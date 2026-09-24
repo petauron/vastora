@@ -23,12 +23,13 @@ import (
 // or the desired configuration revision. The encrypted journal records every
 // accepted high-water mark before a report is sent to Center.
 type meridianUsageState struct {
-	LedgerID      string                          `json:"ledgerId"`
-	Sequence      uint64                          `json:"sequence"`
-	Generation    string                          `json:"generation"`
-	ActiveUsers   []string                        `json:"activeUsers"`
-	AffectedUsers []string                        `json:"affectedUsers"`
-	Counters      map[string]meridianUsageCounter `json:"counters"`
+	LedgerID    string                          `json:"ledgerId"`
+	Sequence    uint64                          `json:"sequence"`
+	Generation  string                          `json:"generation"`
+	ActiveUsers []string                        `json:"activeUsers"`
+	GapSequence uint64                          `json:"gapSequence"`
+	Gaps        []meridianruntime.UsageGap      `json:"gaps"`
+	Counters    map[string]meridianUsageCounter `json:"counters"`
 }
 
 type meridianUsageCounter struct {
@@ -104,10 +105,27 @@ func validMeridianUsageUsers(users []string) bool {
 	return true
 }
 
-func mergeMeridianUsageUsers(left, right []string) []string {
-	users := append(slices.Clone(left), right...)
-	slices.Sort(users)
-	return slices.Compact(users)
+func recordMeridianUsageGap(state *meridianUsageState, users []string) error {
+	if len(users) == 0 {
+		return nil
+	}
+	if state.GapSequence >= math.MaxInt64 {
+		return errors.New("agent: Meridian gap sequence overflow")
+	}
+	state.GapSequence++
+	byUser := make(map[string]uint64, len(state.Gaps)+len(users))
+	for _, gap := range state.Gaps {
+		byUser[gap.User] = gap.Epoch
+	}
+	for _, user := range users {
+		byUser[user] = state.GapSequence
+	}
+	state.Gaps = state.Gaps[:0]
+	for user, epoch := range byUser {
+		state.Gaps = append(state.Gaps, meridianruntime.UsageGap{User: user, Epoch: epoch})
+	}
+	slices.SortFunc(state.Gaps, func(a, b meridianruntime.UsageGap) int { return strings.Compare(a.User, b.User) })
+	return nil
 }
 
 // The hashed Xray config, rather than StatsService, identifies users that had
@@ -163,8 +181,13 @@ func (s *Store) loadMeridianUsageState(ctx context.Context, applicationID string
 		return meridianUsageState{}, errors.New("agent: invalid durable Meridian usage journal")
 	}
 	id, idErr := hex.DecodeString(state.LedgerID)
-	if idErr != nil || len(id) != 16 || hex.EncodeToString(id) != state.LedgerID || state.Sequence == 0 || state.Sequence > math.MaxInt64 || state.Generation == "" || state.Counters == nil || len(state.Counters) > 65536 || !validMeridianUsageUsers(state.ActiveUsers) || !validMeridianUsageUsers(state.AffectedUsers) {
+	if idErr != nil || len(id) != 16 || hex.EncodeToString(id) != state.LedgerID || state.Sequence == 0 || state.Sequence > math.MaxInt64 || state.Generation == "" || state.Counters == nil || len(state.Counters) > 65536 || !validMeridianUsageUsers(state.ActiveUsers) || len(state.Gaps) > 65536 || state.GapSequence > math.MaxInt64 {
 		return meridianUsageState{}, errors.New("agent: invalid durable Meridian usage journal")
+	}
+	for index, gap := range state.Gaps {
+		if strings.TrimSpace(gap.User) == "" || len(gap.User) > 512 || gap.Epoch == 0 || gap.Epoch > state.GapSequence || index > 0 && state.Gaps[index-1].User >= gap.User {
+			return meridianUsageState{}, errors.New("agent: invalid durable Meridian usage gap")
+		}
 	}
 	for name, counter := range state.Counters {
 		if meridianCounterUser(name) == "" || counter.Raw < 0 || counter.Total < counter.Raw {
@@ -208,7 +231,9 @@ func (s *Store) accumulateMeridianUsage(ctx context.Context, applicationID, gene
 		state.LedgerID = hex.EncodeToString(id)
 	}
 	if state.Generation != "" && state.Generation != generation {
-		state.AffectedUsers = mergeMeridianUsageUsers(state.AffectedUsers, state.ActiveUsers)
+		if err := recordMeridianUsageGap(&state, state.ActiveUsers); err != nil {
+			return nil, err
+		}
 		state.Generation = generation
 		for name, counter := range state.Counters {
 			counter.Raw = 0
@@ -220,13 +245,21 @@ func (s *Store) accumulateMeridianUsage(ctx context.Context, applicationID, gene
 	state.ActiveUsers = slices.Clone(activeUsers)
 	for name, counter := range state.Counters {
 		if _, present := values[name]; !present && counter.Raw > 0 {
-			state.AffectedUsers = mergeMeridianUsageUsers(state.AffectedUsers, []string{meridianCounterUser(name)})
+			if err := recordMeridianUsageGap(&state, []string{meridianCounterUser(name)}); err != nil {
+				return nil, err
+			}
+			counter.Raw = 0
+			state.Counters[name] = counter
 		}
 	}
 	for name, value := range values {
 		counter := state.Counters[name]
 		if value < counter.Raw {
-			state.AffectedUsers = mergeMeridianUsageUsers(state.AffectedUsers, []string{meridianCounterUser(name)})
+			if err := recordMeridianUsageGap(&state, []string{meridianCounterUser(name)}); err != nil {
+				return nil, err
+			}
+			counter.Raw = value
+			state.Counters[name] = counter
 			continue
 		}
 		delta := value - counter.Raw
@@ -265,7 +298,7 @@ func (s *Store) accumulateMeridianUsage(ctx context.Context, applicationID, gene
 	if err := s.saveMeridianUsageState(ctx, applicationID, state); err != nil {
 		return nil, err
 	}
-	report := &meridianruntime.UsageLedgerReport{ID: state.LedgerID, Sequence: state.Sequence, Stats: encoded, AffectedUsers: slices.Clone(state.AffectedUsers)}
+	report := &meridianruntime.UsageLedgerReport{ID: state.LedgerID, Sequence: state.Sequence, Stats: encoded, Gaps: slices.Clone(state.Gaps)}
 	if err := report.Validate(); err != nil {
 		return nil, err
 	}

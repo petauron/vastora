@@ -68,19 +68,24 @@ type Result struct {
 // Result remains the raw Xray sample for the released Center during the Agent
 // first rollout phase; the ledger is the next Center's accounting authority.
 type UsageLedgerReport struct {
-	ID            string          `json:"id"`
-	Sequence      uint64          `json:"sequence"`
-	Stats         json.RawMessage `json:"stats"`
-	AffectedUsers []string        `json:"affectedUsers,omitempty"`
+	ID       string          `json:"id"`
+	Sequence uint64          `json:"sequence"`
+	Stats    json.RawMessage `json:"stats"`
+	Gaps     []UsageGap      `json:"gaps,omitempty"`
+}
+
+type UsageGap struct {
+	User  string `json:"user"`
+	Epoch uint64 `json:"epoch"`
 }
 
 func (r UsageLedgerReport) Validate() error {
 	id, err := hex.DecodeString(r.ID)
-	if err != nil || len(id) != 16 || hex.EncodeToString(id) != r.ID || r.Sequence == 0 || r.Sequence > math.MaxInt64 || len(r.Stats) == 0 || len(r.Stats) > 4<<20 || !json.Valid(r.Stats) || len(r.AffectedUsers) > 65536 || !slices.IsSorted(r.AffectedUsers) {
+	if err != nil || len(id) != 16 || hex.EncodeToString(id) != r.ID || r.Sequence == 0 || r.Sequence > math.MaxInt64 || len(r.Stats) == 0 || len(r.Stats) > 4<<20 || !json.Valid(r.Stats) || len(r.Gaps) > 65536 || !slices.IsSortedFunc(r.Gaps, func(a, b UsageGap) int { return strings.Compare(a.User, b.User) }) {
 		return errors.New("meridian runtime: invalid usage ledger report")
 	}
-	for index, user := range r.AffectedUsers {
-		if strings.TrimSpace(user) == "" || len(user) > 512 || index > 0 && r.AffectedUsers[index-1] == user {
+	for index, gap := range r.Gaps {
+		if strings.TrimSpace(gap.User) == "" || len(gap.User) > 512 || gap.Epoch == 0 || gap.Epoch > math.MaxInt64 || index > 0 && r.Gaps[index-1].User == gap.User {
 			return errors.New("meridian runtime: invalid affected usage user")
 		}
 	}

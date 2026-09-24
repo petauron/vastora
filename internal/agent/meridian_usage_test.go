@@ -82,8 +82,8 @@ func TestMeridianUsageLedgerSurvivesRestartAndScopesProcessGapToOldUsers(t *test
 	// The first counter in the new process exceeds the old raw value. It is
 	// still a new generation and must be added, with Alice's gap marked.
 	gap := read("container/start-2", []string{"bob"}, map[string]int64{"alice": 200, "bob": 10})
-	if got := meridianUsageTotals(t, gap); got[upAlice] != 330 || got[upBob] != 10 || !reflect.DeepEqual(gap.AffectedUsers, []string{"alice"}) {
-		t.Fatalf("process gap totals=%v affected=%v", got, gap.AffectedUsers)
+	if got := meridianUsageTotals(t, gap); got[upAlice] != 330 || got[upBob] != 10 || !reflect.DeepEqual(gap.Gaps, []meridianruntime.UsageGap{{User: "alice", Epoch: 1}}) {
+		t.Fatalf("process gap totals=%v affected=%v", got, gap.Gaps)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -93,12 +93,20 @@ func TestMeridianUsageLedgerSurvivesRestartAndScopesProcessGapToOldUsers(t *test
 		t.Fatal(err)
 	}
 	continued := read("container/start-2", []string{"bob"}, map[string]int64{"bob": 20})
-	if got := meridianUsageTotals(t, continued); got[upAlice] != 330 || got[upBob] != 20 || !reflect.DeepEqual(continued.AffectedUsers, []string{"alice"}) {
-		t.Fatalf("persisted gap contaminated new user or lost old total: %v affected=%v", got, continued.AffectedUsers)
+	if got := meridianUsageTotals(t, continued); got[upAlice] != 330 || got[upBob] != 20 || !reflect.DeepEqual(continued.Gaps, []meridianruntime.UsageGap{{User: "alice", Epoch: 1}}) {
+		t.Fatalf("persisted gap contaminated new user or lost old total: %v affected=%v", got, continued.Gaps)
 	}
 	regressed := read("container/start-2", []string{"bob"}, map[string]int64{"bob": 5})
-	if got := meridianUsageTotals(t, regressed); got[upBob] != 20 || !reflect.DeepEqual(regressed.AffectedUsers, []string{"alice", "bob"}) {
-		t.Fatalf("lower same-process counter rewound high water: %v affected=%v", got, regressed.AffectedUsers)
+	if got := meridianUsageTotals(t, regressed); got[upBob] != 20 || !reflect.DeepEqual(regressed.Gaps, []meridianruntime.UsageGap{{User: "alice", Epoch: 1}, {User: "bob", Epoch: 2}}) {
+		t.Fatalf("lower same-process counter rewound high water: %v affected=%v", got, regressed.Gaps)
+	}
+	repeated := read("container/start-2", []string{"bob"}, map[string]int64{"bob": 5})
+	if !reflect.DeepEqual(repeated.Gaps, regressed.Gaps) {
+		t.Fatalf("unchanged gap advanced its epoch: %v", repeated.Gaps)
+	}
+	newGap := read("container/start-3", []string{"bob"}, map[string]int64{"bob": 1})
+	if !reflect.DeepEqual(newGap.Gaps, []meridianruntime.UsageGap{{User: "alice", Epoch: 1}, {User: "bob", Epoch: 3}}) {
+		t.Fatalf("new process gap failed to advance the affected user: %v", newGap.Gaps)
 	}
 }
 
