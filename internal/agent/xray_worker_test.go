@@ -730,3 +730,80 @@ func TestMeridianArtifactHY2DetectionControlsUDP443Publication(t *testing.T) {
 		t.Fatal("Meridian accepted Hysteria away from UDP 443")
 	}
 }
+
+func TestXrayWorkerClientDisableAppliesRevision(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	state := testXrayWorkerState()
+	var inbound map[string]any
+	if err := json.Unmarshal(state.Inbounds[0], &inbound); err != nil {
+		t.Fatal(err)
+	}
+	inbound["settings"] = map[string]any{"clients": []any{map[string]any{
+		"email": "phone", "id": "00000000-0000-4000-8000-000000000001", "enable": true,
+	}}}
+	state.Inbounds[0], err = json.Marshal(inbound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.saveXrayWorkerState(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	applies := 0
+	handler := store.xrayWorkerHandler(func(_ context.Context, previous, next xrayWorkerState) error {
+		applies++
+		changed, err := xrayWorkerConfigChanged(previous, next)
+		if err != nil || !changed || previous.Revision != 1 || next.Revision != 2 {
+			t.Fatalf("disabled client did not revise runtime: changed=%t previous=%d next=%d err=%v", changed, previous.Revision, next.Revision, err)
+		}
+		return nil
+	}, nil)
+	body, err := json.Marshal(map[string]any{
+		"email": "phone", "id": "00000000-0000-4000-8000-000000000001", "enable": false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/panel/api/clients/update/phone?inboundIds=1", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+state.APIToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	applied, loadErr := store.loadXrayWorkerState(context.Background())
+	if response.Code != http.StatusOK || applies != 1 || loadErr != nil || applied.Revision != 2 || applied.AppliedRevision != 2 {
+		t.Fatalf("client update response=%d applies=%d revisions=%d/%d err=%v", response.Code, applies, applied.Revision, applied.AppliedRevision, loadErr)
+	}
+}
+
+func TestXrayWorkerReconcilerPersistsObservedCounters(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	state := testXrayWorkerState()
+	state.RuntimeStats = map[string]int64{"counter": 1}
+	state.AccountStats = map[string]xrayWorkerTraffic{"phone": {Up: 1}}
+	if err := store.saveXrayWorkerState(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	applies := 0
+	apply := func(_ context.Context, _, _ xrayWorkerState) error {
+		applies++
+		return nil
+	}
+	observe := func(_ context.Context, current xrayWorkerState) (xrayWorkerState, error) {
+		current.RuntimeStats["counter"] = 2
+		current.AccountStats["phone"] = xrayWorkerTraffic{Up: 2}
+		return current, nil
+	}
+	if err := store.reconcileXrayWorkerRuntime(context.Background(), apply, observe); err != nil {
+		t.Fatal(err)
+	}
+	observed, loadErr := store.loadXrayWorkerState(context.Background())
+	if loadErr != nil || applies != 0 || observed.RuntimeStats["counter"] != 2 || observed.AccountStats["phone"].Up != 2 {
+		t.Fatalf("observed counters were lost: applies=%d runtime=%d account=%d err=%v", applies, observed.RuntimeStats["counter"], observed.AccountStats["phone"].Up, loadErr)
+	}
+}
