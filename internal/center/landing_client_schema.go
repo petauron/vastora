@@ -14,7 +14,7 @@ CREATE TABLE three_x_ui_client_accounts (
  observed_at TEXT NOT NULL,
  UNIQUE(controller_id,email)
 );
-CREATE TABLE landing_client_capabilities (
+CREATE TABLE agent_private_peer_capabilities (
  node_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
  generation INTEGER NOT NULL,
  peer_json BLOB NOT NULL CHECK(json_valid(peer_json)),

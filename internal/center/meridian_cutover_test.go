@@ -842,7 +842,7 @@ func TestMeridianRouteLifecycleDoesNotBlockUnrelatedSubscriptionEntries(t *testi
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET tailscale_ownership='managed' WHERE id=?`, entry.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_client_capabilities(node_id,generation,peer_json,observed_at)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO agent_private_peer_capabilities(node_id,generation,peer_json,observed_at)
 		VALUES(?,?,?,?)`, entry.ID, landing.ClientRuntimeGeneration, []byte(`{"id":"tailnet-lifecycle-entry","publicKey":"nodekey:test-lifecycle","address":"100.64.0.44"}`), stamp); err != nil {
 		t.Fatal(err)
 	}

@@ -31,7 +31,7 @@ func openMeridianLandingSourcesFixture(t *testing.T) (*Store, string, string) {
 	var entryID string
 	var sourceJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT application.node_id,capability.peer_json FROM applications application
-		JOIN landing_client_capabilities capability ON capability.node_id=application.node_id WHERE application.id='snapshot-shared-app'`).Scan(&entryID, &sourceJSON); err != nil {
+		JOIN agent_private_peer_capabilities capability ON capability.node_id=application.node_id WHERE application.id='snapshot-shared-app'`).Scan(&entryID, &sourceJSON); err != nil {
 		t.Fatal(err)
 	}
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
@@ -134,10 +134,10 @@ func TestMeridianLandingSourceUsesPinnedIdentityAndDurableRoutePurpose(t *testin
 		{"entry removed", `UPDATE agents SET status='disabled' WHERE id=?`, []any{entryID}, false},
 		{"entry credential revoked", `UPDATE agents SET credential_revoked_at='2026-09-22T00:00:00Z' WHERE id=?`, []any{entryID}, false},
 		{"unmanaged entry", `UPDATE agents SET tailscale_ownership='external' WHERE id=?`, []any{entryID}, false},
-		{"different reported identity", `UPDATE landing_client_capabilities SET peer_json='{"id":"changed","publicKey":"changed-key","address":"100.64.0.72"}'`, nil, false},
-		{"reported key changed at same address", `UPDATE landing_client_capabilities SET peer_json=json_set(peer_json,'$.publicKey','nodekey:changed')`, nil, false},
-		{"identity not observed", `UPDATE landing_client_capabilities SET peer_json='{}'`, nil, true},
-		{"capability absent", `DELETE FROM landing_client_capabilities WHERE node_id=?`, []any{entryID}, true},
+		{"different reported identity", `UPDATE agent_private_peer_capabilities SET peer_json='{"id":"changed","publicKey":"changed-key","address":"100.64.0.72"}'`, nil, false},
+		{"reported key changed at same address", `UPDATE agent_private_peer_capabilities SET peer_json=json_set(peer_json,'$.publicKey','nodekey:changed')`, nil, false},
+		{"identity not observed", `UPDATE agent_private_peer_capabilities SET peer_json='{}'`, nil, true},
+		{"capability absent", `DELETE FROM agent_private_peer_capabilities WHERE node_id=?`, []any{entryID}, true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -281,7 +281,7 @@ func TestMeridianLegacyRetirementStopsOnlyTheMatchingLegacySourceUse(t *testing.
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	source := landing.PeerIdentity{ID: "old-source", PublicKey: "old-source-key", Address: "100.64.0.62"}
 	sourceJSON, _ := json.Marshal(source)
-	if _, err := tx.Exec(`UPDATE landing_client_capabilities SET peer_json=? WHERE node_id=?`, sourceJSON, entryID); err != nil {
+	if _, err := tx.Exec(`UPDATE agent_private_peer_capabilities SET peer_json=? WHERE node_id=?`, sourceJSON, entryID); err != nil {
 		t.Fatal(err)
 	}
 	var targetJSON []byte

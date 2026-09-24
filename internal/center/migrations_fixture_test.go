@@ -3,7 +3,8 @@ package center
 import "testing"
 
 // Older migration tests reconstruct a historical database from a fresh store.
-// Newer ownership tables and cross-table triggers cannot be left in that input.
+// Newer ownership tables, names, and cross-table triggers cannot be left in
+// that input.
 func removePostVersion85TablesForFixture(t *testing.T, store *Store) {
 	t.Helper()
 	for _, statement := range []string{
@@ -20,6 +21,7 @@ func removePostVersion85TablesForFixture(t *testing.T, store *Store) {
 		`DROP TABLE meridian_endpoints`,
 		`DROP TABLE meridian_cutover`,
 		`DROP TABLE xray_configuration_recoveries`,
+		`ALTER TABLE agent_private_peer_capabilities RENAME TO landing_client_capabilities`,
 		`ALTER TABLE landing_server_states DROP COLUMN applied_json`,
 	} {
 		if _, err := store.db.Exec(statement); err != nil {

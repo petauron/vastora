@@ -18,7 +18,7 @@ func TestLandingClientMigrationStartsWithoutImplicitGrants(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	for _, table := range []string{"landing_client_capabilities", "three_x_ui_client_accounts", "landing_client_grants", "landing_client_blocks"} {
+	for _, table := range []string{"agent_private_peer_capabilities", "three_x_ui_client_accounts", "landing_client_grants", "landing_client_blocks"} {
 		var count int
 		if err := store.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("migration granted implicit authority in %s: %d %v", table, count, err)

@@ -199,7 +199,7 @@ func TestMeridianSourcePinDoesNotFollowCurrentCapabilityReplacement(t *testing.T
 	}
 	source.ID = "replaced-tailnet-machine"
 	replaced, _ := json.Marshal(source)
-	if _, err := store.db.ExecContext(ctx, `UPDATE landing_client_capabilities SET peer_json=? WHERE node_id=(SELECT node_id FROM applications WHERE id='snapshot-shared-app')`, replaced); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE agent_private_peer_capabilities SET peer_json=? WHERE node_id=(SELECT node_id FROM applications WHERE id='snapshot-shared-app')`, replaced); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := store.db.BeginTx(ctx, nil)

@@ -192,7 +192,7 @@ func openMeridianSharedEndpointSnapshotFixture(t *testing.T) *Store {
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET tailscale_ownership='managed',last_seen_at=? WHERE id=?`, now, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO landing_client_capabilities(node_id,generation,peer_json,observed_at)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_private_peer_capabilities(node_id,generation,peer_json,observed_at)
 		VALUES(?,?,?,?)`, node.ID, landing.ClientRuntimeGeneration, []byte(`{"id":"tailnet-source-entry","publicKey":"nodekey:test-source","address":"100.64.0.61"}`), now); err != nil {
 		t.Fatal(err)
 	}

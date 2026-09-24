@@ -39,7 +39,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	exec(`INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,status,created_at,updated_at) VALUES('client-publication','client-inbound','public_shared_443','application_node',?,'entry.example.test','example.com','manual',0,'ready',?,?)`, entry.ID, now, now)
 	peer := landing.PeerIdentity{ID: "entry", PublicKey: "entry-key", Address: "100.64.0.8"}
 	peerJSON, _ := json.Marshal(peer)
-	exec(`INSERT INTO landing_client_capabilities(node_id,generation,peer_json,observed_at) VALUES(?,?,?,?)`, entry.ID, landing.ClientRuntimeGeneration, peerJSON, now)
+	exec(`INSERT INTO agent_private_peer_capabilities(node_id,generation,peer_json,observed_at) VALUES(?,?,?,?)`, entry.ID, landing.ClientRuntimeGeneration, peerJSON, now)
 	parentUUID := "11111111-2222-4333-8444-555555555555"
 	parent := landing.Identity(parentUUID)
 	metadata, _ := json.Marshal(ThreeXUIClientView{ID: parent, Email: "Phone", Enabled: true, InboundIDs: []int{9}, HasSubscription: true})

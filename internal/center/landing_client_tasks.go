@@ -148,7 +148,7 @@ func (s *Store) hydrateLandingClientCommand(ctx context.Context, tx *sql.Tx, com
 
 func (s *Store) checkClientLandingIdentity(ctx context.Context, tx *sql.Tx, record landingGrantRecord) error {
 	var sourceJSON, peerJSON []byte
-	if err := tx.QueryRowContext(ctx, `SELECT c.peer_json FROM landing_client_capabilities c JOIN applications app ON app.node_id=c.node_id JOIN agents a ON a.id=c.node_id WHERE app.id=? AND c.generation=? AND a.status='active' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed'`, record.ApplicationID, landing.ClientRuntimeGeneration).Scan(&sourceJSON); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT c.peer_json FROM agent_private_peer_capabilities c JOIN applications app ON app.node_id=c.node_id JOIN agents a ON a.id=c.node_id WHERE app.id=? AND c.generation=? AND a.status='active' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed'`, record.ApplicationID, landing.ClientRuntimeGeneration).Scan(&sourceJSON); err != nil {
 		return errors.New("center: entry identity unavailable")
 	}
 	var source, peer landing.PeerIdentity

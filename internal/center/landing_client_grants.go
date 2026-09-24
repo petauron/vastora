@@ -155,7 +155,7 @@ func (s *Store) configureClientLanding(ctx context.Context, tx *sql.Tx, input La
 	var sourceJSON, peerJSON []byte
 	for _, nodeID := range []string{selected.NodeID, controllerNode} {
 		var generation int
-		if err := tx.QueryRowContext(ctx, `SELECT c.generation,c.peer_json FROM landing_client_capabilities c JOIN agents a ON a.id=c.node_id WHERE c.node_id=? AND a.status='active' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed' AND c.observed_at>?`, nodeID, s.now().UTC().Add(-landingHealthFreshness).Format(time.RFC3339Nano)).Scan(&generation, &sourceJSON); err != nil || generation != landing.ClientRuntimeGeneration {
+		if err := tx.QueryRowContext(ctx, `SELECT c.generation,c.peer_json FROM agent_private_peer_capabilities c JOIN agents a ON a.id=c.node_id WHERE c.node_id=? AND a.status='active' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed' AND c.observed_at>?`, nodeID, s.now().UTC().Add(-landingHealthFreshness).Format(time.RFC3339Nano)).Scan(&generation, &sourceJSON); err != nil || generation != landing.ClientRuntimeGeneration {
 			return LandingClientGrantView{}, errors.New("center: update the selected Agents and wait for them to reconnect")
 		}
 		if nodeID == selected.NodeID && json.Unmarshal(sourceJSON, &source) != nil {

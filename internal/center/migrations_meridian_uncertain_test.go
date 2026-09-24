@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,7 +49,7 @@ func TestVersion94ProjectsUncertainMeridianFailureForExplicitRecovery(t *testing
 	if endpointStatus != "failed" || deploymentStatus != "failed" || lastError != "legacy worker drift" {
 		t.Fatalf("endpoint=%q deployment=%q error=%q", endpointStatus, deploymentStatus, lastError)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v93-before-v94-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v93-before-v%d-*.db", centerSchemaVersion)))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("pre-migration backup count=%d err=%v", len(backups), err)
 	}

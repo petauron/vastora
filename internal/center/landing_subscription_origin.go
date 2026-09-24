@@ -16,7 +16,7 @@ import (
 // unrelated subscription controllers are not changed.
 func (s *Store) reconcileLandingSubscriptionOrigin(ctx context.Context, tx *sql.Tx, nodeID string, now time.Time) error {
 	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT a.id,s.id,s.endpoint FROM applications a JOIN services s ON s.application_id=a.id
-		JOIN landing_client_capabilities c ON c.node_id=a.node_id
+		JOIN agent_private_peer_capabilities c ON c.node_id=a.node_id
 		WHERE a.node_id=? AND s.name='subscription' AND s.status<>'stopped' AND s.app_protocol<>? AND c.generation=?
 		AND EXISTS(SELECT 1 FROM three_x_ui_client_accounts p JOIN landing_client_grants g ON g.parent_id=p.id WHERE p.controller_id=a.id AND g.applied_revision>0)`, nodeID, meridianSubscriptionProtocol, landing.ClientRuntimeGeneration)
 	if err != nil {

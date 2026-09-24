@@ -52,6 +52,7 @@ func TestVersion88PreservesSubscriptionGraphAndAddsSystemOwnership(t *testing.T)
 		`ALTER TABLE meridian_endpoints DROP COLUMN next_reset_at`,
 		`ALTER TABLE meridian_endpoints DROP COLUMN last_reset_at`,
 		`ALTER TABLE landing_server_states DROP COLUMN applied_json`,
+		`ALTER TABLE agent_private_peer_capabilities RENAME TO landing_client_capabilities`,
 		`PRAGMA user_version=87`, `COMMIT`, `PRAGMA legacy_alter_table=OFF`, `PRAGMA foreign_keys=ON`,
 	} {
 		if _, err := db.Exec(statement); err != nil {

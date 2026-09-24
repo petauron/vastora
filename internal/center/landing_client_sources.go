@@ -75,7 +75,7 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 	}
 	rows, err = tx.QueryContext(ctx, `SELECT g.source_peer_json,c.peer_json,s.peer_json,g.grant_json
 		FROM landing_client_grants g JOIN applications app ON app.id=g.application_id
-		JOIN landing_client_capabilities c ON c.node_id=app.node_id
+		JOIN agent_private_peer_capabilities c ON c.node_id=app.node_id
 		JOIN landing_server_states s ON s.node_id=g.landing_node_id
 		JOIN agents a ON a.id=app.node_id
 		WHERE g.landing_node_id=? AND g.status<>'revoked' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed'
@@ -120,7 +120,7 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 		JOIN meridian_endpoints endpoint ON endpoint.id=grant_row.endpoint_id
 		JOIN applications application ON application.id=endpoint.application_id
 		JOIN agents agent ON agent.id=application.node_id
-		LEFT JOIN landing_client_capabilities capability ON capability.node_id=agent.id
+		LEFT JOIN agent_private_peer_capabilities capability ON capability.node_id=agent.id
 		WHERE grant_row.egress_node_id=?
 		AND ((grant_row.enabled=1 AND grant_row.status<>'revoked') OR grant_row.status='revoking')
 		AND agent.status='active' AND agent.credential_revoked_at='' AND agent.tailscale_ownership='managed'`, landingID)
@@ -175,7 +175,7 @@ func (s *Store) clientLandingRoutePrerequisites(ctx context.Context, tx *sql.Tx,
 		return true, nil
 	}
 	var generation int
-	if err := tx.QueryRowContext(ctx, `SELECT generation FROM landing_client_capabilities WHERE node_id=?`, state.NodeID).Scan(&generation); err != nil || generation != landing.ClientRuntimeGeneration {
+	if err := tx.QueryRowContext(ctx, `SELECT generation FROM agent_private_peer_capabilities WHERE node_id=?`, state.NodeID).Scan(&generation); err != nil || generation != landing.ClientRuntimeGeneration {
 		return false, nil
 	}
 	for _, grant := range state.Clients.Grants {
