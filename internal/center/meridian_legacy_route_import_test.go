@@ -82,7 +82,10 @@ func TestMeridianLegacyRouteImportRejectsChangedReceiptWithoutWrites(t *testing.
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	badReceipt, _ := json.Marshal(landing.ControllerResult{GrantID: legacy.ID, Revision: legacy.Revision + 1, Phase: "activate", BaseLink: "vless://base", FixedLink: "vless://route", SubscriptionToken: "subscription-token"})
+	badReceipt, _ := json.Marshal(landing.ControllerResult{GrantID: legacy.ID, Revision: legacy.Revision, Phase: "activate",
+		BaseLink:          "vless://11111111-1111-4111-8111-111111111111@entry.example.test:443?security=reality",
+		FixedLink:         "vless://33333333-3333-4333-8333-333333333333@entry.example.test:443?security=reality",
+		SubscriptionToken: "subscription-token"})
 	badSecretID, err := store.putSecret(ctx, tx, badReceipt, "landing-material:"+legacy.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +121,10 @@ func prepareMeridianLegacyRouteImport(t *testing.T, store *Store, legacy meridia
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, _ := json.Marshal(landing.ControllerResult{GrantID: legacy.ID, Revision: legacy.Revision, Phase: "activate", BaseLink: "vless://base", FixedLink: "vless://route", SubscriptionToken: "subscription-token"})
+	receipt, _ := json.Marshal(landing.ControllerResult{GrantID: legacy.ID, Revision: legacy.Revision, Phase: "activate",
+		BaseLink:          "vless://11111111-1111-4111-8111-111111111111@entry.example.test:443?security=reality",
+		FixedLink:         "vless://" + legacy.FixedUUID + "@entry.example.test:443?security=reality",
+		SubscriptionToken: "subscription-token"})
 	materialSecretID, err := store.putSecret(ctx, tx, receipt, "landing-material:"+legacy.ID)
 	if err != nil {
 		t.Fatal(err)

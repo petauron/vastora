@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"time"
 
@@ -146,7 +147,8 @@ func (s *Store) importReadyMeridianLegacyRoutesInTx(ctx context.Context, tx *sql
 		var material landing.ControllerResult
 		if json.Unmarshal(materialJSON, &material) != nil || material.GrantID != record.ID ||
 			material.Revision != record.Revision || material.Phase != "activate" ||
-			material.BaseLink == "" || material.FixedLink == "" || material.SubscriptionToken == "" {
+			meridianLegacyLinkIdentity(material.BaseLink) != record.ParentID ||
+			meridianLegacyLinkIdentity(material.FixedLink) != record.Grant.FixedIdentity || material.SubscriptionToken == "" {
 			return 0, errors.New("center: ready legacy route receipt changed")
 		}
 
@@ -241,4 +243,12 @@ func meridianUnimportedReadyLegacyRoutes(ctx context.Context, tx *sql.Tx) (int, 
 		"JOIN meridian_endpoints endpoint ON endpoint.application_id=grant_row.application_id "+
 		"WHERE grant_row.status='ready' AND NOT EXISTS(SELECT 1 FROM meridian_route_grants route WHERE route.id=grant_row.id)").Scan(&count)
 	return count, err
+}
+
+func meridianLegacyLinkIdentity(raw string) string {
+	link, err := url.Parse(raw)
+	if err != nil || link.Scheme != "vless" || link.User == nil || link.Hostname() == "" || uuid.Validate(link.User.Username()) != nil {
+		return ""
+	}
+	return landing.Identity(link.User.Username())
 }
