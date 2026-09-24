@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -43,6 +44,7 @@ type meridianRuntimeState struct {
 	PendingPeers        []meridianruntime.Peer    `json:"pendingPeers,omitempty"`
 	AppliedSource       *landing.PeerIdentity     `json:"appliedSource,omitempty"`
 	PendingSource       *landing.PeerIdentity     `json:"pendingSource,omitempty"`
+	GateRevision        uint64                    `json:"gateRevision,omitempty"`
 	Bridge              string                    `json:"bridge,omitempty"`
 	RetiringGates       []meridianGateIdentity    `json:"retiringGates,omitempty"`
 	HandoverPending     bool                      `json:"handoverPending,omitempty"`
@@ -59,6 +61,9 @@ func (state meridianRuntimeState) validate() error {
 	}
 	if state.Applied != nil && state.Pending != nil && state.Pending.Revision <= state.Applied.Revision {
 		return errors.New("agent: stale Meridian pending revision")
+	}
+	if state.GateRevision != 0 && (state.Applied == nil || state.GateRevision > state.Applied.Revision) {
+		return errors.New("agent: invalid Meridian gate revision")
 	}
 	if err := state.validateLanding(); err != nil {
 		return err
@@ -135,6 +140,7 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 	candidate.Applied, candidate.Pending = state.Pending, nil
 	candidate.AppliedPeers, candidate.PendingPeers = slices.Clone(state.PendingPeers), nil
 	candidate.AppliedSource, candidate.PendingSource = cloneMeridianSource(state.PendingSource), nil
+	candidate.GateRevision = 0
 	candidate.ImageReference = pendingImageReference
 	socket := e.DockerSocket
 	if socket == "" {
@@ -281,6 +287,9 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 		result.LegacyRetired, err = e.Store.legacyMeridianRetired(ctx, task.ApplicationID)
 		return result, err
 	}
+	if canAdvanceMeridianRevision(state, task) {
+		return e.advanceMeridianRevision(ctx, state, task, e.observeAppliedMeridianRuntime)
+	}
 	if state.Pending != nil && (!sameMeridianArtifact(*state.Pending, task.Desired) || !sameMeridianPeers(state.PendingPeers, task.Peers) || !sameMeridianSource(state.PendingSource, task.Source)) {
 		if !task.ReplacePendingState {
 			return result, errors.New("agent: another Meridian revision requires explicit recovery")
@@ -376,6 +385,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	state.Applied, state.Pending = &applied, nil
 	state.AppliedPeers, state.PendingPeers = slices.Clone(task.Peers), nil
 	state.AppliedSource, state.PendingSource = cloneMeridianSource(task.Source), nil
+	state.GateRevision = 0
 	state.ImageReference = task.ImageReference
 	if err := e.Store.saveMeridianRuntimeState(ctx, state); err != nil {
 		return result, uncertainTaskOutcome(err)
@@ -728,6 +738,47 @@ func (s *Store) writeExactMeridianConfig(encoded []byte) error {
 
 func sameMeridianArtifact(left, right meridian.DesiredArtifact) bool {
 	return left.Revision == right.Revision && subtle.ConstantTimeCompare([]byte(left.ConfigSHA256), []byte(right.ConfigSHA256)) == 1
+}
+
+func canAdvanceMeridianRevision(state meridianRuntimeState, task meridianruntime.Task) bool {
+	return state.Applied != nil && state.Pending == nil && !state.HandoverPending && len(state.RetiringGates) == 0 &&
+		!task.ReplacePendingState && !task.RetireLegacy && state.ImageReference == task.ImageReference &&
+		task.Desired.Revision > state.Applied.Revision &&
+		subtle.ConstantTimeCompare([]byte(task.Desired.ConfigSHA256), []byte(state.Applied.ConfigSHA256)) == 1 &&
+		bytes.Equal(task.Desired.Config, state.Applied.Config) &&
+		sameMeridianPeers(state.AppliedPeers, task.Peers) && sameMeridianSource(state.AppliedSource, task.Source)
+}
+
+// A new Center revision with identical runtime authority needs a fresh
+// receipt, not a new Xray process. Keep the already leased peer gates and
+// verify the running container against both journal revisions before replying.
+func (e ApplicationExecutor) advanceMeridianRevision(ctx context.Context, state meridianRuntimeState, task meridianruntime.Task, observe func(context.Context, meridianRuntimeState) (meridianruntime.Result, error)) (meridianruntime.Result, error) {
+	if !canAdvanceMeridianRevision(state, task) {
+		return meridianruntime.Result{}, errors.New("agent: Meridian revision cannot advance without runtime replacement")
+	}
+	if _, err := observe(ctx, state); err != nil {
+		return meridianruntime.Result{}, err
+	}
+	if len(state.AppliedPeers) != 0 {
+		state.GateRevision = state.appliedGateRevision()
+	} else {
+		state.GateRevision = 0
+	}
+	applied := task.Desired
+	state.Applied = &applied
+	if err := e.Store.saveMeridianRuntimeState(ctx, state); err != nil {
+		return meridianruntime.Result{}, err
+	}
+	result, err := observe(ctx, state)
+	if err == nil && !e.Store.meridianLandingMonitorRunning(state) {
+		if err = e.startMeridianLandingMonitor(ctx, state); err == nil {
+			result.Peers = e.Store.meridianPeerObservations(state)
+		}
+	}
+	if err == nil {
+		result.LegacyRetired, err = e.Store.legacyMeridianRetired(ctx, task.ApplicationID)
+	}
+	return result, err
 }
 
 func artifactMatchesBytes(artifact meridian.DesiredArtifact, encoded []byte) bool {

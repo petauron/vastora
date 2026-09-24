@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,65 @@ const (
 	sharedSnapshotTokenB     = "snapshot-subscription-b"
 	sharedSnapshotUUIDB      = "22222222-2222-4222-8222-222222222222"
 )
+
+func TestMeridianAccountMetadataAndResetKeepRenderedRuntime(t *testing.T) {
+	for _, operation := range []string{"account-update", "scheduled-reset"} {
+		t.Run(operation, func(t *testing.T) {
+			store := openMeridianSharedEndpointSnapshotFixture(t)
+			ctx := context.Background()
+			if _, err := store.db.ExecContext(ctx, `UPDATE applications SET image='example.test/xray:current' WHERE id='snapshot-shared-app'`); err != nil {
+				t.Fatal(err)
+			}
+			project := func() meridianRuntimeProjection {
+				t.Helper()
+				tx, err := store.db.BeginTx(ctx, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer tx.Rollback()
+				projection, err := store.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return projection
+			}
+			if operation == "scheduled-reset" {
+				future := store.now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
+				if _, err := store.db.ExecContext(ctx, `UPDATE meridian_accounts SET reset_days=1,next_reset_at=? WHERE id=?`, future, sharedSnapshotAccountA); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := project().task
+			if operation == "account-update" {
+				enabled := true
+				if _, err := store.UpdateMeridianAccount(ctx, sharedSnapshotAccountA, MeridianAccountInput{DisplayName: sharedSnapshotAccountA, TotalBytes: 1000, Enabled: &enabled}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				tx, err := store.db.BeginTx(ctx, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer tx.Rollback()
+				past := store.now().UTC().Add(-time.Minute)
+				if _, err := tx.ExecContext(ctx, `UPDATE meridian_accounts SET reset_days=1,next_reset_at=? WHERE id=?`, past.Format(time.RFC3339Nano), sharedSnapshotAccountA); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.resetDueMeridianAccounts(ctx, tx); err != nil {
+					t.Fatal(err)
+				}
+				if err := tx.Commit(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			after := project().task
+			if after.Desired.Revision != before.Desired.Revision+1 || after.Desired.ConfigSHA256 != before.Desired.ConfigSHA256 ||
+				!reflect.DeepEqual(after.Desired.Config, before.Desired.Config) || !reflect.DeepEqual(after.Peers, before.Peers) || !reflect.DeepEqual(after.Source, before.Source) {
+				t.Fatalf("%s unexpectedly changed the running Xray authority: before=%d/%s after=%d/%s", operation, before.Desired.Revision, before.Desired.ConfigSHA256, after.Desired.Revision, after.Desired.ConfigSHA256)
+			}
+		})
+	}
+}
 
 func TestMeridianObservationKeepsImportedServiceIdentityAndRepairsListener(t *testing.T) {
 	store := openMeridianSharedEndpointSnapshotFixture(t)

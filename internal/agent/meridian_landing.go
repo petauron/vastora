@@ -43,10 +43,11 @@ func newMeridianTrafficGate(identity meridianGateIdentity) (meridianTrafficGate,
 
 func (state meridianRuntimeState) validateLanding() error {
 	for _, plan := range []struct {
-		artifact *meridian.DesiredArtifact
-		peers    []meridianruntime.Peer
-		source   *landing.PeerIdentity
-	}{{state.Applied, state.AppliedPeers, state.AppliedSource}, {state.Pending, state.PendingPeers, state.PendingSource}} {
+		artifact     *meridian.DesiredArtifact
+		peers        []meridianruntime.Peer
+		source       *landing.PeerIdentity
+		gateRevision uint64
+	}{{state.Applied, state.AppliedPeers, state.AppliedSource, state.appliedGateRevision()}, {state.Pending, state.PendingPeers, state.PendingSource, 0}} {
 		if plan.artifact == nil {
 			if len(plan.peers) != 0 || plan.source != nil {
 				return errors.New("agent: Meridian peers have no owning artifact")
@@ -57,7 +58,11 @@ func (state meridianRuntimeState) validateLanding() error {
 		if task.Validate() != nil {
 			return errors.New("agent: Meridian peer plan does not match its artifact")
 		}
-		for _, identity := range meridianPlanGates(plan.peers, state.Bridge, plan.artifact.Revision) {
+		gateRevision := plan.artifact.Revision
+		if plan.gateRevision != 0 {
+			gateRevision = plan.gateRevision
+		}
+		for _, identity := range meridianPlanGates(plan.peers, state.Bridge, gateRevision) {
 			if _, err := newMeridianTrafficGate(identity); err != nil {
 				return err
 			}
@@ -115,12 +120,25 @@ func appendMeridianGates(destination []meridianGateIdentity, additions ...meridi
 func (state meridianRuntimeState) knownLandingGates() []meridianGateIdentity {
 	gates := appendMeridianGates(nil, state.RetiringGates...)
 	if state.Applied != nil {
-		gates = appendMeridianGates(gates, meridianPlanGates(state.AppliedPeers, state.Bridge, state.Applied.Revision)...)
+		gates = appendMeridianGates(gates, meridianPlanGates(state.AppliedPeers, state.Bridge, state.appliedGateRevision())...)
 	}
 	if state.Pending != nil {
 		gates = appendMeridianGates(gates, meridianPlanGates(state.PendingPeers, state.Bridge, state.Pending.Revision)...)
 	}
 	return gates
+}
+
+// An unchanged Xray configuration keeps its existing nft gate and lease when
+// Center advances only the desired revision. Zero is the original behavior
+// for states created before this field existed and after a real replacement.
+func (state meridianRuntimeState) appliedGateRevision() uint64 {
+	if state.GateRevision != 0 {
+		return state.GateRevision
+	}
+	if state.Applied != nil {
+		return state.Applied.Revision
+	}
+	return 0
 }
 
 func closeMeridianGates(ctx context.Context, gates []meridianGateIdentity, factory func(meridianGateIdentity) (meridianTrafficGate, error)) error {
@@ -361,9 +379,11 @@ func (e ApplicationExecutor) finishMeridianLandingHandover(ctx context.Context, 
 		return err
 	}
 	current := meridianPlanGates(state.AppliedPeers, state.Bridge, state.Applied.Revision)
-	if err := removeSupersededMeridianGates(ctx, state.RetiringGates, current, newMeridianTrafficGate); err != nil {
+	previous := appendMeridianGates(slices.Clone(state.RetiringGates), meridianPlanGates(state.AppliedPeers, state.Bridge, state.appliedGateRevision())...)
+	if err := removeSupersededMeridianGates(ctx, previous, current, newMeridianTrafficGate); err != nil {
 		return err
 	}
+	state.GateRevision = 0
 	if err := removeClosedMeridianGateConflicts(ctx, *state); err != nil {
 		return err
 	}
@@ -379,7 +399,7 @@ func removeClosedMeridianGateConflicts(ctx context.Context, state meridianRuntim
 		return errors.New("agent: Meridian gate cleanup requires an applied runtime")
 	}
 	for _, peer := range state.AppliedPeers {
-		gate, err := landing.NewBridgeGate(peer.Identity, state.Bridge, state.Applied.Revision)
+		gate, err := landing.NewBridgeGate(peer.Identity, state.Bridge, state.appliedGateRevision())
 		if err != nil {
 			return err
 		}
@@ -470,7 +490,7 @@ func (e ApplicationExecutor) startMeridianLandingMonitor(ctx context.Context, st
 	}
 	monitorContext, cancel := context.WithCancel(context.Background())
 	e.Store.landingStatusMu.Lock()
-	e.Store.meridianMonitorRevision, e.Store.meridianMonitorSHA256 = state.Applied.Revision, state.Applied.ConfigSHA256
+	e.Store.meridianMonitorRevision, e.Store.meridianMonitorSHA256 = state.appliedGateRevision(), state.Applied.ConfigSHA256
 	e.Store.meridianMonitorSource = cloneMeridianSource(state.AppliedSource)
 	e.Store.meridianPeerStatuses = map[string]meridianruntime.PeerObservation{}
 	e.Store.landingPeerStatuses = map[string]landingPeerStatus{}
@@ -488,7 +508,7 @@ func (e ApplicationExecutor) startMeridianLandingMonitor(ctx context.Context, st
 			monitors.Add(1)
 			go func() {
 				defer monitors.Done()
-				gate, err := landing.NewBridgeGate(peer.Identity, state.Bridge, state.Applied.Revision)
+				gate, err := landing.NewBridgeGate(peer.Identity, state.Bridge, state.appliedGateRevision())
 				if err != nil {
 					return
 				}
@@ -540,7 +560,7 @@ func (s *Store) meridianLandingMonitorRunning(state meridianRuntimeState) bool {
 	}
 	s.landingStatusMu.RLock()
 	defer s.landingStatusMu.RUnlock()
-	return s.meridianMonitorRevision == state.Applied.Revision && s.meridianMonitorSHA256 == state.Applied.ConfigSHA256 && sameMeridianSource(s.meridianMonitorSource, state.AppliedSource)
+	return s.meridianMonitorRevision == state.appliedGateRevision() && s.meridianMonitorSHA256 == state.Applied.ConfigSHA256 && sameMeridianSource(s.meridianMonitorSource, state.AppliedSource)
 }
 
 func blockedMeridianPeer(peer meridianruntime.Peer, revision uint64, reason string) meridianruntime.PeerObservation {
@@ -550,7 +570,7 @@ func blockedMeridianPeer(peer meridianruntime.Peer, revision uint64, reason stri
 func (s *Store) recordMeridianPeerObservation(state meridianRuntimeState, observation meridianruntime.PeerObservation) {
 	s.landingStatusMu.Lock()
 	defer s.landingStatusMu.Unlock()
-	if state.Applied != nil && s.meridianMonitorRevision == state.Applied.Revision && s.meridianMonitorSHA256 == state.Applied.ConfigSHA256 && sameMeridianSource(s.meridianMonitorSource, state.AppliedSource) {
+	if state.Applied != nil && s.meridianMonitorRevision == state.appliedGateRevision() && s.meridianMonitorSHA256 == state.Applied.ConfigSHA256 && sameMeridianSource(s.meridianMonitorSource, state.AppliedSource) {
 		s.meridianPeerStatuses[observation.EgressID] = observation
 	}
 }
@@ -561,9 +581,10 @@ func (s *Store) meridianPeerObservations(state meridianRuntimeState) []meridianr
 	defer s.landingStatusMu.RUnlock()
 	for _, peer := range state.AppliedPeers {
 		observation := blockedMeridianPeer(peer, state.Applied.Revision, "no_current_peer_evidence")
-		if !state.HandoverPending && s.meridianMonitorRevision == state.Applied.Revision && s.meridianMonitorSHA256 == state.Applied.ConfigSHA256 && sameMeridianSource(s.meridianMonitorSource, state.AppliedSource) {
+		if !state.HandoverPending && s.meridianMonitorRevision == state.appliedGateRevision() && s.meridianMonitorSHA256 == state.Applied.ConfigSHA256 && sameMeridianSource(s.meridianMonitorSource, state.AppliedSource) {
 			if current, exists := s.meridianPeerStatuses[peer.EgressID]; exists && current.Identity == peer.Identity {
 				observation = current
+				observation.Status.Revision = state.Applied.Revision
 			}
 		}
 		observations = append(observations, observation)
