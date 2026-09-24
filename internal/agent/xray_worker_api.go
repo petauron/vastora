@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net"
 	"net/http"
 	"slices"
@@ -33,6 +34,10 @@ func (s *Store) xrayWorkerHandler(apply xrayWorkerApply, observe xrayWorkerObser
 			return
 		}
 		original := state
+		// Mutations replace inbound entries and update accounting maps in place.
+		// Keep the loaded snapshot separate so config changes cannot disappear
+		// from the revision/apply comparison through shared slice backing arrays.
+		state = cloneXrayWorkerState(state)
 		forceApply := request.Method == http.MethodPost && path == "/panel/api/server/restartXrayService"
 		var observationErr error
 		if observe != nil {
@@ -102,6 +107,26 @@ func xrayWorkerStateEqual(left, right xrayWorkerState) bool {
 	leftJSON, leftErr := json.Marshal(left)
 	rightJSON, rightErr := json.Marshal(right)
 	return leftErr == nil && rightErr == nil && bytes.Equal(leftJSON, rightJSON)
+}
+
+func cloneXrayWorkerState(state xrayWorkerState) xrayWorkerState {
+	state.Inbounds = slices.Clone(state.Inbounds)
+	for index := range state.Inbounds {
+		state.Inbounds[index] = bytes.Clone(state.Inbounds[index])
+	}
+	state.HostGroups = slices.Clone(state.HostGroups)
+	for index := range state.HostGroups {
+		group := &state.HostGroups[index]
+		group.InboundIDs = slices.Clone(group.InboundIDs)
+		group.Hosts = slices.Clone(group.Hosts)
+		group.Tags = slices.Clone(group.Tags)
+	}
+	state.XraySetting = bytes.Clone(state.XraySetting)
+	state.RuntimeStats = maps.Clone(state.RuntimeStats)
+	state.AccountStats = maps.Clone(state.AccountStats)
+	state.ControllerStats = maps.Clone(state.ControllerStats)
+	state.BlockedAccounts = maps.Clone(state.BlockedAccounts)
+	return state
 }
 
 func xrayWorkerEndpointAllowed(method, path string) bool {
