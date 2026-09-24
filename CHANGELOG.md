@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.212](https://github.com/petauron/vastora/compare/v0.1.0-alpha.211...v0.1.0-alpha.212) (2026-09-24)
+
+
+### Bug Fixes
+
+* **agent:** snapshot Xray worker state before mutations ([#643](https://github.com/petauron/vastora/issues/643)) ([0a97384](https://github.com/petauron/vastora/commit/0a973849a6b0f2b8faaccd7780720e8451092f72))
+* **center:** accept zero-valued Meridian usage counters ([#645](https://github.com/petauron/vastora/issues/645)) ([4f3c76f](https://github.com/petauron/vastora/commit/4f3c76f45de2ba98339cd593a26d952bd7936ce7))
+
 ## [0.1.0-alpha.211](https://github.com/petauron/vastora/compare/v0.1.0-alpha.210...v0.1.0-alpha.211) (2026-09-24)
 
 
