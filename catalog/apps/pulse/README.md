@@ -27,10 +27,11 @@ with a retryable error rather than leaving it indefinitely pending.
 
 ## Access and runtime
 
-- Service: pinned `v0.1.0-alpha.3` multi-architecture image, non-root UID 65532,
+- Service: pinned `v0.1.0-alpha.4` multi-architecture image, non-root UID 65532,
   private host port 18080 to container 8080, `vastora-pulse-data` volume.
-- Collector: checksum-pinned upstream archive, exact executable extraction,
-  dedicated unprivileged systemd account, no Docker, no inbound port. Original
+- Collector: pinned `v0.1.0-alpha.3` checksum-verified upstream archive,
+  exact executable extraction, dedicated unprivileged systemd account, no
+  Docker, no inbound port. Original
   archive and license notices remain under `/opt/vastora/pulse-agent`.
 - Current native release requires **Debian 12/13 or Ubuntu 24.04/26.04**. Vastora
   Agent still supports Ubuntu 22.04, but this Pulse binary does not; installation
@@ -46,9 +47,18 @@ with a retryable error rather than leaving it indefinitely pending.
 
 ## Lifecycle
 
-Service upgrades use Pulse's supported online backup before replacement; the new
-Service performs forward-only schema migration. A failed upgrade never starts an
-old image against the changed database. Uninstall collectors before the Service.
+The managed Service upgrade takes Pulse's online backup before replacing the
+running container. For Alpha.4, first stop the old Service in a maintenance
+window, copy the entire `vastora-pulse-data` volume to a separate protected
+location, then restart the old Service before invoking Vastora's upgrade action.
+Alpha.4 performs a forward-only
+schema migration that splits `pulse.db` into paired `pulse.db` and
+`pulse.metrics.db` files; keep the whole volume persistent. A failed upgrade
+never starts an old image against the changed database. Rolling back across the
+split requires the pre-upgrade single-file backup and matching older image, not
+an image-only downgrade. Alpha.4 retains protocol v2, so existing collectors do
+not need an upgrade solely for this storage change. Uninstall collectors before
+the Service.
 
 Collector keep-data uninstall preserves its local identity; delete-data uninstall
 removes that credential, so the next installation registers a new Pulse node.
@@ -63,4 +73,4 @@ Regression tests cover the command handoff, secret redaction, failed enrollment,
 native lifecycle, safe archive selection, entry prerequisites, and migration.
 They have been added but not run locally under this repository's verification policy.
 
-Upstream: https://github.com/petauron/pulse/releases/tag/v0.1.0-alpha.3
+Upstream Service release: https://github.com/petauron/pulse/releases/tag/v0.1.0-alpha.4
