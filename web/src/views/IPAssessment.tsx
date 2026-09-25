@@ -10,7 +10,6 @@ export function assessmentLabel(language: Language, assessment?: IPQualityAssess
   if (!assessment) return copy(language, "未检测", "Not checked");
   if (assessment.status === "ip_changed") return copy(language, "IP 已变化", "IP changed");
   if (assessment.status === "expired") return copy(language, "结果已过期", "Expired");
-  if (assessment.status === "conservative") return copy(language, `保守分 ${assessment.score}`, `Conservative ${assessment.score}`);
   return assessment.score == null ? copy(language, `暂评 ${assessment.min}～${assessment.max}`, `Provisional ${assessment.min}–${assessment.max}`) : `${assessment.score} / 100`;
 }
 
@@ -44,7 +43,7 @@ export function AssessmentSummary({ language, assessment, report, checkedAt }: {
     </div>
     {expanded ? <div id={id} className="flex flex-col gap-2 rounded-lg border p-3 text-xs">
       <p className="font-medium">{copy(language, "Meridian 评分 v2 · 出口适用性", "Meridian score v2 · Exit suitability")}</p>
-      {assessment.status === "conservative" ? <p>{copy(language, `仅缺 IPQS：该项按 0 / 10 分计算保守分 ${assessment.score}；实际评分可能在 ${assessment.min}～${assessment.max}。未推测 IPQS 原分。`, `Only IPQS is missing: its contribution is set to 0 / 10 for a conservative score of ${assessment.score}; the full range is ${assessment.min}–${assessment.max}. No IPQS value was inferred.`)}</p> : null}
+      {assessment.status === "conservative" ? <p>{copy(language, `仅缺 IPQS：该项按 0 / 10 分计算，显示 ${assessment.score} 分；完整区间为 ${assessment.min}～${assessment.max}。未推测 IPQS 原分。`, `Only IPQS is missing: its contribution is set to 0 / 10, showing ${assessment.score} points; the full range is ${assessment.min}–${assessment.max}. No IPQS value was inferred.`)}</p> : null}
       <Table className="text-xs"><TableHeader><TableRow><TableHead>{copy(language, "维度", "Dimension")}</TableHead><TableHead>{copy(language, "贡献 / 满分", "Contribution / Weight")}</TableHead><TableHead>{copy(language, "缺失项", "Missing")}</TableHead></TableRow></TableHeader><TableBody>{assessment.contributions.map((part) => <TableRow key={part.id}><TableCell>{labels[part.id] ? copy(language, ...labels[part.id]) : part.id}</TableCell><TableCell className="tabular-nums">{number(part.min)}{part.min !== part.max ? `～${number(part.max)}` : ""} / {part.weight}</TableCell><TableCell>{part.missing.join("、") || "—"}</TableCell></TableRow>)}</TableBody></Table>
       <p>{copy(language, "类型上限：家宽 100 · 移动 95 · 商业 89 · 机房 79", "Type caps: Residential 100 · Mobile 95 · Business 89 · Hosting 79")}</p>
       <p>{copy(language, "类型证据", "Type evidence")}: {assessment.typeEvidence.map((item) => `${item.source}: ${item.value}`).join(" · ") || "—"}</p>
@@ -53,7 +52,7 @@ export function AssessmentSummary({ language, assessment, report, checkedAt }: {
       {report?.ippure ? <p className="break-all text-muted-foreground">{report.ippure.provider} · {report.ippure.address || "—"} · {new Date(report.ippure.checkedAt).toLocaleString(language)}</p> : null}
       {assessment.requiredFailed.length ? <p className="text-destructive">{copy(language, "必需服务未满足", "Required services unavailable")}: {assessment.requiredFailed.join("、")}</p> : null}
       {assessment.requiredUnknown.length ? <p>{copy(language, "必需服务待确认", "Required services unconfirmed")}: {assessment.requiredUnknown.join("、")}</p> : null}
-      <p className="text-muted-foreground">{copy(language, "产品选机规则，不是行业标准或通过概率。保守分单独列示，比较提升时用候选下界减当前上界；其他暂评不参与排名。", "Product selection rules, not an industry standard or probability. Conservative scores are listed separately; comparisons use the candidate lower bound minus the current upper bound. Other provisional results are excluded from ranking.")}</p>
+      <p className="text-muted-foreground">{copy(language, "产品选机规则，不是行业标准或通过概率。缺 IPQS 的评分单独列示，比较提升时用候选下界减当前上界；其他暂评不参与排名。", "Product selection rules, not an industry standard or probability. Scores missing IPQS are listed separately; comparisons use the candidate lower bound minus the current upper bound. Other provisional results are excluded from ranking.")}</p>
     </div> : null}
   </section>;
 }
