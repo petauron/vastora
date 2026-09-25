@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const AssessmentVersion = "meridian-v1"
+const AssessmentVersion = "meridian-v2"
 const EvidenceMaxAge = 24 * time.Hour
 
 type Preferences struct {
@@ -270,6 +270,14 @@ func Assess(report *Report, checkedAt string, changed bool, now time.Time, prefe
 		score := a.Min
 		a.Score = &score
 		a.Grade = grade(score)
+	} else if len(a.Missing) == 1 && a.Missing[0] == "IPQS" {
+		// A missing IPQS response contributes its worst possible zero points.
+		// Keep the evidence interval and missing source visible; this is a
+		// conservative decision score, never an inferred IPQS risk value.
+		a.Status = "conservative"
+		score := a.Min
+		a.Score = &score
+		a.Grade = grade(score)
 	}
 	// A confirmed required-service failure is actionable even when another
 	// provider is missing; missing-only evidence never asserts failure.
@@ -343,7 +351,7 @@ func Compare(current, candidate Assessment, compatible bool) (bool, string, *int
 	if !compatible {
 		return false, "connection_unverified", nil
 	}
-	if current.Status == "ip_changed" || current.Status == "expired" || candidate.Status != "complete" || candidate.Score == nil {
+	if current.Status == "ip_changed" || current.Status == "expired" || candidate.Status != "complete" && candidate.Status != "conservative" || candidate.Score == nil {
 		return false, "recheck", nil
 	}
 	if current.Version != candidate.Version || !slices.Equal(current.Preferences.RequiredServices, candidate.Preferences.RequiredServices) || current.Preferences.TargetRegion != candidate.Preferences.TargetRegion {
@@ -351,7 +359,9 @@ func Compare(current, candidate Assessment, compatible bool) (bool, string, *int
 	}
 	var delta *int
 	if current.Score != nil {
-		value := *candidate.Score - *current.Score
+		// A candidate's minimum must beat the current maximum. This also
+		// remains exact when both assessments are complete.
+		value := candidate.Min - current.Max
 		delta = &value
 	}
 	if len(candidate.RequiredFailed)+len(candidate.RequiredUnknown) > 0 {

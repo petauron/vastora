@@ -44,9 +44,9 @@ normal Activity workflow. Nothing automatically retries or starts a check.
 - Schemas 78 and 80 are additive and forward-only using Center's existing migration
   backup/fail-closed flow. Agent deletion cascades its latest diagnostic record.
 
-## Meridian exit suitability v1
+## Meridian exit suitability v2
 
-`meridian-v1` is a product selection policy, **not** an industry standard,
+`meridian-v2` is a product selection policy, **not** an industry standard,
 fraud probability, or network-performance measurement. NodeQuality/IPQuality
 supply evidence, not this formula. The score is 1–100, higher is better.
 
@@ -112,20 +112,32 @@ empty required selects no mandatory services. Duplicate/unknown service names
 and invalid region shapes return 400. Preferences change advice and regional
 unlock scoring, not the six fixed service weights.
 
-Missing evidence is never reweighted. Bounds enumerate possible type points
+Missing evidence is never reweighted. When IPQS is the only missing item,
+the assessment also publishes a **conservative score** equal to the interval's
+lower bound: IPQS contributes 0 of its possible 10 points. This is a decision
+score, not an inferred IPQS value or a claim that IPQS found high risk. The
+missing source and full interval remain visible. For example, a confirmed
+hosting IP with 14.3 known provider points, 13.5 IPPure points and 30 unlock
+points receives conservative score 63 and interval 63–73. A fresh valid IPQS
+value restores a complete score. Other missing items remain provisional.
+
+Bounds enumerate possible type points
 and caps with minimum/maximum missing contributions. A capped equal interval
-is still provisional when evidence is missing. Old/IP-changed reports have no
-formal score or recommendation. Reports expire after 24 hours; all contributing
+is still provisional when evidence is missing, except for the explicit IPQS-only
+conservative rule. Old/IP-changed reports have no usable score or recommendation.
+Reports expire after 24 hours; all contributing
 observations must independently be fresh and IP-bound. This is an evidence
 interval, not a statistical confidence interval. Grades are excellent 90+,
-premium 80+, good 60+, fair 40+, poor below 40; incomplete/expired is neutral.
+premium 80+, good 60+, fair 40+, poor below 40; other incomplete/expired is neutral.
 
 A confirmed mandatory-service failure requests comparison even with other
 missing providers. Otherwise missing/expired evidence requests a recheck.
-Complete score >=60 with all requirements met supports direct use; below 60
-requests comparison. A fully assessed candidate must meet every requirement
-and either fix a current required-service failure or improve a complete current
-score by at least 10. Incomplete candidates never enter formal ranking.
+Complete or conservative score >=60 with all requirements met supports direct
+use; below 60 requests comparison. A complete or conservative candidate must
+meet every requirement and either fix a current required-service failure or
+have its lower bound exceed the current upper bound by at least 10. Conservative
+candidates are listed separately from complete scores. Other incomplete
+candidates never enter ranking.
 
 Comparison checks source and destination readiness, private-network enrollment,
 blocked/paused state, and existing source-to-egress health (Meridian route
@@ -135,7 +147,7 @@ pending verification. This never creates grants or changes routes. The actual
 route still requires the existing runtime workflow before it can be used.
 
 The compact IP summary expands into evidence. Landing comparison allows
-service/country selection and separates formal ranking from provisional
+service/country selection and separates complete, conservative and provisional
 results. User selection only fills the route form. Network measurements remain
 in their separate tab. Saved assessments refresh while visible to expire old
 results without starting probes. No schema migration or historical backfill is

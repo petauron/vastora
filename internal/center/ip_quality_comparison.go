@@ -124,7 +124,7 @@ func (s *Store) compareIPQuality(ctx context.Context, nodeID string, checks []IP
 		recommended, reason, delta := ipquality.Compare(current.Assessment, assessment, allowed)
 		// Score improvement is useful even while connection verification is pending.
 		if delta == nil && current.Assessment.Score != nil && assessment.Score != nil {
-			difference := *assessment.Score - *current.Assessment.Score
+			difference := assessment.Min - current.Assessment.Max
 			delta = &difference
 		}
 		services := []ipquality.Service{}
@@ -134,6 +134,19 @@ func (s *Store) compareIPQuality(ctx context.Context, nodeID string, checks []IP
 		values = append(values, ipquality.Comparison{NodeID: id, Name: name, Compatible: allowed, ConnectionVerified: compatible[id], Recommended: recommended, Reason: reason, Delta: delta, Assessment: assessment, Services: services})
 	}
 	slices.SortStableFunc(values, func(a, b ipquality.Comparison) int {
+		rank := func(status string) int {
+			switch status {
+			case "complete":
+				return 0
+			case "conservative":
+				return 1
+			default:
+				return 2
+			}
+		}
+		if aRank, bRank := rank(a.Assessment.Status), rank(b.Assessment.Status); aRank != bRank {
+			return aRank - bRank
+		}
 		if (a.Assessment.Score != nil) != (b.Assessment.Score != nil) {
 			if a.Assessment.Score != nil {
 				return -1
