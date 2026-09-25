@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.216](https://github.com/petauron/vastora/compare/v0.1.0-alpha.215...v0.1.0-alpha.216) (2026-09-25)
+
+
+### Features
+
+* **meridian:** assess exit quality and measure landing links ([5adaf05](https://github.com/petauron/vastora/commit/5adaf058e71b9cbaf3bb2ccb5b3f153b112e4ad4))
+
 ## [0.1.0-alpha.215](https://github.com/petauron/vastora/compare/v0.1.0-alpha.214...v0.1.0-alpha.215) (2026-09-24)
 
 
