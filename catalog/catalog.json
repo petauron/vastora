@@ -96,11 +96,11 @@
     },
     {
       "id": "pulse",
-      "version": "0.1.0-alpha.3",
+      "version": "0.1.0-alpha.4",
       "name": {"en": "Pulse", "zh-CN": "Pulse 监控主机"},
       "description": {"en": "One monitoring dashboard for nodes in every region. Add a private HTTPS access point before installing collectors.", "zh-CN": "统一查看所有地区的节点监控。安装后先添加私网 HTTPS 入口，再安装探针。"},
       "license": "Apache-2.0",
-      "images": [{"name":"pulse","reference":"ghcr.io/petauron/pulse:v0.1.0-alpha.3@sha256:1a885646d1f044593db94e92c9b1292d17698005d3424604ac407ab22765d744"}],
+      "images": [{"name":"pulse","reference":"ghcr.io/petauron/pulse:v0.1.0-alpha.4@sha256:a84105ad3fa303e3461cd0887c07b000ed1a87ad43091f3407e9fd67bad2e617"}],
       "services": [{"name":"dashboard","protocol":"http","containerPort":8080,"defaultHostPort":18080,"healthPath":"/healthz","management":true}],
       "homepage": {"service":"dashboard","path":"/"},
       "config": [

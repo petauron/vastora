@@ -39,9 +39,11 @@ An old installation without these saved fields must provide them explicitly befo
 upgrading. A matching `/healthz` response alone does not prove that browser login,
 Origin/CSRF handling, or administrator setup works.
 
-The catalog pins the published Alpha.3 multi-architecture image by digest and
-both native collector archives by their upstream SHA256. Publish the compatible
-Vastora executor release before the signed catalog revision. Neither publication
+The catalog pins the published Alpha.4 multi-architecture Service image by digest
+and retains the Alpha.3 native collector archives by their upstream SHA256.
+Alpha.4 Service storage changes do not require re-enrolling or upgrading existing
+collectors. Ensure a compatible Vastora executor is deployed before publishing
+the signed catalog revision. Neither publication
 automatically upgrades an installed Pulse Service or collector.
 Go regression tests cover configuration rejection, encrypted secret retention,
 archive ownership/modes, environment secrecy, data-volume preservation, and
