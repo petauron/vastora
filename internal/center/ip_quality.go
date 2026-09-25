@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/petauron/vastora/internal/ipquality"
@@ -28,14 +29,15 @@ const ipQualitySchemaSQL = `CREATE TABLE ip_quality_checks (
 );`
 
 type IPQualityView struct {
-	AgentID   string            `json:"agentId"`
-	ID        string            `json:"id"`
-	State     string            `json:"state"`
-	Error     string            `json:"error,omitempty"`
-	Report    *ipquality.Report `json:"report,omitempty"`
-	CheckedAt string            `json:"checkedAt,omitempty"`
-	UpdatedAt string            `json:"updatedAt"`
-	Stale     bool              `json:"stale"`
+	Assessment ipquality.Assessment `json:"assessment"`
+	AgentID    string               `json:"agentId"`
+	ID         string               `json:"id"`
+	State      string               `json:"state"`
+	Error      string               `json:"error,omitempty"`
+	Report     *ipquality.Report    `json:"report,omitempty"`
+	CheckedAt  string               `json:"checkedAt,omitempty"`
+	UpdatedAt  string               `json:"updatedAt"`
+	Stale      bool                 `json:"stale"`
 }
 
 // Only the latest report is retained. A new check leaves the previous report
@@ -71,6 +73,7 @@ func (s *Store) ListIPQuality(ctx context.Context) ([]IPQualityView, error) {
 				value.State, value.Error = "failed", "interrupted"
 			}
 		}
+		value.Assessment = ipquality.Assess(value.Report, value.CheckedAt, value.Stale, s.now(), ipquality.DefaultPreferences())
 		values = append(values, value)
 	}
 	return values, rows.Err()
@@ -193,6 +196,11 @@ func (s *Store) completeIPQuality(ctx context.Context, commit projectionCommit, 
 		if len(raw) > ipquality.MaxReportBytes || json.Unmarshal(raw, &result) != nil || result.IPQuality == nil || result.IPQuality.Validate(address) != nil {
 			return errors.New("center: invalid IP quality result")
 		}
+		if result.IPQuality.Report != nil {
+			// Center owns collection provenance for the accepted, IP-bound
+			// report. The node runner supplies evidence, not assessment time.
+			result.IPQuality.Report.RecordObservations(s.now())
+		}
 		diagnosticError = result.IPQuality.Error
 	} else {
 		target, diagnosticError = "failed", "interrupted"
@@ -224,12 +232,36 @@ func (s *Store) completeIPQuality(ctx context.Context, commit projectionCommit, 
 }
 
 func (s *Server) handleListIPQuality(w http.ResponseWriter, r *http.Request) {
+	preferences := ipquality.DefaultPreferences()
+	if r.URL.Query().Has("required") {
+		preferences.RequiredServices = []string{}
+		if required := r.URL.Query().Get("required"); required != "" {
+			preferences.RequiredServices = strings.Split(required, ",")
+		}
+	}
+	preferences.TargetRegion = r.URL.Query().Get("region")
+	if preferences.Validate() != nil || len(r.URL.Query().Get("compareNodeId")) > 128 {
+		writeError(w, http.StatusBadRequest, errors.New("ip_quality_invalid_preferences"))
+		return
+	}
 	values, err := s.store.ListIPQuality(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("ip_quality_read_failed"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"checks": values})
+	for index := range values {
+		value := &values[index]
+		value.Assessment = ipquality.Assess(value.Report, value.CheckedAt, value.Stale, s.store.now(), preferences)
+	}
+	comparisons := []ipquality.Comparison{}
+	if nodeID := r.URL.Query().Get("compareNodeId"); nodeID != "" {
+		comparisons, err = s.store.compareIPQuality(r.Context(), nodeID, values, preferences)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("ip_quality_read_failed"))
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"checks": values, "comparisons": comparisons})
 }
 func (s *Server) handleStartIPQuality(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.StartIPQuality(r.Context(), r.PathValue("id")); err != nil {

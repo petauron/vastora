@@ -28,16 +28,17 @@ var (
 )
 
 type NodeCapabilities struct {
-	IPQuality            bool `json:"ipQuality"`
-	NetworkDiagnostics   bool `json:"networkDiagnostics"`
-	ReturnRoute          bool `json:"returnRoute"`
-	BandwidthDiagnostics bool `json:"bandwidthDiagnostics"`
-	HostProfile          bool `json:"hostProfile"`
-	Docker               bool `json:"docker"`
-	Gateway              bool `json:"gateway"`
-	Tunnel               bool `json:"tunnel"`
-	Metrics              bool `json:"metrics"`
-	Logs                 bool `json:"logs"`
+	IPQuality             bool `json:"ipQuality"`
+	NetworkDiagnostics    bool `json:"networkDiagnostics"`
+	ReturnRoute           bool `json:"returnRoute"`
+	BandwidthDiagnostics  bool `json:"bandwidthDiagnostics"`
+	MeridianLinkBandwidth bool `json:"meridianLinkBandwidth"`
+	HostProfile           bool `json:"hostProfile"`
+	Docker                bool `json:"docker"`
+	Gateway               bool `json:"gateway"`
+	Tunnel                bool `json:"tunnel"`
+	Metrics               bool `json:"metrics"`
+	Logs                  bool `json:"logs"`
 }
 
 type NodeHeartbeat struct {

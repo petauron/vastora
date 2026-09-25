@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { ipQualitySummary, unlockLabel, unlockTypeLabel } from "./ipQualityModel";
+import { cleanIPQualityValue, ipClassification, ipQualitySummary, unlockLabel, unlockTypeLabel } from "./ipQualityModel";
 import type { IPQualityCheck } from "../ip-quality-types";
 
 describe("IP quality presentation", () => {
+  it("removes terminal color codes from saved classification labels", () => {
+    expect(cleanIPQualityValue("x1b[43mx1b[37mx1b[1m Business x1b[0m")).toBe("Business");
+  });
+  it("uses NodeQuality's Chinese category labels and retains unfamiliar values", () => {
+    expect(ipClassification("zh-CN", "x1b[43m Business x1b[0m")).toEqual({ label: "商业", tone: "warning" });
+    expect(ipClassification("zh-CN", "ISP")).toEqual({ label: "家宽", tone: "good" });
+    expect(ipClassification("zh-CN", "Hosting")).toEqual({ label: "机房", tone: "bad" });
+    expect(ipClassification("zh-CN", "Unlisted type")).toEqual({ label: "Unlisted type", tone: "neutral" });
+  });
   it("does not mistake missing results for unlocked", () => {
     expect(unlockLabel("zh-CN", "null")).toBe("未知");
     expect(unlockLabel("zh-CN", " Yes ")).toBe("解锁");

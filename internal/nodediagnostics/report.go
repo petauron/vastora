@@ -11,13 +11,15 @@ import (
 )
 
 const (
-	NetworkKind     = "node.network-quality"
-	ReturnRouteKind = "node.return-route"
-	BandwidthKind   = "node.international-bandwidth"
-	HostProfileKind = "node.host-profile"
-	MaxResultBytes  = 64 * 1024
-	ProbeCount      = 4
-	BandwidthBytes  = 8 * 1024 * 1024
+	NetworkKind       = "node.network-quality"
+	ReturnRouteKind   = "node.return-route"
+	BandwidthKind     = "node.international-bandwidth"
+	LinkBandwidthKind = "meridian.link-bandwidth"
+	LinkServerKind    = "meridian.link-bandwidth-server"
+	HostProfileKind   = "node.host-profile"
+	MaxResultBytes    = 64 * 1024
+	ProbeCount        = 4
+	BandwidthBytes    = 8 * 1024 * 1024
 )
 
 type Target struct {
@@ -50,9 +52,31 @@ var BandwidthTargets = []BandwidthTarget{
 }
 
 type Task struct {
-	BindAddress      string            `json:"bindAddress"`
-	Targets          []Target          `json:"targets,omitempty"`
-	BandwidthTargets []BandwidthTarget `json:"bandwidthTargets,omitempty"`
+	BindAddress      string             `json:"bindAddress"`
+	Targets          []Target           `json:"targets,omitempty"`
+	BandwidthTargets []BandwidthTarget  `json:"bandwidthTargets,omitempty"`
+	Link             *LinkBandwidthTask `json:"link,omitempty"`
+}
+
+// LinkBandwidthTask is issued only by Center for an authorized Meridian entry
+// and a selected managed landing. Both addresses are authenticated private peers.
+type LinkBandwidthTask struct {
+	SourceNodeID  string `json:"sourceNodeId"`
+	LandingNodeID string `json:"landingNodeId"`
+	SourceIP      string `json:"sourceIp"`
+	LandingIP     string `json:"landingIp"`
+	Port          int    `json:"port"`
+}
+
+type LinkBandwidthMeasurement struct {
+	SourceNodeID    string  `json:"sourceNodeId"`
+	LandingNodeID   string  `json:"landingNodeId"`
+	UploadMbps      float64 `json:"uploadMbps"`
+	DownloadMbps    float64 `json:"downloadMbps"`
+	UploadBytes     int64   `json:"uploadBytes"`
+	DownloadBytes   int64   `json:"downloadBytes"`
+	UploadSeconds   float64 `json:"uploadSeconds"`
+	DownloadSeconds float64 `json:"downloadSeconds"`
 }
 
 type NetworkMeasurement struct {
@@ -87,11 +111,34 @@ type BandwidthMeasurement struct {
 }
 
 type Result struct {
-	Network   []NetworkMeasurement   `json:"network,omitempty"`
-	Routes    []Route                `json:"routes,omitempty"`
-	Bandwidth []BandwidthMeasurement `json:"bandwidth,omitempty"`
-	Host      *HostProfile           `json:"host,omitempty"`
-	Error     string                 `json:"error,omitempty"`
+	Network             []NetworkMeasurement      `json:"network,omitempty"`
+	Routes              []Route                   `json:"routes,omitempty"`
+	Bandwidth           []BandwidthMeasurement    `json:"bandwidth,omitempty"`
+	Host                *HostProfile              `json:"host,omitempty"`
+	Link                *LinkBandwidthMeasurement `json:"link,omitempty"`
+	LinkServerCompleted bool                      `json:"linkServerCompleted,omitempty"`
+	Error               string                    `json:"error,omitempty"`
+}
+
+func (t Task) ValidateLinkBandwidth(kind string) error {
+	if kind != LinkBandwidthKind && kind != LinkServerKind || t.Link == nil || t.BindAddress != "" || len(t.Targets) != 0 || len(t.BandwidthTargets) != 0 {
+		return errors.New("node diagnostics: invalid Meridian link task")
+	}
+	v := t.Link
+	if len(v.SourceNodeID) < 1 || len(v.SourceNodeID) > 128 || len(v.LandingNodeID) < 1 || len(v.LandingNodeID) > 128 || v.SourceNodeID == v.LandingNodeID || v.SourceIP == v.LandingIP || v.Port < 20000 || v.Port > 60000 {
+		return errors.New("node diagnostics: invalid Meridian link identity")
+	}
+	for _, raw := range []string{v.SourceIP, v.LandingIP} {
+		parsed := net.ParseIP(raw)
+		if parsed == nil {
+			return errors.New("node diagnostics: invalid Meridian private address")
+		}
+		ip := parsed.To4()
+		if ip == nil || ip[0] != 100 || ip[1] < 64 || ip[1] > 127 || ip.String() != raw {
+			return errors.New("node diagnostics: invalid Meridian private address")
+		}
+	}
+	return nil
 }
 
 // HostProfile is a read-only snapshot of the host, not a recommendation or
@@ -165,6 +212,22 @@ func (r Result) Validate(kind string) error {
 			return nil
 		}
 		return errors.New("node diagnostics: invalid error")
+	}
+	if kind == LinkServerKind {
+		if !r.LinkServerCompleted || r.Link != nil || r.Host != nil || len(r.Network) != 0 || len(r.Routes) != 0 || len(r.Bandwidth) != 0 {
+			return errors.New("node diagnostics: invalid Meridian link server result")
+		}
+		return nil
+	}
+	if kind == LinkBandwidthKind {
+		v := r.Link
+		if v == nil || r.LinkServerCompleted || r.Host != nil || len(r.Network) != 0 || len(r.Routes) != 0 || len(r.Bandwidth) != 0 || v.SourceNodeID == "" || v.LandingNodeID == "" || v.SourceNodeID == v.LandingNodeID || v.UploadBytes <= 0 || v.DownloadBytes <= 0 || v.UploadSeconds < 8 || v.UploadSeconds > 30 || v.DownloadSeconds < 8 || v.DownloadSeconds > 30 || v.UploadMbps < 0 || v.UploadMbps > 1_000_000 || v.DownloadMbps < 0 || v.DownloadMbps > 1_000_000 {
+			return errors.New("node diagnostics: invalid Meridian link result")
+		}
+		return nil
+	}
+	if r.Link != nil || r.LinkServerCompleted {
+		return errors.New("node diagnostics: unexpected Meridian link evidence")
 	}
 	if kind == HostProfileKind {
 		if r.Host == nil || len(r.Network) != 0 || len(r.Routes) != 0 || len(r.Bandwidth) != 0 {

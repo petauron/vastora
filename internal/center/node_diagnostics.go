@@ -32,42 +32,58 @@ const nodeDiagnosticsSchema80SQL = `CREATE TABLE node_diagnostic_checks (
  PRIMARY KEY(agent_id,kind)
 );`
 
-var nodeDiagnosticsSchemaSQL = strings.Replace(nodeDiagnosticsSchema80SQL, "'node.international-bandwidth'))", "'node.international-bandwidth','node.host-profile'))", 1)
+var nodeDiagnosticsSchemaSQL = strings.Replace(nodeDiagnosticsSchema80SQL, "'node.international-bandwidth'))", "'node.international-bandwidth','node.host-profile','meridian.link-bandwidth','meridian.link-bandwidth-server'))", 1)
 
 type NodeDiagnosticView struct {
-	AgentID        string                                 `json:"agentId"`
-	Kind           string                                 `json:"kind"`
-	ID             string                                 `json:"id"`
-	State          string                                 `json:"state"`
-	Error          string                                 `json:"error,omitempty"`
-	TargetRevision int64                                  `json:"targetRevision"`
-	Network        []nodediagnostics.NetworkMeasurement   `json:"network,omitempty"`
-	Routes         []nodediagnostics.Route                `json:"routes,omitempty"`
-	Bandwidth      []nodediagnostics.BandwidthMeasurement `json:"bandwidth,omitempty"`
-	Host           *nodediagnostics.HostProfile           `json:"host,omitempty"`
-	CheckedAt      string                                 `json:"checkedAt,omitempty"`
-	UpdatedAt      string                                 `json:"updatedAt"`
+	AgentID        string                                    `json:"agentId"`
+	Kind           string                                    `json:"kind"`
+	ID             string                                    `json:"id"`
+	State          string                                    `json:"state"`
+	Error          string                                    `json:"error,omitempty"`
+	TargetRevision int64                                     `json:"targetRevision"`
+	Network        []nodediagnostics.NetworkMeasurement      `json:"network,omitempty"`
+	Routes         []nodediagnostics.Route                   `json:"routes,omitempty"`
+	Bandwidth      []nodediagnostics.BandwidthMeasurement    `json:"bandwidth,omitempty"`
+	Host           *nodediagnostics.HostProfile              `json:"host,omitempty"`
+	Link           *nodediagnostics.LinkBandwidthMeasurement `json:"link,omitempty"`
+	LandingNodeID  string                                    `json:"landingNodeId,omitempty"`
+	CheckedAt      string                                    `json:"checkedAt,omitempty"`
+	UpdatedAt      string                                    `json:"updatedAt"`
 }
 
 func (s *Store) ListNodeDiagnostics(ctx context.Context) ([]NodeDiagnosticView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT agent_id,kind,id,state,error,target_revision,result_json,checked_at,updated_at,lease_expires_at FROM node_diagnostic_checks ORDER BY agent_id,kind`)
+	rows, err := s.db.QueryContext(ctx, `SELECT agent_id,kind,id,state,error,target_revision,targets_json,result_json,checked_at,updated_at,lease_expires_at FROM node_diagnostic_checks ORDER BY agent_id,kind`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	values := []NodeDiagnosticView{}
+	linkTargets := map[string]nodediagnostics.LinkBandwidthTask{}
 	for rows.Next() {
 		var value NodeDiagnosticView
-		var raw, lease string
-		if err := rows.Scan(&value.AgentID, &value.Kind, &value.ID, &value.State, &value.Error, &value.TargetRevision, &raw, &value.CheckedAt, &value.UpdatedAt, &lease); err != nil {
+		var raw, targetsJSON, lease string
+		if err := rows.Scan(&value.AgentID, &value.Kind, &value.ID, &value.State, &value.Error, &value.TargetRevision, &targetsJSON, &raw, &value.CheckedAt, &value.UpdatedAt, &lease); err != nil {
 			return nil, err
+		}
+		if value.Kind == nodediagnostics.LinkBandwidthKind || value.Kind == nodediagnostics.LinkServerKind {
+			var link nodediagnostics.LinkBandwidthTask
+			if json.Unmarshal([]byte(targetsJSON), &link) != nil {
+				return nil, errors.New("center: invalid stored Meridian link target")
+			}
+			if (nodediagnostics.Task{Link: &link}).ValidateLinkBandwidth(value.Kind) != nil {
+				return nil, errors.New("center: invalid stored Meridian link target")
+			}
+			linkTargets[value.ID] = link
+			if value.Kind == nodediagnostics.LinkBandwidthKind {
+				value.LandingNodeID = link.LandingNodeID
+			}
 		}
 		if raw != "null" {
 			var result nodediagnostics.Result
 			if json.Unmarshal([]byte(raw), &result) != nil || result.Validate(value.Kind) != nil {
 				return nil, errors.New("center: invalid stored node diagnostic")
 			}
-			value.Network, value.Routes, value.Bandwidth, value.Host = result.Network, result.Routes, result.Bandwidth, result.Host
+			value.Network, value.Routes, value.Bandwidth, value.Host, value.Link = result.Network, result.Routes, result.Bandwidth, result.Host, result.Link
 		}
 		if value.State == "running" {
 			expires, err := time.Parse(time.RFC3339Nano, lease)
@@ -77,7 +93,29 @@ func (s *Store) ListNodeDiagnostics(ctx context.Context) ([]NodeDiagnosticView, 
 		}
 		values = append(values, value)
 	}
-	return values, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for index := range values {
+		value := &values[index]
+		if value.Kind != nodediagnostics.LinkBandwidthKind {
+			continue
+		}
+		target := linkTargets[value.ID]
+		var peer *NodeDiagnosticView
+		for other := range values {
+			if values[other].AgentID == target.LandingNodeID && values[other].Kind == nodediagnostics.LinkServerKind && linkTargets[values[other].ID] == target {
+				peer = &values[other]
+				break
+			}
+		}
+		if peer == nil || peer.State == "failed" || peer.Error != "" {
+			value.State, value.Error, value.Link = "failed", "peer_unavailable", nil
+		} else if value.State == "succeeded" && peer.State != "succeeded" {
+			value.State, value.Link = "running", nil
+		}
+	}
+	return values, nil
 }
 
 func (s *Store) StartNodeDiagnostic(ctx context.Context, agentID, kind string) error {
@@ -158,7 +196,7 @@ func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID str
 	var id, kind, bindAddress, targetsJSON string
 	var attempt int64
 	err := tx.QueryRowContext(ctx, `SELECT q.id,q.kind,q.bind_address,q.targets_json,q.attempt FROM node_diagnostic_checks q JOIN agents a ON a.id=q.agent_id
- WHERE q.agent_id=? AND q.state='pending' AND ((q.kind='node.network-quality' AND json_extract(a.capabilities_json,'$.networkDiagnostics')=1) OR (q.kind='node.return-route' AND json_extract(a.capabilities_json,'$.returnRoute')=1) OR (q.kind='node.international-bandwidth' AND json_extract(a.capabilities_json,'$.bandwidthDiagnostics')=1) OR (q.kind='node.host-profile' AND json_extract(a.capabilities_json,'$.hostProfile')=1))
+ WHERE q.agent_id=? AND q.state='pending' AND ((q.kind='node.network-quality' AND json_extract(a.capabilities_json,'$.networkDiagnostics')=1) OR (q.kind='node.return-route' AND json_extract(a.capabilities_json,'$.returnRoute')=1) OR (q.kind='node.international-bandwidth' AND json_extract(a.capabilities_json,'$.bandwidthDiagnostics')=1) OR (q.kind='node.host-profile' AND json_extract(a.capabilities_json,'$.hostProfile')=1) OR (q.kind IN ('meridian.link-bandwidth','meridian.link-bandwidth-server') AND json_extract(a.capabilities_json,'$.meridianLinkBandwidth')=1))
  ORDER BY q.created_at,q.kind LIMIT 1`, agentID).Scan(&id, &kind, &bindAddress, &targetsJSON, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -167,7 +205,10 @@ func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID str
 		return nil, err
 	}
 	input := nodediagnostics.Task{BindAddress: bindAddress}
-	if kind == nodediagnostics.HostProfileKind {
+	if kind == nodediagnostics.LinkBandwidthKind || kind == nodediagnostics.LinkServerKind {
+		input.Link = &nodediagnostics.LinkBandwidthTask{}
+		err = json.Unmarshal([]byte(targetsJSON), input.Link)
+	} else if kind == nodediagnostics.HostProfileKind {
 		if targetsJSON != "[]" {
 			return nil, errors.New("center: invalid host profile targets")
 		}
@@ -179,7 +220,9 @@ func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID str
 	if err != nil {
 		return nil, errors.New("center: invalid stored diagnostic targets")
 	}
-	if kind == nodediagnostics.HostProfileKind {
+	if kind == nodediagnostics.LinkBandwidthKind || kind == nodediagnostics.LinkServerKind {
+		err = input.ValidateLinkBandwidth(kind)
+	} else if kind == nodediagnostics.HostProfileKind {
 		err = input.ValidateHostProfile()
 	} else if kind == nodediagnostics.BandwidthKind {
 		err = input.ValidateBandwidth()
@@ -210,8 +253,8 @@ func (s *Store) completeNodeDiagnostic(ctx context.Context, commit projectionCom
 		return err
 	}
 	defer tx.Rollback()
-	var kind, state, lease string
-	if attempt <= 0 || tx.QueryRowContext(ctx, `SELECT kind,state,lease_expires_at FROM node_diagnostic_checks WHERE id=? AND agent_id=? AND attempt=?`, id, agentID, attempt).Scan(&kind, &state, &lease) != nil {
+	var kind, state, lease, targetsJSON string
+	if attempt <= 0 || tx.QueryRowContext(ctx, `SELECT kind,state,lease_expires_at,targets_json FROM node_diagnostic_checks WHERE id=? AND agent_id=? AND attempt=?`, id, agentID, attempt).Scan(&kind, &state, &lease, &targetsJSON) != nil {
 		return errStaleTaskLease
 	}
 	target, diagnosticError := "succeeded", ""
@@ -221,6 +264,12 @@ func (s *Store) completeNodeDiagnostic(ctx context.Context, commit projectionCom
 	if succeeded {
 		if len(raw) > nodediagnostics.MaxResultBytes || json.Unmarshal(raw, &envelope) != nil || envelope.NodeDiagnostics == nil || envelope.NodeDiagnostics.Validate(kind) != nil {
 			return errors.New("center: invalid node diagnostic result")
+		}
+		if kind == nodediagnostics.LinkBandwidthKind && envelope.NodeDiagnostics.Link != nil {
+			var target nodediagnostics.LinkBandwidthTask
+			if json.Unmarshal([]byte(targetsJSON), &target) != nil || envelope.NodeDiagnostics.Link.SourceNodeID != agentID || envelope.NodeDiagnostics.Link.LandingNodeID != target.LandingNodeID {
+				return errors.New("center: Meridian link result does not match its task")
+			}
 		}
 		diagnosticError = envelope.NodeDiagnostics.Error
 	} else {

@@ -1,7 +1,7 @@
 import type { Action, AgentEnrollment, AgentUpdate, AgentView, ApplicationCommand, ApplicationCommandKind, ApplicationCredentialRotation, ApplicationCredentials, AppView, Application, AssistantConversation, AssistantExecution, AssistantProvider, AssistantProposal, AssistantRun, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, CreatePublicationInput, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, RealitySecurityCheck, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration, XrayConfigurationRecovery } from "./types";
 
 import type { LandingView } from "./landing-types";
-import type { IPQualityCheck } from "./ip-quality-types";
+import type { IPQualityPreferences, IPQualityResponse } from "./ip-quality-types";
 import type { NodeDiagnosticCheck } from "./node-diagnostics-types";
 import type { NodeProtocols } from "./types";
 import type { MeridianAccountCreated, MeridianAccountInput, MeridianAccount, MeridianEndpoint, MeridianInventory, MeridianRouteGrant } from "./meridian-types";
@@ -63,10 +63,16 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
-  ipQuality: (signal?: AbortSignal) => request<{ checks: IPQualityCheck[] }>("/api/v1/ip-quality", { signal }),
+  ipQuality: (signal?: AbortSignal, preferences?: IPQualityPreferences, compareNodeId?: string) => {
+    const params = new URLSearchParams();
+    if (preferences) { params.set("required", preferences.requiredServices.join(",")); params.set("region", preferences.targetRegion); }
+    if (compareNodeId) params.set("compareNodeId", compareNodeId);
+    return request<IPQualityResponse>(`/api/v1/ip-quality${params.size ? `?${params}` : ""}`, { signal });
+  },
   checkIPQuality: (id: string, signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/ip-quality`, { method: "POST", body: "{}", signal }),
   nodeDiagnostics: (signal?: AbortSignal) => request<{ checks: NodeDiagnosticCheck[] }>("/api/v1/node-diagnostics", { signal }),
   checkNodeDiagnostic: (id: string, kind: NodeDiagnosticCheck["kind"], signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/node-diagnostics/${encodeURIComponent(kind)}`, { method: "POST", body: "{}", signal }),
+  checkMeridianLinkBandwidth: (sourceNodeId: string, landingNodeId: string, signal?: AbortSignal) => request<{ queued: boolean }>("/api/v1/meridian/link-bandwidth", { method: "POST", body: JSON.stringify({ sourceNodeId, landingNodeId }), signal }),
   xrayConfigurationRecovery: (id: string, signal?: AbortSignal) => request<{ recovery: XrayConfigurationRecovery | null }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery`, { signal }),
   inspectXrayConfiguration: (id: string, signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery/inspect`, { method: "POST", body: "{}", signal }),
   applyXrayConfigurationRecovery: (id: string, source: "runtime" | "agent_state", signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery/apply`, { method: "POST", body: JSON.stringify({ source }), signal }),

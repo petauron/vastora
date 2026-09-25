@@ -25,6 +25,10 @@
     --color-success-foreground: var(--success-foreground);
     --color-success: var(--success);
     --color-latency-fast: var(--latency-fast);
+    --color-quality-excellent: var(--quality-excellent);
+    --color-quality-premium: var(--quality-premium);
+    --color-quality-good: var(--quality-good);
+    --color-quality-fair: var(--quality-fair);
     --color-latency-medium: var(--latency-medium);
     --color-input: var(--input);
     --color-border: var(--border);
@@ -79,6 +83,10 @@
     --radius: 0.75rem;
     --success: oklch(0.62 0.18 145);
     --latency-fast: oklch(0.45 0.13 145);
+    --quality-excellent: oklch(0.45 0.13 145);
+    --quality-premium: oklch(0.45 0.10 210);
+    --quality-good: oklch(0.46 0.16 255);
+    --quality-fair: oklch(0.48 0.13 55);
     --latency-medium: oklch(0.48 0.10 85);
     --success-foreground: oklch(0.99 0 0);
     --sidebar: oklch(0.975 0.004 264 / 94%);
@@ -125,6 +133,10 @@
     --sidebar-ring: oklch(0.556 0 0);
     --success: oklch(0.72 0.17 145);
     --latency-fast: oklch(0.78 0.17 145);
+    --quality-excellent: oklch(0.78 0.17 145);
+    --quality-premium: oklch(0.80 0.12 210);
+    --quality-good: oklch(0.78 0.12 255);
+    --quality-fair: oklch(0.80 0.14 55);
     --latency-medium: oklch(0.85 0.16 90);
     --success-foreground: oklch(0.16 0.03 145);
 }
@@ -149,6 +161,13 @@
     scroll-margin: 1rem;
     }
 }
+
+.quality-grade { color: var(--muted-foreground); }
+.quality-grade-excellent { color: var(--quality-excellent); }
+.quality-grade-premium { color: var(--quality-premium); }
+.quality-grade-good { color: var(--quality-good); }
+.quality-grade-fair { color: var(--quality-fair); }
+.quality-grade-poor { color: var(--destructive); }
 
 /* Application-specific typography and layout inherit the shared theme colors. */
 .apps-workspace {

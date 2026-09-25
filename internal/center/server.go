@@ -202,6 +202,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/ip-quality", s.requireAuth(true, s.handleStartIPQuality))
 	mux.HandleFunc("GET /api/v1/node-diagnostics", s.requireAuth(false, s.handleListNodeDiagnostics))
 	mux.HandleFunc("POST /api/v1/agents/{id}/node-diagnostics/{kind}", s.requireAuth(true, s.handleStartNodeDiagnostic))
+	mux.HandleFunc("POST /api/v1/meridian/link-bandwidth", s.requireAuth(true, s.handleStartMeridianLinkBandwidth))
 	mux.HandleFunc("GET /api/v1/agents/{id}/xray-configuration-recovery", s.requireAuth(false, s.handleGetXrayConfigurationRecovery))
 	mux.HandleFunc("POST /api/v1/agents/{id}/xray-configuration-recovery/inspect", s.requireAuth(true, s.handleInspectXrayConfiguration))
 	mux.HandleFunc("POST /api/v1/agents/{id}/xray-configuration-recovery/apply", s.requireAuth(true, s.handleApplyXrayConfigurationRecovery))

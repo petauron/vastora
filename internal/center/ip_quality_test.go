@@ -48,6 +48,8 @@ func TestIPQualityLatestResultAndStaleAttempt(t *testing.T) {
 	}
 	task := claim()
 	report := ipquality.Report{Address: "203.0.113.8", Version: "test", Scores: []ipquality.Score{{Source: "IPQS", Value: "75"}}, Services: []ipquality.Service{{Name: "Netflix", Status: "Yes", RegionCode: "CA"}}}
+	report.RecordObservations(s.now())
+	report.IPPure = &ipquality.IPPureResult{Provider: ipquality.IPPureProvider, Status: "unavailable", CheckedAt: now}
 	raw, _ := json.Marshal(map[string]any{"ipQuality": ipquality.Result{Report: &report}})
 	if err := s.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt+1, true, "", raw, false); err == nil {
 		t.Fatal("stale attempt accepted")
@@ -69,12 +71,18 @@ func TestIPQualityLatestResultAndStaleAttempt(t *testing.T) {
 	if err != nil || len(values) != 1 || values[0].State != "succeeded" || values[0].Error != "timeout" || values[0].Report == nil || values[0].Report.Scores[0].Value != "75" {
 		t.Fatalf("failed diagnostic lost previous report: %#v %v", values, err)
 	}
+	if values[0].Report.IPPure == nil || len(values[0].Report.Observations) == 0 || values[0].Assessment.Status != "partial" || values[0].Assessment.Score != nil {
+		t.Fatalf("evidence did not round trip or partial report was ranked: %+v", values[0])
+	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE agents SET public_egress_address='203.0.113.9' WHERE id=?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
 	values, err = s.ListIPQuality(ctx)
 	if err != nil || !values[0].Stale {
 		t.Fatal("IP change did not invalidate report")
+	}
+	if values[0].Assessment.Status != "ip_changed" || values[0].Assessment.Score != nil || values[0].Assessment.Advice != "recheck" {
+		t.Fatal("changed IP retained a usable assessment")
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE landing_server_states SET status='stopped' WHERE node_id=?`, node.ID); err != nil {
 		t.Fatal(err)

@@ -5730,7 +5730,33 @@
           "500": {
             "$ref": "#/components/responses/Error"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "compareNodeId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "required",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/v1/agents/{id}/ip-quality": {
@@ -5884,6 +5910,47 @@
             }
           }
         ]
+      }
+    },
+    "/api/v1/meridian/link-bandwidth": {
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Start Meridian Link Bandwidth",
+        "operationId": "startMeridianLinkBandwidth_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/api/v1/agents/{id}/xray-configuration-recovery": {
@@ -6964,6 +7031,9 @@
                         "type": "boolean"
                       },
                       "bandwidthDiagnostics": {
+                        "type": "boolean"
+                      },
+                      "meridianLinkBandwidth": {
                         "type": "boolean"
                       },
                       "hostProfile": {

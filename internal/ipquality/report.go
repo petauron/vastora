@@ -46,6 +46,8 @@ type RiskFactor struct {
 	Value  bool   `json:"value"`
 }
 type Report struct {
+	Observations     []Observation    `json:"observations,omitempty"`
+	IPPure           *IPPureResult    `json:"ippure,omitempty"`
 	Address          string           `json:"address"`
 	Version          string           `json:"version"`
 	ASN              string           `json:"asn,omitempty"`
@@ -96,6 +98,9 @@ func (r Result) Validate(address string) error {
 	}
 	if r.Report.Scores == nil || r.Report.Services == nil || len(r.Report.Scores)+len(r.Report.Services) == 0 {
 		return errors.New("ipquality: empty report")
+	}
+	if err := r.Report.validateEvidence(); err != nil {
+		return err
 	}
 	encoded, err := json.Marshal(r.Report)
 	if err != nil || len(encoded) > MaxReportBytes {
@@ -240,7 +245,7 @@ func bounded(value string, limit int) string {
 }
 
 func normalizedValue(value string, limit int) string {
-	return bounded(strings.TrimSpace(value), limit)
+	return terminalValue(value, limit)
 }
 
 func asn(value string) string {
