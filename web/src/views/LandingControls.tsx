@@ -14,7 +14,9 @@ import { copy, userError } from "./shared";
 import { landingLatencyColor, selectedLandingLatencies } from "./landingLatency";
 import { applyLandingLatencyEvent, freshLandingLatencies } from "./landingLatencyEvents";
 import { RegionFlag } from "./RegionFlag";
-import { IPQualityButton } from "./IPQuality";
+import { IPQualityButton, useIPQuality } from "./IPQuality";
+import { IPQualityComparison } from "./IPQualityComparison";
+import { assessmentLabel } from "./IPAssessment";
 import { useLandingRegions } from "./useLandingRegions";
 
 type LandingContextValue = {
@@ -145,6 +147,7 @@ export function LandingProvider({ enabled, agents = [], children }: { enabled: b
 
 export function LandingManager({ language }: { language: Language }) {
   const state = useContext(LandingContext);
+  const quality = useIPQuality();
   const [open, setOpen] = useState(false);
   const [candidateID, setCandidateID] = useState("");
   const id = useId();
@@ -171,6 +174,7 @@ export function LandingManager({ language }: { language: Language }) {
       </SheetHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto px-5 pb-5">
         <LandingNotice language={language} />
+        <IPQualityComparison language={language} nodes={quality?.agents.map((agent) => ({ id: agent.id, name: agent.name })) ?? []} />
         {state.changeError != null ? <Alert variant="destructive"><AlertTitle>{copy(language, "全局落地池未更新", "Global landing pool was not updated")}</AlertTitle><AlertDescription>{userError(language, state.changeError)}</AlertDescription></Alert> : null}
         {view && missingRegionNodeIds.length > 0 ? <Alert variant="destructive">
           <AlertTitle>{copy(language, "落地地区信息未同步", "Landing region metadata is incomplete")}</AlertTitle>
@@ -222,7 +226,7 @@ export function LandingManager({ language }: { language: Language }) {
               <div className="flex gap-2">
                 <Select items={candidates.map((item) => ({ value: item.nodeId, label: item.name }))} value={candidate?.nodeId ?? null} disabled={disabled || !candidates.length || (view?.nodeIds.length ?? 0) >= 16} onValueChange={(value) => setCandidateID(value ?? "")}>
                   <SelectTrigger id={id} className="min-w-0 flex-1"><SelectValue placeholder={copy(language, "选择节点", "Choose a node")} /></SelectTrigger>
-                  <SelectContent className="apps-workspace"><SelectGroup>{candidates.map((item) => <SelectItem key={item.nodeId} value={item.nodeId}>{item.name}</SelectItem>)}</SelectGroup></SelectContent>
+                  <SelectContent className="apps-workspace"><SelectGroup>{candidates.map((item) => <SelectItem key={item.nodeId} value={item.nodeId}>{item.name} · {assessmentLabel(language, quality?.checks.find((check) => check.agentId === item.nodeId)?.assessment)}</SelectItem>)}</SelectGroup></SelectContent>
                 </Select>
                 <Button type="submit" disabled={disabled || !candidate || !candidateRegionReady || (view?.nodeIds.length ?? 0) >= 16}>{copy(language, "添加", "Add")}</Button>
               </div>

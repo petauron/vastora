@@ -48,6 +48,17 @@ func TestParseRemovesTerminalFormattingFromUnlockFields(t *testing.T) {
 	}
 }
 
+func TestParseRemovesTerminalFormattingFromClassifications(t *testing.T) {
+	raw := strings.Replace(reportFixture, `"IPinfo":"Commercial"`, `"IPinfo":"x1b[43mx1b[37mx1b[1m Business x1b[0m"`, 1)
+	value, err := Parse([]byte(raw), "203.0.113.8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.UsageTypes[0].Value != "Business" {
+		t.Fatalf("terminal formatting retained: %#v", value.UsageTypes[0])
+	}
+}
+
 func TestParseRejectsWrongExitAndInvalidReports(t *testing.T) {
 	for _, raw := range []string{strings.ReplaceAll(reportFixture, "203.0.113.8", "203.0.113.9"), "not-json", strings.Repeat("x", MaxReportBytes+1)} {
 		if _, err := Parse([]byte(raw), "203.0.113.8"); err == nil {

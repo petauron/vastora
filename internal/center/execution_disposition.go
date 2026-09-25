@@ -103,7 +103,7 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 	switch task.Kind {
 	case "node.ip-quality":
 		return `UPDATE ip_quality_checks SET state='failed',lease_expires_at='',error='abandoned',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
-	case "node.network-quality", "node.return-route", "node.international-bandwidth":
+	case "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server":
 		return `UPDATE node_diagnostic_checks SET state='failed',lease_expires_at='',error='abandoned',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "xray.configuration.inspect", "xray.configuration.apply":
 		return `UPDATE xray_configuration_recoveries SET state='failed',lease_expires_at='',error='abandoned',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
@@ -136,7 +136,7 @@ func executionRequeueStatement(task AgentTask, agentID, now string) (string, []a
 	switch task.Kind {
 	case "node.ip-quality":
 		return `UPDATE ip_quality_checks SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
-	case "node.network-quality", "node.return-route", "node.international-bandwidth":
+	case "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server":
 		return `UPDATE node_diagnostic_checks SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "xray.configuration.inspect", "xray.configuration.apply":
 		return `UPDATE xray_configuration_recoveries SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil

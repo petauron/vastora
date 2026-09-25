@@ -82,7 +82,10 @@ func TestIPQualityContainerIsBoundedAndDoesNotMountHost(t *testing.T) {
 	if options.Config.User != "65534:65534" || options.Config.Cmd[0] != "10.0.0.8" || options.Config.Cmd[1] != "-4" || !strings.Contains(options.Config.Image, "@sha256:") {
 		t.Fatal("container identity or address not pinned")
 	}
-	for _, required := range []string{"sha256sum -c", "-E -n -p -f -j", "/^check_mail$/d", "/^countRunTimes$/d", "check_dnsbl", "ad222ab16778be2a13a174cd1acbd69fb4cac6b7"} {
+	if options.Config.Labels["io.vastora.application"] != "meridian" {
+		t.Fatal("IP diagnostics lost Meridian ownership")
+	}
+	for _, required := range []string{"sha256sum -c", "-E -n -p -f -j", "/^check_mail$/d", "/^countRunTimes$/d", "check_dnsbl", "ad222ab16778be2a13a174cd1acbd69fb4cac6b7", "https://my.ippure.com/v1/info", "--interface \"$1\" --noproxy '*'"} {
 		if !strings.Contains(ipQualityScript, required) {
 			t.Fatalf("missing runner restriction %q", required)
 		}

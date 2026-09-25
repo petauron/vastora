@@ -213,6 +213,26 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			value, checkErr := checker.CheckInternationalBandwidth(ctx, *task.NodeDiagnostics)
 			result.NodeDiagnostics, err = &value, checkErr
 		}
+	case nodediagnostics.LinkServerKind:
+		checker, ok := c.Executor.(interface {
+			CheckMeridianLinkServer(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+		})
+		if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
+			err = errors.New("agent: Meridian link server is unavailable")
+		} else {
+			value, checkErr := checker.CheckMeridianLinkServer(ctx, *task.NodeDiagnostics)
+			result.NodeDiagnostics, err = &value, checkErr
+		}
+	case nodediagnostics.LinkBandwidthKind:
+		checker, ok := c.Executor.(interface {
+			CheckMeridianLinkBandwidth(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+		})
+		if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
+			err = errors.New("agent: Meridian link bandwidth is unavailable")
+		} else {
+			value, checkErr := checker.CheckMeridianLinkBandwidth(ctx, *task.NodeDiagnostics)
+			result.NodeDiagnostics, err = &value, checkErr
+		}
 	case nodediagnostics.HostProfileKind:
 		checker, ok := c.Executor.(interface {
 			CheckHostProfile(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)

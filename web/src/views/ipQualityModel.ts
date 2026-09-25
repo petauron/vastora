@@ -11,6 +11,25 @@ export function cleanIPQualityValue(value?: string) {
   return (value ?? "").replace(ansiEscapePattern, "").replace(serializedAnsiEscapePattern, "").replace(/\s+/g, " ").trim();
 }
 
+type ClassificationTone = "good" | "warning" | "bad" | "neutral";
+const classificationLabels: Record<string, [string, string, ClassificationTone]> = {
+  business: ["商业", "Business", "warning"], commercial: ["商业", "Business", "warning"],
+  isp: ["家宽", "ISP", "good"], "line isp": ["家宽", "Line ISP", "good"],
+  hosting: ["机房", "Hosting", "bad"],
+  education: ["教育", "Education", "warning"], government: ["政府", "Government", "warning"],
+  banking: ["银行", "Banking", "warning"], organization: ["组织", "Organization", "warning"],
+  military: ["军队", "Military", "warning"], library: ["图书馆", "Library", "warning"],
+  cdn: ["CDN", "CDN", "bad"], mobile: ["手机", "Mobile ISP", "good"], "mobile isp": ["手机", "Mobile ISP", "good"],
+  spider: ["蜘蛛", "Web Spider", "bad"], "web spider": ["蜘蛛", "Web Spider", "bad"],
+  reserved: ["保留", "Reserved", "warning"], other: ["其他", "Other", "warning"],
+};
+
+export function ipClassification(language: Language, raw: string): { label: string; tone: ClassificationTone } {
+  const value = cleanIPQualityValue(raw);
+  const known = classificationLabels[value.toLowerCase()];
+  return known ? { label: copy(language, known[0], known[1]), tone: known[2] } : { label: value || "—", tone: "neutral" };
+}
+
 export function checkPending(check?: IPQualityCheck) {
   return check?.state === "pending" || check?.state === "running";
 }

@@ -33,7 +33,7 @@ func (s *Store) releaseClaimedTask(ctx context.Context, agentID string, task Age
 	switch task.Kind {
 	case "node.ip-quality":
 		result, err = tx.ExecContext(ctx, `UPDATE ip_quality_checks SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
-	case "node.network-quality", "node.return-route", "node.international-bandwidth":
+	case "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server":
 		result, err = tx.ExecContext(ctx, `UPDATE node_diagnostic_checks SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
 	case "xray.configuration.inspect", "xray.configuration.apply":
 		result, err = tx.ExecContext(ctx, `UPDATE xray_configuration_recoveries SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
@@ -224,6 +224,9 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		{`SELECT id, target_revision FROM node_diagnostic_checks WHERE agent_id=? AND kind='node.network-quality' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.network-quality"},
 		{`SELECT id, target_revision FROM node_diagnostic_checks WHERE agent_id=? AND kind='node.return-route' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.return-route"},
 		{`SELECT id, target_revision FROM node_diagnostic_checks WHERE agent_id=? AND kind='node.international-bandwidth' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.international-bandwidth"},
+		{`SELECT id, target_revision FROM node_diagnostic_checks WHERE agent_id=? AND kind='node.host-profile' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.host-profile"},
+		{`SELECT id, target_revision FROM node_diagnostic_checks WHERE agent_id=? AND kind='meridian.link-bandwidth' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "meridian.link-bandwidth"},
+		{`SELECT id, target_revision FROM node_diagnostic_checks WHERE agent_id=? AND kind='meridian.link-bandwidth-server' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "meridian.link-bandwidth-server"},
 		{`SELECT id, 1 FROM xray_configuration_recoveries WHERE agent_id=? AND action='inspect' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "xray.configuration.inspect"},
 		{`SELECT id, 1 FROM xray_configuration_recoveries WHERE agent_id=? AND action<>'inspect' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "xray.configuration.apply"},
 		{`SELECT id, 1 FROM deployments WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "application.apply"},

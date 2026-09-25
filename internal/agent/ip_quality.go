@@ -53,7 +53,12 @@ const ipQualityScript = `set -eu
 curl --proto '=https' --tlsv1.2 -fsSL --max-time 30 https://raw.githubusercontent.com/xykt/IPQuality/ad222ab16778be2a13a174cd1acbd69fb4cac6b7/ip.sh -o /tmp/upstream.sh
 echo 'ffb17dae790341c13023a94c5141775974dd73a3653ca5fba5c4648fc5588402  /tmp/upstream.sh' | sha256sum -c - >/dev/null
 sed -e '/^check_mail$/d' -e '/^\[\[ \$2 -eq 4 \]\]&&check_dnsbl /d' -e '/^show_mail \$2$/d' -e '/^countRunTimes$/d' -e '/^show_ad$/d' -e 's/\${rawgithub}main\//\${rawgithub}ad222ab16778be2a13a174cd1acbd69fb4cac6b7\//g' /tmp/upstream.sh > /tmp/check.sh
-exec bash /tmp/check.sh -i "$1" "$2" -E -n -p -f -j
+bash /tmp/check.sh -i "$1" "$2" -E -n -p -f -j > /tmp/report.json || [ "$?" -eq 1 ]
+cat /tmp/report.json
+if [ "$2" = '-4' ] && curl --proto '=https' --tlsv1.2 --ipv4 --interface "$1" --noproxy '*' --max-time 12 --max-filesize 16384 -fsS https://my.ippure.com/v1/info -o /tmp/ippure.json 2>/dev/null; then
+  printf '\n__MERIDIAN_IPPURE__\n'
+  cat /tmp/ippure.json
+fi
 `
 
 func ipQualityContainerOptions(task ipquality.Task) client.ContainerCreateOptions {
@@ -65,7 +70,7 @@ func ipQualityContainerOptions(task ipquality.Task) client.ContainerCreateOption
 	return client.ContainerCreateOptions{
 		Config: &container.Config{Image: ipQualityImage, User: "65534:65534", WorkingDir: "/tmp", Env: []string{"TERM=dumb", "HOME=/tmp"},
 			Entrypoint: []string{"timeout", "-s", "KILL", "210", "/bin/sh", "-c", ipQualityScript, "ip-quality"}, Cmd: []string{task.BindAddress, family},
-			Labels: map[string]string{"io.vastora.diagnostic": "ip-quality"}},
+			Labels: map[string]string{"io.vastora.diagnostic": "ip-quality", "io.vastora.application": "meridian"}},
 		HostConfig: &container.HostConfig{NetworkMode: "host", AutoRemove: false, ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"},
 			Tmpfs: map[string]string{"/tmp": "rw,noexec,nosuid,size=32m,mode=1777"}, LogConfig: container.LogConfig{Type: "none"},
 			Resources: container.Resources{Memory: 128 * 1024 * 1024, MemorySwap: 128 * 1024 * 1024, NanoCPUs: 500000000, PidsLimit: &pids}},
@@ -157,10 +162,16 @@ func (e ApplicationExecutor) CheckIPQuality(parent context.Context, task ipquali
 			return ipquality.Result{Error: "detection_failed"}, nil
 		}
 	}
-	report, parseErr := ipquality.Parse(stdout, task.Address)
+	parts := bytes.SplitN(stdout, []byte("\n__MERIDIAN_IPPURE__\n"), 2)
+	report, parseErr := ipquality.Parse(parts[0], task.Address)
 	if parseErr != nil {
 		return ipquality.Result{Error: parseErr.Error()}, nil
 	}
+	pure := missingIPPure(task.Address, time.Now())
+	if len(parts) == 2 {
+		pure = parseIPPure(parts[1], task.Address, time.Now())
+	}
+	report.IPPure = &pure
 	return ipquality.Result{Report: &report}, nil
 }
 
