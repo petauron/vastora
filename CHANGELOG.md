@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.218](https://github.com/petauron/vastora/compare/v0.1.0-alpha.217...v0.1.0-alpha.218) (2026-09-25)
+
+
+### Bug Fixes
+
+* **meridian:** simplify missing IPQS score labels ([#663](https://github.com/petauron/vastora/issues/663)) ([80ffef8](https://github.com/petauron/vastora/commit/80ffef8ecfca95c22dc3da1b9c054636a2ca38b4))
+
 ## [0.1.0-alpha.217](https://github.com/petauron/vastora/compare/v0.1.0-alpha.216...v0.1.0-alpha.217) (2026-09-25)
 
 
