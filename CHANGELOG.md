@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.217](https://github.com/petauron/vastora/compare/v0.1.0-alpha.216...v0.1.0-alpha.217) (2026-09-25)
+
+
+### Features
+
+* **meridian:** score conservatively when IPQS is missing ([#660](https://github.com/petauron/vastora/issues/660)) ([63dbeb5](https://github.com/petauron/vastora/commit/63dbeb52ba30bf1c15790417f3756aa70138327e))
+
 ## [0.1.0-alpha.216](https://github.com/petauron/vastora/compare/v0.1.0-alpha.215...v0.1.0-alpha.216) (2026-09-25)
 
 
