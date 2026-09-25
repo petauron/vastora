@@ -69,6 +69,35 @@ func TestAssessmentMissingNeverBecomesClean(t *testing.T) {
 	}
 }
 
+func TestAssessmentIPQSOnlyConservativeScore(t *testing.T) {
+	r := assessmentReport("Hosting")
+	r.Scores = []Score{{"SCAMALYTICS", "0"}, {"AbuseIPDB", "14"}}
+	risk := 46.0
+	r.IPPure.RiskScore = &risk
+	r.RecordObservations(assessmentTime)
+	a := assessFixture(r)
+	if a.Version != "meridian-v2" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
+		t.Fatalf("IPQS-only absence must produce a transparent lower bound: %+v", a)
+	}
+	r.Scores = append(r.Scores, Score{"IPQS", "100"})
+	r.RecordObservations(assessmentTime)
+	if full := assessFixture(r); full.Status != "complete" || full.Score == nil || *full.Score != 63 || len(full.Missing) != 0 {
+		t.Fatalf("valid IPQS score did not restore complete assessment: %+v", full)
+	}
+	r.Scores = r.Scores[:2]
+	r.IPPure = nil
+	r.RecordObservations(assessmentTime)
+	if partial := assessFixture(r); partial.Status != "partial" || partial.Score != nil {
+		t.Fatalf("additional missing evidence got a conservative score: %+v", partial)
+	}
+	r = assessmentReport("Hosting")
+	r.Scores = []Score{{"SCAMALYTICS", "0"}, {"AbuseIPDB", "14"}}
+	r.RecordObservations(assessmentTime)
+	if expired := Assess(&r, assessmentTime.Format(time.RFC3339Nano), false, assessmentTime.Add(EvidenceMaxAge+time.Second), DefaultPreferences()); expired.Status != "expired" || expired.Score != nil {
+		t.Fatalf("expired conservative score remained usable: %+v", expired)
+	}
+}
+
 func TestAssessmentTypeEvidenceAndConflict(t *testing.T) {
 	r := assessmentReport("Hosting")
 	r.UsageTypes[0].Value = `x1b[41mx1b[37m Hosting x1b[0m`
@@ -196,6 +225,26 @@ func TestComparisonRequiresEvidenceAndMeaningfulImprovement(t *testing.T) {
 	partial := assessFixture(r)
 	if yes, _, _ := Compare(base, partial, true); yes {
 		t.Fatal("partial candidate recommended")
+	}
+}
+
+func TestComparisonWithConservativeBounds(t *testing.T) {
+	r := assessmentReport("Hosting")
+	r.Scores = []Score{{"SCAMALYTICS", "0"}, {"AbuseIPDB", "14"}}
+	risk := 46.0
+	r.IPPure.RiskScore = &risk
+	r.RecordObservations(assessmentTime)
+	base := assessFixture(r) // 63–73
+	r = assessmentReport("Business")
+	r.Scores = []Score{{"SCAMALYTICS", "0"}, {"AbuseIPDB", "0"}}
+	r.RecordObservations(assessmentTime)
+	if yes, reason, delta := Compare(base, assessFixture(r), true); yes || reason != "no_clear_improvement" || delta == nil || *delta != 7 {
+		t.Fatal("uncertain improvement was recommended", yes, reason, delta)
+	}
+	r.UsageTypes = []Classification{{"IPinfo", "ISP"}, {"ipregistry", "ISP"}}
+	r.RecordObservations(assessmentTime)
+	if yes, reason, delta := Compare(base, assessFixture(r), true); !yes || reason != "score_improved" || delta == nil || *delta != 17 {
+		t.Fatal("certain conservative improvement was missed", yes, reason, delta)
 	}
 }
 

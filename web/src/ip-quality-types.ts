@@ -19,7 +19,7 @@ export type IPQualityCheck = {
 export type IPQualityPreferences = { requiredServices: string[]; targetRegion: string };
 export type IPQualityAssessment = {
   version: string;
-  status: "complete" | "partial" | "expired" | "ip_changed";
+  status: "complete" | "conservative" | "partial" | "expired" | "ip_changed";
   score?: number; min: number; max: number;
   grade: "excellent" | "premium" | "good" | "fair" | "poor" | "unknown";
   ipType: "residential" | "mobile" | "business" | "hosting" | "unknown";

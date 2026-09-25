@@ -18,7 +18,7 @@ afterEach(() => {
 
 function assessment(): IPQualityAssessment {
   return {
-    version: "meridian-v1", status: "partial", min: 75, max: 100, grade: "unknown", ipType: "residential",
+    version: "meridian-v2", status: "partial", min: 75, max: 100, grade: "unknown", ipType: "residential",
     typeCandidates: ["residential"], typeEvidence: [{ source: "IPinfo", value: "ISP" }],
     contributions: [{ id: "ippure", min: 0, max: 25, weight: 25, missing: ["IPPure"] }], missing: ["IPPure"],
     advice: "recheck", reasons: ["incomplete"], requiredFailed: [], requiredUnknown: [],
@@ -32,14 +32,30 @@ it("keeps missing evidence as an interval and reveals policy only on expansion",
   root = createRoot(container);
   await act(async () => root?.render(<AssessmentSummary language="zh-CN" assessment={assessment()} />));
   expect(container.textContent).toContain("暂评 75～100");
-  expect(container.textContent).not.toContain("Meridian 评分 v1");
+  expect(container.textContent).not.toContain("Meridian 评分 v2");
   const trigger = container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
   expect(trigger.getAttribute("aria-expanded")).toBe("false");
   await act(async () => trigger.click());
   expect(trigger.getAttribute("aria-expanded")).toBe("true");
-  expect(container.textContent).toContain("Meridian 评分 v1");
+  expect(container.textContent).toContain("Meridian 评分 v2");
   expect(container.textContent).toContain("IPPure");
   expect(container.textContent).toContain("0～25 / 25");
+});
+
+it("labels an IPQS-only lower bound and explains its interval", async () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  const conservative: IPQualityAssessment = {
+    ...assessment(), status: "conservative", score: 63, min: 63, max: 73, grade: "good", ipType: "hosting",
+    contributions: [{ id: "sources", min: 14.3, max: 24.3, weight: 25, missing: ["IPQS"] }], missing: ["IPQS"], advice: "direct",
+  };
+  await act(async () => root?.render(<AssessmentSummary language="zh-CN" assessment={conservative} />));
+  expect(container.textContent).toContain("保守分 63");
+  expect(container.textContent).toContain("可直连");
+  await act(async () => container.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click());
+  expect(container.textContent).toContain("63～73");
+  expect(container.textContent).toContain("该项按 0 / 10 分");
 });
 
 it("does not display a formal number for expired or changed-IP results", () => {
