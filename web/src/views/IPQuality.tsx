@@ -66,12 +66,28 @@ function RiskFactorMatrix({ language, factors }: { language: Language; factors: 
   })}</TableRow>)}</TableBody></Table>;
 }
 
-function UnlockMatrix({ language, services }: { language: Language; services: IPQualityService[] }) {
+function unlockPresentation(language: Language, service?: IPQualityService, exitRegion?: string) {
+  const status = cleanIPQualityValue(service?.status).toLowerCase();
+  const region = cleanIPQualityValue(service?.regionCode).toUpperCase();
+  const exit = cleanIPQualityValue(exitRegion).toUpperCase();
+  const knownRegion = (value: string) => /^[A-Z]{2}$/.test(value) && !["XX", "ZZ", "UN"].includes(value);
+  const label = unlockLabel(language, service?.status);
+  if (status === "yes") {
+    if (!knownRegion(region) || !knownRegion(exit)) return { label, description: copy(language, "已解锁，地区待确认", "Unlocked; region unconfirmed"), mark: "✓?", tone: "text-muted-foreground" };
+    if (region !== exit) return { label, description: copy(language, `已解锁 ${region}，与出口 IP 地区 ${exit} 不一致`, `Unlocked in ${region}; differs from exit IP region ${exit}`), mark: region, tone: "text-latency-medium" };
+    return { label, description: copy(language, `已解锁 ${region}，与出口 IP 地区一致`, `Unlocked in ${region}; matches exit IP region`), mark: "✓", tone: "text-latency-fast" };
+  }
+  const blocked = status === "no" || status === "block";
+  const mark = blocked ? "×" : ["org", "originals only", "nf.only", "apponly", "webonly", "china", "noprem.", "pending", "idc"].includes(status) ? label : ["failed", "fail", "error"].includes(status) ? "!" : "?";
+  return { label, description: label, mark, tone: blocked ? "text-destructive" : "text-muted-foreground" };
+}
+
+function UnlockMatrix({ language, services, exitRegion }: { language: Language; services: IPQualityService[]; exitRegion?: string }) {
   if (!services.length) return <p className="text-xs text-muted-foreground">{copy(language, "暂无解锁结果", "No availability results")}</p>;
   return <Table className="table-fixed text-xs"><TableHeader><TableRow><TableHead className="h-7 w-20 px-1">{copy(language, "服务", "Service")}</TableHead>{services.map((service) => <TableHead key={service.name} className="h-7 px-1 text-center text-[11px]" title={service.name}>{unlockServiceLabel(service.name)}</TableHead>)}</TableRow></TableHeader><TableBody>
     <TableRow><TableCell className="px-1 py-1 text-muted-foreground">{copy(language, "结果", "Status")}</TableCell>{services.map((service) => {
-      const status = cleanIPQualityValue(service.status).toLowerCase();
-      return <TableCell key={service.name} className={cn("px-1 py-1 text-center font-medium", status === "yes" ? "text-latency-fast" : status === "no" || status === "block" ? "text-destructive" : "text-muted-foreground")}>{unlockLabel(language, service.status)}</TableCell>;
+      const result = unlockPresentation(language, service, exitRegion);
+      return <TableCell key={service.name} title={result.description} aria-label={result.description} className={cn("px-1 py-1 text-center font-medium", result.tone)}>{result.label}</TableCell>;
     })}</TableRow>
     <TableRow><TableCell className="px-1 py-1 text-muted-foreground">{copy(language, "地区", "Region")}</TableCell>{services.map((service) => <TableCell key={service.name} className="px-1 py-1 text-center"><span className="inline-flex items-center gap-1"><RegionFlag code={service.regionCode} language={language} />{service.regionCode ?? "—"}</span></TableCell>)}</TableRow>
     <TableRow><TableCell className="px-1 py-1 text-muted-foreground">{copy(language, "方式", "Type")}</TableCell>{services.map((service) => <TableCell key={service.name} className="px-1 py-1 text-center">{unlockTypeLabel(language, service.type) || "—"}</TableCell>)}</TableRow>
@@ -81,10 +97,9 @@ function UnlockMatrix({ language, services }: { language: Language; services: IP
 function UnlockIndicators({ check, language, current }: { check?: IPQualityCheck; language: Language; current: boolean }) {
   return <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">{unlockServices.map((name) => {
     const service = current ? check?.report?.services.find((item) => item.name === name) : undefined;
-    const status = cleanIPQualityValue(service?.status).toLowerCase();
-    const label = current ? unlockLabel(language, service?.status) : copy(language, "待检测", "Check needed");
-    const mark = status === "yes" ? "✓" : status === "no" || status === "block" ? "×" : status === "org" || status === "originals only" || status === "nf.only" ? copy(language, "仅自制", "Originals") : ["apponly", "webonly", "china", "noprem.", "pending", "idc"].includes(status) ? label : status === "failed" || status === "fail" || status === "error" ? "!" : "?";
-    return <span aria-label={`${unlockServiceLabel(name)} ${label}`} className={cn("inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[11px] leading-5", status === "yes" ? "text-latency-fast" : status === "no" || status === "block" ? "text-destructive" : "text-muted-foreground")} key={name} title={`${unlockServiceLabel(name)} · ${label}`}><span>{unlockServiceLabel(name, true)}</span><span aria-hidden="true" className="font-semibold">{current ? mark : "?"}</span></span>;
+    const result = unlockPresentation(language, service, check?.report?.regionCode);
+    const description = current ? result.description : copy(language, "待检测", "Check needed");
+    return <span aria-label={`${unlockServiceLabel(name)} ${description}`} className={cn("inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[11px] leading-5", result.tone)} key={name} title={`${unlockServiceLabel(name)} · ${description}`}><span>{unlockServiceLabel(name, true)}</span><span aria-hidden="true" className="font-semibold">{current ? result.mark : "?"}</span></span>;
   })}</span>;
 }
 
@@ -304,7 +319,7 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
             </section>
             <section className="border-t pt-2" aria-label={copy(language, "流媒体与 AI 解锁", "Streaming and AI availability")}>
               <h3 className="mb-1 text-xs font-semibold text-latency-fast">{copy(language, "四 · 流媒体与 AI 解锁", "4 · Streaming and AI availability")}</h3>
-              <UnlockMatrix language={language} services={report.services} />
+              <UnlockMatrix language={language} services={report.services} exitRegion={report.regionCode} />
             </section>
           </div> : <p className="py-6 text-center text-sm text-muted-foreground">{copy(language, "尚无 IP 质量结果", "No IP-quality report yet")}</p>}</TabsContent> : null}
           <TabsContent value="network" className="pt-3">
