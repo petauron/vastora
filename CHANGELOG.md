@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.245](https://github.com/petauron/vastora/compare/v0.1.0-alpha.244...v0.1.0-alpha.245) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** align inline controls and frame node panels ([#719](https://github.com/petauron/vastora/issues/719)) ([7d26551](https://github.com/petauron/vastora/commit/7d265510e1f6dc982e1146e5d502aa14ed9e38b1))
+
 ## [0.1.0-alpha.244](https://github.com/petauron/vastora/compare/v0.1.0-alpha.243...v0.1.0-alpha.244) (2026-09-26)
 
 
