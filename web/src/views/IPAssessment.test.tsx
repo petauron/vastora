@@ -66,18 +66,20 @@ it("does not display a formal number for expired or changed-IP results", () => {
 });
 
 it("loads comparisons on demand, separates partial rows, and only selects a form value", async () => {
-  const quality = vi.spyOn(api, "ipQuality").mockResolvedValue({ checks: [], comparisons: [{
-    nodeId: "landing", name: "落地 A", compatible: false, connectionVerified: false, recommended: false, reason: "connection_unverified", assessment: assessment(), services: [],
+  const quality = vi.spyOn(api, "ipQuality").mockResolvedValue({ checks: [], targets: [], comparisons: [{
+    nodeId: "landing", name: "落地 A", address: "2001:db8::2", family: "ipv6", compatible: false, connectionVerified: false, recommended: false, reason: "connection_unverified", assessment: assessment(), services: [],
   }] });
   const mutate = vi.spyOn(api, "selectLanding");
   const select = vi.fn();
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => root?.render(<IPQualityComparison language="zh-CN" nodeId="entry" onSelect={select} />));
+  await act(async () => root?.render(<IPQualityComparison language="zh-CN" nodeId="entry" compareAddress="2001:db8::1" onSelect={select} />));
   expect(quality).not.toHaveBeenCalled();
   await act(async () => container.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click());
-  expect(quality).toHaveBeenCalledWith(expect.any(AbortSignal), expect.objectContaining({ targetRegion: "" }), "entry");
+  expect(quality).toHaveBeenCalledWith(expect.any(AbortSignal), expect.objectContaining({ targetRegion: "" }), "entry", "2001:db8::1");
+  expect(container.textContent).toContain("2001:db8::1");
+  expect(container.textContent).toContain("IPv6");
   expect(container.textContent).toContain("暂评 / 待复测");
   expect(container.textContent).toContain("连接待验证");
   const choose = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "选择")!;

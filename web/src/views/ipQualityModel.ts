@@ -1,6 +1,33 @@
-import type { IPQualityCheck } from "../ip-quality-types";
+import type { IPQualityCheck, IPQualityTarget } from "../ip-quality-types";
+import type { PublicEgress } from "../types";
 import type { Language } from "../translations";
 import { copy } from "./shared";
+
+export function canonicalIPQualityAddress(address: string) {
+  if (!address.includes(":")) return address;
+  try { return new URL(`http://[${address}]/`).hostname.slice(1, -1); }
+  catch { return address; }
+}
+
+export function landingQualityAddress(configuredAddress: string, native: PublicEgress | undefined, targets: IPQualityTarget[]) {
+  const desired = canonicalIPQualityAddress(configuredAddress);
+  const publicAddress = canonicalIPQualityAddress(native?.address ?? "");
+  const selected = targets.find((target) => target.selected);
+  if (!desired) return publicAddress;
+  if (native && desired === canonicalIPQualityAddress(native.bindAddress) && selected?.address === publicAddress) return selected.address;
+  // An unavailable fixed address must never borrow another selected exit's score.
+  return desired;
+}
+
+// An explicit address never falls back to another address on the same node.
+export function ipQualityCheckForAddress(checks: IPQualityCheck[], agentId: string, address?: string) {
+  const expected = address === undefined ? undefined : canonicalIPQualityAddress(address);
+  return checks.find((check) => check.agentId === agentId && (expected === undefined ? check.selected : check.address === expected));
+}
+
+export function ipQualityFamilyLabel(family?: "ipv4" | "ipv6") {
+  return family === "ipv6" ? "IPv6" : family === "ipv4" ? "IPv4" : "—";
+}
 
 // Reports contain terminal ESC sequences that must be removed before display.
 // eslint-disable-next-line no-control-regex
@@ -75,7 +102,7 @@ export function ipQualityError(language: Language, code: string) {
     ip_quality_target_required: ["IP 质量仅适用于 VLESS 节点和落地机。", "IP quality is available only for VLESS nodes and landing servers."],
     ip_quality_tasks_paused: ["任务领取已暂停，请先在活动中恢复。", "Task claims are paused. Resume them in Activity."],
     ip_quality_node_busy: ["节点已有执行中或待处理任务，请先在活动中查看。", "The node has an active or unresolved task. Check Activity first."],
-    ip_quality_address_unavailable: ["节点尚未上报有效的公网出口。", "The node has not reported a valid public egress address."],
+    ip_quality_address_unavailable: ["此出口 IP 暂不可检测，请刷新节点地址后重试。", "This exit IP is not available for checking. Refresh the node addresses and try again."],
     docker_unavailable: ["无法启动检测容器，请检查节点 Docker。", "Could not start the check container. Check Docker on the node."],
     download_failed: ["检测镜像下载失败。", "Could not download the check image."],
     detection_failed: ["检测未完成，可能是检测服务无法访问。", "The check did not finish; a detection service may be unreachable."],

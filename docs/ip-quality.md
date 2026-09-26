@@ -1,11 +1,20 @@
 # IP quality diagnostics
 
-The 3x-ui node list, landing server manager and exit chooser expose the same
-manual node-diagnostics panel. Its IP and Network tabs describe that
-host's own observed public egress;
-it is **not** a VLESS/HY2 entry-to-landing route test. Center uses the Agent's
-reported public egress and local bind address. A report with a different IP is
-rejected. A later address change marks the retained report stale.
+The unified Meridian node list and exit chooser expose the same manual
+node-diagnostics panel. The IP tab separates IPv4 and IPv6 and, when a host has
+multiple addresses in one family, offers an exact-address selector. Landing
+rows show the report for their configured exit; entry rows use their observed
+native public egress. An exit without its own report displays pending detection.
+The Network tab retains host network diagnostics; entry-to-landing route tests
+remain separate.
+
+Center accepts probe targets only from the Agent's observed public egress and
+validated local exit-address inventory. NAT probes retain the distinction
+between public target and local bind address. Every report must match the exact
+requested public IP. Reports are stored independently by node and canonical IP,
+so testing IPv6 preserves IPv4 results and two IPv6 exits never share a report.
+Removing an address from the node's eligible targets makes its retained report
+stale; changing the selected exit simply selects that exit's own report.
 
 Meridian owns the on-demand diagnostic container on both entry and managed
 landing nodes. The Agent only supervises its lifecycle and relays the bounded
@@ -35,14 +44,17 @@ normal Activity workflow. Nothing automatically retries or starts a check.
   SMTP scan or bulk DNS blacklist scan. No speed/return-route test. Provider
   and streaming requests necessarily expose the tested exit IP to those sites.
 - No raw report, coordinates, command, upstream response or report URL is
-  retained. The authenticated Center stores the latest normalized report/IP,
+  retained. The authenticated Center stores the latest normalized report per IP,
   bounded ASN/organization/location fields, provider classifications and risk
   factors, provider-specific risk values, unlock status/region/type and
   completion time.
   Missing values are not zero. The UI preserves provider-specific evidence
   alongside the explicitly versioned Meridian selection policy described below.
-- Schemas 78 and 80 are additive and forward-only using Center's existing migration
-  backup/fail-closed flow. Agent deletion cascades its latest diagnostic record.
+- Schemas 78, 80 and 99 use Center's forward-only migration backup/fail-closed
+  flow. Schema 99 preserves existing reports and task ownership while changing
+  the diagnostic key to node plus IP. Agent deletion cascades its diagnostics.
+- All IP-sensitive upstream self-lookups use the requested local binding,
+  including DB-IP. Reference-file downloads do not contribute exit evidence.
 
 ## Meridian exit suitability v2
 
@@ -103,11 +115,18 @@ classification votes.
 
 ### Assessment and recommendation API
 
-`GET /api/v1/ip-quality` adds `assessment` to each check, including version,
+`GET /api/v1/ip-quality` returns eligible `targets` and saved `checks`, each
+identifying `agentId`, canonical public `address`, `family` (`ipv4` or `ipv6`),
+and whether it is the `selected` exit. Checks add `assessment`, including version,
 status, score or min/max, grade, type evidence, four contributions, missing
 items, required-service results, advice, preferences and expiry. Optional query
 parameters: `required=ChatGPT,Netflix,DisneyPlus`, `region=US`, and
-`compareNodeId=<agent-id>`. Omitted required uses the three defaults; explicit
+`compareNodeId=<agent-id>` and `compareAddress=<public-ip>`. An omitted comparison
+address uses the source node's native public egress. Candidate landings always
+use their selected exact exit and never borrow another address's report.
+`POST /api/v1/agents/{id}/ip-quality` requires a JSON body containing `address`;
+Center resolves its trusted local binding and rejects unrecognized targets.
+Omitted required uses the three defaults; explicit
 empty required selects no mandatory services. Duplicate/unknown service names
 and invalid region shapes return 400. Preferences change advice and regional
 unlock scoring, not the six fixed service weights.
@@ -150,8 +169,8 @@ The compact IP summary expands into evidence. Landing comparison allows
 service/country selection and separates complete, conservative and provisional
 results. User selection only fills the route form. Network measurements remain
 in their separate tab. Saved assessments refresh while visible to expire old
-results without starting probes. No schema migration or historical backfill is
-needed: raw evidence uses the existing report JSON; Center computes assessments.
+results without starting probes. Raw evidence uses the existing report JSON;
+Center computes assessments without inventing missing historical evidence.
 
 ## Network quality and return route
 

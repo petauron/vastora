@@ -10,7 +10,7 @@ import (
 
 // This read only combines existing diagnostic and connection evidence. It does
 // not create grants, authorize private identities, or start a network probe.
-func (s *Store) compareIPQuality(ctx context.Context, nodeID string, checks []IPQualityView, preferences ipquality.Preferences) ([]ipquality.Comparison, error) {
+func (s *Store) compareIPQuality(ctx context.Context, nodeID, address string, checks []IPQualityView, targets []ipQualityProbeTarget, preferences ipquality.Preferences) ([]ipquality.Comparison, error) {
 	view, err := s.Landing(ctx)
 	if err != nil {
 		return nil, err
@@ -23,11 +23,20 @@ func (s *Store) compareIPQuality(ctx context.Context, nodeID string, checks []IP
 	if err != nil {
 		return nil, err
 	}
-	byNode := map[string]IPQualityView{}
+	byAddress := map[string]IPQualityView{}
 	for _, check := range checks {
-		byNode[check.AgentID] = check
+		byAddress[ipQualityKey(check.AgentID, check.Address)] = check
 	}
-	current, found := byNode[nodeID]
+	selected := map[string]ipQualityProbeTarget{}
+	for _, target := range targets {
+		if target.Selected {
+			selected[target.AgentID] = target
+		}
+		if target.AgentID == nodeID && target.native && address == "" {
+			address = target.Address
+		}
+	}
+	current, found := byAddress[ipQualityKey(nodeID, address)]
 	if !found {
 		current.Assessment = ipquality.Assess(nil, "", false, s.now(), preferences)
 	}
@@ -113,7 +122,8 @@ func (s *Store) compareIPQuality(ctx context.Context, nodeID string, checks []IP
 		if id == nodeID {
 			continue
 		}
-		check, exists := byNode[id]
+		target := selected[id]
+		check, exists := byAddress[ipQualityKey(id, target.Address)]
 		assessment := check.Assessment
 		if !exists {
 			assessment = ipquality.Assess(nil, "", false, s.now(), preferences)
@@ -131,7 +141,7 @@ func (s *Store) compareIPQuality(ctx context.Context, nodeID string, checks []IP
 		if check.Report != nil {
 			services = check.Report.Services
 		}
-		values = append(values, ipquality.Comparison{NodeID: id, Name: name, Compatible: allowed, ConnectionVerified: compatible[id], Recommended: recommended, Reason: reason, Delta: delta, Assessment: assessment, Services: services})
+		values = append(values, ipquality.Comparison{NodeID: id, Address: target.Address, Family: target.Family, Name: name, Compatible: allowed, ConnectionVerified: compatible[id], Recommended: recommended, Reason: reason, Delta: delta, Assessment: assessment, Services: services})
 	}
 	slices.SortStableFunc(values, func(a, b ipquality.Comparison) int {
 		rank := func(status string) int {

@@ -5770,7 +5770,8 @@
         "tags": [
           "System"
         ],
-        "summary": "List IPQuality",
+        "summary": "List IPQuality by exact egress address",
+        "description": "Returns eligible targets and saved checks with agentId, canonical public address, family and selected exit metadata. Reports are independent for each node and IP.",
         "operationId": "listIPQuality_get",
         "x-vastora-audience": "browser-admin",
         "security": [
@@ -5813,6 +5814,15 @@
             }
           },
           {
+            "name": "compareAddress",
+            "in": "query",
+            "required": false,
+            "description": "Exact eligible public IPv4 or IPv6 address on compareNodeId. Omit to use that node's native public egress. Landing candidates use their configured exit.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "region",
             "in": "query",
             "required": false,
@@ -5836,8 +5846,25 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Start IPQuality",
+        "summary": "Start IPQuality for an eligible egress address",
         "operationId": "startIPQuality_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["address"],
+                "properties": {
+                  "address": {
+                    "type": "string",
+                    "description": "An exact public IPv4 or IPv6 address from this node's eligible targets. Center resolves the trusted local bind address."
+                  }
+                }
+              }
+            }
+          }
+        },
         "x-vastora-audience": "browser-admin",
         "security": [
           {

@@ -24,10 +24,10 @@ func TestIPQualityLatestResultAndStaleAttempt(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `UPDATE agents SET public_egress_address='203.0.113.8',public_egress_bind_address='10.0.0.18',public_egress_mode='nat',public_egress_observed_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.StartIPQuality(ctx, node.ID); err != nil {
+	if err := s.StartIPQuality(ctx, node.ID, "203.0.113.8"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.StartIPQuality(ctx, node.ID); err == nil {
+	if err := s.StartIPQuality(ctx, node.ID, "203.0.113.8"); err == nil {
 		t.Fatal("duplicate diagnostic queued")
 	}
 	claim := func() *AgentTask {
@@ -57,7 +57,7 @@ func TestIPQualityLatestResultAndStaleAttempt(t *testing.T) {
 	if err := s.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, true, "", raw, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.StartIPQuality(ctx, node.ID); err != nil {
+	if err := s.StartIPQuality(ctx, node.ID, "203.0.113.8"); err != nil {
 		t.Fatal(err)
 	}
 	second := claim()
@@ -101,7 +101,7 @@ func TestIPQualityRequiresVLESSOrLandingTarget(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `UPDATE agents SET public_egress_address='203.0.113.9',public_egress_bind_address='10.0.0.19',public_egress_mode='nat',public_egress_observed_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.StartIPQuality(ctx, node.ID); err == nil || err.Error() != "ip_quality_target_required" {
+	if err := s.StartIPQuality(ctx, node.ID, "203.0.113.9"); err == nil || err.Error() != "ip_quality_target_required" {
 		t.Fatalf("compute-only node accepted IP quality check: %v", err)
 	}
 }
@@ -136,5 +136,134 @@ func TestIPQualityMigration78AddsEmptyLatestResults(t *testing.T) {
 	}
 	if err := db.QueryRow(`SELECT COUNT(*) FROM ip_quality_checks`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("migration generated diagnostic tasks: %d %v", count, err)
+	}
+}
+
+func TestIPQualitySeparatesExactEgressReportsAndRetiresMissingAddress(t *testing.T) {
+	s := openOrchestrationStore(t)
+	defer s.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, s, "dual-stack-quality", NodeCapabilities{Docker: true, IPQuality: true}, []networking.Candidate{{Address: "10.0.0.18", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.18", LANAddress: "10.0.0.18", EnabledKinds: []string{networking.KindLAN}})
+	const v4 = "203.0.113.8"
+	const v6 = "2001:4860:4860::8888"
+	const secondV6 = "2001:4860:4860::8844"
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	inventory := `[{"address":"2001:4860:4860::8888","interface":"eth0"},{"address":"2001:4860:4860::8844","interface":"eth0"},{"address":"10.0.0.18","interface":"eth0"}]`
+	if _, err := s.db.Exec(`UPDATE agents SET public_egress_address=?,public_egress_bind_address='10.0.0.18',public_egress_mode='nat',public_egress_observed_at=?,landing_egress_addresses_json=? WHERE id=?`, v4, now, inventory, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,status,updated_at) VALUES(?,1,1,?,'ready',?)`, node.ID, `{"plan":{"egressIp":"2001:4860:4860::8888"}}`, now); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := listIPQualityTargets(ctx, s.db, node.ID)
+	if err != nil || len(targets) != 3 {
+		t.Fatalf("expected native IPv4 and two independent IPv6 exits: %+v %v", targets, err)
+	}
+	selected := 0
+	for _, target := range targets {
+		if target.Selected {
+			selected++
+			if target.Address != v6 || target.Family != "ipv6" {
+				t.Fatalf("wrong selected exit: %+v", target)
+			}
+		}
+		if target.Address == v4 && (target.bindAddress != "10.0.0.18" || !target.native) {
+			t.Fatalf("native NAT mapping lost: %+v", target)
+		}
+	}
+	if selected != 1 {
+		t.Fatalf("selected %d exits", selected)
+	}
+	for _, address := range []string{"", "1.1.1.1", "10.0.0.18"} {
+		if err := s.StartIPQuality(ctx, node.ID, address); err == nil || err.Error() != "ip_quality_address_unavailable" {
+			t.Fatalf("accepted unreported or non-public target %q: %v", address, err)
+		}
+	}
+	complete := func(address string) {
+		t.Helper()
+		if err := s.StartIPQuality(ctx, node.ID, address); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.StartIPQuality(ctx, node.ID, secondV6); err == nil {
+			t.Fatal("accepted concurrent egress probes on the same agent")
+		}
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task, err := s.claimIPQuality(ctx, tx, node.ID)
+		if err != nil || task == nil {
+			tx.Rollback()
+			t.Fatalf("claim: %+v %v", task, err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		if task.IPQuality.Address != address || address == v6 && task.IPQuality.BindAddress != v6 {
+			t.Fatalf("wrong egress dispatched: %+v", task.IPQuality)
+		}
+		wrong := ipquality.Report{Address: secondV6, Version: "test", Scores: []ipquality.Score{{Source: "IPQS", Value: "10"}}, Services: []ipquality.Service{{Name: "Netflix", Status: "Yes", RegionCode: "US"}}}
+		wrong.RecordObservations(s.now())
+		raw, _ := json.Marshal(map[string]any{"ipQuality": ipquality.Result{Report: &wrong}})
+		if err := s.completeIPQuality(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, raw); err == nil {
+			t.Fatal("accepted another exit's report")
+		}
+		report := wrong
+		report.Address = address
+		report.RecordObservations(s.now())
+		raw, _ = json.Marshal(map[string]any{"ipQuality": ipquality.Result{Report: &report}})
+		if err := s.completeIPQuality(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	complete(v4)
+	complete(v6)
+	checks, err := s.ListIPQuality(ctx)
+	if err != nil || len(checks) != 2 {
+		t.Fatalf("reports were overwritten: %+v %v", checks, err)
+	}
+	for _, check := range checks {
+		if check.Report == nil || check.Report.Address != check.Address || check.Stale || check.Selected != (check.Address == v6) {
+			t.Fatalf("report identity or selection crossed exits: %+v", check)
+		}
+	}
+	if _, err := s.db.Exec(`UPDATE agents SET landing_egress_addresses_json=? WHERE id=?`, `[{"address":"2001:4860:4860::8844","interface":"eth0"}]`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	checks, err = s.ListIPQuality(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range checks {
+		if check.Address == v4 && check.Stale {
+			t.Fatal("retiring IPv6 invalidated native IPv4 report")
+		}
+		if check.Address == v6 && (!check.Stale || check.Selected || check.Assessment.Status != "ip_changed") {
+			t.Fatalf("removed IPv6 remained usable: %+v", check)
+		}
+	}
+	targets, err = listIPQualityTargets(ctx, s.db, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range targets {
+		if target.Selected {
+			t.Fatal("missing selected IPv6 silently selected another exit")
+		}
+	}
+	if err := s.StartIPQuality(ctx, node.ID, v6); err == nil {
+		t.Fatal("removed IPv6 could still be queued")
+	}
+	if err := s.StartIPQuality(ctx, node.ID, secondV6); err != nil {
+		t.Fatal(err)
+	}
+	checks, err = s.ListIPQuality(ctx)
+	if err != nil || len(checks) != 3 {
+		t.Fatalf("second IPv6 missing: %+v %v", checks, err)
+	}
+	for _, check := range checks {
+		if check.Address == secondV6 && (check.Report != nil || check.Assessment.Status != "partial" || check.Assessment.Score != nil) {
+			t.Fatalf("new IPv6 borrowed historical report: %+v", check)
+		}
 	}
 }

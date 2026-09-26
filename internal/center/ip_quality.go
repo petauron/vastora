@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -14,7 +13,7 @@ import (
 )
 
 const ipQualitySchemaSQL = `CREATE TABLE ip_quality_checks (
- agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+ agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
  id TEXT NOT NULL UNIQUE,
  address TEXT NOT NULL,
  bind_address TEXT NOT NULL,
@@ -25,12 +24,17 @@ const ipQualitySchemaSQL = `CREATE TABLE ip_quality_checks (
  result_json TEXT NOT NULL DEFAULT 'null' CHECK(json_valid(result_json)),
  checked_at TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL,
- updated_at TEXT NOT NULL
-);`
+ updated_at TEXT NOT NULL,
+ PRIMARY KEY(agent_id,address)
+);
+CREATE UNIQUE INDEX ip_quality_active_agent_idx ON ip_quality_checks(agent_id) WHERE state IN ('pending','running');`
 
 type IPQualityView struct {
 	Assessment ipquality.Assessment `json:"assessment"`
 	AgentID    string               `json:"agentId"`
+	Address    string               `json:"address"`
+	Family     string               `json:"family"`
+	Selected   bool                 `json:"selected"`
 	ID         string               `json:"id"`
 	State      string               `json:"state"`
 	Error      string               `json:"error,omitempty"`
@@ -40,15 +44,27 @@ type IPQualityView struct {
 	Stale      bool                 `json:"stale"`
 }
 
-// Only the latest report is retained. A new check leaves the previous report
-// available, but never relabels its IP or timestamp as the new check's result.
+// Only the latest report for each exact exit address is retained. A new check
+// leaves that address's previous report available without changing its timestamp.
 func (s *Store) ListIPQuality(ctx context.Context) ([]IPQualityView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT q.agent_id,q.id,q.state,q.error,q.result_json,q.checked_at,q.updated_at,q.lease_expires_at,a.public_egress_address,
+	targets, err := listIPQualityTargets(ctx, s.db, "")
+	if err != nil {
+		return nil, err
+	}
+	return s.listIPQuality(ctx, targets)
+}
+
+func (s *Store) listIPQuality(ctx context.Context, targets []ipQualityProbeTarget) ([]IPQualityView, error) {
+	byTarget := map[string]ipQualityProbeTarget{}
+	for _, target := range targets {
+		byTarget[ipQualityKey(target.AgentID, target.Address)] = target
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT q.agent_id,q.id,q.state,q.error,q.result_json,q.checked_at,q.updated_at,q.lease_expires_at,q.address,
  EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=q.id AND e.agent_id=q.agent_id AND e.attempt=q.attempt AND e.disposition='' AND e.state IN ('unknown','failed'))
  FROM ip_quality_checks q JOIN agents a ON a.id=q.agent_id
  WHERE EXISTS(SELECT 1 FROM services s JOIN applications app ON app.id=s.application_id WHERE app.node_id=q.agent_id AND s.app_protocol IN ('vless/tcp/reality','meridian/entry') AND s.status<>'stopped')
     OR EXISTS(SELECT 1 FROM landing_server_states l WHERE l.node_id=q.agent_id AND l.status<>'stopped')
- ORDER BY q.agent_id`)
+ ORDER BY q.agent_id,q.address`)
 	if err != nil {
 		return nil, err
 	}
@@ -56,16 +72,21 @@ func (s *Store) ListIPQuality(ctx context.Context) ([]IPQualityView, error) {
 	values := []IPQualityView{}
 	for rows.Next() {
 		var value IPQualityView
-		var raw, lease, address string
+		var raw, lease string
 		var interrupted bool
-		if err := rows.Scan(&value.AgentID, &value.ID, &value.State, &value.Error, &raw, &value.CheckedAt, &value.UpdatedAt, &lease, &address, &interrupted); err != nil {
+		if err := rows.Scan(&value.AgentID, &value.ID, &value.State, &value.Error, &raw, &value.CheckedAt, &value.UpdatedAt, &lease, &value.Address, &interrupted); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(raw), &value.Report); err != nil {
 			return nil, err
 		}
+		value.Address = ipQualityAddress(value.Address)
+		value.Family = ipQualityFamily(value.Address)
+		target, available := byTarget[ipQualityKey(value.AgentID, value.Address)]
+		value.Selected = available && target.Selected
+		value.Stale = !available
 		if value.Report != nil {
-			value.Stale = net.ParseIP(address) == nil || !net.ParseIP(address).Equal(net.ParseIP(value.Report.Address))
+			value.Stale = value.Stale || ipQualityAddress(value.Report.Address) != value.Address
 		}
 		if value.State == "running" {
 			expires, err := time.Parse(time.RFC3339Nano, lease)
@@ -79,7 +100,7 @@ func (s *Store) ListIPQuality(ctx context.Context) ([]IPQualityView, error) {
 	return values, rows.Err()
 }
 
-func (s *Store) StartIPQuality(ctx context.Context, agentID string) error {
+func (s *Store) StartIPQuality(ctx context.Context, agentID, address string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -118,14 +139,18 @@ func (s *Store) StartIPQuality(ctx context.Context, agentID string) error {
 	if busy {
 		return errors.New("ip_quality_node_busy")
 	}
-	egress, err := agentPublicEgress(ctx, tx, agentID)
+	targets, err := listIPQualityTargets(ctx, tx, agentID)
 	if err != nil {
 		return err
 	}
-	if egress == nil {
-		return errors.New("ip_quality_address_unavailable")
+	input := ipquality.Task{}
+	canonical := ipQualityAddress(address)
+	for _, target := range targets {
+		if target.Address == canonical {
+			input = ipquality.Task{Address: target.Address, BindAddress: target.bindAddress}
+			break
+		}
 	}
-	input := ipquality.Task{Address: egress.Address, BindAddress: egress.BindAddress}
 	if input.Validate() != nil {
 		return errors.New("ip_quality_address_unavailable")
 	}
@@ -136,7 +161,7 @@ func (s *Store) StartIPQuality(ctx context.Context, agentID string) error {
 	id = "ip-quality-" + id
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	_, err = tx.ExecContext(ctx, `INSERT INTO ip_quality_checks(agent_id,id,address,bind_address,state,created_at,updated_at) VALUES(?,?,?,?,'pending',?,?)
- ON CONFLICT(agent_id) DO UPDATE SET id=excluded.id,address=excluded.address,bind_address=excluded.bind_address,state='pending',attempt=0,lease_expires_at='',error='',created_at=excluded.created_at,updated_at=excluded.updated_at`, agentID, id, input.Address, input.BindAddress, now, now)
+ ON CONFLICT(agent_id,address) DO UPDATE SET id=excluded.id,bind_address=excluded.bind_address,state='pending',attempt=0,lease_expires_at='',error='',created_at=excluded.created_at,updated_at=excluded.updated_at`, agentID, id, input.Address, input.BindAddress, now, now)
 	if err != nil {
 		return err
 	}
@@ -240,11 +265,16 @@ func (s *Server) handleListIPQuality(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	preferences.TargetRegion = r.URL.Query().Get("region")
-	if preferences.Validate() != nil || len(r.URL.Query().Get("compareNodeId")) > 128 {
+	if preferences.Validate() != nil || len(r.URL.Query().Get("compareNodeId")) > 128 || r.URL.Query().Has("compareAddress") && (r.URL.Query().Get("compareNodeId") == "" || ipQualityAddress(r.URL.Query().Get("compareAddress")) == "") {
 		writeError(w, http.StatusBadRequest, errors.New("ip_quality_invalid_preferences"))
 		return
 	}
-	values, err := s.store.ListIPQuality(r.Context())
+	targets, err := listIPQualityTargets(r.Context(), s.store.db, "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("ip_quality_read_failed"))
+		return
+	}
+	values, err := s.store.listIPQuality(r.Context(), targets)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("ip_quality_read_failed"))
 		return
@@ -255,16 +285,27 @@ func (s *Server) handleListIPQuality(w http.ResponseWriter, r *http.Request) {
 	}
 	comparisons := []ipquality.Comparison{}
 	if nodeID := r.URL.Query().Get("compareNodeId"); nodeID != "" {
-		comparisons, err = s.store.compareIPQuality(r.Context(), nodeID, values, preferences)
+		comparisons, err = s.store.compareIPQuality(r.Context(), nodeID, r.URL.Query().Get("compareAddress"), values, targets, preferences)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, errors.New("ip_quality_read_failed"))
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"checks": values, "comparisons": comparisons})
+	writeJSON(w, http.StatusOK, map[string]any{"checks": values, "targets": publicIPQualityTargets(targets), "comparisons": comparisons})
 }
 func (s *Server) handleStartIPQuality(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.StartIPQuality(r.Context(), r.PathValue("id")); err != nil {
+	var input struct {
+		Address string `json:"address"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if ipQualityAddress(input.Address) == "" {
+		writeError(w, http.StatusBadRequest, errors.New("ip_quality_address_required"))
+		return
+	}
+	if err := s.store.StartIPQuality(r.Context(), r.PathValue("id"), input.Address); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}

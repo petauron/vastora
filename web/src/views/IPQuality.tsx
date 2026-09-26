@@ -3,24 +3,25 @@ import { ActivityIcon, ChevronDownIcon, ChevronRightIcon, RefreshCwIcon } from "
 import { api, APIError } from "../api";
 import type { AgentView } from "../types";
 import type { Language } from "../translations";
-import type { IPQualityCheck, IPQualityClassification, IPQualityRiskFactor, IPQualityService } from "../ip-quality-types";
+import type { IPQualityCheck, IPQualityClassification, IPQualityRiskFactor, IPQualityService, IPQualityTarget } from "../ip-quality-types";
 import type { Carrier, NodeDiagnosticCheck, NetworkMeasurement } from "../node-diagnostics-types";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
+import { SelectControl } from "@/components/SelectControl";
 import { cn } from "@/lib/utils";
 import { copy } from "./shared";
 import { RegionFlag } from "./RegionFlag";
 import { routeLine, type RouteTier } from "./returnRouteModel";
-import { checkPending, cleanIPQualityValue, ipClassification, ipQualityError, ipQualitySummary, unlockLabel, unlockServiceLabel, unlockServices, unlockTypeLabel } from "./ipQualityModel";
+import { canonicalIPQualityAddress, checkPending, cleanIPQualityValue, ipClassification, ipQualityCheckForAddress, ipQualityError, ipQualityFamilyLabel, ipQualitySummary, landingQualityAddress, unlockLabel, unlockServiceLabel, unlockServices, unlockTypeLabel } from "./ipQualityModel";
 import { AssessmentBadge, AssessmentSummary } from "./IPAssessment";
 import { IPQualityComparison } from "./IPQualityComparison";
 import { MeridianLinkBandwidth } from "@/app-modules/meridian/LinkBandwidth";
 
 type QualityState = {
-  checks: IPQualityCheck[]; diagnostics: NodeDiagnosticCheck[]; agents: AgentView[]; loading: boolean; error: boolean;
+  checks: IPQualityCheck[]; targets: IPQualityTarget[]; diagnostics: NodeDiagnosticCheck[]; agents: AgentView[]; loading: boolean; error: boolean;
   refresh: () => Promise<void>;
 };
 const QualityContext = createContext<QualityState | null>(null);
@@ -147,6 +148,7 @@ export function NodeHealthInline({ agent }: { agent: AgentView }) {
 // A list refresh never starts a diagnostic on any node.
 function DiagnosticsProvider({ agents, enabled, includeIPQuality, children }: { agents: AgentView[]; enabled: boolean; includeIPQuality: boolean; children: ReactNode }) {
   const [checks, setChecks] = useState<IPQualityCheck[]>([]);
+  const [targets, setTargets] = useState<IPQualityTarget[]>([]);
   const [diagnostics, setDiagnostics] = useState<NodeDiagnosticCheck[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -158,8 +160,8 @@ function DiagnosticsProvider({ agents, enabled, includeIPQuality, children }: { 
     const timeout = setTimeout(() => request.abort(), 15000);
     setLoading(true);
     try {
-      const [quality, nodeDiagnostics] = await Promise.all([includeIPQuality ? api.ipQuality(request.signal) : Promise.resolve({ checks: [] }), api.nodeDiagnostics(request.signal)]);
-      if (!request.signal.aborted) { setChecks(quality.checks); setDiagnostics(nodeDiagnostics.checks); setError(false); }
+      const [quality, nodeDiagnostics] = await Promise.all([includeIPQuality ? api.ipQuality(request.signal) : Promise.resolve({ checks: [], targets: [] }), api.nodeDiagnostics(request.signal)]);
+      if (!request.signal.aborted) { setChecks(quality.checks); setTargets(quality.targets); setDiagnostics(nodeDiagnostics.checks); setError(false); }
     } catch {
       if (pending.current === request) setError(true);
     } finally {
@@ -186,7 +188,7 @@ function DiagnosticsProvider({ agents, enabled, includeIPQuality, children }: { 
     document.addEventListener("visibilitychange", visible);
     return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", visible); };
   }, [enabled, active, error, loading, refresh]);
-  return <QualityContext.Provider value={{ checks, diagnostics, agents, loading, error, refresh }}>{children}</QualityContext.Provider>;
+  return <QualityContext.Provider value={{ checks, targets, diagnostics, agents, loading, error, refresh }}>{children}</QualityContext.Provider>;
 }
 
 export function IPQualityProvider({ agents, enabled, children }: { agents: AgentView[]; enabled: boolean; children: ReactNode }) {
@@ -197,7 +199,7 @@ export function NodeDiagnosticsProvider({ agents, enabled, children }: { agents:
   return <DiagnosticsProvider agents={agents} enabled={enabled} includeIPQuality={false}>{children}</DiagnosticsProvider>;
 }
 
-type DiagnosticsButtonProps = { nodeId: string; name: string; language: Language; compact?: boolean; linkBandwidth?: boolean };
+type DiagnosticsButtonProps = { nodeId: string; name: string; language: Language; compact?: boolean; linkBandwidth?: boolean; egressAddress?: string; landingEgress?: boolean };
 
 export function IPQualityButton(props: DiagnosticsButtonProps) {
   return <DiagnosticsButton {...props} includeIPQuality />;
@@ -207,36 +209,47 @@ export function NodeDiagnosticsButton(props: DiagnosticsButtonProps) {
   return <DiagnosticsButton {...props} includeIPQuality={false} />;
 }
 
-function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwidth = false, includeIPQuality }: DiagnosticsButtonProps & { includeIPQuality: boolean }) {
+function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwidth = false, egressAddress, landingEgress = false, includeIPQuality }: DiagnosticsButtonProps & { includeIPQuality: boolean }) {
   const state = useContext(QualityContext);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState(includeIPQuality ? "quality" : "network");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [requestAddress, setRequestAddress] = useState("");
+  const [selection, setSelection] = useState<{ address: string; currentAddress: string } | null>(null);
   const pending = useRef<AbortController | null>(null);
   useEffect(() => () => { const request = pending.current; pending.current = null; request?.abort(); }, []);
   if (!state) return null;
   const agent = state.agents.find((value) => value.id === nodeId);
-  const check = state.checks.find((value) => value.agentId === nodeId);
+  const targets = state.targets.filter((value) => value.agentId === nodeId);
+  const currentAddress = landingEgress ? landingQualityAddress(egressAddress ?? "", agent?.publicEgress, targets) : canonicalIPQualityAddress(egressAddress || agent?.publicEgress?.address || "");
+  const currentLabel = landingEgress ? copy(language, "已选出口", "Selected exit") : copy(language, "当前出口", "Current exit");
+  const address = selection?.currentAddress === currentAddress ? selection.address : currentAddress;
+  const target = targets.find((value) => value.address === address);
+  const family = address.includes(":") ? "ipv6" : "ipv4";
+  const familyTargets = targets.filter((value) => value.family === family);
+  const listCheck = ipQualityCheckForAddress(state.checks, nodeId, currentAddress);
+  const check = ipQualityCheckForAddress(state.checks, nodeId, address);
   const report = check?.report;
   const networkCheck = state.diagnostics.find((value) => value.agentId === nodeId && value.kind === "node.network-quality");
   const routeCheck = state.diagnostics.find((value) => value.agentId === nodeId && value.kind === "node.return-route");
   const bandwidthCheck = state.diagnostics.find((value) => value.agentId === nodeId && value.kind === "node.international-bandwidth");
   const hostCheck = state.diagnostics.find((value) => value.agentId === nodeId && value.kind === "node.host-profile");
   const active = checkPending(check);
+  const nodeActive = state.checks.some((value) => value.agentId === nodeId && checkPending(value));
   const unavailable = !agent || agent.status !== "active" || agent.credentialRevoked ? "ip_quality_node_unavailable"
     : !agent.connected ? "ip_quality_node_offline"
     : !agent.capabilities.ipQuality || !agent.capabilities.docker ? "ip_quality_agent_upgrade_required"
-    : !agent.publicEgress?.address ? "ip_quality_address_unavailable" : "";
+    : !target ? "ip_quality_address_unavailable" : "";
   const diagnosticsUnavailable = !agent || agent.status !== "active" || agent.credentialRevoked || !agent.connected || !agent.publicEgress?.address;
   const start = async () => {
-    if (pending.current || active || unavailable || state.error || state.loading) return;
+    if (pending.current || nodeActive || unavailable || state.error || state.loading) return;
     const request = new AbortController();
     pending.current = request;
     const timeout = setTimeout(() => request.abort(), 15000);
-    setSubmitting(true); setError("");
+    setSubmitting(true); setError(""); setRequestAddress(address);
     try {
-      await api.checkIPQuality(nodeId, request.signal);
+      await api.checkIPQuality(nodeId, address, request.signal);
       if (pending.current !== request) return;
       await state.refresh();
     } catch (cause) {
@@ -255,7 +268,7 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
     const request = new AbortController();
     pending.current = request;
     const timeout = setTimeout(() => request.abort(), 15000);
-    setSubmitting(true); setError("");
+    setSubmitting(true); setError(""); setRequestAddress("");
     try {
       await api.checkNodeDiagnostic(nodeId, kind, request.signal);
       if (pending.current === request) await state.refresh();
@@ -266,13 +279,14 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
       if (pending.current === request) { pending.current = null; setSubmitting(false); }
     }
   };
-  const summary = state.error ? copy(language, "节点诊断 · 读取失败", "Node diagnostics · Unavailable") : includeIPQuality ? ipQualitySummary(language, check) : copy(language, "主机与网络诊断", "Host and network diagnostics");
+  const summary = state.error ? copy(language, "节点诊断 · 读取失败", "Node diagnostics · Unavailable") : includeIPQuality ? ipQualitySummary(language, listCheck) : copy(language, "主机与网络诊断", "Host and network diagnostics");
+  const listUnlocks = Boolean(!state.error && listCheck?.state === "succeeded" && listCheck.report && !listCheck.stale && !listCheck.error && listCheck.assessment?.status !== "expired" && listCheck.assessment?.status !== "ip_changed");
   const currentUnlocks = Boolean(!state.error && check?.state === "succeeded" && check.report && !check.stale && !check.error && check.assessment?.status !== "expired" && check.assessment?.status !== "ip_changed");
   const broadcast = currentUnlocks && report?.ippure?.status === "ok" ? report.ippure.broadcast : undefined;
   const ipOrigin = broadcast === true ? copy(language, "广播 IP", "Broadcast IP") : broadcast === false ? copy(language, "原生 IP", "Native IP") : copy(language, "未知", "Unknown");
-  return <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) { setTab(includeIPQuality ? "quality" : "network"); setError(""); void state.refresh(); } }}>
+  return <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) { setTab(includeIPQuality ? "quality" : "network"); setSelection(null); setError(""); void state.refresh(); } }}>
     <SheetTrigger render={<Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "quality-list-trigger h-auto min-h-11 w-full max-w-full justify-start gap-2 px-0 py-1 text-left text-xs text-muted-foreground"} />} aria-label={compact ? copy(language, `查看 ${name} 的节点诊断`, `View node diagnostics for ${name}`) : copy(language, `查看 ${name} 的节点诊断：${summary}`, `View node diagnostics for ${name}: ${summary}`)} title={compact ? copy(language, "查看节点诊断", "View node diagnostics") : summary}>
-      {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="shrink-0"><AssessmentBadge language={language} assessment={!state.error ? check?.assessment : undefined} /></span><UnlockIndicators check={check} language={language} current={currentUnlocks} /><ChevronRightIcon className="ml-auto shrink-0" aria-hidden="true" /></>}
+      {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="flex shrink-0 flex-col items-center gap-0.5"><span className="text-[10px]" title={currentAddress}>{currentAddress ? currentAddress.includes(":") ? "IPv6" : "IPv4" : "IP"}</span><AssessmentBadge language={language} assessment={!state.error && !listCheck?.stale ? listCheck?.assessment : undefined} /></span><UnlockIndicators check={listCheck} language={language} current={listUnlocks} /><ChevronRightIcon className="ml-auto shrink-0" aria-hidden="true" /></>}
     </SheetTrigger>
     {open ? <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-6xl">
       <SheetHeader className="pr-12">
@@ -282,21 +296,30 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 text-xs text-muted-foreground">
-            {includeIPQuality ? <p className="break-words">{copy(language, "当前出口", "Current exit")}: {agent?.publicEgress?.address ?? "—"}{check?.checkedAt ? <> · {copy(language, "最近结果", "Last result")}: {new Date(check.checkedAt).toLocaleString(language)}</> : null}</p> : <p>{copy(language, "节点诊断按需执行，不会在后台持续探测。", "Node diagnostics run on demand and do not probe continuously in the background.")}</p>}
+            {includeIPQuality ? <p className="break-all">{currentLabel}: {currentAddress || "—"}</p> : <p>{copy(language, "节点诊断按需执行，不会在后台持续探测。", "Node diagnostics run on demand and do not probe continuously in the background.")}</p>}
           </div>
           <Button size="icon-sm" variant="ghost" disabled={state.loading} onClick={() => void state.refresh()} aria-label={copy(language, "刷新检测状态", "Refresh check status")}><RefreshCwIcon aria-hidden="true" /></Button>
         </div>
-        {(includeIPQuality && active) || submitting ? <p role="status" className="flex items-center gap-2 text-sm"><Spinner aria-hidden="true" />{submitting ? copy(language, "正在提交检测…", "Submitting check…") : check?.state === "pending" ? copy(language, "等待节点执行，可关闭此面板。", "Waiting for the node. You can close this panel.") : copy(language, "正在检测，可关闭此面板。", "Checking. You can close this panel.")}</p> : null}
-        {state.error || error || includeIPQuality && check?.error ? <p role="alert" className="text-sm text-destructive">{ipQualityError(language, state.error ? "read_failed" : error || check!.error!)}</p> : null}
-        {includeIPQuality && check?.stale ? <p role="status" className="text-sm text-destructive">{copy(language, "出口 IP 已变化。以下为旧 IP 的结果，请重新检测。", "The exit IP changed. The results below belong to the previous IP; run a new check.")}</p> : null}
+        {state.error ? <p role="alert" className="text-sm text-destructive">{ipQualityError(language, "read_failed")}</p> : null}
+        {tab === "network" && error && !requestAddress ? <p role="alert" className="text-sm text-destructive">{ipQualityError(language, error)}</p> : null}
+        {tab === "network" && submitting && !requestAddress ? <p role="status" className="flex items-center gap-2 text-sm"><Spinner aria-hidden="true" />{copy(language, "正在提交检测…", "Submitting check…")}</p> : null}
         <Tabs value={tab} onValueChange={setTab} className="min-w-0">
           <TabsList className={cn("grid h-auto w-full", includeIPQuality ? "grid-cols-2" : "grid-cols-1")}>
             {includeIPQuality ? <TabsTrigger value="quality">IP</TabsTrigger> : null}
             <TabsTrigger value="network">{copy(language, "网络", "Network")}</TabsTrigger>
           </TabsList>
-          {includeIPQuality ? <TabsContent value="quality" className="pt-3">{report ? <div className="space-y-3">
+          {includeIPQuality ? <TabsContent value="quality" className="pt-3"><Tabs value={family} onValueChange={(value) => {
+            const next = targets.find((item) => item.family === value && item.address === currentAddress) ?? targets.find((item) => item.family === value);
+            if (next) { setSelection({ address: next.address, currentAddress }); setError(""); }
+          }}><TabsList aria-label={copy(language, "出口地址族", "Exit address family")}>{(["ipv4", "ipv6"] as const).map((value) => <TabsTrigger key={value} value={value} disabled={submitting || value !== family && !targets.some((item) => item.family === value)}>{ipQualityFamilyLabel(value)}</TabsTrigger>)}</TabsList><TabsContent value={family} className="flex min-w-0 flex-col gap-3">
+            {familyTargets.length > 1 ? <SelectControl size="sm" disabled={submitting} aria-label={copy(language, "检测出口 IP", "Exit IP to inspect")} value={address} onValueChange={(value) => { setSelection({ address: value, currentAddress }); setError(""); }} options={familyTargets.map((item) => ({ value: item.address, label: `${item.address}${item.address === currentAddress ? ` · ${currentLabel}` : ""}` }))} /> : null}
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="break-all font-mono">{address || copy(language, "地址待上报", "Address unavailable")}</span>{address && address === currentAddress ? <span>{currentLabel}</span> : null}{check?.checkedAt ? <time dateTime={check.checkedAt}>{new Date(check.checkedAt).toLocaleString(language)}</time> : null}</div>
+            {active || submitting && requestAddress === address ? <p role="status" className="flex items-center gap-2 text-sm"><Spinner aria-hidden="true" />{submitting ? copy(language, "正在提交检测…", "Submitting check…") : check?.state === "pending" ? copy(language, "等待节点执行，可关闭此面板。", "Waiting for the node. You can close this panel.") : copy(language, "正在检测，可关闭此面板。", "Checking. You can close this panel.")}</p> : nodeActive ? <p role="status" className="text-xs text-muted-foreground">{copy(language, "此节点的其他出口正在检测，完成后可检测当前地址。", "Another exit on this node is being checked. Wait before checking this address.")}</p> : null}
+            {error && requestAddress === address || check?.error ? <p role="alert" className="text-sm text-destructive">{ipQualityError(language, requestAddress === address && error || check!.error!)}</p> : null}
+            {check?.stale ? <p role="status" className="text-sm text-destructive">{copy(language, "此 IP 已不在当前可检测地址中，以下为历史结果。", "This IP is no longer available for checking. These are historical results.")}</p> : null}
+            {report ? <div className="flex flex-col gap-3">
             <AssessmentSummary language={language} assessment={check?.assessment} report={report} checkedAt={check?.checkedAt} />
-            <IPQualityComparison language={language} nodeId={nodeId} />
+            <IPQualityComparison language={language} nodeId={nodeId} compareAddress={address} />
             <section className="rounded-lg border px-4 py-3" aria-label={copy(language, "基础信息", "Basic information")}>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"><RegionFlag code={report.regionCode} language={language} /><span className="font-mono font-medium">{report.address}</span><span className="text-muted-foreground">IPQuality {report.version}</span></div>
               <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3">
@@ -314,6 +337,7 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
                 const hasKnownScale = Number.isFinite(risk) && risk >= 0 && risk <= 100;
                 return <div key={value.source} className="grid grid-cols-[100px_minmax(0,1fr)_56px] items-center gap-2 text-xs"><span className="truncate text-muted-foreground" title={value.source}>{value.source}</span><span className="h-1.5 rounded-full bg-muted">{hasKnownScale ? <span className="block h-full rounded-full bg-primary" style={{ width: `${risk}%` }} /> : null}</span><span className="text-right font-medium tabular-nums">{value.value}</span></div>;
               })}{!report.scores.length ? <p className="text-xs text-muted-foreground">{copy(language, "暂无评分数据", "No score data")}</p> : null}</div>
+              {report.ippure?.status === "unsupported" ? <p className="mt-1 text-xs text-muted-foreground">IPPure · {copy(language, "IPv6 不支持", "IPv6 unsupported")}</p> : null}
             </section>
             <section className="border-t pt-2" aria-label={copy(language, "风险因子", "Risk factors")}>
               <h3 className="mb-1 text-xs font-semibold text-latency-fast">{copy(language, "三 · 风险因子", "3 · Risk factors")}</h3>
@@ -323,7 +347,7 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
               <h3 className="mb-1 text-xs font-semibold text-latency-fast">{copy(language, "四 · 流媒体与 AI 解锁", "4 · Streaming and AI availability")}</h3>
               <UnlockMatrix language={language} services={report.services} exitRegion={report.regionCode} />
             </section>
-          </div> : <p className="py-6 text-center text-sm text-muted-foreground">{copy(language, "尚无 IP 质量结果", "No IP-quality report yet")}</p>}</TabsContent> : null}
+          </div> : <p className="py-6 text-center text-sm text-muted-foreground">{copy(language, "此出口待检测", "This exit needs a check")}</p>}</TabsContent></Tabs></TabsContent> : null}
           <TabsContent value="network" className="pt-3">
             <div className="grid items-start gap-3 lg:grid-cols-2">
               <section className="space-y-3 rounded-lg border p-3 sm:p-4" aria-label={copy(language, "三网质量", "Carrier quality")}>
@@ -386,7 +410,7 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
       {includeIPQuality && tab === "quality" ? <SheetFooter className="border-t">
         {unavailable ? <p className="text-xs text-muted-foreground">{ipQualityError(language, unavailable)}</p> : null}
         <p className="text-xs text-muted-foreground">{copy(language, "使用 IPQuality 访问第三方检测服务，会暴露该节点的出口 IP；不上传在线报告，不测速。首次需下载镜像。", "IPQuality contacts third-party services, revealing this node's exit IP. No online report upload or speed test. The first run downloads an image.")}</p>
-        <Button disabled={!!unavailable || active || submitting || state.loading || state.error} onClick={() => void start()}>{report ? copy(language, "重新检测", "Run again") : copy(language, "开始检测", "Run check")}</Button>
+        <Button disabled={!!unavailable || nodeActive || submitting || state.loading || state.error} onClick={() => void start()}>{report ? copy(language, `重新检测 ${ipQualityFamilyLabel(family)}`, `Check ${ipQualityFamilyLabel(family)} again`) : copy(language, `检测 ${ipQualityFamilyLabel(family)}`, `Check ${ipQualityFamilyLabel(family)}`)}</Button>
       </SheetFooter> : null}
     </SheetContent> : null}
   </Sheet>;

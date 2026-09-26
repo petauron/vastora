@@ -11,6 +11,7 @@ import { TableCell, TableRow } from "@/components/ui/table";
 import { regionName } from "@/lib/regions";
 import { cn } from "@/lib/utils";
 import { assessmentLabel } from "@/views/IPAssessment";
+import { ipQualityCheckForAddress } from "@/views/ipQualityModel";
 import { IPQualityButton, useIPQuality } from "@/views/IPQuality";
 import { IPQualityComparison } from "@/views/IPQualityComparison";
 import { useLanding } from "@/views/LandingControls";
@@ -52,7 +53,7 @@ export function LandingTableRows({ language, search, siteNames, onSubscriptions 
             <div className="flex items-center gap-2"><RegionFlag code={state.regions[server.nodeId]} language={language} /><span className="min-w-0 break-words font-medium">{server.name}</span></div>
             <p className="mt-1 text-xs text-muted-foreground"><NodeLocation regionCode={state.regions[server.nodeId]} siteName={siteNames?.[server.nodeId]} language={language} /> · {server.egressIp?.includes(":") ? "IPv6" : "IPv4"}</p>
           </TableCell>
-          <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><IPQualityButton nodeId={server.nodeId} name={server.name} language={language} /></TableCell>
+          <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><IPQualityButton nodeId={server.nodeId} name={server.name} language={language} egressAddress={server.egressIp ?? ""} landingEgress /></TableCell>
           <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><span className="inline-flex items-center gap-2"><span aria-hidden="true" className={cn("apps-status-dot", server.status === "ready" ? "bg-latency-fast" : ["failed", "offline"].includes(server.status) ? "bg-destructive" : "bg-muted-foreground")} />{copy(language, statusLabels[server.status][0], statusLabels[server.status][1])}</span></TableCell>
           <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><LandingSubscriptions server={server} language={language} /></TableCell>
           <TableCell className="col-span-2 p-0 lg:px-2 lg:py-3"><div className="flex justify-end"><Button variant="ghost" size="icon-sm" className="max-lg:min-h-11 max-lg:min-w-11" aria-label={copy(language, `${server.name} 落地设置`, `${server.name} landing settings`)} aria-expanded={open} aria-controls={panelId} onClick={() => setExpanded(open ? null : server.nodeId)}>{open ? <ChevronDownIcon aria-hidden="true" /> : <SlidersHorizontalIcon aria-hidden="true" />}</Button></div></TableCell>
@@ -74,7 +75,7 @@ export function LandingTableRows({ language, search, siteNames, onSubscriptions 
       </Fragment>;
     })}
     {state?.view && !state.failed && !servers.length ? <TableRow className="block lg:table-row"><TableCell colSpan={5} className="block py-5 text-xs text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的落地机", "No matching landing nodes") : copy(language, "尚未添加落地机", "No landing nodes configured")}</TableCell></TableRow> : null}
-    <TableRow className="block hover:bg-transparent lg:table-row"><TableCell colSpan={5} className="block whitespace-normal lg:table-cell"><div className="py-2"><IPQualityComparison language={language} nodes={quality?.agents.map((agent) => ({ id: agent.id, name: agent.name })) ?? []} /></div></TableCell></TableRow>
+    <TableRow className="block hover:bg-transparent lg:table-row"><TableCell colSpan={5} className="block whitespace-normal lg:table-cell"><div className="py-2"><IPQualityComparison language={language} nodes={quality?.agents.map((agent) => ({ id: agent.id, name: agent.name, address: agent.publicEgress?.address })) ?? []} /></div></TableCell></TableRow>
   </>;
 }
 
@@ -99,7 +100,7 @@ function AddLandingNode({ state, language, onAdded }: { state: LandingState; lan
     if (await state.change((signal) => api.selectLanding(nodeIds, view.revision, selectedRegions(state, nodeIds), signal))) onAdded();
   }}><FieldGroup><Field><FieldLabel htmlFor={id}>{copy(language, "选择落地节点", "Choose a landing node")}</FieldLabel><div className="flex gap-2">
     <Select items={candidates.map((item) => ({ value: item.nodeId, label: item.name }))} value={candidate?.nodeId ?? null} disabled={disabled || !candidates.length || (view?.nodeIds.length ?? 0) >= 16} onValueChange={(value) => setCandidateID(value ?? "")}>
-      <SelectTrigger id={id} className="min-w-0 flex-1"><SelectValue placeholder={copy(language, "选择节点", "Choose a node")} /></SelectTrigger><SelectContent className="apps-workspace"><SelectGroup>{candidates.map((item) => <SelectItem key={item.nodeId} value={item.nodeId}><RegionFlag code={state.regions[item.nodeId]} language={language} />{item.name} · {assessmentLabel(language, quality?.checks.find((check) => check.agentId === item.nodeId)?.assessment)}</SelectItem>)}</SelectGroup></SelectContent>
+      <SelectTrigger id={id} className="min-w-0 flex-1"><SelectValue placeholder={copy(language, "选择节点", "Choose a node")} /></SelectTrigger><SelectContent className="apps-workspace"><SelectGroup>{candidates.map((item) => <SelectItem key={item.nodeId} value={item.nodeId}><RegionFlag code={state.regions[item.nodeId]} language={language} />{item.name} · {assessmentLabel(language, ipQualityCheckForAddress(quality?.checks ?? [], item.nodeId)?.assessment)}</SelectItem>)}</SelectGroup></SelectContent>
     </Select><Button type="submit" size="sm" disabled={disabled || !candidate || !regionReady || (view?.nodeIds.length ?? 0) >= 16}>{copy(language, "添加", "Add")}</Button></div>
     <FieldDescription>{candidate && !regionReady ? copy(language, "正在识别落地区域，完成后才能添加。", "Detecting the landing region before it can be added.") : (view?.nodeIds.length ?? 0) >= 16 ? copy(language, "最多可配置 16 台落地机。", "Up to 16 landing nodes.") : copy(language, "仅显示在线且已接入私网的节点。", "Only online nodes on the managed private network are listed.")}</FieldDescription>
   </Field></FieldGroup></form>;
