@@ -305,7 +305,9 @@ func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executa
 
 func (b *SystemdPackageBackend) Inspect(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
 	unitFound := false
+	retainedDirectoriesOnly := len(receipt.Resources) > 0
 	for _, resource := range receipt.Resources {
+		retainedDirectoriesOnly = retainedDirectoriesOnly && resource.Kind == "directory"
 		actual := b.Manager.path(resource.Path)
 		if err := checkPackageParents(actual); err != nil {
 			return err
@@ -347,7 +349,7 @@ func (b *SystemdPackageBackend) Inspect(ctx context.Context, task DeploymentTask
 			return errors.New("agent: unexpected resource kind in systemd receipt")
 		}
 	}
-	if !unitFound && receipt.State != "retained" {
+	if !unitFound && receipt.State != "retained" && !(task.Operation == "uninstall" && retainedDirectoriesOnly) {
 		return errors.New("agent: systemd ownership evidence is missing")
 	}
 	return ctx.Err()
@@ -569,11 +571,10 @@ func (b *SystemdPackageBackend) Remove(ctx context.Context, task DeploymentTask,
 		return err
 	}
 	unit := resourceNamed(receipt, "unit", "service")
-	if unit == nil {
-		return errors.New("agent: missing systemd receipt")
-	}
-	if err := b.Manager.run(ctx, "systemctl", "disable", "--now", unit.Name); err != nil {
-		return errors.New("agent: package service could not be disabled")
+	if unit != nil {
+		if err := b.Manager.run(ctx, "systemctl", "disable", "--now", unit.Name); err != nil {
+			return errors.New("agent: package service could not be disabled")
+		}
 	}
 	for _, resource := range receipt.Resources {
 		if resource.Kind == "directory" {

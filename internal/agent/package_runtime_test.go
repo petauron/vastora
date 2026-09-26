@@ -402,6 +402,15 @@ func TestPackageSystemdCompleteLifecycleBothArchitectures(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(dataPath, "database")); err != nil {
 				t.Fatal(err)
 			}
+			// An explicitly requested later purge must not need the removed unit.
+			task.ID, task.DeleteData = "purge-retained-data", true
+			result, err = executor.Deploy(context.Background(), task)
+			if err != nil || result.Resources == nil || result.Resources.State != "removed" {
+				t.Fatalf("retained native data could not be explicitly removed: %v", err)
+			}
+			if _, err := os.Stat(dataPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("explicit native data removal left state: %v", err)
+			}
 			for _, command := range calls {
 				if strings.Contains(command, "sh ") || strings.Contains(command, "bash ") {
 					t.Fatal("shell invoked")

@@ -262,7 +262,9 @@ func (b *DockerPackageBackend) Resume(ctx context.Context, task DeploymentTask, 
 	if err := b.Inspect(ctx, task, receipt); err != nil {
 		return err
 	}
-	for _, id := range b.resumeIDs {
+	// Backup stops dependents first. Resume their dependencies first.
+	for i := len(b.resumeIDs) - 1; i >= 0; i-- {
+		id := b.resumeIDs[i]
 		if _, err := b.Docker.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 			return errors.New("agent: original package process could not resume after backup")
 		}
