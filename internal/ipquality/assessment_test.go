@@ -93,8 +93,8 @@ func TestAssessmentIPQSOnlyConservativeScore(t *testing.T) {
 	r = assessmentReport("Hosting")
 	r.Scores = []Score{{"SCAMALYTICS", "0"}, {"AbuseIPDB", "14"}}
 	r.RecordObservations(assessmentTime)
-	if expired := Assess(&r, assessmentTime.Format(time.RFC3339Nano), false, assessmentTime.Add(EvidenceMaxAge+time.Second), DefaultPreferences()); expired.Status != "expired" || expired.Score != nil {
-		t.Fatalf("expired conservative score remained usable: %+v", expired)
+	if expired := Assess(&r, assessmentTime.Format(time.RFC3339Nano), false, assessmentTime.Add(EvidenceMaxAge+time.Second), DefaultPreferences()); expired.Status != "expired" || expired.Score == nil {
+		t.Fatalf("historical conservative score disappeared: %+v", expired)
 	}
 }
 
@@ -238,7 +238,7 @@ func TestAssessmentRegionAndFreshness(t *testing.T) {
 		status  string
 	}{{true, assessmentTime, "ip_changed"}, {false, assessmentTime.Add(24*time.Hour + time.Second), "expired"}} {
 		a := Assess(&r, assessmentTime.Format(time.RFC3339Nano), tc.changed, tc.now, DefaultPreferences())
-		if a.Status != tc.status || a.Score != nil || a.Advice != "recheck" {
+		if a.Status != tc.status || (a.Score == nil) != tc.changed || a.Advice != "recheck" {
 			t.Fatalf("stale score remained usable: %+v", a)
 		}
 	}
@@ -407,8 +407,8 @@ func TestIPv6EvidenceBoundaries(t *testing.T) {
 	if a := Assess(&r, stamp, true, assessmentTime, DefaultPreferences()); a.Score != nil || a.Status != "ip_changed" {
 		t.Fatalf("changed IP retained score: %+v", a)
 	}
-	if a := Assess(&r, stamp, false, assessmentTime.Add(25*time.Hour), DefaultPreferences()); a.Score != nil || a.Status != "expired" {
-		t.Fatalf("expired report retained score: %+v", a)
+	if a := Assess(&r, stamp, false, assessmentTime.Add(25*time.Hour), DefaultPreferences()); a.Score == nil || a.Status != "expired" {
+		t.Fatalf("expired report lost its historical score: %+v", a)
 	}
 	if a := Assess(nil, "", false, assessmentTime, DefaultPreferences()); a.Score != nil {
 		t.Fatalf("absent report acquired score: %+v", a)
@@ -423,8 +423,8 @@ func TestHistoricalTypeKeepsSameIPProvenance(t *testing.T) {
 	r := assessmentReport("ISP")
 	stamp := assessmentTime.Format(time.RFC3339Nano)
 	a := Assess(&r, stamp, false, assessmentTime.Add(25*time.Hour), DefaultPreferences())
-	if a.Status != "expired" || a.IPType != "residential" || a.Score != nil {
-		t.Fatalf("historical type should survive without reviving expired score: %+v", a)
+	if a.Status != "expired" || a.IPType != "residential" || a.Score == nil || *a.Score != 100 || a.Advice != "recheck" {
+		t.Fatalf("historical result should survive with recheck advice: %+v", a)
 	}
 	for i := range r.Observations {
 		r.Observations[i].Address = "203.0.113.9"

@@ -280,8 +280,8 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
     }
   };
   const summary = state.error ? copy(language, "节点诊断 · 读取失败", "Node diagnostics · Unavailable") : includeIPQuality ? ipQualitySummary(language, listCheck) : copy(language, "主机与网络诊断", "Host and network diagnostics");
-  const listUnlocks = Boolean(!state.error && listCheck?.state === "succeeded" && listCheck.report && !listCheck.stale && !listCheck.error && listCheck.assessment?.status !== "expired" && listCheck.assessment?.status !== "ip_changed");
-  const currentUnlocks = Boolean(!state.error && check?.state === "succeeded" && check.report && !check.stale && !check.error && check.assessment?.status !== "expired" && check.assessment?.status !== "ip_changed");
+  const listUnlocks = Boolean(!state.error && listCheck?.state === "succeeded" && listCheck.report && !listCheck.stale && !listCheck.error && listCheck.assessment?.status !== "ip_changed");
+  const currentUnlocks = Boolean(!state.error && check?.state === "succeeded" && check.report && !check.stale && !check.error && check.assessment?.status !== "ip_changed");
   const broadcast = currentUnlocks && report?.ippure?.status === "ok" ? report.ippure.broadcast : undefined;
   const ipOrigin = broadcast === true ? copy(language, "广播 IP", "Broadcast IP") : broadcast === false ? copy(language, "原生 IP", "Native IP") : copy(language, "未知", "Unknown");
   return <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) { setTab(includeIPQuality ? "quality" : "network"); setSelection(null); setError(""); void state.refresh(); } }}>

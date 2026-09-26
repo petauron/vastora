@@ -61,10 +61,10 @@ it("labels an IPQS-only lower bound and explains its interval", async () => {
   expect(container.textContent).toContain("按最低可能贡献计算 63 分");
 });
 
-it("does not display a formal number for expired or changed-IP results", () => {
+it("retains historical scores while hiding changed-IP results", () => {
   expect(assessmentLabel("zh-CN", { ...assessment(), validUntil: undefined })).toBe("待检测");
-  expect(assessmentLabel("zh-CN", { ...assessment(), status: "expired" })).toBe("待检测");
-  expect(assessmentLabel("zh-CN", { ...assessment(), status: "ip_changed" })).toBe("待检测");
+  expect(assessmentLabel("zh-CN", { ...assessment(), status: "expired", score: 63 })).toBe("63");
+  expect(assessmentLabel("zh-CN", { ...assessment(), status: "ip_changed", score: 63 })).toBe("待检测");
 });
 
 it("loads comparisons on demand, separates partial rows, and only selects a form value", async () => {
