@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.232](https://github.com/petauron/vastora/compare/v0.1.0-alpha.231...v0.1.0-alpha.232) (2026-09-26)
+
+
+### Features
+
+* **meridian:** color link bandwidth by measured speed ([#692](https://github.com/petauron/vastora/issues/692)) ([5d6b01e](https://github.com/petauron/vastora/commit/5d6b01e5557f0c5776be13c117fbfc1425cb4e8a))
+
 ## [0.1.0-alpha.231](https://github.com/petauron/vastora/compare/v0.1.0-alpha.230...v0.1.0-alpha.231) (2026-09-26)
 
 
