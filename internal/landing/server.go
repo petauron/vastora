@@ -150,7 +150,8 @@ MountFlags=private
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Dante uses getifaddrs via unprivileged netlink to locate the bound IPv6 address.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 CapabilityBoundingSet=
 AmbientCapabilities=
 UMask=0077
