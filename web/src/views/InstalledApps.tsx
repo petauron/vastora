@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
-import { LandingProvider, LandingManager, LandingNotice, LandingLatency } from "./LandingControls";
+import { LandingProvider, LandingManager, LandingNotice, LandingLatency, LandingTableRows } from "./LandingControls";
 import { AppWindowIcon, EllipsisIcon, ExternalLinkIcon, MonitorIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
 import { api } from "../api";
 import type { Mutate } from "../App";
@@ -75,7 +75,7 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrad
         {threeXUI ? <div className="flex items-center gap-2"><h2 className="text-base font-medium" id={headingID}>{name}</h2>{group.app ? <AppIdentityBadge app={group.app} language={language} /> : null}</div> : <CardTitle className="flex flex-wrap items-center gap-2">
           <h2 className="min-w-0 break-words" id={headingID}>{name}</h2>{group.app ? <AppIdentityBadge app={group.app} language={language} /> : null}
         </CardTitle>}
-        {threeXUI ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, `${nodeCount} 个节点 · ${group.controller ? 1 : 0} 台订阅主机`, `${nodeCount} nodes · ${group.controller ? 1 : 0} subscription host`)}</p>
+        {threeXUI ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, `${nodeCount} 个线路机 · ${group.controller ? 1 : 0} 台订阅主机`, `${nodeCount} entry nodes · ${group.controller ? 1 : 0} subscription host`)}</p>
           : <CardDescription>{copy(language, `已安装到 ${group.instances.length} 个节点`, `Installed on ${group.instances.length} node(s)`)}</CardDescription>}
       </div>
       {attentionInstance ? <Button onClick={() => onManage(attentionInstance.application)} size="sm" variant="ghost">
@@ -91,7 +91,7 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrad
           <InputGroupInput type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={copy(language, "搜索节点", "Search nodes")} placeholder={copy(language, "搜索节点…", "Search nodes…")} />
           <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
         </InputGroup>
-        {!threeXUI || search ? <p role="status" className="text-xs text-muted-foreground">{copy(language, `${instances.length} 个节点`, `${instances.length} node(s)`)}</p> : null}
+        {!threeXUI ? <p role="status" className="text-xs text-muted-foreground">{copy(language, `${instances.length} 个节点`, `${instances.length} node(s)`)}</p> : null}
         {group.controller ? <ControllerBand instance={group.controller} language={language} onClients={onClients} onManage={onManage} onUpgrade={onUpgrade}>
           {threeXUI ? <LandingManager language={language} /> : null}
         </ControllerBand> : threeXUI ? <div className="ml-auto"><LandingManager language={language} /></div> : null}
@@ -108,8 +108,10 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrad
           </TableRow>
         </TableHeader>
         <TableBody className="block lg:table-row-group">
+          {threeXUI ? <TableRow className="block bg-muted/30 hover:bg-muted/30 lg:table-row"><TableCell colSpan={6} className="block text-xs font-medium lg:table-cell">{copy(language, "线路机", "Entry nodes")} <span className="ml-1 text-muted-foreground">{instances.length}</span></TableCell></TableRow> : null}
           {instances.map((instance) => <InstalledInstanceRow instance={instance} key={instance.application.id} language={language} mutate={mutate} onManage={onManage} onUpgrade={onUpgrade} onReality={onReality} showSite={showSite} threeXUI={threeXUI} />)}
           {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 6 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 Xray 节点", "No Xray nodes configured")}</TableCell></TableRow> : null}
+          {threeXUI ? <LandingTableRows language={language} search={search} /> : null}
         </TableBody>
       </Table>
     </Content>
