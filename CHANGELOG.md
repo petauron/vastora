@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.242](https://github.com/petauron/vastora/compare/v0.1.0-alpha.241...v0.1.0-alpha.242) (2026-09-26)
+
+
+### Features
+
+* **meridian:** use plurality and historical evidence for IP types ([#712](https://github.com/petauron/vastora/issues/712)) ([9e8ea5a](https://github.com/petauron/vastora/commit/9e8ea5a0f4bd8a09a2843ec017618859ad089462))
+
 ## [0.1.0-alpha.241](https://github.com/petauron/vastora/compare/v0.1.0-alpha.240...v0.1.0-alpha.241) (2026-09-26)
 
 
