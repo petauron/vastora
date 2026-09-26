@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.246](https://github.com/petauron/vastora/compare/v0.1.0-alpha.245...v0.1.0-alpha.246) (2026-09-26)
+
+
+### Bug Fixes
+
+* **landing:** restore IPv6 egress interface discovery ([#721](https://github.com/petauron/vastora/issues/721)) ([f40e6a7](https://github.com/petauron/vastora/commit/f40e6a7a5e5cac9dfd830070adae3c4f4feb283e))
+
 ## [0.1.0-alpha.245](https://github.com/petauron/vastora/compare/v0.1.0-alpha.244...v0.1.0-alpha.245) (2026-09-26)
 
 
