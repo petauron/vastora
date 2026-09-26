@@ -1,8 +1,10 @@
 # Catalog runtime v4 acceptance checkpoint
 
-This is an implementation checkpoint, not production approval. All Vastora
-changes remain on the feature branch. Do not enable the independent publisher
-or run the maintenance cutover based on unit tests alone.
+This is an implementation checkpoint, not production approval. Vastora changes
+are reviewed in PR #716; Pulse notification is in petauron/pulse#25. The shared
+module is published as petauron/catalog v0.1.0 and pinned without a development
+workspace replacement. Do not enable the independent publisher or run the
+maintenance cutover based on unit tests alone.
 
 ## Verified locally
 
@@ -26,16 +28,23 @@ or run the maintenance cutover based on unit tests alone.
   not rendered-browser or deployed-UI evidence.
 - CI workflow policy and release sequencing checks pass locally.
 
-Docker and systemd lifecycle tests currently use simulated engines/commands.
-Their architecture fixtures do not establish execution on real amd64/arm64
-hosts. No production application, catalog object, or signing secret was changed
-during this checkpoint.
+The real-host CI matrix passed on Linux amd64 and arm64 in run 36254810439:
+actual Docker/systemd installation, metadata-only adoption of copied v4 receipts,
+upgrade, cold backup, data restore, logs and retained-data uninstall. These tests
+use disposable hosted runners and neither execute production applications nor
+prove adoption of a historical production installation. They exposed and led to
+fixes for stale Docker resume IDs and systemd startup confirmation ordering.
+
+Production signing remains disabled. The catalog-signing environment is restricted
+to protected branches with administrator bypass disabled; signing and upload
+credentials are still operator prerequisites. No production application or live
+catalog object was modified.
 
 ## Required before release/cutover
 
-- Run isolated Linux Docker and systemd lifecycle acceptance on amd64 and arm64
-  for applications not hard-coded into Vastora. Cover configuration, networking,
-  health, logs, backup/restore, upgrade failure and retained-data uninstall.
+- Keep the real-host matrix green on the final release commit. Extend acceptance
+  to permission/secret boundary checks and application-specific health/configuration
+  behavior, beyond the generic process/data lifecycle already exercised.
 - Rehearse adoption with copied historical state and real runtime resources;
   compare container ID/StartedAt, MainPID/InvocationID, mounts, ports, config
   digests and pairing before/after. Mock receipts do not prove no restart.

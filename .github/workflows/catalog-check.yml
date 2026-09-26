@@ -58,6 +58,6 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Validate shared protocol and retained bootstrap trust
-        run: go run github.com/petauron/catalog/cmd/catalog-check --catalog internal/center/testdata/reviewed-catalog-v4.json --root-directory catalog/trust
+        run: sh scripts/check-independent-catalog.sh --catalog internal/center/testdata/reviewed-catalog-v4.json --root-directory catalog/trust
       - name: Verify generic executors, admission, and forward migration
         run: go test ./internal/agent ./internal/center -count=1 -timeout=10m
