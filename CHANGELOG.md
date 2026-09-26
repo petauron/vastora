@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.244](https://github.com/petauron/vastora/compare/v0.1.0-alpha.243...v0.1.0-alpha.244) (2026-09-26)
+
+
+### Features
+
+* **meridian:** simplify MVP exit and subscription controls ([#717](https://github.com/petauron/vastora/issues/717)) ([e320b0e](https://github.com/petauron/vastora/commit/e320b0e09abb2b0c27ebd022dada0bbef35494e5))
+
 ## [0.1.0-alpha.243](https://github.com/petauron/vastora/compare/v0.1.0-alpha.242...v0.1.0-alpha.243) (2026-09-26)
 
 
