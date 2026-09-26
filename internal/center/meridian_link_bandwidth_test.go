@@ -74,7 +74,7 @@ func TestMeridianLinkBandwidthQueuesBothPrivatePeers(t *testing.T) {
 	if _, err := store.db.Exec(`UPDATE agents SET tailscale_ownership='managed',last_seen_at=? WHERE id=?`, stamp, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{egress.ID, other.ID}, LandingRegionCodes: map[string]string{egress.ID: "US", other.ID: "US"}}); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{Revision: 1, NodeIDs: []string{egress.ID, other.ID}, LandingRegionCodes: map[string]string{egress.ID: "US", other.ID: "US"}}); err != nil {
 		t.Fatal(err)
 	}
 	otherPeer, _ := json.Marshal(landing.PeerIdentity{ID: "ts-other", PublicKey: "nodekey:other", Address: "100.64.0.83"})
