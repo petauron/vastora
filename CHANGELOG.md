@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.233](https://github.com/petauron/vastora/compare/v0.1.0-alpha.232...v0.1.0-alpha.233) (2026-09-26)
+
+
+### Features
+
+* **meridian:** select a bound landing IPv4 or IPv6 egress ([#694](https://github.com/petauron/vastora/issues/694)) ([cd60807](https://github.com/petauron/vastora/commit/cd608079114de3d48293faa9f5d842942141e401))
+
 ## [0.1.0-alpha.232](https://github.com/petauron/vastora/compare/v0.1.0-alpha.231...v0.1.0-alpha.232) (2026-09-26)
 
 
