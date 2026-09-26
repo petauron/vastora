@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.234](https://github.com/petauron/vastora/compare/v0.1.0-alpha.233...v0.1.0-alpha.234) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** discover IPv6 landing egress choices ([#696](https://github.com/petauron/vastora/issues/696)) ([f3c90c2](https://github.com/petauron/vastora/commit/f3c90c21991f9d19fe83e9cf40cb82b831ed9a52))
+
 ## [0.1.0-alpha.233](https://github.com/petauron/vastora/compare/v0.1.0-alpha.232...v0.1.0-alpha.233) (2026-09-26)
 
 
