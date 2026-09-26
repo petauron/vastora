@@ -31,7 +31,7 @@ it("keeps missing evidence as an interval and reveals policy only on expansion",
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root?.render(<AssessmentSummary language="zh-CN" assessment={assessment()} />));
-  expect(container.textContent).toContain("暂评 75～100");
+  expect(container.textContent).toContain("待检测");
   expect(container.textContent).not.toContain("Meridian 评分 v2");
   const trigger = container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
   expect(trigger.getAttribute("aria-expanded")).toBe("false");
@@ -51,7 +51,8 @@ it("labels an IPQS-only lower bound and explains its interval", async () => {
     contributions: [{ id: "sources", min: 14.3, max: 24.3, weight: 25, missing: ["IPQS"] }], missing: ["IPQS"], advice: "direct",
   };
   await act(async () => root?.render(<AssessmentSummary language="zh-CN" assessment={conservative} />));
-  expect(container.textContent).toContain("63 / 100");
+  expect(container.textContent).toContain("63");
+  expect(container.textContent).not.toContain("63 / 100");
   expect(container.textContent).not.toContain("保守分");
   expect(container.textContent).toContain("可直连");
   await act(async () => container.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click());
@@ -60,8 +61,8 @@ it("labels an IPQS-only lower bound and explains its interval", async () => {
 });
 
 it("does not display a formal number for expired or changed-IP results", () => {
-  expect(assessmentLabel("zh-CN", { ...assessment(), status: "expired" })).toBe("结果已过期");
-  expect(assessmentLabel("zh-CN", { ...assessment(), status: "ip_changed" })).toBe("IP 已变化");
+  expect(assessmentLabel("zh-CN", { ...assessment(), status: "expired" })).toBe("待检测");
+  expect(assessmentLabel("zh-CN", { ...assessment(), status: "ip_changed" })).toBe("待检测");
 });
 
 it("loads comparisons on demand, separates partial rows, and only selects a form value", async () => {
