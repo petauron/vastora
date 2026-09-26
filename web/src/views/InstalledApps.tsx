@@ -99,16 +99,17 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrad
       <Table aria-label={threeXUI ? copy(language, `${name} 节点`, `${name} nodes`) : copy(language, `${name} 已安装实例`, `${name} installed instances`)} className="apps-instance-table block lg:table lg:table-fixed">
         <TableHeader className="hidden lg:table-header-group">
           <TableRow>
-            <TableHead className={threeXUI ? "w-[30%]" : "w-[36%]"}>{copy(language, "节点", "Node")}</TableHead>
-            <TableHead className={threeXUI ? "w-[15%]" : "w-[24%]"}>{copy(language, "状态", "Status")}</TableHead>
-            {threeXUI ? <TableHead className="w-[35%]">{copy(language, "全局落地延迟", "Global exit latency")}</TableHead> : null}
-            <TableHead className={threeXUI ? "w-[12%]" : "w-[24%]"}>{copy(language, "入口", "Access")}</TableHead>
-            <TableHead className={threeXUI ? "w-[8%]" : "w-[16%]"}><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
+            <TableHead className={threeXUI ? "w-[22%]" : "w-[36%]"}>{copy(language, "节点", "Node")}</TableHead>
+            {threeXUI ? <TableHead className="w-[42%]">{copy(language, "IP 质量与解锁", "IP quality & availability")}</TableHead> : null}
+            <TableHead className={threeXUI ? "w-[11%]" : "w-[24%]"}>{copy(language, "状态", "Status")}</TableHead>
+            {threeXUI ? <TableHead className="w-[16%]">{copy(language, "全局落地延迟", "Global exit latency")}</TableHead> : null}
+            <TableHead className={threeXUI ? "w-[6%]" : "w-[24%]"}>{copy(language, "入口", "Access")}</TableHead>
+            <TableHead className={threeXUI ? "w-[3%]" : "w-[16%]"}><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody className="block lg:table-row-group">
           {instances.map((instance) => <InstalledInstanceRow instance={instance} key={instance.application.id} language={language} mutate={mutate} onManage={onManage} onUpgrade={onUpgrade} onReality={onReality} showSite={showSite} threeXUI={threeXUI} />)}
-          {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 5 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 Xray 节点", "No Xray nodes configured")}</TableCell></TableRow> : null}
+          {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 6 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 Xray 节点", "No Xray nodes configured")}</TableCell></TableRow> : null}
         </TableBody>
       </Table>
     </Content>
@@ -242,14 +243,16 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         {threeXUI ? <RegionFlag code={instance.realityServices[0]?.regionCode} language={language} /> : null}
         <p className="min-w-0 break-words font-medium">{name}</p>
-        {threeXUI && instance.realityServices[0] ? <div className="flex flex-wrap gap-1">{(instance.realityServices[0].protocols ?? ["vless"]).map((protocol) => <Badge key={protocol} variant="secondary">{protocol.toUpperCase()}</Badge>)}</div> : null}
       </div>
       {threeXUI && application.role === "master" && application.id !== instance.controller?.id ? <Badge className="mt-1" variant="outline">{copy(language, "待转为节点", "Converting to node")}</Badge> : null}
       {showSite || displayName || threeXUI ? <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
         {showSite || displayName ? <p className="min-w-0 truncate text-xs text-muted-foreground" title={displayName ?? instance.siteName}>{showSite ? instance.siteName : displayName}</p> : null}
-        {threeXUI && instance.realityServices.length > 0 ? <IPQualityButton nodeId={application.nodeId} name={name} language={language} linkBandwidth={application.appKey === meridianAppKey} /> : null}
+        {threeXUI && instance.realityServices[0] ? <span className="text-[11px] text-muted-foreground">{(instance.realityServices[0].protocols ?? ["vless"]).map((protocol) => protocol.toUpperCase()).join(" · ")}</span> : null}
       </div> : null}
     </TableCell>
+    {threeXUI ? <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
+      {instance.realityServices.length > 0 ? <IPQualityButton nodeId={application.nodeId} name={name} language={language} linkBandwidth={application.appKey === meridianAppKey} /> : <span className="text-muted-foreground">—</span>}
+    </TableCell> : null}
     <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
       <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "应用状态", "Application")}</p>
       <ApplicationStatus instance={instance} language={language} onUpgrade={onUpgrade} />
