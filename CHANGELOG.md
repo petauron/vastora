@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.219](https://github.com/petauron/vastora/compare/v0.1.0-alpha.218...v0.1.0-alpha.219) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** show node scores and all unlock statuses ([#665](https://github.com/petauron/vastora/issues/665)) ([258de34](https://github.com/petauron/vastora/commit/258de34705d14442ffb49d87b8f425e50be1095f))
+
 ## [0.1.0-alpha.218](https://github.com/petauron/vastora/compare/v0.1.0-alpha.217...v0.1.0-alpha.218) (2026-09-25)
 
 
