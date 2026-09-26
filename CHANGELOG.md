@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.236](https://github.com/petauron/vastora/compare/v0.1.0-alpha.235...v0.1.0-alpha.236) (2026-09-26)
+
+
+### Features
+
+* **meridian:** manage landing nodes in the main list ([#700](https://github.com/petauron/vastora/issues/700)) ([dc22cf9](https://github.com/petauron/vastora/commit/dc22cf9c107716ec38528ba5af2531d456143578))
+
 ## [0.1.0-alpha.235](https://github.com/petauron/vastora/compare/v0.1.0-alpha.234...v0.1.0-alpha.235) (2026-09-26)
 
 
