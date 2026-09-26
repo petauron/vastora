@@ -318,3 +318,103 @@ func TestAssessmentSelectedUnweightedServiceMustBeKnown(t *testing.T) {
 		t.Fatal("unknown selected service entered ranking")
 	}
 }
+
+func ipv6AssessmentReport(kind string) Report {
+	r := assessmentReport(kind)
+	r.Address = "2001:db8::8"
+	r.IPPure = nil
+	r.Scores = []Score{{"IPQS", "0"}, {"AbuseIPDB", "0"}}
+	r.RecordObservations(assessmentTime)
+	return r
+}
+
+func TestIPv6AssessmentWeightsAndCaps(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		want int
+	}{{"ISP", 100}, {"Mobile ISP", 95}, {"Business", 88}, {"Hosting", 79}} {
+		t.Run(tc.kind, func(t *testing.T) {
+			a := assessFixture(ipv6AssessmentReport(tc.kind))
+			if a.Version != IPv6AssessmentVersion || a.Score == nil || *a.Score != tc.want || a.Status != "complete" || len(a.Contributions) != 3 {
+				t.Fatalf("IPv6 weights/caps: %+v", a)
+			}
+		})
+	}
+	r := ipv6AssessmentReport("ISP")
+	r.Scores = []Score{{"IPQS", "100"}, {"AbuseIPDB", "100"}}
+	a := assessFixture(r)
+	if a.Score == nil || *a.Score != 75 {
+		t.Fatalf("residential identity must not erase risk: %+v", a)
+	}
+}
+
+func TestIPv6MissingEvidenceContributesZero(t *testing.T) {
+	r := ipv6AssessmentReport("ISP")
+	r.Scores = nil
+	for i := range r.Services {
+		switch r.Services[i].Name {
+		case "AmazonPrimeVideo":
+			r.Services[i].Status = "Block"
+		case "TikTok":
+			r.Services[i].Status = "Failed"
+		}
+	}
+	r.RecordObservations(assessmentTime)
+	a := assessFixture(r)
+	if a.Score == nil || *a.Score != 71 || a.Status != "conservative" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS", "AbuseIPDB", "TikTok"}) {
+		t.Fatalf("missing supported evidence must not prevent a numeric score: %+v", a)
+	}
+	r.UsageTypes = nil
+	r.RecordObservations(assessmentTime)
+	a = assessFixture(r)
+	if a.Score == nil || *a.Score != 41 || a.IPType != "unknown" || a.Contributions[0].Min != 0 {
+		t.Fatalf("unknown type must not receive free points: %+v", a)
+	}
+	for i := range r.Services {
+		if r.Services[i].Name == "ChatGPT" {
+			r.Services[i].Status = "Block"
+		}
+	}
+	r.RecordObservations(assessmentTime)
+	if a = assessFixture(r); a.Advice != "compare" || !slices.Contains(a.RequiredFailed, "ChatGPT") {
+		t.Fatalf("required failure must remain actionable: %+v", a)
+	}
+}
+
+func TestIPv6EvidenceBoundaries(t *testing.T) {
+	r := ipv6AssessmentReport("ISP")
+	for i := range r.Observations {
+		if r.Observations[i].Source == "IPQS" {
+			r.Observations[i].Address = "203.0.113.8"
+		}
+	}
+	if a := assessFixture(r); a.Score == nil || *a.Score != 80 || !slices.Contains(a.Missing, "IPQS") {
+		t.Fatalf("IPv4 evidence must not score IPv6: %+v", a)
+	}
+	r = ipv6AssessmentReport("ISP")
+	r.IPPure = assessmentReport("ISP").IPPure
+	r.IPPure.CheckedAt = assessmentTime.Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	for i := range r.Observations {
+		if r.Observations[i].Source == "SCAMALYTICS" {
+			r.Observations[i].Status = "ok"
+			r.Observations[i].CheckedAt = r.IPPure.CheckedAt
+		}
+	}
+	if a := assessFixture(r); a.Score == nil || *a.Score != 100 || a.Status != "complete" {
+		t.Fatalf("excluded providers must not affect IPv6 freshness: %+v", a)
+	}
+	stamp := assessmentTime.Format(time.RFC3339Nano)
+	if a := Assess(&r, stamp, true, assessmentTime, DefaultPreferences()); a.Score != nil || a.Status != "ip_changed" {
+		t.Fatalf("changed IP retained score: %+v", a)
+	}
+	if a := Assess(&r, stamp, false, assessmentTime.Add(25*time.Hour), DefaultPreferences()); a.Score != nil || a.Status != "expired" {
+		t.Fatalf("expired report retained score: %+v", a)
+	}
+	if a := Assess(nil, "", false, assessmentTime, DefaultPreferences()); a.Score != nil {
+		t.Fatalf("absent report acquired score: %+v", a)
+	}
+	v4, v6 := assessFixture(assessmentReport("Hosting")), assessFixture(ipv6AssessmentReport("ISP"))
+	if recommended, _, delta := Compare(v4, v6, true); recommended || delta != nil {
+		t.Fatal("different scoring rules must not produce a score improvement recommendation")
+	}
+}

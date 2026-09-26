@@ -337,7 +337,6 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
                 const hasKnownScale = Number.isFinite(risk) && risk >= 0 && risk <= 100;
                 return <div key={value.source} className="grid grid-cols-[100px_minmax(0,1fr)_56px] items-center gap-2 text-xs"><span className="truncate text-muted-foreground" title={value.source}>{value.source}</span><span className="h-1.5 rounded-full bg-muted">{hasKnownScale ? <span className="block h-full rounded-full bg-primary" style={{ width: `${risk}%` }} /> : null}</span><span className="text-right font-medium tabular-nums">{value.value}</span></div>;
               })}{!report.scores.length ? <p className="text-xs text-muted-foreground">{copy(language, "暂无评分数据", "No score data")}</p> : null}</div>
-              {report.ippure?.status === "unsupported" ? <p className="mt-1 text-xs text-muted-foreground">IPPure · {copy(language, "IPv6 不支持", "IPv6 unsupported")}</p> : null}
             </section>
             <section className="border-t pt-2" aria-label={copy(language, "风险因子", "Risk factors")}>
               <h3 className="mb-1 text-xs font-semibold text-latency-fast">{copy(language, "三 · 风险因子", "3 · Risk factors")}</h3>
