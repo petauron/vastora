@@ -16,15 +16,15 @@ export function LandingEgressIP({ server, language, disabled, save }: {
   const [manual, setManual] = useState("");
   const candidates = server.egressAddresses ?? [];
   const value = choice === "auto" ? "" : choice === "manual" ? manual.trim() : choice;
-  return <section aria-label={copy(language, "出口 IP", "Egress IP")} className="min-w-0 text-xs">
-    <h4 className="font-medium">{copy(language, "出口 IP", "Egress IP")}</h4>
-    <form className="mt-3 flex flex-col gap-2" onSubmit={(event) => { event.preventDefault(); if (!disabled && server.egressSupported && (choice === "auto" || value)) void save(value); }}>
-      <div className="flex items-center gap-2"><SelectControl aria-label={copy(language, `${server.name} 出口 IP`, `${server.name} egress IP`)} value={choice} onValueChange={setChoice} disabled={disabled || !server.egressSupported} options={[
+  return <section aria-label={copy(language, "出口 IP", "Egress IP")} className="min-w-0 text-xs xl:border-r xl:pr-6">
+    <form className="flex flex-col gap-1.5" onSubmit={(event) => { event.preventDefault(); if (!disabled && server.egressSupported && (choice === "auto" || value)) void save(value); }}>
+      <label htmlFor={`${id}-address`}>{copy(language, "出口 IP", "Egress IP")}</label>
+      <div className="flex items-center gap-2"><SelectControl id={`${id}-address`} className="h-8" aria-label={copy(language, `${server.name} 出口 IP`, `${server.name} egress IP`)} value={choice} onValueChange={setChoice} disabled={disabled || !server.egressSupported} options={[
         { value: "auto", label: copy(language, "自动 IPv4", "Automatic IPv4") },
         ...candidates.map((candidate) => ({ value: candidate.address, label: `${candidate.address.includes(":") ? "IPv6" : "IPv4"} · ${candidate.address}` })),
         ...(server.egressIp && !candidates.some((candidate) => candidate.address === server.egressIp) ? [{ value: server.egressIp, label: server.egressIp }] : []),
         { value: "manual", label: copy(language, "手动填写…", "Enter manually…") },
-      ]} /><Button type="submit" size="sm" variant="outline" disabled={disabled || !server.egressSupported || value === (server.egressIp ?? "") || choice !== "auto" && !value}>{copy(language, "保存", "Save")}</Button></div>
+      ]} /><Button className="h-8 shrink-0" type="submit" size="sm" variant="outline" disabled={disabled || !server.egressSupported || value === (server.egressIp ?? "") || choice !== "auto" && !value}>{copy(language, "保存", "Save")}</Button></div>
       {choice === "manual" ? <><label htmlFor={id}>{copy(language, "服务器本机 IP", "Local server IP")}</label><Input id={id} value={manual} onChange={(event) => setManual(event.target.value)} required placeholder={copy(language, "IPv4 或 IPv6", "IPv4 or IPv6")} disabled={disabled} autoComplete="off" spellCheck={false} /></> : null}
       {value.includes(":") ? <p className="text-muted-foreground">{copy(language, "此出口仅支持 IPv6 目标。", "This exit reaches IPv6 destinations only.")}</p> : null}
       {!server.egressSupported ? <p className="text-muted-foreground">{copy(language, "请先更新此节点的 Agent", "Update this node’s Agent first")}</p> : null}
