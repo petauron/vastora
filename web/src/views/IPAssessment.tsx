@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { copy } from "./shared";
 
 export function assessmentLabel(language: Language, assessment?: IPQualityAssessment) {
-  if (!assessment || assessment.status === "ip_changed" || assessment.status === "expired") {
+  if (!assessment || assessment.status === "ip_changed") {
     return copy(language, "待检测", "Check needed");
   }
   if (assessment.score == null) {
@@ -35,12 +35,12 @@ export function assessmentAdvice(language: Language, value: IPQualityAssessment[
 }
 
 export function AssessmentBadge({ language, assessment }: { language: Language; assessment?: IPQualityAssessment }) {
-  const hasScore = assessment?.score != null && assessment.status !== "expired" && assessment.status !== "ip_changed";
+  const hasScore = assessment?.score != null && assessment.status !== "ip_changed";
   const grade = hasScore ? assessment.grade : "unknown";
   const labels = { excellent: ["优秀", "Excellent"], premium: ["优质", "Premium"], good: ["良好", "Good"], fair: ["一般", "Fair"], poor: ["较差", "Poor"], unknown: ["待确认", "Unconfirmed"] };
   const label = assessmentLabel(language, assessment);
   const incomplete = assessment?.status === "partial" && assessment.validUntil;
-  const detail = incomplete ? copy(language, `已检测，评分数据不足：${assessment.missing.map((item) => item === "type" ? "IP 类型" : item).join("、")}`, `Checked; insufficient scoring data: ${assessment.missing.join(", ")}`) : undefined;
+  const detail = assessment?.status === "expired" ? copy(language, "历史检测结果，建议复测", "Historical result; recheck recommended") : incomplete ? copy(language, `已检测，评分数据不足：${assessment.missing.map((item) => item === "type" ? "IP 类型" : item).join("、")}`, `Checked; insufficient scoring data: ${assessment.missing.join(", ")}`) : undefined;
   return <Badge variant="outline" className={`quality-grade quality-grade-${grade}`} title={detail} aria-label={hasScore ? copy(language, `评分 ${label}，${labels[grade][0]}`, `Score ${label}, ${labels[grade][1]}`) : detail ?? label}>{label}</Badge>;
 }
 

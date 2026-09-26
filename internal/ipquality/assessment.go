@@ -134,6 +134,24 @@ func sameIP(a, b string) bool {
 // A result from the original check is not evidence for a different IP or a
 // later check. Unknown provider values retain their entire possible range.
 func Assess(report *Report, checkedAt string, changed bool, now time.Time, preferences Preferences) Assessment {
+	a := assessAt(report, checkedAt, changed, now, preferences)
+	if a.Status != "expired" {
+		return a
+	}
+	// Reconstruct the saved result at acquisition time. Age changes its
+	// recommendation eligibility, not the measured result for the same IP.
+	stamp, err := time.Parse(time.RFC3339Nano, checkedAt)
+	if err != nil || stamp.After(now) {
+		return a
+	}
+	historical := assessAt(report, checkedAt, changed, stamp, preferences)
+	historical.Status = "expired"
+	historical.Advice = "recheck"
+	historical.Reasons = []string{"expired"}
+	return historical
+}
+
+func assessAt(report *Report, checkedAt string, changed bool, now time.Time, preferences Preferences) Assessment {
 	a := Assessment{Version: AssessmentVersion, Status: "partial", Grade: "unknown", IPType: "unknown",
 		TypeCandidates: []string{}, TypeEvidence: []Classification{}, Contributions: []Contribution{}, Missing: []string{},
 		Advice: "recheck", Reasons: []string{}, RequiredFailed: []string{}, RequiredUnknown: []string{}, Preferences: preferences}
