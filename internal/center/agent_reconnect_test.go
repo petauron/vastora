@@ -143,3 +143,44 @@ func TestMigration59AddsAgentReconnectTargetBinding(t *testing.T) {
 		t.Fatalf("migration result: columns=%d indexes=%d enrollments=%d", columns, indexes, enrollments)
 	}
 }
+
+func TestDisabledAgentReconnectRestoresOnlyWithFreshCredential(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.db.Exec(`INSERT INTO settings(key,value) VALUES(?,?),(?,?)`, agentConnectionModeSetting, "lan", agentConnectURLSetting, "https://center.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: "Disabled node", CenterURL: "https://center.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := store.EnrollAgent(ctx, enrollment.Token, "0.1.0-alpha.224", "linux", "amd64", testAgentPublicKey(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE agents SET status='disabled',credential_revoked_at='2026-01-01T00:00:00Z' WHERE id=?`, original.ID); err != nil {
+		t.Fatal(err)
+	}
+	reconnect, err := store.CreateAgentReconnectEnrollment(ctx, original.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := store.db.QueryRow(`SELECT status FROM agents WHERE id=?`, original.ID).Scan(&status); err != nil || status != "disabled" {
+		t.Fatalf("node enabled before enrollment: %s, %v", status, err)
+	}
+	replacement, err := store.EnrollAgent(ctx, reconnect.Token, "0.1.0-alpha.225", "linux", "amd64", testAgentPublicKey(t))
+	if err != nil || replacement.ID != original.ID {
+		t.Fatalf("restore identity: %v", err)
+	}
+	if err := store.authenticateAgent(ctx, original.ID, original.Credential); err == nil {
+		t.Fatal("old credential accepted")
+	}
+	if err := store.authenticateAgent(ctx, replacement.ID, replacement.Credential); err != nil {
+		t.Fatal(err)
+	}
+}
