@@ -478,6 +478,9 @@ func (b *DockerPackageBackend) Inspect(ctx context.Context, task DeploymentTask,
 }
 
 func (b *DockerPackageBackend) Backup(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
+	// A backend can serve successive operations. Never resume IDs captured
+	// before an upgrade replaced its containers.
+	b.resumeIDs = nil
 	// All writers are stopped before the first byte of a shared-volume snapshot.
 	for i := len(receipt.Resources) - 1; i >= 0; i-- {
 		resource := receipt.Resources[i]

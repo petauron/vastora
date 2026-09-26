@@ -372,7 +372,7 @@ func TestPackageSystemdCompleteLifecycleBothArchitectures(t *testing.T) {
 			}
 			unit := resourceNamed(result.Resources, "unit", "service")
 			unitData, _ := os.ReadFile(manager.path(unit.Path))
-			if !bytes.Contains(unitData, []byte("User=65534\n")) || unit.MainPID != 123 {
+			if !bytes.Contains(unitData, []byte("Type=exec\n")) || !bytes.Contains(unitData, []byte("User=65534\n")) || unit.MainPID != 123 {
 				t.Fatal("missing confinement or runtime identity")
 			}
 			dataPath := manager.path(resourceNamed(result.Resources, "directory", "data").Path)

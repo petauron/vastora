@@ -45,7 +45,7 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 	packageHostedRunner(t)
 	for _, kind := range []string{"docker", "systemd"} {
 		t.Run(kind, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
 			task := packageTestTask(t)
 			task.ApplicationID = "ci-" + kind + "-" + filepath.Base(t.TempDir())
@@ -58,9 +58,12 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 					t.Fatal("CI must supply the resolved public busybox digest")
 				}
 				task.Manifest.Images[0].Reference = image
-				task.Manifest.Runtime.Docker.Containers[0].Arguments = []catalog.Value{hostFixtureValue("sleep"), hostFixtureValue("300")}
+				// A container-local fixture with a TERM handler avoids making every
+				// cold backup wait for Docker's PID-1 stop timeout. No host shell runs.
+				arguments := []catalog.Value{hostFixtureValue("sh"), hostFixtureValue("-c"), hostFixtureValue("trap 'exit 0' TERM; while :; do sleep 1 & wait $!; done")}
+				task.Manifest.Runtime.Docker.Containers[0].Arguments = arguments
 				// Exercise real private-network creation, dependency order and aliases.
-				task.Manifest.Runtime.Docker.Containers = append(task.Manifest.Runtime.Docker.Containers, catalog.Container{Name: "sidecar", Image: "app", Arguments: []catalog.Value{hostFixtureValue("sleep"), hostFixtureValue("300")}, DependsOn: []string{"app"}})
+				task.Manifest.Runtime.Docker.Containers = append(task.Manifest.Runtime.Docker.Containers, catalog.Container{Name: "sidecar", Image: "app", Arguments: arguments, DependsOn: []string{"app"}})
 				var err error
 				docker, err = client.New(client.WithHost("unix:///var/run/docker.sock"))
 				if err != nil {

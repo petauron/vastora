@@ -96,6 +96,37 @@ func TestPackageDockerMaintenanceRestoresCopyAndRetainsPreviousVolume(t *testing
 	}
 }
 
+func TestPackageBackupAfterUpgradeOnlyResumesCurrentWriters(t *testing.T) {
+	task := packageTestTask(t)
+	engine := newPackageDocker()
+	directory := packageTestDirectory(t)
+	backend := &DockerPackageBackend{Docker: engine, StateDirectory: directory}
+	executor := PackageExecutor{StateDirectory: directory, Backend: backend}
+	installed, err := executor.Deploy(context.Background(), task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldID := resourceNamed(installed.Resources, "container", "app").ID
+	engine.data[resourceNamed(installed.Resources, "volume", "data").Name] = packageBackupTar(t, "data/database", "saved")
+	task.ID, task.Operation, task.Manifest.Version = "upgrade", "upgrade", "1.1.0"
+	packageTaskDigest(t, &task)
+	installed, err = executor.Deploy(context.Background(), task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentID := resourceNamed(installed.Resources, "container", "app").ID
+	if currentID == oldID {
+		t.Fatal("fixture did not replace the process")
+	}
+	task.ID, task.PackageMaintenance = "backup", &PackageMaintenanceTask{Action: "backup"}
+	if _, err := maintainPackage(context.Background(), executor, backend, task); err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.resumeIDs) != 1 || backend.resumeIDs[0] != currentID {
+		t.Fatalf("resumed obsolete writer: %v", backend.resumeIDs)
+	}
+}
+
 func TestPackageMaintenanceRejectsTamperBeforeStoppingWriters(t *testing.T) {
 	task := packageTestTask(t)
 	engine := newPackageDocker()

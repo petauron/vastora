@@ -245,7 +245,9 @@ func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executa
 		return nil, err
 	}
 	var unit strings.Builder
-	fmt.Fprintf(&unit, "# Managed by Vastora\n# Application: %s\n[Unit]\nDescription=Managed package %s\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\n", task.ApplicationID, task.Manifest.ID)
+	// Wait for successful exec, including StateDirectory and credential setup,
+	// rather than accepting the initial fork before those resources exist.
+	fmt.Fprintf(&unit, "# Managed by Vastora\n# Application: %s\n[Unit]\nDescription=Managed package %s\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=exec\n", task.ApplicationID, task.Manifest.ID)
 	if spec.User == "" {
 		unit.WriteString("User=65534\nGroup=65534\n")
 	} else {
