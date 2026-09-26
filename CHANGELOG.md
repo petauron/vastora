@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.241](https://github.com/petauron/vastora/compare/v0.1.0-alpha.240...v0.1.0-alpha.241) (2026-09-26)
+
+
+### Features
+
+* **meridian:** highlight residential exits in node lists ([#710](https://github.com/petauron/vastora/issues/710)) ([028e47a](https://github.com/petauron/vastora/commit/028e47a0b1511bdae0148aa1c84cd640e9eddb62))
+
 ## [0.1.0-alpha.240](https://github.com/petauron/vastora/compare/v0.1.0-alpha.239...v0.1.0-alpha.240) (2026-09-26)
 
 
