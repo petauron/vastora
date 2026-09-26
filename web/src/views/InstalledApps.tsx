@@ -1,5 +1,6 @@
 import { useId, useState, type ReactNode } from "react";
-import { LandingProvider, LandingManager, LandingNotice, LandingNetwork, LandingTableRows } from "./LandingControls";
+import { LandingProvider, LandingManager, LandingNotice, LandingTableRows } from "./LandingControls";
+import { MeridianNetworkMatrix } from "./MeridianNetworkMatrix";
 import { AppWindowIcon, EllipsisIcon, ExternalLinkIcon, MonitorIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
 import { api } from "../api";
 import type { Mutate } from "../App";
@@ -57,6 +58,7 @@ export function InstalledApps({ groups, agents, ...props }: InstalledAppsProps) 
 function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrade, onClients, onReality, showSite }: Omit<InstalledAppsProps, "groups" | "agents"> & { group: InstalledAppGroup; showSite: boolean }) {
   const headingID = useId();
   const [query, setQuery] = useState("");
+  const [view, setView] = useState("nodes");
   const legacyThreeXUI = group.appKey === threeXUIAppKey;
   const threeXUI = legacyThreeXUI || group.appKey === meridianAppKey;
   const nodeCount = group.instances.filter(showInstalledNode).length;
@@ -96,24 +98,32 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrad
           {threeXUI ? <LandingManager language={language} /> : null}
         </ControllerBand> : threeXUI ? <div className="ml-auto"><LandingManager language={language} /></div> : null}
       </div>
+      <Tabs value={view} onValueChange={(value) => { if (typeof value === "string") setView(value); }}>
+        {threeXUI ? <TabsList variant="line" aria-label={copy(language, "Meridian 视图", "Meridian views")}>
+          <TabsTrigger value="nodes">{copy(language, "节点概览", "Nodes")}</TabsTrigger>
+          <TabsTrigger value="network">{copy(language, "线路测速", "Link tests")}</TabsTrigger>
+        </TabsList> : null}
+        <TabsContent value="nodes">
       <Table aria-label={threeXUI ? copy(language, `${name} 节点`, `${name} nodes`) : copy(language, `${name} 已安装实例`, `${name} installed instances`)} className="apps-instance-table block lg:table lg:table-fixed">
         <TableHeader className="hidden lg:table-header-group">
           <TableRow>
-            <TableHead className={threeXUI ? "w-[19%]" : "w-[36%]"}>{copy(language, "节点", "Node")}</TableHead>
-            {threeXUI ? <TableHead className="w-[34%]">{copy(language, "IP 质量与解锁", "IP quality & availability")}</TableHead> : null}
-            <TableHead className={threeXUI ? "w-[8%]" : "w-[24%]"}>{copy(language, "状态", "Status")}</TableHead>
-            {threeXUI ? <TableHead className="w-[30%]">{copy(language, "落地网络", "Landing network")}<span className="block text-[11px] font-normal text-muted-foreground">{copy(language, "延迟 · ↑去程 / ↓回程 Mbps", "Latency · ↑out / ↓back Mbps")}</span></TableHead> : null}
-            <TableHead className={threeXUI ? "w-[6%]" : "w-[24%]"}>{copy(language, "入口", "Access")}</TableHead>
-            <TableHead className={threeXUI ? "w-[3%]" : "w-[16%]"}><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
+            <TableHead className={threeXUI ? "w-[24%]" : "w-[36%]"}>{copy(language, "节点", "Node")}</TableHead>
+            {threeXUI ? <TableHead className="w-[48%]">{copy(language, "IP 质量与解锁", "IP quality & availability")}</TableHead> : null}
+            <TableHead className={threeXUI ? "w-[12%]" : "w-[24%]"}>{copy(language, "状态", "Status")}</TableHead>
+            <TableHead className={threeXUI ? "w-[10%]" : "w-[24%]"}>{copy(language, "入口", "Access")}</TableHead>
+            <TableHead className={threeXUI ? "w-[6%]" : "w-[16%]"}><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody className="block lg:table-row-group">
-          {threeXUI ? <TableRow className="block bg-muted/30 hover:bg-muted/30 lg:table-row"><TableCell colSpan={6} className="block text-xs font-medium lg:table-cell">{copy(language, "线路机", "Entry nodes")} <span className="ml-1 text-muted-foreground">{instances.length}</span></TableCell></TableRow> : null}
+          {threeXUI ? <TableRow className="block bg-muted/30 hover:bg-muted/30 lg:table-row"><TableCell colSpan={5} className="block text-xs font-medium lg:table-cell">{copy(language, "线路机", "Entry nodes")} <span className="ml-1 text-muted-foreground">{instances.length}</span></TableCell></TableRow> : null}
           {instances.map((instance) => <InstalledInstanceRow instance={instance} key={instance.application.id} language={language} mutate={mutate} onManage={onManage} onUpgrade={onUpgrade} onReality={onReality} showSite={showSite} threeXUI={threeXUI} />)}
-          {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 6 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 Xray 节点", "No Xray nodes configured")}</TableCell></TableRow> : null}
+          {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 5 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 Xray 节点", "No Xray nodes configured")}</TableCell></TableRow> : null}
           {threeXUI ? <LandingTableRows language={language} search={search} /> : null}
         </TableBody>
       </Table>
+        </TabsContent>
+        {threeXUI ? <TabsContent value="network"><MeridianNetworkMatrix instances={instances} language={language} /></TabsContent> : null}
+      </Tabs>
     </Content>
   </Container>;
 }
@@ -259,12 +269,6 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
       <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "应用状态", "Application")}</p>
       <ApplicationStatus instance={instance} language={language} onUpgrade={onUpgrade} />
     </TableCell>
-    {threeXUI ? <>
-      <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
-        <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "落地网络", "Landing network")}</p>
-        {needsVLESS ? <span className="text-muted-foreground">—</span> : <LandingNetwork applicationId={application.id} nodeId={application.nodeId} language={language} />}
-      </TableCell>
-    </> : null}
     <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
       <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{threeXUI ? copy(language, "公网入口", "Public access") : copy(language, "访问入口", "Access")}</p>
       {hy2Only ? <Badge variant="outline">{copy(language, "HY2 已配置", "HY2 configured")}</Badge> : <AccessStatus language={language} publications={publications} services={services} threeXUI={threeXUI} />}

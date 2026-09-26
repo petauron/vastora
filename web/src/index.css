@@ -192,7 +192,7 @@
 
 @media (min-width: 1024px) {
   .apps-instance-table td { padding-block: 10px; }
-  .apps-three-xui .apps-instance-table td { height: 52px; padding-block: 8px; }
+  .apps-three-xui .apps-instance-table td { height: 48px; padding-block: 6px; }
   .apps-three-xui .apps-instance-table :is(th, td):first-child { padding-left: 0; }
   .apps-three-xui .apps-instance-table :is(th, td):last-child { padding-right: 0; }
 }
@@ -259,4 +259,12 @@
   [data-slot="switch"]::after {
     inset: -13px -6px;
   }
+}
+
+/* Keep route comparisons out of the node summary rows. */
+.meridian-network-matrix th { font-size: 12px; font-weight: 500; }
+.meridian-network-matrix td { height: 56px; padding: 8px 12px; font-size: 12px; }
+.apps-three-xui .quality-list-trigger { min-height: 32px; }
+@media (min-width: 1024px) {
+  .apps-three-xui .apps-instance-table tr:not([data-application-id]):not([data-landing-node-id]) td { height: 30px; }
 }
