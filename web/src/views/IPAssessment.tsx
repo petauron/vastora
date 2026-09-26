@@ -21,6 +21,11 @@ export function assessmentType(language: Language, type: IPQualityAssessment["ip
   return copy(language, names[type][0], names[type][1]);
 }
 
+export function AssessmentTypeBadge({ language, assessment }: { language: Language; assessment?: IPQualityAssessment }) {
+  const type = assessment && assessment.status !== "expired" && assessment.status !== "ip_changed" ? assessment.ipType : "unknown";
+  return <Badge variant="outline" className={type === "residential" ? "quality-type-residential" : "text-muted-foreground"}>{assessmentType(language, type)}</Badge>;
+}
+
 export function assessmentAdvice(language: Language, value: IPQualityAssessment["advice"]) {
   return value === "direct" ? copy(language, "可直连", "Direct suitable") : value === "compare" ? copy(language, "建议比较落地", "Compare egress") : copy(language, "建议复测", "Recheck needed");
 }
