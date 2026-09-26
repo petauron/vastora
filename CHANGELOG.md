@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.243](https://github.com/petauron/vastora/compare/v0.1.0-alpha.242...v0.1.0-alpha.243) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** retain historical exit scores and unlock results ([#714](https://github.com/petauron/vastora/issues/714)) ([208b4fd](https://github.com/petauron/vastora/commit/208b4fdb65a0a375d6dcf1d8177bb81fe661f2d0))
+
 ## [0.1.0-alpha.242](https://github.com/petauron/vastora/compare/v0.1.0-alpha.241...v0.1.0-alpha.242) (2026-09-26)
 
 
