@@ -3,7 +3,7 @@ import type { Language } from "@/translations";
 import type { InstalledAppInstance } from "@/views/installed-apps-model";
 import { useLanding } from "@/views/LandingControls";
 import { NodeDiagnosticsButton, useIPQuality } from "@/views/IPQuality";
-import { LinkBandwidthSummary } from "@/views/LinkBandwidthSummary";
+import { bandwidthBands, LinkBandwidthSummary } from "@/views/LinkBandwidthSummary";
 import { RegionFlag } from "@/views/RegionFlag";
 import { landingLatencyColor, selectedLandingLatencies } from "@/views/landingLatency";
 import { copy } from "@/views/shared";
@@ -18,6 +18,12 @@ export function MeridianNetworkMatrix({ instances, language }: { instances: Inst
   const checks = new Map(quality?.diagnostics.filter((check) => check.kind === "meridian.link-bandwidth").map((check) => [`${check.agentId}:${check.landingNodeId}`, check]));
   return <div className="flex min-w-0 flex-col gap-2">
     <p className="text-xs text-muted-foreground">{copy(language, "Mbps · ↑入口到落地 / ↓落地到入口 · 每方向 10 秒", "Mbps · ↑entry to landing / ↓landing to entry · 10 s per direction")}</p>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" aria-label={copy(language, "带宽颜色图例", "Bandwidth color legend")}>
+      <span className="text-muted-foreground">Mbps</span>
+      {bandwidthBands.map((band) => <span key={band.minimum} className={band.className}>{band.label}</span>)}
+      <span className="text-destructive">{copy(language, "失败", "Failed")}</span>
+      <span className="text-muted-foreground">{copy(language, "未测", "Not tested")}</span>
+    </div>
     <Table className="meridian-network-matrix" aria-label={copy(language, "线路测速矩阵", "Link bandwidth matrix")}>
       <TableHeader><TableRow><TableHead className="sticky left-0 z-10 min-w-44 bg-background">{copy(language, "线路机", "Entry node")}</TableHead>{servers.map((server) => <TableHead key={server.nodeId} className="min-w-44 text-center"><span className="inline-flex items-center gap-2"><RegionFlag code={landing.regions[server.nodeId]} language={language} />{server.name}</span></TableHead>)}<TableHead><span className="sr-only">{copy(language, "检测", "Diagnostics")}</span></TableHead></TableRow></TableHeader>
       <TableBody>{instances.map((instance) => {
