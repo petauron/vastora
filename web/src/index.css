@@ -182,8 +182,6 @@
 .apps-status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .apps-instance-table th { font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
 .apps-instance-table td { font-size: 13px; }
-.apps-landing-sheet[data-side="right"] { width: min(100%, 440px); max-width: 440px; }
-.apps-landing-sheet [data-slot="sheet-header"] { padding: 24px 40px 8px 20px; gap: 8px; }
 .quality-list-trigger .quality-grade { border: 0; background: transparent; padding: 0; min-width: 24px; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .quality-list-trigger .quality-grade-unknown { font-size: 11px; font-weight: 400; }
 .apps-three-xui-toolbar { border-bottom: 1px solid var(--border); }
