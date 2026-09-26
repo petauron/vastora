@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.226](https://github.com/petauron/vastora/compare/v0.1.0-alpha.225...v0.1.0-alpha.226) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** restore native landing pool management ([#679](https://github.com/petauron/vastora/issues/679)) ([dfc4237](https://github.com/petauron/vastora/commit/dfc42374e3fa3305f0818559b9f88cf40117572e))
+
 ## [0.1.0-alpha.225](https://github.com/petauron/vastora/compare/v0.1.0-alpha.224...v0.1.0-alpha.225) (2026-09-26)
 
 
