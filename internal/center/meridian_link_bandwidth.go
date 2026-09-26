@@ -86,14 +86,14 @@ func (s *Store) StartMeridianLinkBandwidth(ctx context.Context, sourceID, landin
 		return err
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	for _, side := range []struct{ id, kind string }{{landingID, nodediagnostics.LinkServerKind}, {sourceID, nodediagnostics.LinkBandwidthKind}} {
+	for _, side := range []struct{ id, kind, peer string }{{landingID, nodediagnostics.LinkServerKind, sourceID}, {sourceID, nodediagnostics.LinkBandwidthKind, landingID}} {
 		token, err := randomToken(18)
 		if err != nil {
 			return err
 		}
 		id := "node-diagnostic-" + token
-		_, err = tx.ExecContext(ctx, `INSERT INTO node_diagnostic_checks(agent_id,kind,id,bind_address,target_revision,targets_json,state,created_at,updated_at) VALUES(?,?,?,'',1,?,'pending',?,?)
- ON CONFLICT(agent_id,kind) DO UPDATE SET id=excluded.id,bind_address='',target_revision=1,targets_json=excluded.targets_json,state='pending',attempt=0,lease_expires_at='',error='',result_json='null',checked_at='',created_at=excluded.created_at,updated_at=excluded.updated_at`, side.id, side.kind, id, string(targetsJSON), now, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO node_diagnostic_checks(agent_id,kind,pair_key,id,bind_address,target_revision,targets_json,state,created_at,updated_at) VALUES(?,?,?,?,'',1,?,'pending',?,?)
+ ON CONFLICT(agent_id,kind,pair_key) DO UPDATE SET id=excluded.id,bind_address='',target_revision=1,targets_json=excluded.targets_json,state='pending',attempt=0,lease_expires_at='',error='',result_json='null',checked_at='',created_at=excluded.created_at,updated_at=excluded.updated_at`, side.id, side.kind, side.peer, id, string(targetsJSON), now, now)
 		if err != nil {
 			return err
 		}

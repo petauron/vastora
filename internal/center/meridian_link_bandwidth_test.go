@@ -66,4 +66,35 @@ func TestMeridianLinkBandwidthQueuesBothPrivatePeers(t *testing.T) {
 	if err := store.StartMeridianLinkBandwidth(ctx, source.ID, egress.ID); err == nil {
 		t.Fatal("concurrent link check accepted")
 	}
+	// A later test to another landing must not erase the first pair or its peer.
+	if _, err := store.db.Exec(`UPDATE node_diagnostic_checks SET state='succeeded'`); err != nil {
+		t.Fatal(err)
+	}
+	other := newNode("other-egress", "100.64.0.83")
+	if _, err := store.db.Exec(`UPDATE agents SET tailscale_ownership='managed',last_seen_at=? WHERE id=?`, stamp, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SelectLanding(ctx, LandingSelection{Revision: 1, NodeIDs: []string{egress.ID, other.ID}, LandingRegionCodes: map[string]string{egress.ID: "US", other.ID: "US"}}); err != nil {
+		t.Fatal(err)
+	}
+	otherPeer, _ := json.Marshal(landing.PeerIdentity{ID: "ts-other", PublicKey: "nodekey:other", Address: "100.64.0.83"})
+	if _, err := store.db.Exec(`UPDATE landing_server_states SET status='ready',applied_revision=desired_revision,peer_json=? WHERE node_id=?`, otherPeer, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartMeridianLinkBandwidth(ctx, source.ID, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	checks, err = store.ListNodeDiagnostics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pairs := map[string]NodeDiagnosticView{}
+	for _, check := range checks {
+		if check.AgentID == source.ID && check.Kind == nodediagnostics.LinkBandwidthKind {
+			pairs[check.LandingNodeID] = check
+		}
+	}
+	if len(pairs) != 2 || pairs[egress.ID].State != "succeeded" || pairs[other.ID].State != "pending" {
+		t.Fatalf("link pairs overwritten or invalidated: %+v", pairs)
+	}
 }

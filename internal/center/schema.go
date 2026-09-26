@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 96
+const centerSchemaVersion = 97
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {

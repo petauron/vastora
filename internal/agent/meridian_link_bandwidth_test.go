@@ -11,7 +11,7 @@ func TestMeridianLinkContainerIsPrivateAndBounded(t *testing.T) {
 	task := nodediagnostics.Task{Link: &nodediagnostics.LinkBandwidthTask{SourceNodeID: "source", LandingNodeID: "landing", SourceIP: "100.64.0.8", LandingIP: "100.64.0.9", Port: 34567}}
 	for _, server := range []bool{true, false} {
 		options := meridianIperfOptions(task, server)
-		if options.HostConfig.NetworkMode != "host" || !options.HostConfig.ReadonlyRootfs || len(options.HostConfig.Binds) != 0 || len(options.HostConfig.Mounts) != 0 || options.HostConfig.Memory != 64*1024*1024 || options.HostConfig.MemorySwap != options.HostConfig.Memory || options.HostConfig.NanoCPUs != 1000000000 || options.Config.User != "65534:65534" {
+		if options.HostConfig.NetworkMode != "host" || !options.HostConfig.ReadonlyRootfs || len(options.HostConfig.Binds) != 0 || len(options.HostConfig.Mounts) != 0 || options.HostConfig.Memory != 64*1024*1024 || options.HostConfig.MemorySwap != options.HostConfig.Memory || options.HostConfig.NanoCPUs != 1000000000 || options.Config.User != "1000:1000" {
 			t.Fatal("diagnostic container is not constrained")
 		}
 		if strings.Contains(strings.Join(options.Config.Cmd, " "), "203.0.113") || options.Config.Labels["io.vastora.application"] != "meridian" {

@@ -31,7 +31,7 @@ func TestVersion96PreservesDiagnosticsAndAllowsMeridianLink(t *testing.T) {
 		t.Fatalf("new diagnostic kind rejected: %v", err)
 	}
 	var version, violations int
-	if err := upgraded.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 96 {
+	if err := upgraded.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != centerSchemaVersion {
 		t.Fatalf("schema version %d: %v", version, err)
 	}
 	if err := upgraded.db.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&violations); err != nil || violations != 0 {

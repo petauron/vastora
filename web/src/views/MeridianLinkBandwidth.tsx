@@ -20,9 +20,8 @@ export function MeridianLinkBandwidth({ nodeId, language, checks, agents, refres
   }, [language]);
   const sourceReady = agents.some((agent) => agent.id === nodeId && agent.connected && agent.capabilities.meridianLinkBandwidth);
   const servers = landing?.servers.filter((server) => landing.nodeIds.includes(server.nodeId) && server.status === "ready" && server.nodeId !== nodeId && agents.some((agent) => agent.id === server.nodeId && agent.connected && agent.capabilities.meridianLinkBandwidth)) ?? [];
-  const check = checks.find((value) => value.agentId === nodeId && value.kind === "meridian.link-bandwidth");
-  const current = check?.landingNodeId === landingId ? check : undefined;
-  const active = current?.state === "pending" || current?.state === "running";
+  const results = checks.filter((value) => value.agentId === nodeId && value.kind === "meridian.link-bandwidth");
+  const active = results.some((value) => value.state === "pending" || value.state === "running");
   const start = async () => {
     if (!sourceReady || !landingId || submitting || active) return;
     setError(""); setSubmitting(true);
@@ -36,8 +35,17 @@ export function MeridianLinkBandwidth({ nodeId, language, checks, agents, refres
   return <div className="space-y-2 border-t pt-3">
     <div><h4 className="text-sm font-semibold">{copy(language, "入口 → 落地带宽", "Entry → landing bandwidth")}</h4><p className="text-xs text-muted-foreground">{copy(language, "私网 TCP · 单流 · 每方向 10 秒 · 手动检测；流量随带宽变化", "Private TCP · one stream · 10 s per direction · manual; data use scales with speed")}</p></div>
     <div className="flex flex-wrap items-center gap-2"><Select value={landingId || null} onValueChange={(value) => setLandingId(value ?? "")} items={servers.map((server) => ({ value: server.nodeId, label: server.name }))}><SelectTrigger className="min-w-36 max-w-56" aria-label={copy(language, "选择落地机", "Choose landing server")}><SelectValue placeholder={copy(language, "选择落地机", "Choose landing server")} /></SelectTrigger><SelectContent><SelectGroup>{servers.map((server) => <SelectItem key={server.nodeId} value={server.nodeId}>{server.name}</SelectItem>)}</SelectGroup></SelectContent></Select><Button variant="outline" disabled={!sourceReady || !selected || active || submitting} onClick={() => void start()}>{active ? copy(language, "测速中…", "Testing…") : copy(language, "测试链路", "Test link")}</Button></div>
-    {current?.link ? <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm tabular-nums"><span>{copy(language, "入口 → 落地", "Entry → landing")} {current.link.uploadMbps.toFixed(1)} Mbps</span><span>{copy(language, "落地 → 入口", "Landing → entry")} {current.link.downloadMbps.toFixed(1)} Mbps</span>{current.checkedAt ? <time className="text-xs text-muted-foreground" dateTime={current.checkedAt}>{new Date(current.checkedAt).toLocaleString(language === "zh-CN" ? "zh-CN" : "en-US")}</time> : null}</div> : null}
-    {current?.state === "failed" || current?.error ? <p role="alert" className="text-xs text-destructive">{copy(language, "链路测速失败，请查看活动记录。", "Link test failed; see Activity.")}</p> : null}
+    {results.length > 0 ? <div className="overflow-x-auto rounded-md border"><table className="w-full text-xs tabular-nums">
+      <caption className="sr-only">{copy(language, "各落地机最近一次内置测速结果，单位 Mbps", "Latest built-in test per landing server, in Mbps")}</caption>
+      <thead className="bg-muted/40 text-muted-foreground"><tr><th className="px-2 py-1.5 text-left font-medium">{copy(language, "落地机", "Landing")}</th><th className="px-2 py-1.5 text-right font-medium">{copy(language, "入口 → 落地", "Entry → landing")}</th><th className="px-2 py-1.5 text-right font-medium">{copy(language, "落地 → 入口", "Landing → entry")}</th><th className="px-2 py-1.5 text-right font-medium">{copy(language, "检测时间", "Checked")}</th></tr></thead>
+      <tbody>{results.map((result) => {
+        const name = agents.find((agent) => agent.id === result.landingNodeId)?.name ?? result.landingNodeId;
+        const failed = result.state === "failed" || Boolean(result.error);
+        const measuring = result.state === "pending" || result.state === "running";
+        const valid = !failed && !measuring && result.link;
+        return <tr key={result.id} className="border-t"><th className="whitespace-nowrap px-2 py-1.5 text-left font-medium">{name}</th>{valid ? <><td className="whitespace-nowrap px-2 py-1.5 text-right">{valid.uploadMbps.toFixed(1)} Mbps</td><td className="whitespace-nowrap px-2 py-1.5 text-right">{valid.downloadMbps.toFixed(1)} Mbps</td></> : <td colSpan={2} className={`px-2 py-1.5 text-right ${failed ? "text-destructive" : "text-muted-foreground"}`}>{measuring ? copy(language, "测速中…", "Testing…") : copy(language, "测速失败", "Test failed")}</td>}<td className="whitespace-nowrap px-2 py-1.5 text-right text-muted-foreground"><time dateTime={result.checkedAt || result.updatedAt}>{new Date(result.checkedAt || result.updatedAt).toLocaleString(language === "zh-CN" ? "zh-CN" : "en-US", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></td></tr>;
+      })}</tbody>
+    </table></div> : <p className="text-xs text-muted-foreground">{copy(language, "暂无测速结果", "No bandwidth results yet")}</p>}
     {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
     {!sourceReady ? <p className="text-xs text-muted-foreground">{copy(language, "此入口需要升级 Agent 才能测速。", "Upgrade this entry Agent to test the link.")}</p> : null}
     {landing && servers.length === 0 ? <p className="text-xs text-muted-foreground">{copy(language, "暂无就绪的落地机", "No ready landing server")}</p> : null}

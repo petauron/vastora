@@ -19,6 +19,8 @@ import (
 
 // Multi-architecture, immutable diagnostic image. The network listener binds
 // only the managed private peer address and exists for one explicit check.
+// The pinned image installs iperf3 mode 0700, owned by UID/GID 1000.
+// Run as that unprivileged owner while retaining the container restrictions.
 const meridianIperfImage = "ghcr.io/userdocs/iperf3-static@sha256:c61d33698fd938a1334af93c9b59ee042dad90657df9de827dc5b53d5f8894f2"
 
 const meridianIperfServerScript = `set -eu
@@ -52,7 +54,7 @@ func meridianIperfOptions(task nodediagnostics.Task, server bool) client.Contain
 	}
 	pids := int64(32)
 	return client.ContainerCreateOptions{
-		Config: &container.Config{Image: meridianIperfImage, User: "65534:65534", WorkingDir: "/tmp", Env: []string{"HOME=/tmp"},
+		Config: &container.Config{Image: meridianIperfImage, User: "1000:1000", WorkingDir: "/tmp", Env: []string{"HOME=/tmp"},
 			Entrypoint: []string{"/bin/sh", "-c", script, "meridian-iperf"}, Cmd: cmd,
 			Labels: map[string]string{"io.vastora.application": "meridian", "io.vastora.diagnostic": "link-bandwidth"}},
 		HostConfig: &container.HostConfig{NetworkMode: "host", AutoRemove: false, ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"},
