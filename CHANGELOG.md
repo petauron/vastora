@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.221](https://github.com/petauron/vastora/compare/v0.1.0-alpha.220...v0.1.0-alpha.221) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** compact node quality and unlock rows ([#669](https://github.com/petauron/vastora/issues/669)) ([03cef55](https://github.com/petauron/vastora/commit/03cef55d86d8db259d7ca22195972f0ef4b307ae))
+
 ## [0.1.0-alpha.220](https://github.com/petauron/vastora/compare/v0.1.0-alpha.219...v0.1.0-alpha.220) (2026-09-26)
 
 
