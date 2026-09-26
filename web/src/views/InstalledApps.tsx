@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
-import { LandingProvider, LandingManager, LandingNotice, LandingLatency, LandingTableRows } from "./LandingControls";
+import { LandingProvider, LandingManager, LandingNotice, LandingNetwork, LandingTableRows } from "./LandingControls";
 import { AppWindowIcon, EllipsisIcon, ExternalLinkIcon, MonitorIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
 import { api } from "../api";
 import type { Mutate } from "../App";
@@ -99,10 +99,10 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrad
       <Table aria-label={threeXUI ? copy(language, `${name} 节点`, `${name} nodes`) : copy(language, `${name} 已安装实例`, `${name} installed instances`)} className="apps-instance-table block lg:table lg:table-fixed">
         <TableHeader className="hidden lg:table-header-group">
           <TableRow>
-            <TableHead className={threeXUI ? "w-[22%]" : "w-[36%]"}>{copy(language, "节点", "Node")}</TableHead>
-            {threeXUI ? <TableHead className="w-[42%]">{copy(language, "IP 质量与解锁", "IP quality & availability")}</TableHead> : null}
-            <TableHead className={threeXUI ? "w-[11%]" : "w-[24%]"}>{copy(language, "状态", "Status")}</TableHead>
-            {threeXUI ? <TableHead className="w-[16%]">{copy(language, "全局落地延迟", "Global exit latency")}</TableHead> : null}
+            <TableHead className={threeXUI ? "w-[19%]" : "w-[36%]"}>{copy(language, "节点", "Node")}</TableHead>
+            {threeXUI ? <TableHead className="w-[34%]">{copy(language, "IP 质量与解锁", "IP quality & availability")}</TableHead> : null}
+            <TableHead className={threeXUI ? "w-[8%]" : "w-[24%]"}>{copy(language, "状态", "Status")}</TableHead>
+            {threeXUI ? <TableHead className="w-[30%]">{copy(language, "落地网络", "Landing network")}<span className="block text-[11px] font-normal text-muted-foreground">{copy(language, "延迟 · ↑去程 / ↓回程 Mbps", "Latency · ↑out / ↓back Mbps")}</span></TableHead> : null}
             <TableHead className={threeXUI ? "w-[6%]" : "w-[24%]"}>{copy(language, "入口", "Access")}</TableHead>
             <TableHead className={threeXUI ? "w-[3%]" : "w-[16%]"}><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
           </TableRow>
@@ -261,8 +261,8 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
     </TableCell>
     {threeXUI ? <>
       <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
-        <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "全局落地延迟", "Global exit latency")}</p>
-        {needsVLESS ? <span className="text-muted-foreground">—</span> : <LandingLatency applicationId={application.id} nodeId={application.nodeId} language={language} />}
+        <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "落地网络", "Landing network")}</p>
+        {needsVLESS ? <span className="text-muted-foreground">—</span> : <LandingNetwork applicationId={application.id} nodeId={application.nodeId} language={language} />}
       </TableCell>
     </> : null}
     <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">

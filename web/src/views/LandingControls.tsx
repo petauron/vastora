@@ -16,6 +16,7 @@ import { applyLandingLatencyEvent, freshLandingLatencies } from "./landingLatenc
 import { TableCell, TableRow } from "@/components/ui/table";
 import { RegionFlag } from "./RegionFlag";
 import { IPQualityButton, useIPQuality } from "./IPQuality";
+import { LinkBandwidthSummary } from "./LinkBandwidthSummary";
 import { IPQualityComparison } from "./IPQualityComparison";
 import { assessmentLabel } from "./IPAssessment";
 import { useLandingRegions } from "./useLandingRegions";
@@ -275,21 +276,24 @@ function latencyLabel(language: Language, latency: LandingView["latencies"][numb
   return latency?.state === "unavailable" ? copy(language, "无法直连", "Unavailable") : copy(language, "待检测", "Pending");
 }
 
-export function LandingLatency({ applicationId, nodeId, language }: { applicationId: string; nodeId: string; language: Language }) {
+export function LandingNetwork({ applicationId, nodeId, language }: { applicationId: string; nodeId: string; language: Language }) {
   const state = useContext(LandingContext);
+  const quality = useIPQuality();
   const view = state?.view;
   if (!state || !view || state.failed) return <span className="text-muted-foreground">—</span>;
   const pairs = selectedLandingLatencies(view, nodeId, applicationId);
   if (!pairs.length) return <span className="text-muted-foreground">—</span>;
-  return <div className="flex min-w-0 flex-row flex-wrap items-center gap-x-3 gap-y-1">
+  return <div className="grid min-w-0 gap-y-0.5">
     {pairs.map(({ server, latency }, index) => {
       const measured = server?.status === "ready" && latency?.state === "direct" && latency.latencyMs != null && Number.isFinite(latency.latencyMs) && latency.latencyMs >= 0;
       const unavailable = !server || ["offline", "failed", "stopped"].includes(server.status) || server.status === "ready" && latency?.state === "unavailable";
       const label = measured ? latencyLabel(language, latency) : unavailable ? copy(language, "不可用", "Unavailable") : copy(language, "待检测", "Pending");
-      return <span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs tabular-nums", unavailable ? "text-destructive" : measured ? landingLatencyColor(latency.latencyMs) : "text-muted-foreground")} key={server?.nodeId ?? `missing-${index}`} title={server?.name}>
-        <RegionFlag code={server ? state.regions[server.nodeId] : undefined} language={language} />
-        <span>{label}</span>
-      </span>;
+      const check = quality?.diagnostics.find((value) => value.agentId === nodeId && value.kind === "meridian.link-bandwidth" && value.landingNodeId === server?.nodeId);
+      return <div className="flex min-w-0 items-center gap-2 text-xs leading-5 tabular-nums" key={server?.nodeId ?? `missing-${index}`}>
+        <span className="flex min-w-0 flex-1 items-center gap-1" title={server?.name}><RegionFlag code={server ? state.regions[server.nodeId] : undefined} language={language} /><span className="truncate">{server?.name ?? "—"}</span></span>
+        <span className={cn("shrink-0", unavailable ? "text-destructive" : measured ? landingLatencyColor(latency.latencyMs) : "text-muted-foreground")} title={copy(language, `落地延迟：${label}`, `Landing latency: ${label}`)}>{measured || unavailable ? label : "—"}</span>
+        <LinkBandwidthSummary check={check} language={language} unavailable={Boolean(quality?.error)} />
+      </div>;
     })}
   </div>;
 }

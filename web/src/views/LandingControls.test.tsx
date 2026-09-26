@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "../api";
 import type { LandingView } from "../landing-types";
 import type { AgentView } from "../types";
-import { LandingLatency, LandingManager, LandingProvider } from "./LandingControls";
+import { LandingNetwork, LandingManager, LandingProvider } from "./LandingControls";
 import { selectedLandingLatencies } from "./landingLatency";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -108,7 +108,7 @@ it("renders global latency as read-only state", async () => {
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => { root?.render(<LandingProvider enabled><LandingLatency applicationId="entry-one" nodeId="source-one" language="zh-CN" /></LandingProvider>); });
+  await act(async () => { root?.render(<LandingProvider enabled><LandingNetwork applicationId="entry-one" nodeId="source-one" language="zh-CN" /></LandingProvider>); });
   expect(container.textContent).toContain("12 ms");
   expect(container.textContent).toContain("128 ms");
   expect(container.querySelector(".text-destructive")?.textContent).toContain("128 ms");
