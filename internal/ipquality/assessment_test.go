@@ -161,6 +161,52 @@ func TestAssessmentRiskAndServiceSemantics(t *testing.T) {
 	}
 }
 
+func TestAssessmentIPQualityDisplayStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		service string
+		status  string
+		weight  int
+	}{
+		{"DisneyPlus", "Block", 4},
+		{"Netflix", "NF.Only", 6},
+		{"ChatGPT", "APPOnly", 15},
+		{"ChatGPT", "WebOnly", 15},
+		{"Youtube", "China", 2},
+		{"Youtube", "NoPrem.", 2},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			r := assessmentReport("ISP")
+			for i := range r.Services {
+				if r.Services[i].Name == tc.service {
+					r.Services[i].Status = tc.status
+				}
+			}
+			r.Scores = slices.DeleteFunc(r.Scores, func(s Score) bool { return s.Source == "IPQS" })
+			r.RecordObservations(assessmentTime)
+			a := assessFixture(r)
+			if a.Status != "conservative" || a.Score == nil || *a.Score != 90-tc.weight || !slices.Equal(a.Missing, []string{"IPQS"}) {
+				t.Fatalf("known restriction became missing or unlocked: %+v", a)
+			}
+			if slices.Contains(DefaultPreferences().RequiredServices, tc.service) && (a.Advice != "compare" || !slices.Contains(a.RequiredFailed, tc.service)) {
+				t.Fatalf("required restriction did not suggest comparison: %+v", a)
+			}
+		})
+	}
+	for _, status := range []string{"Failed", "Pending", "Unrecognized"} {
+		r := assessmentReport("ISP")
+		for i := range r.Services {
+			if r.Services[i].Name == "ChatGPT" {
+				r.Services[i].Status = status
+			}
+		}
+		r.RecordObservations(assessmentTime)
+		a := assessFixture(r)
+		if a.Score != nil || a.Advice != "recheck" || len(a.RequiredFailed) != 0 || !slices.Contains(a.RequiredUnknown, "ChatGPT") {
+			t.Fatalf("unknown probe result became negative evidence: %+v", a)
+		}
+	}
+}
+
 func TestAssessmentRegionAndFreshness(t *testing.T) {
 	r := assessmentReport("ISP")
 	p := DefaultPreferences()

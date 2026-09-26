@@ -304,8 +304,8 @@ func serviceState(r Report, name, region string, now time.Time) string {
 		if item.Name != name {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(item.Status)) {
-		case "no", "org", "originals only":
+		switch serviceOutcome(item.Status) {
+		case "no":
 			return "no"
 		case "yes":
 			if region != "" && item.RegionCode == "" {
@@ -318,6 +318,20 @@ func serviceState(r Report, name, region string, now time.Time) string {
 		}
 	}
 	return "unknown"
+}
+
+// IPQuality's English JSON uses display labels such as Block and NF.Only.
+// Restricted app/web access and unavailable Premium are not full unlocks.
+// Probe failures remain unknown rather than becoming negative evidence.
+func serviceOutcome(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "yes":
+		return "yes"
+	case "no", "block", "org", "originals only", "nf.only", "apponly", "webonly", "china", "noprem.":
+		return "no"
+	default:
+		return "unknown"
+	}
 }
 
 func grade(score int) string {

@@ -47,8 +47,14 @@ export function unlockLabel(language: Language, status?: string) {
   const value = cleanIPQualityValue(status);
   switch (value.toLowerCase()) {
     case "yes": return copy(language, "解锁", "Unlocked");
-    case "no": return copy(language, "未解锁", "Blocked");
-    case "org": case "originals only": return copy(language, "仅自制", "Originals only");
+    case "no": case "block": return copy(language, "未解锁", "Blocked");
+    case "org": case "originals only": case "nf.only": return copy(language, "仅自制", "Originals only");
+    case "apponly": return copy(language, "仅 APP", "App only");
+    case "webonly": return copy(language, "仅网页", "Web only");
+    case "china": return copy(language, "中国", "China");
+    case "noprem.": return copy(language, "禁会员", "No Premium");
+    case "pending": return copy(language, "待支持", "Pending support");
+    case "idc": return copy(language, "机房", "IDC");
     case "failed": case "fail": case "error": return copy(language, "检测失败", "Check failed");
     case "": case "null": return copy(language, "未知", "Unknown");
     default: return value;
