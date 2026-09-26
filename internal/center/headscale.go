@@ -26,7 +26,7 @@ import (
 const (
 	headscaleDNSFile               = "headscale-extra-records.json"
 	builtinHeadscaleRuntimeSetting = "builtin_headscale_runtime"
-	builtinHeadscaleRuntimeVersion = "dns-policy-v3"
+	builtinHeadscaleRuntimeVersion = "embedded-derp-v4"
 	headscaleDNSPolicySetting      = "headscale_dns_policy"
 	headscaleDNSResolversSetting   = "headscale_dns_resolvers"
 	headscalePinnedRequestOrigin   = "https://headscale-api.vastora.invalid"
@@ -47,12 +47,11 @@ type HeadscaleJoin struct {
 }
 
 type TailscaleIsolationDesiredState struct {
-	ControlURL        string   `json:"controlUrl"`
-	ControlAddresses  []string `json:"controlAddresses"`
-	ControlAliases    []string `json:"controlAliases,omitempty"`
-	StaticEndpoints   []string `json:"staticEndpoints"`
-	RelayRegionID     int      `json:"relayRegionId,omitempty"`
-	STUNOnlyRegionIDs []int    `json:"stunOnlyRegionIds,omitempty"`
+	ControlURL       string   `json:"controlUrl"`
+	ControlAddresses []string `json:"controlAddresses"`
+	ControlAliases   []string `json:"controlAliases,omitempty"`
+	StaticEndpoints  []string `json:"staticEndpoints"`
+	RelayRegionID    int      `json:"relayRegionId,omitempty"`
 }
 
 type headscaleClient struct {
@@ -310,7 +309,6 @@ func (s *Store) tailscaleIsolationDesiredState(ctx context.Context, agentID stri
 		return state, nil
 	}
 	state.RelayRegionID = 999
-	state.STUNOnlyRegionIDs = []int{998}
 	aliases, err := readActiveSystemEndpointAliases(ctx, s.db, "headscale")
 	if err != nil {
 		return nil, fmt.Errorf("center: read Headscale endpoint aliases: %w", err)

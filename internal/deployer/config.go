@@ -159,19 +159,10 @@ node:
 }
 
 func renderHeadscaleDERPMap() []byte {
-	return []byte(`regions:
-  998:
-    regionid: 998
-    regioncode: cloudflare-stun
-    regionname: Cloudflare STUN
-    nodes:
-      - name: cloudflare-stun
-        regionid: 998
-        hostname: stun.cloudflare.com
-        stunport: 3478
-        stunonly: true
-        derpport: 0
-`)
+	// Headscale adds the embedded region, which provides both DERP and STUN.
+	// A standalone STUN-only region can be selected as home DERP by clients
+	// even though it cannot carry relay traffic.
+	return []byte("regions: {}\n")
 }
 
 func renderHeadscalePolicy() []byte {

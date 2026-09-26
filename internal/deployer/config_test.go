@@ -90,6 +90,8 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 		"      - 1.1.1.1",
 		"    enabled: true",
 		"    verify_clients: true",
+		"    region_id: 999",
+		`    stun_listen_addr: "0.0.0.0:3478"`,
 		"    automatically_add_embedded_derp_region: true",
 		"  urls: []",
 		"    - /etc/headscale/derp.yaml",
@@ -108,14 +110,9 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 	if err := yaml.Unmarshal(derpMapPayload, &parsedDERPMap); err != nil {
 		t.Fatalf("generated DERP map is invalid YAML: %v\n%s", err, derpMapPayload)
 	}
-	derpMap := string(derpMapPayload)
-	for _, expected := range []string{"hostname: stun.cloudflare.com", "stunport: 3478", "stunonly: true", "derpport: 0"} {
-		if !strings.Contains(derpMap, expected) {
-			t.Fatalf("Cloudflare STUN map is missing %q:\n%s", expected, derpMap)
-		}
-	}
-	if strings.Contains(derpMap, "turn.cloudflare.com") || strings.Contains(derpMap, "stunonly: false") {
-		t.Fatalf("Cloudflare was configured as a relay:\n%s", derpMap)
+	regions, ok := parsedDERPMap["regions"].(map[string]any)
+	if !ok || len(regions) != 0 {
+		t.Fatalf("custom DERP regions must be empty; use the embedded relay: %#v", parsedDERPMap)
 	}
 	if strings.Contains(headscale, "controlplane.tailscale.com") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") || strings.Contains(headscale, "v6:") {
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)
