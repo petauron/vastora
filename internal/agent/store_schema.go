@@ -631,6 +631,38 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 21
 		}
+		if version == 21 {
+			backupDir, migrateErr := os.MkdirTemp(dataDir, "schema-21-backup-")
+			if migrateErr == nil {
+				_, migrateErr = db.Exec(`VACUUM INTO ?`, filepath.Join(backupDir, "agent.db"))
+			}
+			if migrateErr == nil {
+				migrateErr = os.Chmod(filepath.Join(backupDir, "agent.db"), 0o600)
+			}
+			var tx *sql.Tx
+			if migrateErr == nil {
+				tx, migrateErr = db.Begin()
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE meridian_usage_state (
+					application_id TEXT PRIMARY KEY,
+					sealed_state BLOB NOT NULL
+				)`)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`PRAGMA user_version=22`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 21 to 22: %w", migrateErr)
+			}
+			version = 22
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -753,11 +785,15 @@ func Open(dataDir string) (*Store, error) {
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed_state BLOB NOT NULL
 		);
+		CREATE TABLE meridian_usage_state (
+			application_id TEXT PRIMARY KEY,
+			sealed_state BLOB NOT NULL
+		);
 		CREATE TABLE xray_worker_state (
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed_state BLOB NOT NULL
 		);
-		` + taskReceiptIndexesSQL + `PRAGMA user_version = 21;`); err != nil {
+		` + taskReceiptIndexesSQL + `PRAGMA user_version = 22;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}

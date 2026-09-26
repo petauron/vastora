@@ -17,6 +17,7 @@ func TestMeridianStateMigrationPreservesLegacyJournal(t *testing.T) {
 	legacy := []byte("sealed-legacy-xray-worker-state")
 	if _, err := old.db.Exec(`DELETE FROM xray_worker_state;
 		INSERT INTO xray_worker_state(id,sealed_state) VALUES(1,?);
+		DROP TABLE meridian_usage_state;
 		DROP TABLE meridian_runtime_state;
 		PRAGMA user_version=20`, legacy); err != nil {
 		t.Fatal(err)
