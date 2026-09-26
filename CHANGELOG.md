@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.222](https://github.com/petauron/vastora/compare/v0.1.0-alpha.221...v0.1.0-alpha.222) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** highlight unlock region mismatches ([#671](https://github.com/petauron/vastora/issues/671)) ([d45c8be](https://github.com/petauron/vastora/commit/d45c8be4277ef9daa0f01aaaba9e1caae33004b6))
+
 ## [0.1.0-alpha.221](https://github.com/petauron/vastora/compare/v0.1.0-alpha.220...v0.1.0-alpha.221) (2026-09-26)
 
 
