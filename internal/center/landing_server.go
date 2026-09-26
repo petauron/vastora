@@ -103,6 +103,15 @@ func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID s
 	if json.Unmarshal(encoded, &state) != nil || state.Validate() != nil || state.NodeID != nodeID || state.Revision != uint64(revision) {
 		return nil, errors.New("center: invalid landing service configuration")
 	}
+	if state.Plan != nil && state.Plan.EgressIP != "" {
+		var supported bool
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json,'$.landingEgressIP'),0)=1 FROM agents WHERE id=?`, nodeID).Scan(&supported); err != nil {
+			return nil, err
+		}
+		if !supported {
+			return nil, errors.New("center: landing Agent does not support explicit egress binding")
+		}
+	}
 	var completed bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state='complete')`).Scan(&completed); err != nil {
 		return nil, err

@@ -128,11 +128,11 @@ func (r Result) PeerHealth(task Task, now time.Time) (map[string]bool, error) {
 			return nil, errors.New("meridian runtime: egress observation does not match task")
 		}
 		status := observation.Status
-		exit, err := netip.ParseAddr(status.ExitIPv4)
+		exit, err := netip.ParseAddr(status.ExitIP)
 		health[observation.EgressID] = status.State == "healthy" && status.LinkState == "direct" && status.TCP &&
 			!status.CheckedAt.IsZero() && !status.CheckedAt.After(now) && now.Sub(status.CheckedAt) <= landing.AllowLifetime &&
 			status.AllowedUntil.After(now) && !status.AllowedUntil.After(status.CheckedAt.Add(landing.AllowLifetime)) &&
-			err == nil && landing.PublicIPv4(exit)
+			err == nil && landing.PublicIP(exit)
 	}
 	return health, nil
 }

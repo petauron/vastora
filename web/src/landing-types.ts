@@ -39,7 +39,7 @@ export type LandingView = {
   readyCombinations: number;
   failedCombinations: number;
   withheldCombinations: number;
-  servers: Array<{ nodeId: string; name: string; status: "pending" | "applying" | "ready" | "failed" | "stopped" | "offline" | "draining"; inUse: boolean; eligibleEntries: number; readyCombinations: number; failedCombinations: number; withheldCombinations: number }>;
+  servers: Array<{ egressIp?: string; egressRevision?: number; egressSupported?: boolean; egressError?: string; nodeId: string; name: string; status: "pending" | "applying" | "ready" | "failed" | "stopped" | "offline" | "draining"; inUse: boolean; eligibleEntries: number; readyCombinations: number; failedCombinations: number; withheldCombinations: number }>;
   candidates: Array<{ nodeId: string; name: string }>;
   proxies: LandingProxyView[];
   latencies: LandingLatencyView[];

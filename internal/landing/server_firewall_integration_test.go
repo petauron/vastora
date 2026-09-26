@@ -37,10 +37,12 @@ func TestNativeServerKernelPolicy(t *testing.T) {
 		return
 	}
 	if os.Getenv("VASTORA_LANDING_SERVER_KERNEL_CHILD") != "1" {
-		command := exec.Command("unshare", "--net", "--", os.Args[0], "-test.run=^TestNativeServerKernelPolicy$", "-test.v")
-		command.Env = append(os.Environ(), "VASTORA_LANDING_SERVER_KERNEL_CHILD=1")
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("isolated native firewall: %v\n%s", err, output)
+		for _, mode := range []string{"ipv4", "ipv6"} {
+			command := exec.Command("unshare", "--net", "--", os.Args[0], "-test.run=^TestNativeServerKernelPolicy$", "-test.v")
+			command.Env = append(os.Environ(), "VASTORA_LANDING_SERVER_KERNEL_CHILD=1", "VASTORA_LANDING_SERVER_KERNEL_MODE="+mode)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("isolated native firewall: %v\n%s", err, output)
+			}
 		}
 		return
 	}
@@ -58,6 +60,10 @@ func TestNativeServerKernelPolicy(t *testing.T) {
 		return output, nil
 	}
 	policy := testServerFirewall()
+	ipv6 := os.Getenv("VASTORA_LANDING_SERVER_KERNEL_MODE") == "ipv6"
+	if ipv6 {
+		policy.EgressIP = "2606:4700:4700::1111"
+	}
 	for range 2 {
 		if err := policy.install(ctx, run); err != nil {
 			actual, _ := run(ctx, nil, "--json", "list", "ruleset")
@@ -97,6 +103,8 @@ func TestNativeServerKernelPolicy(t *testing.T) {
 	for _, args := range [][]string{
 		{"link", "set", "lo", "up"},
 		{"addr", "add", "1.1.1.1/32", "dev", "lo"},
+		{"-6", "addr", "add", "2606:4700:4700::1111/128", "dev", "lo", "nodad"},
+		{"-6", "addr", "add", "fd00::1/128", "dev", "lo", "nodad"},
 		{"addr", "add", "169.254.169.254/32", "dev", "lo"},
 		{"addr", "add", "100.64.0.9/32", "dev", "lo"},
 	} {
@@ -110,8 +118,11 @@ func TestNativeServerKernelPolicy(t *testing.T) {
 		address  string
 		allowed  bool
 	}{
-		{"public TCP", "tcp4", "1.1.1.1:0", true},
-		{"public UDP", "udp4", "1.1.1.1:0", true},
+		{"public TCP", "tcp4", "1.1.1.1:0", !ipv6},
+		{"public UDP", "udp4", "1.1.1.1:0", !ipv6},
+		{"public IPv6", "tcp6", "[2606:4700:4700::1111]:0", ipv6},
+		{"private IPv6", "tcp6", "[fd00::1]:0", false},
+		{"IPv6 management", "tcp6", "[2606:4700:4700::1111]:22", false},
 		{"loopback", "tcp4", "127.0.0.1:0", false},
 		{"metadata", "tcp4", "169.254.169.254:0", false},
 		{"tailnet destination", "udp4", "100.64.0.9:0", false},

@@ -567,6 +567,7 @@ func runAgent(arguments []string) error {
 		client.Capabilities.ReturnRoute = runtime.GOOS == "linux" && os.Geteuid() == 0
 		_, iperfErr := exec.LookPath("iperf3")
 		client.Capabilities.BandwidthDiagnostics = runtime.GOOS == "linux" && iperfErr == nil
+		client.Capabilities.LandingEgressIP = runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.MeridianLinkBandwidth = capabilities.Docker && runtime.GOOS == "linux"
 		client.Capabilities.HostProfile = runtime.GOOS == "linux"
 		if capabilities.Docker {

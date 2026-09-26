@@ -91,6 +91,7 @@ export const api = {
     return request(`/api/v1/executions/${encodeURIComponent(id)}/${endpoint}`, { method: "POST", body: JSON.stringify(input) });
   },
   landing: (signal?: AbortSignal) => request<LandingView>("/api/v1/meridian/landing", { signal }),
+  setLandingEgress: (nodeId: string, revision: number, egressIp: string, signal?: AbortSignal) => request<LandingView>(`/api/v1/meridian/landing/${encodeURIComponent(nodeId)}/egress`, { method: "PUT", body: JSON.stringify({ revision, egressIp }), signal }),
   selectLanding: (nodeIds: string[], revision: number, landingRegionCodes: Record<string, string>, signal?: AbortSignal) => request<LandingView>("/api/v1/meridian/landing", {
     method: "PUT", body: JSON.stringify({ nodeIds, revision, landingRegionCodes }), signal
   }),

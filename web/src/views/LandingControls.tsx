@@ -1,3 +1,4 @@
+import { LandingEgressIP } from "@/app-modules/meridian/EgressIP";
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
 import type { LandingLatencyEvent, LandingLatencySnapshot, LandingView } from "../landing-types";
@@ -221,6 +222,10 @@ export function LandingManager({ language }: { language: Language }) {
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">{copy(language, `${server.eligibleEntries} 个入口 · ${server.readyCombinations} 就绪 · ${server.failedCombinations} 失败 · ${server.withheldCombinations} 暂缓`, `${server.eligibleEntries} entries · ${server.readyCombinations} ready · ${server.failedCombinations} failed · ${server.withheldCombinations} withheld`)}</p>
                 <IPQualityButton nodeId={server.nodeId} name={server.name} language={language} />
+                <LandingEgressIP key={`${server.nodeId}:${server.egressRevision}`} server={server} language={language}
+                  disabled={disabled || !["ready", "failed"].includes(server.status)}
+                  addresses={(quality?.agents.find((agent) => agent.id === server.nodeId)?.networkCandidates ?? []).filter((candidate) => candidate.kind !== "headscale").map((candidate) => candidate.address)}
+                  save={(address) => state.change((signal) => api.setLandingEgress(server.nodeId, server.egressRevision ?? 0, address, signal))} />
               </div>
               <Button variant="outline" size="sm" disabled={disabled || server.status === "draining"} aria-label={copy(language, `移除 ${server.name}`, `Remove ${server.name}`)} onClick={() => {
                 if (view) {

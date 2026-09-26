@@ -42,7 +42,7 @@ func (p Probe) check(ctx context.Context, peer PeerIdentity, revision uint64) (B
 	if err != nil {
 		return result, err
 	}
-	result.TCP, result.ExitIPv4 = true, exit
+	result.TCP, result.ExitIP = true, exit
 	if p.TCPOnly {
 		result.CheckedAt = time.Now().UTC()
 		return result, nil
@@ -129,7 +129,7 @@ func traceExit(body []byte) (string, error) {
 	for _, line := range strings.Split(string(body), "\n") {
 		if strings.HasPrefix(line, "ip=") {
 			ip, err := netip.ParseAddr(strings.TrimPrefix(line, "ip="))
-			if err != nil || !PublicIPv4(ip) || exit != "" {
+			if err != nil || !PublicIP(ip) || exit != "" {
 				return "", errors.New("landing: invalid exit address")
 			}
 			exit = ip.String()

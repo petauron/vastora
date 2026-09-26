@@ -20,17 +20,24 @@ type AuthorizedNode struct {
 // Exact private source membership is the authentication boundary. Center
 // generates this plan from managed nodes; no SOCKS password is needed.
 type ServerPlan struct {
+	EgressIP string           `json:"egressIp,omitempty"`
 	Revision uint64           `json:"revision"`
 	Address  string           `json:"address"`
 	Sources  []AuthorizedNode `json:"sources"`
 }
 
 func (plan ServerPlan) Validate() error {
+	if plan.EgressIP != "" && !ValidEgressIP(plan.EgressIP) {
+		return errors.New("landing: invalid selected egress IP")
+	}
 	if plan.Revision == 0 || !tailnetIPv4(plan.Address) || len(plan.Sources) > 128 {
 		return errors.New("landing: invalid native server plan")
 	}
 	addresses := map[string]bool{}
 	for _, node := range plan.Sources {
+		if strings.Contains(plan.EgressIP, ":") && !node.TCPOnly {
+			return errors.New("landing: IPv6 egress requires TCP-only source grants")
+		}
 		if !tailnetIPv4(node.Address) || node.Address == plan.Address || addresses[node.Address] {
 			return errors.New("landing: invalid authorized proxy node")
 		}
@@ -57,14 +64,18 @@ func (plan ServerPlan) RenderDante(egress string) ([]byte, error) {
 		return nil, err
 	}
 	address, err := netip.ParseAddr(egress)
-	if err != nil || !address.Is4() || address.String() != egress || !address.IsGlobalUnicast() || address.IsLoopback() || address.IsLinkLocalUnicast() || tailnetIPv4(egress) {
+	if err != nil || !ValidEgressIP(egress) || plan.EgressIP != "" && plan.EgressIP != egress || plan.EgressIP == "" && !address.Is4() {
 		return nil, errors.New("landing: invalid observed egress address")
+	}
+	family, destination, blocked := "ipv4", "0.0.0.0/0", blockedIPv4
+	if address.Is6() {
+		family, destination, blocked = "ipv6", "::/0", blockedIPv6
 	}
 	var config strings.Builder
 	fmt.Fprintf(&config, `# Managed by Vastora
 internal.protocol: ipv4
 internal: %s port = %d
-external.protocol: ipv4
+external.protocol: %s
 external: %s
 clientmethod: none
 socksmethod: none
@@ -74,22 +85,22 @@ timeout.negotiate: 10
 timeout.connect: 10
 timeout.io.tcp: 300
 timeout.io.udp: 60
-`, plan.Address, SOCKSPort, egress)
+`, plan.Address, SOCKSPort, family, egress)
 	for _, source := range plan.Sources {
 		fmt.Fprintf(&config, "client pass {\n from: %s/32 to: %s/32\n}\n", source.Address, plan.Address)
 	}
 	config.WriteString("client block {\n from: 0.0.0.0/0 to: 0.0.0.0/0\n}\n")
 	// UDP ASSOCIATE's 0.0.0.0:0 describes the client, not an egress
 	// destination. The kernel policy filters every actual UDP destination.
-	for _, cidr := range blockedIPv4 {
+	for _, cidr := range blocked {
 		fmt.Fprintf(&config, "socks block {\n from: 0.0.0.0/0 to: %s\n command: connect\n}\n", cidr)
 	}
 	for _, port := range strings.Split(managementPorts, ",") {
-		fmt.Fprintf(&config, "socks block {\n from: 0.0.0.0/0 to: 0.0.0.0/0 port = %s\n command: connect\n}\n", port)
+		fmt.Fprintf(&config, "socks block {\n from: 0.0.0.0/0 to: %s port = %s\n command: connect\n}\n", destination, port)
 	}
 	for _, source := range plan.Sources {
 		if source.TCPOnly {
-			fmt.Fprintf(&config, "socks pass {\n from: %s/32 to: 0.0.0.0/0\n command: connect\n protocol: tcp\n}\n", source.Address)
+			fmt.Fprintf(&config, "socks pass {\n from: %s/32 to: %s\n command: connect\n protocol: tcp\n}\n", source.Address, destination)
 			continue
 		}
 		fmt.Fprintf(&config, "socks pass {\n from: %s/32 to: 0.0.0.0/0\n command: connect udpassociate\n protocol: tcp udp\n udp.portrange: %d-%d\n}\n", source.Address, UDPRelayFirst, UDPRelayLast)
@@ -139,7 +150,7 @@ MountFlags=private
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-RestrictAddressFamilies=AF_INET AF_UNIX
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 CapabilityBoundingSet=
 AmbientCapabilities=
 UMask=0077

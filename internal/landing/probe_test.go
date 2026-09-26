@@ -71,7 +71,7 @@ func TestTCPProbeDeadlineCoversSOCKSAndTLSHandshake(t *testing.T) {
 }
 
 func TestProbeRejectsInvalidExitResponses(t *testing.T) {
-	for _, body := range []string{"", "ip=127.0.0.1", "ip=100.64.0.8", "ip=10.0.0.1", "ip=169.254.169.254", "ip=::1", "ip=2001:4860:4860::8888", "ip=192.0.2.1", "ip=1.1.1.1\nip=8.8.8.8", "ip=invalid"} {
+	for _, body := range []string{"", "ip=127.0.0.1", "ip=100.64.0.8", "ip=10.0.0.1", "ip=169.254.169.254", "ip=::1", "ip=2001:db8::1", "ip=192.0.2.1", "ip=1.1.1.1\nip=8.8.8.8", "ip=invalid"} {
 		if _, err := traceExit([]byte(body)); err == nil {
 			t.Fatalf("accepted invalid exit %q", body)
 		}

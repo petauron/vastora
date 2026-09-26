@@ -18,6 +18,7 @@ import (
 // members. The output chain runs after output DNAT, so post-resolution private
 // addresses (including DNS rebinding) cannot bypass the destination restriction.
 type ServerFirewall struct {
+	EgressIP       string   `json:"egressIp,omitempty"`
 	Revision       uint64   `json:"revision"`
 	Address        string   `json:"address"`
 	Sources        []string `json:"sources"`
@@ -27,6 +28,9 @@ type ServerFirewall struct {
 }
 
 func (policy ServerFirewall) validate() error {
+	if policy.EgressIP != "" && !ValidEgressIP(policy.EgressIP) {
+		return errors.New("landing: invalid firewall egress IP")
+	}
 	if policy.Revision == 0 || !tailnetIPv4(policy.Address) || policy.UID == 0 || policy.UID == 65534 || !bridgeNamePattern.MatchString(policy.Interface) || len(policy.Sources) > 128 {
 		return errors.New("landing: invalid native firewall identity")
 	}
@@ -116,10 +120,32 @@ func (policy ServerFirewall) objects() []map[string]nftObject {
 			rule("destinations", match(payload(protocol, "dport"), port), nftObject{"drop": nil})
 		}
 	}
-	for _, protocol := range []string{"tcp", "udp"} {
-		rule("destinations", match(meta("nfproto"), "ipv4"), match(meta("l4proto"), protocol), nftObject{"return": nil})
+	// Name resolution is the only IPv4 exception for an explicit IPv6 exit.
+	// Fixed resolver destinations cannot carry arbitrary application connections.
+	if policy.EgressIP != "" {
+		for _, resolver := range []string{"1.1.1.1", "1.0.0.1"} {
+			for _, protocol := range []string{"tcp", "udp"} {
+				rule("destinations", match(payload("ip", "daddr"), resolver), match(payload(protocol, "dport"), 53), nftObject{"return": nil})
+			}
+		}
 	}
-	rule("destinations", nftObject{"drop": nil}) // IPv6 and non-TCP/UDP fail closed.
+	egress, _ := netip.ParseAddr(policy.EgressIP)
+	if egress.Is6() {
+		for _, cidr := range blockedIPv6 {
+			prefix := netip.MustParsePrefix(cidr)
+			rule("destinations", match(payload("ip6", "daddr"), nftObject{"prefix": nftObject{"addr": prefix.Addr().String(), "len": prefix.Bits()}}), nftObject{"drop": nil})
+		}
+		rule("destinations", match(payload("ip6", "saddr"), policy.EgressIP), match(payload("ip6", "daddr"), nftObject{"prefix": nftObject{"addr": "2000::", "len": 3}}), match(meta("l4proto"), "tcp"), nftObject{"return": nil})
+	} else {
+		for _, protocol := range []string{"tcp", "udp"} {
+			expr := []any{match(meta("nfproto"), "ipv4"), match(meta("l4proto"), protocol)}
+			if policy.EgressIP != "" {
+				expr = append(expr, match(payload("ip", "saddr"), policy.EgressIP))
+			}
+			rule("destinations", append(expr, nftObject{"return": nil})...)
+		}
+	}
+	rule("destinations", nftObject{"drop": nil}) // No other source or family may escape.
 	return objects
 }
 

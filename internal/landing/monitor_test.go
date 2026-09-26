@@ -229,7 +229,7 @@ func TestRecoveredMonitorKeepsGateClosedOnUnconfirmedInitialRenewal(t *testing.T
 	monitor := Monitor{Gate: gate, Links: &LinkChecker{HTTPClient: &http.Client{Transport: latencyTransport{server.URL}}},
 		CheckBusiness: func(_ context.Context, peer PeerIdentity, revision uint64) (BusinessResult, error) {
 			started := time.Now()
-			return BusinessResult{Peer: peer, Revision: revision, TCP: true, UDP: true, UDPRelay: peer.Address + ":1081", ExitIPv4: "1.1.1.1", StartedAt: started, CheckedAt: time.Now()}, nil
+			return BusinessResult{Peer: peer, Revision: revision, TCP: true, UDP: true, UDPRelay: peer.Address + ":1081", ExitIP: "1.1.1.1", StartedAt: started, CheckedAt: time.Now()}, nil
 		},
 		Report: func(status MonitorStatus) {
 			reports++
@@ -252,7 +252,7 @@ func TestLandingLeaseRequiresCurrentDirectAndActualBusinessProof(t *testing.T) {
 	}
 	before := link(now.Add(-4*time.Second), now.Add(-3*time.Second))
 	after := link(now.Add(-time.Second), now)
-	health := BusinessResult{Peer: gate.peer, Revision: gate.revision, TCP: true, UDP: true, UDPRelay: "100.64.0.8:1081", ExitIPv4: "1.1.1.1", StartedAt: now.Add(-3 * time.Second), CheckedAt: now.Add(-time.Second)}
+	health := BusinessResult{Peer: gate.peer, Revision: gate.revision, TCP: true, UDP: true, UDPRelay: "100.64.0.8:1081", ExitIP: "1.1.1.1", StartedAt: now.Add(-3 * time.Second), CheckedAt: now.Add(-time.Second)}
 	for _, test := range []struct {
 		name   string
 		change func(*LinkResult, *BusinessResult, *LinkResult)
@@ -265,8 +265,8 @@ func TestLandingLeaseRequiresCurrentDirectAndActualBusinessProof(t *testing.T) {
 		{"wrong UDP relay", func(_ *LinkResult, h *BusinessResult, _ *LinkResult) { h.UDPRelay = "100.64.0.8:9999" }},
 		{"stale revision", func(_ *LinkResult, h *BusinessResult, _ *LinkResult) { h.Revision-- }},
 		{"replaced peer", func(_ *LinkResult, h *BusinessResult, _ *LinkResult) { h.Peer.PublicKey = "nodekey:new" }},
-		{"no exit evidence", func(_ *LinkResult, h *BusinessResult, _ *LinkResult) { h.ExitIPv4 = "" }},
-		{"private exit", func(_ *LinkResult, h *BusinessResult, _ *LinkResult) { h.ExitIPv4 = "100.64.0.8" }},
+		{"no exit evidence", func(_ *LinkResult, h *BusinessResult, _ *LinkResult) { h.ExitIP = "" }},
+		{"private exit", func(_ *LinkResult, h *BusinessResult, _ *LinkResult) { h.ExitIP = "100.64.0.8" }},
 		{"future proof", func(_ *LinkResult, _ *BusinessResult, a *LinkResult) { a.CheckedAt = now.Add(time.Second) }},
 		{"expired proof", func(b *LinkResult, h *BusinessResult, a *LinkResult) {
 			b.StartedAt = b.StartedAt.Add(-time.Minute)
@@ -299,7 +299,7 @@ func TestTCPOnlyLeaseAcceptsMeasuredFourSecondBusinessProof(t *testing.T) {
 	gate := fixtureGate(t)
 	now := time.Now()
 	before := LinkResult{State: "direct", Reason: "fresh_disco_direct_response", StartedAt: now.Add(-9 * time.Second), CheckedAt: now.Add(-8 * time.Second)}
-	business := BusinessResult{Peer: gate.peer, Revision: gate.revision, TCP: true, ExitIPv4: "1.1.1.1", StartedAt: now.Add(-8 * time.Second), CheckedAt: now.Add(-4 * time.Second)}
+	business := BusinessResult{Peer: gate.peer, Revision: gate.revision, TCP: true, ExitIP: "1.1.1.1", StartedAt: now.Add(-8 * time.Second), CheckedAt: now.Add(-4 * time.Second)}
 	after := LinkResult{State: "direct", Reason: "fresh_disco_direct_response", StartedAt: now.Add(-2 * time.Second), CheckedAt: now.Add(-time.Second)}
 	if until, ok := leaseDeadlineForTransport(gate, before, business, after, now, true); !ok || !until.Equal(before.StartedAt.Add(AllowLifetime)) {
 		t.Fatal("fresh TCP-only proof rejected or lease extended")

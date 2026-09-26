@@ -17,7 +17,7 @@ type BusinessResult struct {
 	TCP       bool
 	UDP       bool
 	UDPRelay  string
-	ExitIPv4  string
+	ExitIP    string
 	StartedAt time.Time
 	CheckedAt time.Time
 }
@@ -29,7 +29,7 @@ type MonitorStatus struct {
 	Reason        string    `json:"reason"`
 	TCP           bool      `json:"tcp"`
 	UDP           bool      `json:"udp"`
-	ExitIPv4      string    `json:"exitIpv4,omitempty"`
+	ExitIP        string    `json:"exitIp,omitempty"`
 	CheckedAt     time.Time `json:"checkedAt"`
 	LastHealthyAt time.Time `json:"lastHealthyAt,omitempty"`
 	AllowedUntil  time.Time `json:"allowedUntil,omitempty"`
@@ -97,7 +97,7 @@ func (m *Monitor) Run(ctx context.Context) error {
 			checkErr = m.Gate.renew(ctx, until)
 			if checkErr == nil {
 				status.State, status.Reason = "healthy", "direct_and_business_ready"
-				status.TCP, status.UDP, status.ExitIPv4 = business.TCP, business.UDP, business.ExitIPv4
+				status.TCP, status.UDP, status.ExitIP = business.TCP, business.UDP, business.ExitIP
 				status.AllowedUntil = until.UTC()
 				lastHealthy = time.Now().UTC()
 				status.LastHealthyAt = lastHealthy
@@ -153,8 +153,8 @@ func leaseDeadlineForTransport(gate *BridgeGate, before LinkResult, business Bus
 		after.StartedAt.Before(business.CheckedAt) || (!tcpOnly && (!business.UDP || !validUDPRelay(business.UDPRelay, gate.peer.Address))) {
 		return time.Time{}, false
 	}
-	address, err := netip.ParseAddr(business.ExitIPv4)
-	if err != nil || !PublicIPv4(address) {
+	address, err := netip.ParseAddr(business.ExitIP)
+	if err != nil || !PublicIP(address) {
 		return time.Time{}, false
 	}
 	deadline := before.StartedAt.Add(AllowLifetime)

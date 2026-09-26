@@ -189,7 +189,7 @@ func ensureLandingPackage(ctx context.Context) error {
 	return nil
 }
 
-func landingHostAddresses(privateAddress string) (string, string, error) {
+func landingHostAddresses(privateAddress, selectedEgress string) (string, string, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return "", "", err
@@ -209,6 +209,12 @@ func landingHostAddresses(privateAddress string) (string, string, error) {
 	}
 	if device == "" {
 		return "", "", errors.New("agent: landing private address is not present on this host")
+	}
+	if selectedEgress != "" {
+		if err := validateLandingLocalEgress(selectedEgress); err != nil {
+			return "", "", err
+		}
+		return device, selectedEgress, nil
 	}
 	// UDP connect selects a source route without transmitting a packet.
 	connection, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.ParseIP("1.1.1.1"), Port: 53})
@@ -368,7 +374,14 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 	if err := saveLandingHostJournal(journal); err != nil {
 		return err
 	}
-	device, egress, err := landingHostAddresses(plan.Address)
+	// A failed explicit binding must not leave the previous egress serving
+	// traffic while the requested revision is reported as failed.
+	if plan.EgressIP != "" {
+		if err := stopLandingService(ctx); err != nil {
+			return err
+		}
+	}
+	device, egress, err := landingHostAddresses(plan.Address, plan.EgressIP)
 	if err != nil {
 		return err
 	}
@@ -385,7 +398,7 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 	files[landingBinaryPath] = binary
 	files["/etc/vastora-landing/Dante-LICENSE"] = license
 	files["/etc/vastora-landing/Dante-NOTICE"] = notice
-	policy := landing.ServerFirewall{Revision: plan.Revision, Address: plan.Address, Interface: device, UID: journal.UID}
+	policy := landing.ServerFirewall{EgressIP: plan.EgressIP, Revision: plan.Revision, Address: plan.Address, Interface: device, UID: journal.UID}
 	for _, source := range plan.Sources {
 		policy.Sources = append(policy.Sources, source.Address)
 		if source.TCPOnly {
@@ -531,4 +544,40 @@ func RestoreLandingFirewall(ctx context.Context) error {
 		return errors.New("agent: landing firewall account identity changed")
 	}
 	return journal.Policy.Install(ctx)
+}
+
+// Validate ownership on the executing host immediately before applying; Center
+// never treats an arbitrary submitted source address as proof of ownership.
+func validateLandingLocalEgress(address string) error {
+	if !landing.ValidEgressIP(address) {
+		return errors.New("agent: invalid landing egress IP")
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return err
+	}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, value := range addresses {
+			ip, _, err := net.ParseCIDR(value.String())
+			if err == nil && ip.String() == address {
+				network, target := "udp4", "1.1.1.1"
+				if ip.To4() == nil {
+					network, target = "udp6", "2606:4700:4700::1111"
+				}
+				connection, err := net.DialUDP(network, &net.UDPAddr{IP: ip}, &net.UDPAddr{IP: net.ParseIP(target), Port: 53})
+				if err != nil {
+					return errors.New("agent: selected landing egress has no usable route")
+				}
+				return connection.Close()
+			}
+		}
+	}
+	return errors.New("agent: selected landing egress IP is not assigned to an active local interface")
 }

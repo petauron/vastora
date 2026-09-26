@@ -53,7 +53,7 @@ func meridianHealthResult(projection meridianRuntimeProjection, now time.Time, h
 	for _, peer := range projection.task.Peers {
 		status := landing.MonitorStatus{Revision: projection.task.Desired.Revision, State: "blocked", CheckedAt: now}
 		if healthy {
-			status.State, status.LinkState, status.TCP, status.ExitIPv4 = "healthy", "direct", true, "1.1.1.1"
+			status.State, status.LinkState, status.TCP, status.ExitIP = "healthy", "direct", true, "1.1.1.1"
 			status.AllowedUntil = now.Add(10 * time.Second)
 		}
 		result.Peers = append(result.Peers, meridianruntime.PeerObservation{EgressID: peer.EgressID, Identity: peer.Identity, Status: status})
