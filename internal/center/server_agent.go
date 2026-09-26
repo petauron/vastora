@@ -206,6 +206,7 @@ func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Req
 
 func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
+		LandingEgressAddresses       []landing.EgressAddress            `json:"landingEgressAddresses"`
 		PublicKey                    []byte                             `json:"publicKey"`
 		Version                      string                             `json:"version"`
 		AppliedInstallations         int                                `json:"appliedInstallations"`
@@ -245,7 +246,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
-	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{LandingClientRuntime: input.LandingClientRuntime, LandingHealth: input.LandingHealth, PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, MeridianRuntime: input.MeridianRuntime, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, RuntimeRecoveryApplications: input.RuntimeRecoveryApplications, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{LandingEgressAddresses: input.LandingEgressAddresses, LandingClientRuntime: input.LandingClientRuntime, LandingHealth: input.LandingHealth, PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, MeridianRuntime: input.MeridianRuntime, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, RuntimeRecoveryApplications: input.RuntimeRecoveryApplications, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
 		slog.ErrorContext(request.Context(), "Agent heartbeat projection failed", "agent_id", request.PathValue("id"), "error", controlplane.SafeError(err.Error()))
 		writeError(writer, http.StatusInternalServerError, err)
 		return

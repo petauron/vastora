@@ -66,6 +66,10 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err != nil {
 		return nil, fmt.Errorf("agent: discover network addresses: %w", err)
 	}
+	egressAddresses, err := discoverLandingEgressAddresses()
+	if err != nil {
+		return nil, fmt.Errorf("agent: discover landing egress addresses: %w", err)
+	}
 	endpoints, observeErr := observeProxyRuntime(ctx, store)
 	endpointsObserved := observeErr == nil || errors.Is(observeErr, errApplicationNotInstalled)
 	if errors.Is(observeErr, errApplicationNotInstalled) || errors.Is(observeErr, errMeridianRuntimeNotConfigured) {
@@ -106,8 +110,9 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	heartbeatURL := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/heartbeat"
 	runtimeRecovery, runtimeRecoveryApplications := store.runtimeRecovery()
 	payload := map[string]any{
-		"publicKey": publicKey,
-		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
+		"landingEgressAddresses": egressAddresses,
+		"publicKey":              publicKey,
+		"version":                Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
 		"meridianRuntime":              meridianRuntime,
 		"gatewayRevision":              gatewayRevision,

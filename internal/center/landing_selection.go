@@ -50,18 +50,19 @@ type LandingView struct {
 }
 
 type LandingServerView struct {
-	EgressIP             string `json:"egressIp"`
-	EgressRevision       uint64 `json:"egressRevision"`
-	EgressSupported      bool   `json:"egressSupported"`
-	EgressError          string `json:"egressError,omitempty"`
-	NodeID               string `json:"nodeId"`
-	Name                 string `json:"name"`
-	Status               string `json:"status"`
-	InUse                bool   `json:"inUse"`
-	EligibleEntries      int    `json:"eligibleEntries"`
-	ReadyCombinations    int    `json:"readyCombinations"`
-	FailedCombinations   int    `json:"failedCombinations"`
-	WithheldCombinations int    `json:"withheldCombinations"`
+	EgressAddresses      []landing.EgressAddress `json:"egressAddresses"`
+	EgressIP             string                  `json:"egressIp"`
+	EgressRevision       uint64                  `json:"egressRevision"`
+	EgressSupported      bool                    `json:"egressSupported"`
+	EgressError          string                  `json:"egressError,omitempty"`
+	NodeID               string                  `json:"nodeId"`
+	Name                 string                  `json:"name"`
+	Status               string                  `json:"status"`
+	InUse                bool                    `json:"inUse"`
+	EligibleEntries      int                     `json:"eligibleEntries"`
+	ReadyCombinations    int                     `json:"readyCombinations"`
+	FailedCombinations   int                     `json:"failedCombinations"`
+	WithheldCombinations int                     `json:"withheldCombinations"`
 }
 
 type LandingProxyView struct {
@@ -189,15 +190,20 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		server := LandingServerView{NodeID: nodeID}
 		var active bool
 		var lastSeen string
+		var egressAddressesJSON []byte
 		if err := tx.QueryRowContext(ctx, `SELECT a.name,s.status,a.status='active' AND a.credential_revoked_at='',a.last_seen_at,
  EXISTS(SELECT 1 FROM json_each(s.desired_json,'$.plan.sources')),
- COALESCE(json_extract(s.desired_json,'$.plan.egressIp'),''),s.desired_revision,COALESCE(json_extract(a.capabilities_json,'$.landingEgressIP'),0)=1,s.last_error
- FROM landing_server_states s JOIN agents a ON a.id=s.node_id WHERE s.node_id=?`, nodeID).Scan(&server.Name, &server.Status, &active, &lastSeen, &server.InUse, &server.EgressIP, &server.EgressRevision, &server.EgressSupported, &server.EgressError); err != nil {
+ COALESCE(json_extract(s.desired_json,'$.plan.egressIp'),''),s.desired_revision,COALESCE(json_extract(a.capabilities_json,'$.landingEgressIP'),0)=1,s.last_error,a.landing_egress_addresses_json
+ FROM landing_server_states s JOIN agents a ON a.id=s.node_id WHERE s.node_id=?`, nodeID).Scan(&server.Name, &server.Status, &active, &lastSeen, &server.InUse, &server.EgressIP, &server.EgressRevision, &server.EgressSupported, &server.EgressError, &egressAddressesJSON); err != nil {
+			return view, err
+		}
+		if err := json.Unmarshal(egressAddressesJSON, &server.EgressAddresses); err != nil {
 			return view, err
 		}
 		seen, _ := time.Parse(time.RFC3339Nano, lastSeen)
 		if !active || s.now().Sub(seen) > 2*time.Minute {
 			server.Status = "offline"
+			server.EgressAddresses = []landing.EgressAddress{}
 		}
 		if slices.Contains(selection.RetiringNodeIDs, nodeID) {
 			server.Status = "draining"

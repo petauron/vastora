@@ -224,7 +224,6 @@ export function LandingManager({ language }: { language: Language }) {
                 <IPQualityButton nodeId={server.nodeId} name={server.name} language={language} />
                 <LandingEgressIP key={`${server.nodeId}:${server.egressRevision}`} server={server} language={language}
                   disabled={disabled || !["ready", "failed"].includes(server.status)}
-                  addresses={(quality?.agents.find((agent) => agent.id === server.nodeId)?.networkCandidates ?? []).filter((candidate) => candidate.kind !== "headscale").map((candidate) => candidate.address)}
                   save={(address) => state.change((signal) => api.setLandingEgress(server.nodeId, server.egressRevision ?? 0, address, signal))} />
               </div>
               <Button variant="outline" size="sm" disabled={disabled || server.status === "draining"} aria-label={copy(language, `移除 ${server.name}`, `Remove ${server.name}`)} onClick={() => {

@@ -43,6 +43,7 @@ type NodeCapabilities struct {
 }
 
 type NodeHeartbeat struct {
+	LandingEgressAddresses       []landing.EgressAddress
 	LandingClientRuntime         *landing.ClientRuntime
 	LandingHealth                *landing.Health
 	PublicKey                    []byte
