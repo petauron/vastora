@@ -44,13 +44,12 @@ jobs:
     if: github.event_name == 'pull_request' && vars.VASTORA_CI_MODE == 'alpha'
     needs: changes
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Do not restore the shared Go build cache or compile a second time here.
-      # Release builds both architectures and the frontend, then smoke-tests it.
+      # Keep the release migration regression in the alpha gate too.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         with:
@@ -59,6 +58,9 @@ jobs:
       - name: Check Go formatting and API contract
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: make go-format-check
+      - name: Verify Meridian destination migration
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
+        run: go test ./internal/center -run '^TestVersion100' -count=1
       - name: Check deployment syntax and release workflow contracts
         if: needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'
         run: |
