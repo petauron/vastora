@@ -9,6 +9,7 @@
     { "value": "149.112.112.112", "reason": "Well-known public DNS resolver fixture" }
   ],
   "allowedPublicIPv6": [
+    { "value": "2001:4860:4860::8844", "reason": "Well-known alternate public DNS resolver used only for dual-address inventory fixtures" },
     { "value": "2001:4860:4860::8888", "reason": "Well-known public DNS resolver fixture" },
     {"value": "2000::", "reason": "IPv6 global unicast allocation boundary used by the egress firewall"},
     {"value": "2001::", "reason": "IANA IETF protocol assignment prefix boundary"},
