@@ -49,7 +49,6 @@ jobs:
             VASTORA_PACKAGE_HOST_INTEGRATION=1 VASTORA_PACKAGE_TEST_IMAGE="$VASTORA_PACKAGE_TEST_IMAGE" \
             "$RUNNER_TEMP/package-host.test" -test.run '^TestPackageRealHostLifecycle$' -test.v -test.timeout=10m
   verify:
-    if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -61,4 +60,4 @@ jobs:
       - name: Validate shared protocol and retained bootstrap trust
         run: go run github.com/petauron/catalog/cmd/catalog-check --catalog internal/center/testdata/reviewed-catalog-v4.json --root-directory catalog/trust
       - name: Verify generic executors, admission, and forward migration
-        run: go test ./internal/agent ./internal/center -run 'Test.*(Package|Runtime|Adoption|Official|Catalog|Migration)' -count=1
+        run: go test ./internal/agent ./internal/center -count=1 -timeout=10m

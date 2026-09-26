@@ -78,7 +78,10 @@ for job in analyze-go analyze-javascript; do
     exit 1
   fi
 done
-require_line "$project_dir/.github/workflows/catalog-check.yml" "    if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'"
+# Package ownership/migration and host lifecycle acceptance are mandatory even
+# in alpha mode; they are not optional broad performance/security scans.
+require_line "$project_dir/.github/workflows/catalog-check.yml" 'run: go test ./internal/agent ./internal/center -count=1 -timeout=10m'
+require_line "$project_dir/.github/workflows/catalog-check.yml" 'runner: [ubuntu-24.04, ubuntu-24.04-arm]'
 require_line "$project_dir/.github/workflows/catalog-check.yml" '  schedule:'
 
 if grep -Fq 'cache-to: type=gha' "$ci_workflow"; then
