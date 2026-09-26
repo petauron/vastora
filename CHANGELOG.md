@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.223](https://github.com/petauron/vastora/compare/v0.1.0-alpha.222...v0.1.0-alpha.223) (2026-09-26)
+
+
+### Features
+
+* **meridian:** display IPPure native and broadcast IP origin ([#673](https://github.com/petauron/vastora/issues/673)) ([6f254fa](https://github.com/petauron/vastora/commit/6f254faf6bade888b4c70aa5c7c7b5c69d74c19b))
+
 ## [0.1.0-alpha.222](https://github.com/petauron/vastora/compare/v0.1.0-alpha.221...v0.1.0-alpha.222) (2026-09-26)
 
 
