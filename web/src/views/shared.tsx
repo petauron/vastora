@@ -34,6 +34,12 @@ export function userError(language: Language, error: unknown) {
   if (normalized === "center: a related node has an unresolved execution; resolve it before changing exits") {
     return copy(language, "相关节点有待处理任务，处理后才能切换出口。", "A related node has a task needing attention before its exit can change.");
   }
+  if (normalized === "center: remove this landing server's account routes and wait for revocation before removing the server") {
+    return copy(language, "请先移除使用这台落地机的账号路由，等待授权撤销完成后再移除落地机。", "Remove the account routes using this exit and wait for revocation before removing the server.");
+  }
+  if (normalized === "center: landing selection changed; refresh and retry") {
+    return copy(language, "落地配置已变化，请刷新状态后重试。", "Landing settings changed. Refresh and retry.");
+  }
   if (normalized === "refresh the app catalog and retry this operation.") {
     return copy(language, "请先在设置中刷新应用目录，再重试。", "Refresh the app catalog in Settings, then retry.");
   }

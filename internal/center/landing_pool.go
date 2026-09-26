@@ -22,7 +22,7 @@ func (s *Store) reconcileGlobalLandingPool(ctx context.Context, tx *sql.Tx, refr
 	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
 		return err
 	} else if owns {
-		return nil
+		return s.finalizeMeridianLandingRetirements(ctx, tx)
 	}
 	selection, err := readLandingSelection(ctx, tx)
 	if err != nil {
@@ -328,55 +328,16 @@ func (s *Store) finalizeLandingPoolRetirements(ctx context.Context, tx *sql.Tx, 
 }
 
 func (s *Store) populateLandingServerCounts(ctx context.Context, tx *sql.Tx, selection LandingSelection, server *LandingServerView) error {
-	controller, _, err := runningGlobalThreeXUIController(ctx, tx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_endpoints endpoint
+		JOIN applications app ON app.id=endpoint.application_id
+		WHERE endpoint.status<>'retired' AND endpoint.vless_enabled=1 AND app.node_id<>?`, server.NodeID).Scan(&server.EligibleEntries); err != nil {
 		return err
 	}
-	inbounds, err := threeXUIClientInbounds(ctx, tx, controller)
-	if err != nil {
-		return err
-	}
-	clients, err := landingPoolClients(ctx, tx, controller)
-	if err != nil {
-		return err
-	}
-	expected := 0
-	for _, entry := range inbounds {
-		if entry.VLESSDisabled || entry.InboundTag == "" || entry.NodeID == server.NodeID {
-			continue
-		}
-		server.EligibleEntries++
-		for _, client := range clients {
-			if landingPoolClientEligible(client, entry.ID, s.now()) {
-				expected++
-			}
-		}
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT
-		COALESCE(SUM(grant.status='ready' AND proxy.status='ready' AND EXISTS(
-		 SELECT 1 FROM json_each(proxy.peer_health_json) peer
-		 WHERE json_extract(peer.value,'$.peer.id')=grant.landing_node_id AND json_extract(peer.value,'$.healthy')=1)
-		 AND proxy.health_received_at>? ),0),
-		COALESCE(SUM(grant.status IN ('failed','paused') OR proxy.status='failed'),0),
-		COALESCE(SUM(grant.status NOT IN ('failed','paused','revoked') AND NOT (
-		 grant.status='ready' AND proxy.status='ready' AND EXISTS(
-		  SELECT 1 FROM json_each(proxy.peer_health_json) peer
-		  WHERE json_extract(peer.value,'$.peer.id')=grant.landing_node_id AND json_extract(peer.value,'$.healthy')=1)
-		  AND proxy.health_received_at>? )),0)
-		FROM landing_client_grants grant
-		LEFT JOIN landing_proxy_states proxy ON proxy.application_id=grant.application_id
-		WHERE grant.landing_node_id=? AND grant.status<>'revoked'`,
-		s.now().UTC().Add(-landingHealthFreshness).Format(time.RFC3339Nano),
-		s.now().UTC().Add(-landingHealthFreshness).Format(time.RFC3339Nano), server.NodeID,
-	).Scan(&server.ReadyCombinations, &server.FailedCombinations, &server.WithheldCombinations); err != nil {
-		return err
-	}
-	accounted := server.ReadyCombinations + server.FailedCombinations + server.WithheldCombinations
-	if slices.Contains(selection.NodeIDs, server.NodeID) && expected > accounted {
-		server.WithheldCombinations += expected - accounted
-	}
-	return nil
+	return tx.QueryRowContext(ctx, `SELECT
+		COALESCE(SUM(status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision AND health_expires_unix_ms>?),0),
+		COALESCE(SUM(status IN ('failed','blocked')),0),
+		COALESCE(SUM(status NOT IN ('failed','blocked') AND NOT (status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision AND health_expires_unix_ms>?)),0)
+		FROM meridian_route_grants WHERE egress_node_id=? AND enabled=1 AND status<>'revoked'`,
+		s.now().UTC().UnixMilli(), s.now().UTC().UnixMilli(), server.NodeID,
+	).Scan(&server.ReadyCombinations, &server.FailedCombinations, &server.WithheldCombinations)
 }

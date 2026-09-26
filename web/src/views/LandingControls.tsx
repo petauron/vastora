@@ -172,7 +172,7 @@ export function LandingManager({ language }: { language: Language }) {
   const id = useId();
   if (!state) return null;
   const { view, busy, failed } = state;
-  const candidates = view?.candidates.filter((candidate) => !view.nodeIds.includes(candidate.nodeId) && !view.retiringNodeIds?.includes(candidate.nodeId)) ?? [];
+  const candidates = view?.candidates.filter((candidate) => !view.nodeIds.includes(candidate.nodeId)) ?? [];
   const candidate = candidates.find((item) => item.nodeId === candidateID);
   const regionCodes = (nodeIds: string[]) => Object.fromEntries(nodeIds.flatMap((nodeId) => {
     const code = state.regions[nodeId] ?? view?.landingRegionCodes?.[nodeId];
@@ -189,7 +189,7 @@ export function LandingManager({ language }: { language: Language }) {
     <SheetContent className="apps-workspace apps-landing-sheet">
       <SheetHeader>
         <SheetTitle>{copy(language, "管理落地机", "Landing servers")}</SheetTitle>
-        <SheetDescription>{copy(language, "添加后将自动应用到所有符合条件的 VLESS 节点，并可能重置现有组合连接。", "Added servers automatically apply to every eligible VLESS entry and may reset existing combination sessions.")}</SheetDescription>
+        <SheetDescription>{copy(language, "添加或重新添加落地机后，可在账号路由中选择使用；已有账号授权保持不变。", "Add or restore available exits, then choose them in account routes. Existing account authorizations are preserved.")}</SheetDescription>
       </SheetHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto px-5 pb-5">
         <LandingNotice language={language} />

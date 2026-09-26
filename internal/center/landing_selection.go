@@ -263,20 +263,8 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		return view, err
 	}
 	proxies.Close()
-	controller, controllerNode, err := runningGlobalThreeXUIController(ctx, tx)
-	if err == nil {
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, controllerNode).Scan(&view.ControllerBlocked); err != nil {
-			return view, err
-		}
-		inbounds, err := threeXUIClientInbounds(ctx, tx, controller)
-		if err != nil {
-			return view, err
-		}
-		for _, entry := range inbounds {
-			if !entry.VLESSDisabled && entry.InboundTag != "" {
-				view.EligibleEntries++
-			}
-		}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_endpoints WHERE status<>'retired' AND vless_enabled=1`).Scan(&view.EligibleEntries); err != nil {
+		return view, err
 	}
 	for _, server := range view.Servers {
 		view.ReadyCombinations += server.ReadyCombinations
@@ -284,7 +272,7 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		view.WithheldCombinations += server.WithheldCombinations
 	}
 	view.Status = "ready"
-	if len(selection.RetiringNodeIDs) > 0 || view.WithheldCombinations > 0 {
+	if len(selection.RetiringNodeIDs) > 0 || view.WithheldCombinations > 0 || slices.ContainsFunc(view.Servers, func(server LandingServerView) bool { return server.Status != "ready" }) {
 		view.Status = "applying"
 	}
 	if view.TasksPaused || view.ControllerBlocked || view.FailedCombinations > 0 {
@@ -454,7 +442,7 @@ func (s *Server) handleSelectLanding(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.store.SelectLanding(request.Context(), LandingSelection{
+	if err := s.store.SelectMeridianLanding(request.Context(), LandingSelection{
 		NodeIDs: input.NodeIDs, LandingRegionCodes: input.LandingRegionCodes, Revision: input.Revision,
 	}); err != nil {
 		writeError(writer, http.StatusConflict, err)
