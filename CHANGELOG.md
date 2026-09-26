@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.230](https://github.com/petauron/vastora/compare/v0.1.0-alpha.229...v0.1.0-alpha.230) (2026-09-26)
+
+
+### Features
+
+* **meridian:** compact node overview and route matrix ([#688](https://github.com/petauron/vastora/issues/688)) ([7096c60](https://github.com/petauron/vastora/commit/7096c60a42f7636d055996438d2f91fdb7fd0b19))
+
 ## [0.1.0-alpha.229](https://github.com/petauron/vastora/compare/v0.1.0-alpha.228...v0.1.0-alpha.229) (2026-09-26)
 
 
