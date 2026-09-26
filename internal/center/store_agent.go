@@ -129,8 +129,8 @@ func (s *Store) CreateAgentReconnectEnrollment(ctx context.Context, agentID stri
 	if err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: inspect Agent reconnect state: %w", err)
 	}
-	if status != "active" {
-		return AgentEnrollment{}, errors.New("center: only an active Agent can reconnect")
+	if status != "active" && status != "disabled" {
+		return AgentEnrollment{}, errors.New("center: Agent cannot reconnect")
 	}
 	lastSeen, err := time.Parse(time.RFC3339Nano, lastSeenAt)
 	if err != nil {
@@ -244,7 +244,7 @@ func (s *Store) createAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 		var currentStatus, currentLastSeenAt, currentCredentialRevokedAt string
 		var decommissioning int
 		if err := tx.QueryRowContext(ctx, `SELECT status, last_seen_at, credential_revoked_at,
-			EXISTS(SELECT 1 FROM agent_decommissions WHERE agent_id = agents.id AND state IN ('pending', 'running', 'cleaning'))
+			EXISTS(SELECT 1 FROM agent_decommissions WHERE agent_id = agents.id AND state IN ('pending', 'running', 'cleaning')) OR EXISTS(SELECT 1 FROM agent_removals WHERE agent_id = agents.id)
 			FROM agents WHERE id = ?`, targetAgentID).Scan(&currentStatus, &currentLastSeenAt, &currentCredentialRevokedAt, &decommissioning); errors.Is(err, sql.ErrNoRows) {
 			return AgentEnrollment{}, errors.New("center: Agent not found")
 		} else if err != nil {
@@ -254,8 +254,8 @@ func (s *Store) createAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 		if err != nil {
 			return AgentEnrollment{}, errors.New("center: stored Agent heartbeat time is invalid")
 		}
-		if currentStatus != "active" {
-			return AgentEnrollment{}, errors.New("center: only an active Agent can reconnect")
+		if currentStatus != "active" && currentStatus != "disabled" {
+			return AgentEnrollment{}, errors.New("center: Agent cannot reconnect")
 		}
 		if decommissioning != 0 {
 			return AgentEnrollment{}, errors.New("center: Agent decommissioning must finish before reconnecting")
@@ -462,7 +462,7 @@ func (s *Store) EnrollAgentOperation(ctx context.Context, enrollmentToken, opera
 			return AgentCredential{}, fmt.Errorf("center: save agent: %w", err)
 		}
 	} else {
-		result, err := tx.ExecContext(ctx, `UPDATE agents SET credential_hash = ?, x25519_public_key = ?, version = ?, operating_system = ?, architecture = ?, credential_revoked_at = '', applied_installations = 0, gateway_healthy = 0, runtime_generation = 0, tailscale_ownership = '', remote_update_supported = 0, last_seen_at = ? WHERE id = ? AND status = 'active' AND credential_revoked_at <> ''`, tokenHash(credential), append([]byte(nil), publicKey...), version, target.OS, target.Architecture, now.Format(time.RFC3339Nano), targetAgentID)
+		result, err := tx.ExecContext(ctx, `UPDATE agents SET status = 'active', credential_hash = ?, x25519_public_key = ?, version = ?, operating_system = ?, architecture = ?, credential_revoked_at = '', applied_installations = 0, gateway_healthy = 0, runtime_generation = 0, tailscale_ownership = '', remote_update_supported = 0, last_seen_at = ? WHERE id = ? AND status IN ('active', 'disabled') AND credential_revoked_at <> '' AND NOT EXISTS(SELECT 1 FROM agent_removals WHERE agent_id = agents.id) AND NOT EXISTS(SELECT 1 FROM agent_decommissions WHERE agent_id = agents.id AND state IN ('pending', 'running', 'cleaning'))`, tokenHash(credential), append([]byte(nil), publicKey...), version, target.OS, target.Architecture, now.Format(time.RFC3339Nano), targetAgentID)
 		if err != nil {
 			return AgentCredential{}, fmt.Errorf("center: replace Agent identity: %w", err)
 		}
