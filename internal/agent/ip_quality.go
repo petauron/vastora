@@ -52,7 +52,9 @@ func readIPQualityOutput(reader io.Reader) ([]byte, error) {
 const ipQualityScript = `set -eu
 curl --proto '=https' --tlsv1.2 -fsSL --max-time 30 https://raw.githubusercontent.com/xykt/IPQuality/ad222ab16778be2a13a174cd1acbd69fb4cac6b7/ip.sh -o /tmp/upstream.sh
 echo 'ffb17dae790341c13023a94c5141775974dd73a3653ca5fba5c4648fc5588402  /tmp/upstream.sh' | sha256sum -c - >/dev/null
-sed -e '/^check_mail$/d' -e '/^\[\[ \$2 -eq 4 \]\]&&check_dnsbl /d' -e '/^show_mail \$2$/d' -e '/^countRunTimes$/d' -e '/^show_ad$/d' -e 's/\${rawgithub}main\//\${rawgithub}ad222ab16778be2a13a174cd1acbd69fb4cac6b7\//g' /tmp/upstream.sh > /tmp/check.sh
+# DB-IP queries /self. Keep the selected source address for both families;
+# upstream otherwise clears its binding for IPv6 and can report the IPv4 exit.
+sed -e '/^check_mail$/d' -e '/^\[\[ \$2 -eq 4 \]\]&&check_dnsbl /d' -e '/^show_mail \$2$/d' -e '/^countRunTimes$/d' -e '/^show_ad$/d' -e 's/\$tmpcurlarg/\$CurlARG/g' -e 's/\${rawgithub}main\//\${rawgithub}ad222ab16778be2a13a174cd1acbd69fb4cac6b7\//g' /tmp/upstream.sh > /tmp/check.sh
 bash /tmp/check.sh -i "$1" "$2" -E -n -p -f -j > /tmp/report.json || [ "$?" -eq 1 ]
 cat /tmp/report.json
 if [ "$2" = '-4' ] && curl --proto '=https' --tlsv1.2 --ipv4 --interface "$1" --noproxy '*' --max-time 12 --max-filesize 16384 -fsS https://my.ippure.com/v1/info -o /tmp/ippure.json 2>/dev/null; then

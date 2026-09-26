@@ -5770,7 +5770,7 @@
         "tags": [
           "System"
         ],
-        "summary": "List IPQuality",
+        "summary": "List IPQuality by exact egress address",
         "operationId": "listIPQuality_get",
         "x-vastora-audience": "browser-admin",
         "security": [
@@ -5805,6 +5805,15 @@
         },
         "parameters": [
           {
+            "name": "compareAddress",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact public IPv4 or IPv6 address on compareNodeId. Omit to use that node's native public egress. Landing candidates use their configured exit."
+          },
+          {
             "name": "compareNodeId",
             "in": "query",
             "required": false,
@@ -5828,7 +5837,8 @@
               "type": "string"
             }
           }
-        ]
+        ],
+        "description": "Returns eligible targets and saved checks with agentId, canonical public address, family and selected exit metadata. Reports are independent for each node and IP."
       }
     },
     "/api/v1/agents/{id}/ip-quality": {
@@ -5836,7 +5846,7 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Start IPQuality",
+        "summary": "Start IPQuality for an eligible egress address",
         "operationId": "startIPQuality_post",
         "x-vastora-audience": "browser-admin",
         "security": [
@@ -5880,7 +5890,28 @@
               "minLength": 1
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "address": {
+                    "type": "string",
+                    "description": "An exact public IPv4 or IPv6 address from this node's eligible targets. Center resolves the trusted local bind address."
+                  }
+                },
+                "required": [
+                  "address"
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/node-diagnostics": {

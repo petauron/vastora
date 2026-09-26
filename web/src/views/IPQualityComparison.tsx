@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AssessmentBadge, AssessmentSummary } from "./IPAssessment";
 import { copy } from "./shared";
-import { unlockLabel } from "./ipQualityModel";
+import { ipQualityCheckForAddress, ipQualityFamilyLabel, unlockLabel } from "./ipQualityModel";
 
 const defaultPreferences: IPQualityPreferences = { requiredServices: ["ChatGPT", "Netflix", "DisneyPlus"], targetRegion: "" };
 const serviceOptions = ["ChatGPT", "Netflix", "DisneyPlus", "Youtube", "AmazonPrimeVideo", "TikTok", "Reddit"];
@@ -19,7 +19,8 @@ const serviceName = (name: string) => name === "DisneyPlus" ? "Disney+" : name =
 type Props = {
   language: Language;
   nodeId?: string;
-  nodes?: { id: string; name: string }[];
+  compareAddress?: string;
+  nodes?: { id: string; name: string; address?: string }[];
   allowedNodeIds?: string[];
   onSelect?: (nodeId: string) => void;
 };
@@ -33,9 +34,10 @@ export function IPQualityComparison({ language, ...props }: Props) {
   </section>;
 }
 
-function ComparisonPanel({ language, nodeId, nodes = [], allowedNodeIds, onSelect }: Props) {
+function ComparisonPanel({ language, nodeId, compareAddress, nodes = [], allowedNodeIds, onSelect }: Props) {
   const [selectedNode, setSelectedNode] = useState("");
   const currentID = nodeId ?? selectedNode;
+  const currentAddress = compareAddress ?? nodes.find((node) => node.id === currentID)?.address ?? "";
   const [preferences, setPreferences] = useState(defaultPreferences);
   const [required, setRequired] = useState(defaultPreferences.requiredServices);
   const [region, setRegion] = useState("");
@@ -45,24 +47,24 @@ function ComparisonPanel({ language, nodeId, nodes = [], allowedNodeIds, onSelec
   const id = useId();
   const requiredKey = preferences.requiredServices.join(",");
   const targetRegion = preferences.targetRegion;
-  const key = `${currentID}|${requiredKey}|${targetRegion}`;
+  const key = `${currentID}|${currentAddress ?? ""}|${requiredKey}|${targetRegion}`;
   useEffect(() => {
     const controller = new AbortController();
     const timeout = setTimeout(() => { setError(true); controller.abort(); }, 15000);
     setError(false);
-    void api.ipQuality(controller.signal, { requiredServices: requiredKey ? requiredKey.split(",") : [], targetRegion }, currentID).then((value) => {
+    void api.ipQuality(controller.signal, { requiredServices: requiredKey ? requiredKey.split(",") : [], targetRegion }, currentID, currentAddress).then((value) => {
       if (!controller.signal.aborted) setResponse({ key, value });
     }).catch(() => {
       if (!controller.signal.aborted) setError(true);
     }).finally(() => clearTimeout(timeout));
     return () => { clearTimeout(timeout); controller.abort(); };
-  }, [currentID, requiredKey, targetRegion, key, refresh]);
+  }, [currentID, currentAddress, requiredKey, targetRegion, key, refresh]);
   useEffect(() => {
     const timer = setInterval(() => { if (!document.hidden) setRefresh((value) => value + 1); }, 15000);
     return () => clearInterval(timer);
   }, []);
   const data = response?.key === key && !error ? response.value : null;
-  const current = data?.checks.find((value) => value.agentId === currentID);
+  const current = data ? ipQualityCheckForAddress(data.checks, currentID, currentAddress) : undefined;
   const candidates = data?.comparisons.filter((value) => !allowedNodeIds || allowedNodeIds.includes(value.nodeId)) ?? [];
   const formal = candidates.filter((value) => value.assessment.status === "complete");
   const conservative = candidates.filter((value) => value.assessment.status === "conservative");
@@ -79,11 +81,12 @@ function ComparisonPanel({ language, nodeId, nodes = [], allowedNodeIds, onSelec
       <Field className="w-28"><FieldLabel className="text-xs" htmlFor={`${id}-region`}>{copy(language, "国家（可选）", "Country (optional)")}</FieldLabel><Input id={`${id}-region`} placeholder="US" value={region} maxLength={2} pattern="[A-Z]{2}|^$" onChange={(event) => setRegion(event.target.value.toUpperCase())} /></Field>
       <Button type="submit" size="sm">{copy(language, "应用条件", "Apply filters")}</Button>
     </form>
-    {current ? <AssessmentSummary assessment={current.assessment} report={current.report} checkedAt={current.checkedAt} language={language} /> : null}
+    {currentAddress ? <p className="break-all text-xs text-muted-foreground">{copy(language, "当前比较出口", "Compared exit")}: {currentAddress}</p> : null}
+    {current ? <AssessmentSummary assessment={current.assessment} report={current.report} checkedAt={current.checkedAt} language={language} /> : currentID && data ? <p className="text-xs text-muted-foreground">{copy(language, "当前出口待检测", "The current exit needs a check")}</p> : null}
     {error ? <p role="alert" className="text-xs text-destructive">{copy(language, "比较数据读取失败", "Could not load comparison")} <Button type="button" size="sm" variant="ghost" onClick={() => setRefresh((value) => value + 1)}>{copy(language, "重试", "Retry")}</Button></p> : !data ? <p role="status" className="text-xs text-muted-foreground">{copy(language, "正在读取评分…", "Loading assessments…")}</p> : null}
     {currentID && data ? <>
       {[{ title: copy(language, "正式评分", "Formal ranking"), values: formal }, { title: copy(language, "部分证据待确认", "Some evidence unconfirmed"), values: conservative }, { title: copy(language, "暂评 / 待复测", "Provisional / Recheck"), values: provisional }].filter((group) => group.values.length > 0).map((group) => <section key={group.title} className="min-w-0"><h4 className="mb-1 text-xs font-medium">{group.title}</h4><Table className="text-xs"><TableHeader><TableRow><TableHead>{copy(language, "落地", "Egress")}</TableHead><TableHead>{copy(language, "评分 / 提升", "Score / Change")}</TableHead><TableHead>{copy(language, "解锁与地区", "Unlocks / Regions")}</TableHead><TableHead>{copy(language, "建议", "Advice")}</TableHead>{onSelect ? <TableHead className="sr-only">{copy(language, "选择", "Select")}</TableHead> : null}</TableRow></TableHeader><TableBody>{group.values.map((item) => <TableRow key={item.nodeId}>
-        <TableCell className="max-w-40 truncate" title={item.name}>{item.name}</TableCell><TableCell><AssessmentBadge language={language} assessment={item.assessment} />{item.delta != null ? <span className="ml-2 tabular-nums" title={item.assessment.status === "conservative" || current?.assessment?.status === "conservative" ? copy(language, "候选最低分减当前最高分", "Candidate minimum minus current maximum") : undefined}>{item.delta > 0 ? "+" : ""}{item.delta}{item.assessment.status === "conservative" || current?.assessment?.status === "conservative" ? copy(language, "（下界）", " (lower bound)") : null}</span> : null}</TableCell>
+        <TableCell className="max-w-40" title={item.name}><p className="truncate">{item.name}</p><p className="text-muted-foreground" title={item.address}>{ipQualityFamilyLabel(item.family)}</p></TableCell><TableCell><AssessmentBadge language={language} assessment={item.assessment} />{item.delta != null ? <span className="ml-2 tabular-nums" title={item.assessment.status === "conservative" || current?.assessment?.status === "conservative" ? copy(language, "候选最低分减当前最高分", "Candidate minimum minus current maximum") : undefined}>{item.delta > 0 ? "+" : ""}{item.delta}{item.assessment.status === "conservative" || current?.assessment?.status === "conservative" ? copy(language, "（下界）", " (lower bound)") : null}</span> : null}</TableCell>
         <TableCell><div className="flex flex-col gap-1">{preferences.requiredServices.map((name) => { const service = item.services.find((value) => value.name === name); return <span key={name}>{serviceName(name)} {unlockLabel(language, service?.status)} · {service?.regionCode || "—"}</span>; })}</div></TableCell>
         <TableCell className={item.recommended ? "text-latency-fast" : "text-muted-foreground"}>{reasons[item.reason] ? copy(language, ...reasons[item.reason]) : item.reason}{item.recommended && !item.connectionVerified ? <> · {copy(language, "连接待验证", "Connection pending verification")}</> : null}</TableCell>
         {onSelect ? <TableCell><Button type="button" size="sm" variant="outline" onClick={() => onSelect(item.nodeId)}>{copy(language, "选择", "Select")}</Button></TableCell> : null}

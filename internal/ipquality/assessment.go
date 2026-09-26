@@ -352,6 +352,8 @@ func grade(score int) string {
 }
 
 type Comparison struct {
+	Address            string     `json:"address"`
+	Family             string     `json:"family"`
 	NodeID             string     `json:"nodeId"`
 	Name               string     `json:"name"`
 	Compatible         bool       `json:"compatible"`

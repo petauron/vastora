@@ -1,6 +1,7 @@
 export type IPQualityService = { name: string; status: string; regionCode?: string; type?: string };
 export type IPQualityClassification = { source: string; value: string };
 export type IPQualityRiskFactor = { source: string; kind: "Proxy" | "VPN" | "Tor" | "Server" | "Abuser" | "Robot"; value: boolean };
+export type IPQualityTarget = { agentId: string; address: string; family: "ipv4" | "ipv6"; selected: boolean };
 export type IPQualityReport = {
 	observations?: { source: string; status: "ok" | "missing"; address: string; checkedAt: string }[];
 	ippure?: { provider: string; status: "ok" | "unavailable" | "invalid_response" | "ip_mismatch" | "unsupported"; address?: string; checkedAt: string; riskScore?: number; residential?: boolean; broadcast?: boolean };
@@ -10,9 +11,9 @@ export type IPQualityReport = {
   scores: { source: string; value: string }[];
   services: IPQualityService[];
 };
-export type IPQualityCheck = {
+export type IPQualityCheck = IPQualityTarget & {
 	assessment?: IPQualityAssessment;
-  agentId: string; id: string; state: "pending" | "running" | "succeeded" | "failed";
+  id: string; state: "pending" | "running" | "succeeded" | "failed";
   error?: string; report?: IPQualityReport; checkedAt?: string; updatedAt: string; stale: boolean;
 };
 
@@ -31,6 +32,7 @@ export type IPQualityAssessment = {
 };
 export type IPQualityComparison = {
   nodeId: string; name: string; compatible: boolean; connectionVerified: boolean; recommended: boolean; reason: string;
+  address: string; family: IPQualityTarget["family"];
   delta?: number; assessment: IPQualityAssessment; services: IPQualityService[];
 };
-export type IPQualityResponse = { checks: IPQualityCheck[]; comparisons: IPQualityComparison[] };
+export type IPQualityResponse = { checks: IPQualityCheck[]; targets: IPQualityTarget[]; comparisons: IPQualityComparison[] };

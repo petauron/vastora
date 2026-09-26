@@ -63,13 +63,14 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
-  ipQuality: (signal?: AbortSignal, preferences?: IPQualityPreferences, compareNodeId?: string) => {
+  ipQuality: (signal?: AbortSignal, preferences?: IPQualityPreferences, compareNodeId?: string, compareAddress?: string) => {
     const params = new URLSearchParams();
     if (preferences) { params.set("required", preferences.requiredServices.join(",")); params.set("region", preferences.targetRegion); }
     if (compareNodeId) params.set("compareNodeId", compareNodeId);
+    if (compareAddress) params.set("compareAddress", compareAddress);
     return request<IPQualityResponse>(`/api/v1/ip-quality${params.size ? `?${params}` : ""}`, { signal });
   },
-  checkIPQuality: (id: string, signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/ip-quality`, { method: "POST", body: "{}", signal }),
+  checkIPQuality: (id: string, address: string, signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/ip-quality`, { method: "POST", body: JSON.stringify({ address }), signal }),
   nodeDiagnostics: (signal?: AbortSignal) => request<{ checks: NodeDiagnosticCheck[] }>("/api/v1/node-diagnostics", { signal }),
   checkNodeDiagnostic: (id: string, kind: NodeDiagnosticCheck["kind"], signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/node-diagnostics/${encodeURIComponent(kind)}`, { method: "POST", body: "{}", signal }),
   checkMeridianLinkBandwidth: (sourceNodeId: string, landingNodeId: string, signal?: AbortSignal) => request<{ queued: boolean }>("/api/v1/meridian/link-bandwidth", { method: "POST", body: JSON.stringify({ sourceNodeId, landingNodeId }), signal }),

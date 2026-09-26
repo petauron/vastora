@@ -85,7 +85,11 @@ func TestIPQualityContainerIsBoundedAndDoesNotMountHost(t *testing.T) {
 	if options.Config.Labels["io.vastora.application"] != "meridian" {
 		t.Fatal("IP diagnostics lost Meridian ownership")
 	}
-	for _, required := range []string{"sha256sum -c", "-E -n -p -f -j", "/^check_mail$/d", "/^countRunTimes$/d", "check_dnsbl", "ad222ab16778be2a13a174cd1acbd69fb4cac6b7", "https://my.ippure.com/v1/info", "--interface \"$1\" --noproxy '*'"} {
+	ipv6 := ipQualityContainerOptions(ipquality.Task{Address: "2001:db8::8", BindAddress: "2001:db8::8"})
+	if ipv6.Config.Cmd[0] != "2001:db8::8" || ipv6.Config.Cmd[1] != "-6" {
+		t.Fatal("IPv6 diagnostic lost its exact source address or family")
+	}
+	for _, required := range []string{"sha256sum -c", "-E -n -p -f -j", "bash /tmp/check.sh -i \"$1\" \"$2\"", `s/\$tmpcurlarg/\$CurlARG/g`, "/^check_mail$/d", "/^countRunTimes$/d", "check_dnsbl", "ad222ab16778be2a13a174cd1acbd69fb4cac6b7", "https://my.ippure.com/v1/info", "--interface \"$1\" --noproxy '*'"} {
 		if !strings.Contains(ipQualityScript, required) {
 			t.Fatalf("missing runner restriction %q", required)
 		}

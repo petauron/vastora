@@ -548,6 +548,17 @@ for (const route of routes) {
     operation.responses["200"].headers = noStoreHeaders;
     operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/ApplicationCredentialRotation" };
   }
+  if (route.handler === "handleListIPQuality") {
+    operation.summary = "List IPQuality by exact egress address";
+    operation.description = "Returns eligible targets and saved checks with agentId, canonical public address, family and selected exit metadata. Reports are independent for each node and IP.";
+    const address = operation.parameters.find((parameter) => parameter.name === "compareAddress");
+    address.description = "Exact public IPv4 or IPv6 address on compareNodeId. Omit to use that node's native public egress. Landing candidates use their configured exit.";
+  } else if (route.handler === "handleStartIPQuality") {
+    operation.summary = "Start IPQuality for an eligible egress address";
+    const schema = operation.requestBody.content["application/json"].schema;
+    schema.required = ["address"];
+    schema.properties.address.description = "An exact public IPv4 or IPv6 address from this node's eligible targets. Center resolves the trusted local bind address.";
+  }
   if (route.handler === "handleListPublications") {
     operation.responses["200"].content["application/json"].schema = {
       type: "object",
