@@ -29,7 +29,7 @@ func TestExecutionRuntimeConfirmationPreservesEvidenceAndRevisionFence(t *testin
 					query = `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,status,attempt,updated_at) VALUES(?,7,6,?,'failed',3,?)`
 					args = []any{node.ID, desired, stamp}
 				case "landing.proxy.apply":
-					deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+					deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -166,7 +166,7 @@ func TestExecutionProjectionAcceptsAppliedLandingRevisionWithQueuedSuccessor(t *
 					t.Fatal(err)
 				}
 			} else {
-				deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+				deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 				if err != nil {
 					t.Fatal(err)
 				}

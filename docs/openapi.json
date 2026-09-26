@@ -1282,7 +1282,93 @@
             "description": "Successful response.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "deployments"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "deployments": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "agentId": {
+                            "type": "string"
+                          },
+                          "appKey": {
+                            "type": "string"
+                          },
+                          "appVersion": {
+                            "type": "string"
+                          },
+                          "packageRevision": {
+                            "type": "integer"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "reconciliationRequired": {
+                            "type": "boolean"
+                          },
+                          "operation": {
+                            "type": "string"
+                          },
+                          "deleteData": {
+                            "type": "boolean"
+                          },
+                          "accessUrl": {
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "updatedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "applicationId": {
+                            "type": "string"
+                          },
+                          "oneTimeCredentials": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "username": {
+                                    "type": "string"
+                                  },
+                                  "password": {
+                                    "type": "string"
+                                  },
+                                  "setupToken": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "oneTimeCredentialsAvailable": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           },
@@ -1321,7 +1407,81 @@
             "description": "Created.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "appKey": {
+                      "type": "string"
+                    },
+                    "appVersion": {
+                      "type": "string"
+                    },
+                    "packageRevision": {
+                      "type": "integer"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "reconciliationRequired": {
+                      "type": "boolean"
+                    },
+                    "operation": {
+                      "type": "string"
+                    },
+                    "deleteData": {
+                      "type": "boolean"
+                    },
+                    "accessUrl": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "applicationId": {
+                      "type": "string"
+                    },
+                    "oneTimeCredentials": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "username": {
+                              "type": "string"
+                            },
+                            "password": {
+                              "type": "string"
+                            },
+                            "setupToken": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "oneTimeCredentialsAvailable": {
+                      "type": "boolean"
+                    }
+                  }
+                }
               }
             }
           },
@@ -1359,12 +1519,47 @@
                   "role": {
                     "type": "string"
                   },
-                  "config": {},
+                  "config": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "boolean",
+                        "number"
+                      ]
+                    },
+                    "description": "Administrator-provided fields only; product-managed fields are supplied by Center and must not be submitted."
+                  },
                   "operation": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                      "install",
+                      "upgrade",
+                      "configure",
+                      "uninstall"
+                    ],
+                    "default": "install"
                   },
                   "deleteData": {
                     "type": "boolean"
+                  },
+                  "authorizedCapabilities": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": "Explicit administrator grants. Omission may retain existing grants, never authorize an expansion. Unknown or undeclared grants fail closed."
+                  },
+                  "packageRevision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "manifestSha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
                   },
                   "registryCredentialId": {
                     "anyOf": [
@@ -1376,11 +1571,57 @@
                       }
                     ]
                   }
-                }
+                },
+                "required": [
+                  "agentId",
+                  "appKey",
+                  "config"
+                ],
+                "oneOf": [
+                  {
+                    "properties": {
+                      "operation": {
+                        "enum": [
+                          "install",
+                          "upgrade"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "packageRevision",
+                      "manifestSha256"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "operation": {
+                        "enum": [
+                          "configure",
+                          "uninstall"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "operation"
+                    ]
+                  }
+                ]
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stable operation key for product-generated one-time credential operations; retain it for an exact retry."
+          }
+        ],
+        "description": "Install/upgrade requires the exact reviewed catalog package revision and canonical manifest SHA256. Stale identity, unsupported node runtime, missing grants, expired trust or pending/blocked adoption rejects admission. Configuration/uninstall use recorded resources. Uninstall retains data unless deleteData is explicitly true. Catalog refresh never creates this task."
       }
     },
     "/api/v1/deployments/{id}/credentials/reveal": {
@@ -1798,7 +2039,111 @@
             "description": "Successful response.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "applications"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "applications": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "nodeId": {
+                            "type": "string"
+                          },
+                          "siteId": {
+                            "type": "string"
+                          },
+                          "appKey": {
+                            "type": "string"
+                          },
+                          "image": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "runtime": {
+                            "type": "string"
+                          },
+                          "role": {
+                            "type": "string"
+                          },
+                          "controllerApplicationId": {
+                            "type": "string"
+                          },
+                          "nodeSyncStatus": {
+                            "type": "string"
+                          },
+                          "nodeSyncError": {
+                            "type": "string"
+                          },
+                          "restorePointState": {
+                            "type": "string"
+                          },
+                          "restorePointAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "installedVersion": {
+                            "type": "string"
+                          },
+                          "installedPackageRevision": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "adoptionState": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "ready",
+                              "blocked"
+                            ],
+                            "description": "Historical instances stay pending/blocked until read-only resource adoption succeeds. ready does not imply application upgrade or healthy runtime."
+                          },
+                          "adoptionError": {
+                            "type": "string"
+                          },
+                          "availablePackageRevision": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "availableVersion": {
+                            "type": "string"
+                          },
+                          "updateAvailable": {
+                            "type": "boolean"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "updatedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           },
@@ -1818,6 +2163,419 @@
             "$ref": "#/components/responses/Error"
           }
         }
+      }
+    },
+    "/api/v1/applications/{id}/adopt": {
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Verify and Adopt Historical Application Resources",
+        "operationId": "adoptApplication_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "taskId"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "taskId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "backupsConfirmed": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "backupsConfirmed"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Maintenance-only management-record adoption based on the historical installed manifest and actual owned resources. Does not pull, rebuild, restart, reconfigure, expand permissions or migrate application data. Requires separate Center, Agent and application-data backups. Unknown ownership or unresolved node work blocks adoption; no repair reinstall. A 202 response means queued, not adopted; observe task and application adoptionState."
+      }
+    },
+    "/api/v1/applications/{id}/maintenance": {
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Queue Managed Application Logs, Backup or Restore",
+        "operationId": "queueApplicationMaintenance_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "taskId"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "taskId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "logs",
+                      "backup",
+                      "restore"
+                    ]
+                  },
+                  "backupId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[^/\\\\\\x00\\r\\n]+$",
+                    "description": "Opaque backup identifier already recorded for this instance, not a host path."
+                  }
+                },
+                "required": [
+                  "action"
+                ],
+                "oneOf": [
+                  {
+                    "properties": {
+                      "action": {
+                        "const": "restore"
+                      }
+                    },
+                    "required": [
+                      "backupId"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "action": {
+                        "enum": [
+                          "logs",
+                          "backup"
+                        ]
+                      }
+                    },
+                    "not": {
+                      "required": [
+                        "backupId"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "description": "Uses verified instance resource ownership and recorded package identity, never caller-supplied paths, commands or current catalog substitutions. Pending adoption or unresolved work blocks maintenance. Restore accepts only an instance-recorded backup from the same package version; cross-version rollback requires matched offline recovery. Unknown outcomes retain evidence and require reconciliation, not automatic replay. Logs are bounded and known delivered credentials are redacted."
+      }
+    },
+    "/api/v1/applications/{id}/maintenance/{taskId}": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Read Application Maintenance Result",
+        "operationId": "applicationMaintenance_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "applicationId": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    },
+                    "backupId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "reconciliationRequired": {
+                      "type": "boolean"
+                    },
+                    "result": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "logs": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "resource": {
+                                    "type": "string"
+                                  },
+                                  "content": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            },
+                            "backupId": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Returns task status and bounded redacted logs or an opaque backup ID. Never returns resource receipts, host backup paths or delivered secret values. A queued task is not proof of backup or restoration. reconciliationRequired means the actual outcome must be resolved before further changes."
+      }
+    },
+    "/api/v1/applications/{id}/backups": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "List Recorded Application Backups",
+        "operationId": "applicationBackups_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "packageVersion": {
+                        "type": "string"
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "resources": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "restorable": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Returns instance-recorded backup IDs, package version, creation time, logical resource names and current restorable status. Does not discover arbitrary host files or expose backup paths/digests. restorable does not prove a successful restoration drill; cross-version and unverified historical Docker restores remain blocked."
       }
     },
     "/api/v1/meridian": {
@@ -2557,7 +3315,9 @@
                   },
                   "landingRegionCodes": {
                     "type": "object",
-                    "additionalProperties": true
+                    "additionalProperties": {
+                      "type": "string"
+                    }
                   },
                   "revision": {
                     "type": "integer"
@@ -5743,7 +6503,302 @@
             "description": "Successful response.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "agents"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "string"
+                          },
+                          "operatingSystem": {
+                            "type": "string"
+                          },
+                          "architecture": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "appliedInstallations": {
+                            "type": "integer"
+                          },
+                          "enrolledAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "lastSeenAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "connected": {
+                            "type": "boolean"
+                          },
+                          "siteId": {
+                            "type": "string"
+                          },
+                          "roles": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "capabilities": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "executorVersions": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "integer"
+                                },
+                                "description": "Supported executor protocol versions, keyed by runtime kind (for example docker/systemd). No application-ID allowlist."
+                              },
+                              "runtimeCapabilities": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "Available execution capabilities. Availability is not administrator permission approval."
+                              },
+                              "ipQuality": {
+                                "type": "boolean"
+                              },
+                              "networkDiagnostics": {
+                                "type": "boolean"
+                              },
+                              "returnRoute": {
+                                "type": "boolean"
+                              },
+                              "bandwidthDiagnostics": {
+                                "type": "boolean"
+                              },
+                              "landingEgressIP": {
+                                "type": "boolean"
+                              },
+                              "meridianLinkBandwidth": {
+                                "type": "boolean"
+                              },
+                              "hostProfile": {
+                                "type": "boolean"
+                              },
+                              "docker": {
+                                "type": "boolean"
+                              },
+                              "gateway": {
+                                "type": "boolean"
+                              },
+                              "tunnel": {
+                                "type": "boolean"
+                              },
+                              "metrics": {
+                                "type": "boolean"
+                              },
+                              "logs": {
+                                "type": "boolean"
+                              }
+                            }
+                          },
+                          "networkCandidates": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "address": {
+                                  "type": "string"
+                                },
+                                "interface": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string"
+                                },
+                                "observedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              }
+                            }
+                          },
+                          "publicEgress": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "address": {
+                                    "type": "string"
+                                  },
+                                  "bindAddress": {
+                                    "type": "string"
+                                  },
+                                  "mode": {
+                                    "type": "string"
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "networkProfile": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serviceAddress": {
+                                    "type": "string"
+                                  },
+                                  "lanAddress": {
+                                    "type": "string"
+                                  },
+                                  "headscaleAddress": {
+                                    "type": "string"
+                                  },
+                                  "publicAddress": {
+                                    "type": "string"
+                                  },
+                                  "publicBindAddress": {
+                                    "type": "string"
+                                  },
+                                  "publicMode": {
+                                    "type": "string"
+                                  },
+                                  "enabledKinds": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "directPublic": {
+                                    "type": "boolean"
+                                  },
+                                  "publicVerifiedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "confirmedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "candidateObservedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "gatewayHealthy": {
+                            "type": "boolean"
+                          },
+                          "runtimeRecovery": {
+                            "type": "string"
+                          },
+                          "runtimeRecoveryApplications": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "appKey": {
+                                  "type": "string"
+                                },
+                                "applicationId": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "tailscaleOwnership": {
+                            "type": "string"
+                          },
+                          "credentialRevoked": {
+                            "type": "boolean"
+                          },
+                          "remoteUpdateSupported": {
+                            "type": "boolean"
+                          },
+                          "update": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "targetVersion": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  },
+                                  "lastError": {
+                                    "type": "string"
+                                  },
+                                  "updatedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "removal": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "state": {
+                                    "type": "string"
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           },
@@ -7139,6 +8194,18 @@
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
+                      "executorVersions": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "integer"
+                        }
+                      },
+                      "runtimeCapabilities": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "ipQuality": {
                         "type": "boolean"
                       },
@@ -9408,28 +10475,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "source": {
-                      "type": "string"
-                    },
-                    "channel": {
-                      "type": "string"
-                    },
-                    "revision": {
-                      "type": "integer"
-                    },
-                    "generatedAt": {
-                      "type": "string",
-                      "format": "date-time"
-                    },
-                    "expiresAt": {
-                      "type": "string",
-                      "format": "date-time"
-                    },
-                    "catalog": {}
-                  }
+                  "$ref": "#/components/schemas/CatalogOfficialTarget"
                 }
               }
             },
@@ -9931,187 +10977,7 @@
                             "type": "string"
                           },
                           "app": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                              "id": {
-                                "type": "string"
-                              },
-                              "version": {
-                                "type": "string"
-                              },
-                              "name": {
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "en": {
-                                    "type": "string"
-                                  },
-                                  "zh-CN": {
-                                    "type": "string"
-                                  }
-                                }
-                              },
-                              "description": {
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "en": {
-                                    "type": "string"
-                                  },
-                                  "zh-CN": {
-                                    "type": "string"
-                                  }
-                                }
-                              },
-                              "license": {
-                                "type": "string"
-                              },
-                              "images": {
-                                "type": "array",
-                                "items": {
-                                  "type": "object",
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "name": {
-                                      "type": "string"
-                                    },
-                                    "reference": {
-                                      "type": "string"
-                                    }
-                                  }
-                                }
-                              },
-                              "artifacts": {
-                                "type": "array",
-                                "items": {
-                                  "type": "object",
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "name": {
-                                      "type": "string"
-                                    },
-                                    "operatingSystem": {
-                                      "type": "string"
-                                    },
-                                    "architecture": {
-                                      "type": "string"
-                                    },
-                                    "url": {
-                                      "type": "string"
-                                    },
-                                    "sha256": {
-                                      "type": "string"
-                                    }
-                                  }
-                                }
-                              },
-                              "services": {
-                                "type": "array",
-                                "items": {
-                                  "type": "object",
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "name": {
-                                      "type": "string"
-                                    },
-                                    "protocol": {
-                                      "type": "string"
-                                    },
-                                    "containerPort": {
-                                      "type": "integer"
-                                    },
-                                    "defaultHostPort": {
-                                      "type": "integer"
-                                    },
-                                    "hostPortField": {
-                                      "type": "string"
-                                    },
-                                    "healthPath": {
-                                      "type": "string"
-                                    },
-                                    "management": {
-                                      "type": "boolean"
-                                    }
-                                  }
-                                }
-                              },
-                              "homepage": {
-                                "anyOf": [
-                                  {
-                                    "type": "object",
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "service": {
-                                        "type": "string"
-                                      },
-                                      "path": {
-                                        "type": "string"
-                                      }
-                                    }
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ]
-                              },
-                              "config": {
-                                "type": "array",
-                                "items": {
-                                  "type": "object",
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "key": {
-                                      "type": "string"
-                                    },
-                                    "type": {
-                                      "type": "string"
-                                    },
-                                    "label": {
-                                      "type": "object",
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "en": {
-                                          "type": "string"
-                                        },
-                                        "zh-CN": {
-                                          "type": "string"
-                                        }
-                                      }
-                                    },
-                                    "description": {
-                                      "type": "object",
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "en": {
-                                          "type": "string"
-                                        },
-                                        "zh-CN": {
-                                          "type": "string"
-                                        }
-                                      }
-                                    },
-                                    "required": {
-                                      "type": "boolean"
-                                    },
-                                    "secret": {
-                                      "type": "boolean"
-                                    },
-                                    "default": {
-                                      "anyOf": [
-                                        {},
-                                        {
-                                          "type": "null"
-                                        }
-                                      ]
-                                    }
-                                  }
-                                }
-                              },
-                              "hostAccess": {
-                                "type": "boolean"
-                              }
-                            }
+                            "$ref": "#/components/schemas/CatalogAppManifest"
                           },
                           "fetchedAt": {
                             "type": "string",
@@ -10133,8 +10999,35 @@
                           },
                           "installBlocked": {
                             "type": "boolean"
+                          },
+                          "installBlockedReason": {
+                            "type": "string"
+                          },
+                          "manifestSha256": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          },
+                          "managedConfigFields": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Configuration keys owned by the Center product integration, not browser input or secret values."
+                          },
+                          "permissionDetails": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
                           }
-                        }
+                        },
+                        "required": [
+                          "key",
+                          "sourceId",
+                          "app",
+                          "fetchedAt",
+                          "manifestSha256"
+                        ]
                       }
                     }
                   }
@@ -10158,7 +11051,7 @@
             "$ref": "#/components/responses/Error"
           }
         },
-        "description": "Available catalog entries. installBlocked means the cached entry may be displayed but cannot authorize a new install or upgrade. Existing application recovery, configuration and uninstall use their recorded manifests."
+        "description": "Available catalog entries with schema 4 runtime declarations, packageRevision and canonical manifestSha256. Unknown runtime capabilities block only the affected package/node. installBlocked entries remain displayable but cannot authorize install/upgrade. managedConfigFields are Center-controlled product inputs: clients must not render or send them. Existing configuration/uninstall uses recorded manifests."
       }
     },
     "/api/v1/registry-credentials": {
@@ -11385,7 +12278,9 @@
           },
           "landingRegionCodes": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "retiringNodeIds": {
             "type": "array",
@@ -11700,6 +12595,633 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "CatalogOfficialTarget": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "catalog": {
+            "$ref": "#/components/schemas/CatalogCatalog"
+          }
+        }
+      },
+      "CatalogAppManifest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "packageRevision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/CatalogRuntimeSpec"
+          },
+          "name": {
+            "$ref": "#/components/schemas/CatalogLocalizedText"
+          },
+          "description": {
+            "$ref": "#/components/schemas/CatalogLocalizedText"
+          },
+          "license": {
+            "type": "string"
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogImage"
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogArtifact"
+            }
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogService"
+            }
+          },
+          "homepage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogHomepage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "config": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogConfigField"
+            }
+          },
+          "hostAccess": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "packageRevision",
+          "runtime",
+          "name",
+          "description",
+          "license",
+          "config"
+        ]
+      },
+      "CatalogRuntimeSpec": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "requiredCapabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "storage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogStorage"
+            }
+          },
+          "docker": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogDockerRuntime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "systemd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogSystemdRuntime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "version"
+        ],
+        "description": "Versioned runtime contract. Future valid kinds/versions retain their signed fields for display but cannot execute without matching Agent support. Canonical validation is owned by the pinned catalog module."
+      },
+      "CatalogStorage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "persistent": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CatalogDockerRuntime": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "containers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogContainer"
+            }
+          }
+        }
+      },
+      "CatalogContainer": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogValue"
+            }
+          },
+          "arguments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogValue"
+            }
+          },
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CatalogValue"
+            }
+          },
+          "credentials": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "configFiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogConfigFile"
+            }
+          },
+          "mounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogMount"
+            }
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogPort"
+            }
+          },
+          "user": {
+            "type": "string"
+          },
+          "hostNetwork": {
+            "type": "boolean"
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "health": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogHealthCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogResourceLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CatalogValue": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "literal": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "config": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogRuntimeValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "object": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CatalogValue"
+            }
+          },
+          "array": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogValue"
+            }
+          }
+        }
+      },
+      "CatalogRuntimeValue": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "CatalogConfigFile": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "values": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CatalogValue"
+            }
+          }
+        }
+      },
+      "CatalogMount": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "storage": {
+            "type": "string"
+          },
+          "hostPath": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "readOnly": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CatalogPort": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string"
+          }
+        }
+      },
+      "CatalogHealthCheck": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "timeoutSeconds": {
+            "type": "integer"
+          }
+        }
+      },
+      "CatalogResourceLimits": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "memoryBytes": {
+            "type": "integer"
+          },
+          "cpuMillis": {
+            "type": "integer"
+          },
+          "pids": {
+            "type": "integer"
+          }
+        }
+      },
+      "CatalogSystemdRuntime": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "artifact": {
+            "type": "string"
+          },
+          "executable": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogArtifactFile"
+            }
+          },
+          "arguments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogValue"
+            }
+          },
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CatalogValue"
+            }
+          },
+          "configFiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogConfigFile"
+            }
+          },
+          "credentials": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "stateDirectories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "user": {
+            "type": "string"
+          },
+          "health": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogHealthCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogResourceLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CatalogArtifactFile": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "executable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CatalogLocalizedText": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "en": {
+            "type": "string"
+          },
+          "zh-CN": {
+            "type": "string"
+          }
+        }
+      },
+      "CatalogImage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          }
+        }
+      },
+      "CatalogArtifact": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "operatingSystem": {
+            "type": "string"
+          },
+          "architecture": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "stripComponents": {
+            "type": "integer"
+          }
+        }
+      },
+      "CatalogService": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "containerPort": {
+            "type": "integer"
+          },
+          "defaultHostPort": {
+            "type": "integer"
+          },
+          "hostPortField": {
+            "type": "string"
+          },
+          "healthPath": {
+            "type": "string"
+          },
+          "management": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CatalogHomepage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "CatalogConfigField": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "label": {
+            "$ref": "#/components/schemas/CatalogLocalizedText"
+          },
+          "description": {
+            "$ref": "#/components/schemas/CatalogLocalizedText"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "secret": {
+            "type": "boolean"
+          },
+          "default": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CatalogCatalog": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schemaVersion": {
+            "type": "integer",
+            "const": 4
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "apps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogAppManifest"
+            }
           }
         }
       }

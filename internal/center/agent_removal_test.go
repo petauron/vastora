@@ -36,11 +36,11 @@ func TestRemoveOfflineAgentCleansInstallationsAndPreservesOtherNodes(t *testing.
 	if _, err := s.db.Exec(`INSERT OR IGNORE INTO site_gateways(site_id,agent_id,created_at) SELECT site_id,id,'' FROM agents WHERE id=?`, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	installation, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	installation, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherInstall, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: other.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	otherInstall, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: other.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestRemoveOfflineAgentDeletionFailureRetainsRetryState(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	node := enrollAccessTestNode(t, s, "expired", "10.0.0.83")
-	d, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{}`)})
+	d, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestRemoveOfflineAgentKeepsSharedSecret(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	node := enrollAccessTestNode(t, s, "expired", "10.0.0.84")
-	d, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{}`)})
+	d, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}

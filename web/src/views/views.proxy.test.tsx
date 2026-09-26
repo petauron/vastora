@@ -203,7 +203,7 @@ describe("network and app views", () => {
       [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("开始安装"))?.click();
       await Promise.resolve();
     });
-    expect(create).toHaveBeenCalledWith("worker", "vastora-official/3x-ui", {}, "install", false, "worker", "", undefined);
+    expect(create).toHaveBeenCalledWith("worker", "vastora-official/3x-ui", {}, "install", false, "worker", "", undefined, [], { packageRevision: 1, manifestSha256: "a".repeat(64) });
   });
 
 		it("groups the global controller and cross-Site workers into compact rows without duplicate installations", () => {

@@ -167,7 +167,7 @@ jobs:
       - name: Validate native landing routes with catalog Xray
         if: ${{ !cancelled() }}
         run: |
-          VASTORA_LANDING_XRAY_IMAGE=$(jq -er '.apps[] | select(.id == "meridian") | .images[] | select(.name == "xray-core") | .reference' catalog/catalog.json)
+          VASTORA_LANDING_XRAY_IMAGE=$(jq -er '.apps[] | select(.id == "meridian") | .images[] | select(.name == "xray-core") | .reference' internal/center/testdata/reviewed-catalog-v4.json)
           export VASTORA_LANDING_XRAY_IMAGE
           docker pull "$VASTORA_LANDING_XRAY_IMAGE"
           go test -tags=integration ./internal/landing -run '^TestLandingRoutesAcceptedByCatalogXray$' -count=1

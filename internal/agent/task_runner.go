@@ -263,12 +263,30 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			value, recoveryErr := manager.ApplyXrayConfigurationRecovery(ctx, *task.XrayRecovery)
 			result.XrayRecovery, err = &value, recoveryErr
 		}
+	case "application.maintenance":
+		manager, ok := c.Executor.(interface {
+			ManagePackage(context.Context, DeploymentTask) (ApplicationTaskResult, error)
+		})
+		if !ok {
+			err = errors.New("agent: package maintenance is unavailable")
+		} else {
+			result, err = manager.ManagePackage(ctx, task)
+		}
+	case "application.adopt":
+		manager, ok := c.Executor.(interface {
+			Adopt(context.Context, DeploymentTask) (ApplicationTaskResult, error)
+		})
+		if !ok {
+			err = errors.New("agent: package adoption is unavailable")
+		} else {
+			result, err = manager.Adopt(ctx, task)
+		}
 	case "application.apply":
 		if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
 			err = fmt.Errorf("agent: application task requires runtime generation %d, executor is generation %d", task.RequiredRuntimeGeneration, platform.ApplicationRuntimeGeneration)
 		} else if c.Executor == nil {
 			err = errors.New("agent: application capability is not configured")
-		} else if task.AppKey != komariKey && task.AppKey != pulse.AgentKey && !c.Capabilities.Docker {
+		} else if task.Manifest.Runtime != nil && task.Manifest.Runtime.Kind == "docker" && !c.Capabilities.Docker {
 			err = errors.New("agent: Docker capability is not configured")
 		} else {
 			landingState, landingErr := store.prepareLandingXrayRuntimeMigration(ctx, task)
@@ -337,6 +355,11 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				runtimeResult, err = executor.ApplyMeridianRuntime(ctx, *task.MeridianRuntime)
 				if err == nil {
 					result.MeridianRuntime = &runtimeResult
+					if observer, ok := c.Executor.(interface {
+						CompleteCommandResources(string, string) (*InstanceResources, error)
+					}); ok {
+						result.Resources, err = observer.CompleteCommandResources(task.MeridianRuntime.ApplicationID, task.ID)
+					}
 				}
 			}
 		} else if task.MeridianLegacyRetire != nil {

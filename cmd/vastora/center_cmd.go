@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/center"
 	"github.com/petauron/vastora/internal/deployapi"
 )

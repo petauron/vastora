@@ -1,0 +1,813 @@
+{
+  "schemaVersion": 4,
+  "generatedAt": "2026-08-16T00:00:00Z",
+  "apps": [
+    {
+      "id": "cpa",
+      "version": "7.2.130",
+      "name": {
+        "en": "CPA",
+        "zh-CN": "CPA"
+      },
+      "description": {
+        "en": "CLIProxyAPI with local-only management and persistent application data.",
+        "zh-CN": "具有仅本地管理和持久化应用数据的 CLIProxyAPI。"
+      },
+      "license": "NOASSERTION",
+      "images": [
+        {
+          "name": "cli-proxy-api",
+          "reference": "eceasy/cli-proxy-api@sha256:3f7a734784f4cc2c86f6268929caff1b0c178fe600fdaa12cefe884dc4cae841"
+        }
+      ],
+      "services": [
+        {
+          "name": "api",
+          "protocol": "http",
+          "containerPort": 8317,
+          "defaultHostPort": 8317,
+          "healthPath": "/",
+          "management": true
+        },
+        {
+          "name": "client-api",
+          "protocol": "http",
+          "containerPort": 8317,
+          "defaultHostPort": 8317,
+          "healthPath": "/v1/models"
+        }
+      ],
+      "homepage": {
+        "service": "api",
+        "path": "/management.html"
+      },
+      "config": [
+        {
+          "key": "debug",
+          "type": "boolean",
+          "label": {
+            "en": "Debug logging",
+            "zh-CN": "调试日志"
+          },
+          "description": {
+            "en": "Enables additional diagnostic logging.",
+            "zh-CN": "启用额外诊断日志。"
+          },
+          "required": false,
+          "secret": false,
+          "default": false
+        },
+        {
+          "key": "timezone",
+          "type": "string",
+          "label": {
+            "en": "Timezone",
+            "zh-CN": "Timezone"
+          },
+          "description": {
+            "en": "Provided by the product integration or administrator.",
+            "zh-CN": "由产品集成层或管理员提供。"
+          },
+          "required": true,
+          "secret": false,
+          "default": "UTC"
+        },
+        {
+          "key": "management_key",
+          "type": "string",
+          "label": {
+            "en": "CPA management key",
+            "zh-CN": "CPA management key"
+          },
+          "description": {
+            "en": "Provided by the product integration or administrator.",
+            "zh-CN": "由产品集成层或管理员提供。"
+          },
+          "required": true,
+          "secret": true
+        },
+        {
+          "key": "api_key",
+          "type": "string",
+          "label": {
+            "en": "CPA API key",
+            "zh-CN": "CPA API key"
+          },
+          "description": {
+            "en": "Provided by the product integration or administrator.",
+            "zh-CN": "由产品集成层或管理员提供。"
+          },
+          "required": true,
+          "secret": true
+        }
+      ],
+      "packageRevision": 1,
+      "runtime": {
+        "kind": "docker",
+        "version": 1,
+        "requiredCapabilities": [
+          "root"
+        ],
+        "storage": [
+          {
+            "name": "auths",
+            "persistent": true
+          },
+          {
+            "name": "logs",
+            "persistent": true
+          },
+          {
+            "name": "plugins",
+            "persistent": true
+          }
+        ],
+        "docker": {
+          "containers": [
+            {
+              "name": "cpa",
+              "image": "cli-proxy-api",
+              "user": "0:0",
+              "environment": {
+                "TZ": {
+                  "config": "timezone"
+                }
+              },
+              "configFiles": [
+                {
+                  "path": "/CLIProxyAPI/config.yaml",
+                  "format": "json",
+                  "values": {
+                    "host": {
+                      "literal": "0.0.0.0"
+                    },
+                    "port": {
+                      "literal": 8317
+                    },
+                    "auth-dir": {
+                      "literal": "/root/.cli-proxy-api"
+                    },
+                    "api-keys": {
+                      "array": [
+                        {
+                          "secret": "api_key"
+                        }
+                      ]
+                    },
+                    "debug": {
+                      "config": "debug"
+                    },
+                    "logging-to-file": {
+                      "literal": true
+                    },
+                    "remote-management": {
+                      "object": {
+                        "allow-remote": {
+                          "literal": true
+                        },
+                        "secret-key": {
+                          "secret": "management_key"
+                        }
+                      }
+                    }
+                  }
+                }
+              ],
+              "mounts": [
+                {
+                  "storage": "auths",
+                  "target": "/root/.cli-proxy-api"
+                },
+                {
+                  "storage": "logs",
+                  "target": "/CLIProxyAPI/logs"
+                },
+                {
+                  "storage": "plugins",
+                  "target": "/CLIProxyAPI/plugins"
+                }
+              ],
+              "ports": [
+                {
+                  "service": "api"
+                }
+              ],
+              "health": {
+                "service": "api",
+                "path": "/",
+                "timeoutSeconds": 30
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "keeper",
+      "version": "1.14.1",
+      "name": {
+        "en": "CPA Usage Keeper",
+        "zh-CN": "CPA Usage Keeper"
+      },
+      "description": {
+        "en": "CPA companion dashboard installed beside a Vastora-managed CPA instance.",
+        "zh-CN": "安装在 Vastora 管理的 CPA 实例旁的用量与管理面板。"
+      },
+      "license": "MIT",
+      "images": [
+        {
+          "name": "keeper",
+          "reference": "ghcr.io/willxup/cpa-usage-keeper:v1.14.1@sha256:8068a69f755e37de78c5878adbe098cc37de0cf145b04c7af77c5550a444aff2"
+        }
+      ],
+      "services": [
+        {
+          "name": "dashboard",
+          "protocol": "http",
+          "containerPort": 8080,
+          "defaultHostPort": 8080,
+          "healthPath": "/",
+          "management": true
+        }
+      ],
+      "homepage": {
+        "service": "dashboard",
+        "path": "/"
+      },
+      "config": [
+        {
+          "key": "timezone",
+          "type": "string",
+          "label": {
+            "en": "Timezone",
+            "zh-CN": "时区"
+          },
+          "description": {
+            "en": "Timezone for statistics and logs.",
+            "zh-CN": "统计与日志使用的时区。"
+          },
+          "required": true,
+          "secret": false,
+          "default": "UTC"
+        },
+        {
+          "key": "login_password",
+          "type": "string",
+          "label": {
+            "en": "Keeper login password",
+            "zh-CN": "Keeper 登录密码"
+          },
+          "description": {
+            "en": "Protects the Keeper dashboard.",
+            "zh-CN": "用于保护 Keeper 仪表板。"
+          },
+          "required": true,
+          "secret": true
+        },
+        {
+          "key": "cpa_base_url",
+          "type": "string",
+          "label": {
+            "en": "CPA URL",
+            "zh-CN": "CPA URL"
+          },
+          "description": {
+            "en": "Provided by the product integration or administrator.",
+            "zh-CN": "由产品集成层或管理员提供。"
+          },
+          "required": true,
+          "secret": false
+        },
+        {
+          "key": "cpa_management_key",
+          "type": "string",
+          "label": {
+            "en": "CPA management key",
+            "zh-CN": "CPA management key"
+          },
+          "description": {
+            "en": "Provided by the product integration or administrator.",
+            "zh-CN": "由产品集成层或管理员提供。"
+          },
+          "required": true,
+          "secret": true
+        }
+      ],
+      "packageRevision": 1,
+      "runtime": {
+        "kind": "docker",
+        "version": 1,
+        "storage": [
+          {
+            "name": "data",
+            "persistent": true
+          }
+        ],
+        "docker": {
+          "containers": [
+            {
+              "name": "keeper",
+              "image": "keeper",
+              "environment": {
+                "TZ": {
+                  "config": "timezone"
+                },
+                "CPA_BASE_URL": {
+                  "config": "cpa_base_url"
+                },
+                "CPA_MANAGEMENT_KEY": {
+                  "secret": "cpa_management_key"
+                },
+                "LOGIN_PASSWORD": {
+                  "secret": "login_password"
+                },
+                "AUTH_ENABLED": {
+                  "literal": "true"
+                }
+              },
+              "mounts": [
+                {
+                  "storage": "data",
+                  "target": "/data"
+                }
+              ],
+              "ports": [
+                {
+                  "service": "dashboard"
+                }
+              ],
+              "health": {
+                "service": "dashboard",
+                "path": "/",
+                "timeoutSeconds": 30
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "komari-agent",
+      "version": "1.2.60",
+      "name": {
+        "en": "Komari Agent",
+        "zh-CN": "Komari 探针"
+      },
+      "description": {
+        "en": "Komari monitoring agent for an existing Komari panel.",
+        "zh-CN": "连接既有 Komari 面板的监控探针。"
+      },
+      "license": "MIT",
+      "hostAccess": true,
+      "artifacts": [
+        {
+          "name": "komari-agent",
+          "operatingSystem": "linux",
+          "architecture": "amd64",
+          "url": "https://github.com/komari-monitor/komari-agent/releases/download/1.2.60/komari-agent-linux-amd64",
+          "sha256": "113af112a914b918f315fa6cd3a98e8c0f932900f776c4c412b2a79477180859",
+          "format": "raw"
+        },
+        {
+          "name": "komari-agent",
+          "operatingSystem": "linux",
+          "architecture": "arm64",
+          "url": "https://github.com/komari-monitor/komari-agent/releases/download/1.2.60/komari-agent-linux-arm64",
+          "sha256": "8d98966365848435f756d00435b42654d56557f5f783c4b16ba83ed413038007",
+          "format": "raw"
+        }
+      ],
+      "config": [
+        {
+          "key": "endpoint",
+          "type": "string",
+          "label": {
+            "en": "Komari endpoint",
+            "zh-CN": "Komari 面板地址"
+          },
+          "description": {
+            "en": "Base URL of the Komari panel.",
+            "zh-CN": "Komari 面板的基础 URL。"
+          },
+          "required": true,
+          "secret": false
+        },
+        {
+          "key": "token",
+          "type": "string",
+          "label": {
+            "en": "Agent token",
+            "zh-CN": "探针 Token"
+          },
+          "description": {
+            "en": "Token issued by the Komari panel.",
+            "zh-CN": "由 Komari 面板签发的 Token。"
+          },
+          "required": true,
+          "secret": true
+        }
+      ],
+      "packageRevision": 1,
+      "runtime": {
+        "kind": "systemd",
+        "version": 1,
+        "systemd": {
+          "artifact": "komari-agent",
+          "executable": "komari-agent",
+          "files": [
+            {
+              "path": "komari-agent",
+              "executable": true
+            }
+          ],
+          "arguments": [
+            {
+              "literal": "--config"
+            },
+            {
+              "runtime": {
+                "kind": "config-file",
+                "name": "config.json"
+              }
+            }
+          ],
+          "configFiles": [
+            {
+              "path": "config.json",
+              "format": "json",
+              "values": {
+                "endpoint": {
+                  "config": "endpoint"
+                },
+                "token": {
+                  "secret": "token"
+                },
+                "interval": {
+                  "literal": 3
+                },
+                "info_report_interval": {
+                  "literal": 5
+                },
+                "disable_auto_update": {
+                  "literal": true
+                },
+                "disable_web_ssh": {
+                  "literal": true
+                },
+                "ignore_unsafe_cert": {
+                  "literal": false
+                },
+                "protocol_version": {
+                  "literal": 2
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "meridian",
+      "version": "0.1.0-alpha.2",
+      "name": {
+        "en": "Meridian",
+        "zh-CN": "Meridian"
+      },
+      "description": {
+        "en": "Petauron's native managed access, subscription, shared-quota, and Xray data plane.",
+        "zh-CN": "Petauron 原生的访问凭据、订阅、共享流量与 Xray 数据面。"
+      },
+      "license": "Apache-2.0",
+      "hostAccess": false,
+      "config": [],
+      "images": [
+        {
+          "name": "xray-core",
+          "reference": "ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558"
+        }
+      ],
+      "packageRevision": 1,
+      "runtime": {
+        "kind": "docker",
+        "version": 1,
+        "requiredCapabilities": [
+          "meridian-runtime"
+        ],
+        "docker": {
+          "containers": [
+            {
+              "name": "xray",
+              "image": "xray-core",
+              "user": "1000",
+              "arguments": [
+                {
+                  "literal": "run"
+                },
+                {
+                  "literal": "-c"
+                },
+                {
+                  "literal": "/etc/xray/config.json"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pulse",
+      "version": "0.1.0-alpha.4",
+      "name": {
+        "en": "Pulse",
+        "zh-CN": "Pulse 监控主机"
+      },
+      "description": {
+        "en": "One monitoring dashboard for nodes in every region. Add a private HTTPS access point before installing collectors.",
+        "zh-CN": "统一查看所有地区的节点监控。安装后先添加私网 HTTPS 入口，再安装探针。"
+      },
+      "license": "Apache-2.0",
+      "images": [
+        {
+          "name": "pulse",
+          "reference": "ghcr.io/petauron/pulse:v0.1.0-alpha.4@sha256:a84105ad3fa303e3461cd0887c07b000ed1a87ad43091f3407e9fd67bad2e617"
+        }
+      ],
+      "services": [
+        {
+          "name": "dashboard",
+          "protocol": "http",
+          "containerPort": 8080,
+          "defaultHostPort": 18080,
+          "healthPath": "/healthz",
+          "management": true
+        }
+      ],
+      "homepage": {
+        "service": "dashboard",
+        "path": "/"
+      },
+      "config": [
+        {
+          "key": "public_url",
+          "type": "string",
+          "label": {
+            "en": "Dashboard HTTPS origin",
+            "zh-CN": "面板 HTTPS 地址"
+          },
+          "description": {
+            "en": "The exact HTTPS origin used in your browser, such as https://pulse.example.com. No subpath. It must match the access entry before signing in; it is separate from the collector's private URL.",
+            "zh-CN": "浏览器实际访问的 HTTPS 地址，例如 https://pulse.example.com，不含子路径。登录前需配置匹配的访问入口；它与探针私网地址分别管理。"
+          },
+          "required": true,
+          "secret": false
+        },
+        {
+          "key": "setup_token",
+          "type": "string",
+          "label": {
+            "en": "Administrator setup token",
+            "zh-CN": "管理员初始化令牌"
+          },
+          "description": {
+            "en": "Supply a private random token of 32–4096 bytes and retain it for the first /login setup. Stored encrypted and written only to a private container file, never an environment variable. Omit on later upgrades to retain it.",
+            "zh-CN": "提供 32–4096 字节的私密随机令牌并妥善保存，首次访问 /login 时使用。加密保存，仅写入容器私密文件，不进入环境变量。后续升级留空保留原令牌。"
+          },
+          "required": true,
+          "secret": true
+        }
+      ],
+      "packageRevision": 1,
+      "runtime": {
+        "kind": "docker",
+        "version": 1,
+        "storage": [
+          {
+            "name": "data",
+            "persistent": true
+          }
+        ],
+        "docker": {
+          "containers": [
+            {
+              "name": "pulse",
+              "image": "pulse",
+              "user": "65532:65532",
+              "credentials": {
+                "setup-token": "setup_token"
+              },
+              "environment": {
+                "PULSE_PUBLIC_URL": {
+                  "config": "public_url"
+                },
+                "PULSE_SETUP_TOKEN_FILE": {
+                  "runtime": {
+                    "kind": "credential-file",
+                    "name": "setup-token"
+                  }
+                }
+              },
+              "mounts": [
+                {
+                  "storage": "data",
+                  "target": "/var/lib/pulse"
+                }
+              ],
+              "ports": [
+                {
+                  "service": "dashboard"
+                }
+              ],
+              "health": {
+                "service": "dashboard",
+                "path": "/healthz",
+                "timeoutSeconds": 30
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pulse-agent",
+      "version": "0.1.0-alpha.3",
+      "name": {
+        "en": "Pulse Agent",
+        "zh-CN": "Pulse 探针"
+      },
+      "description": {
+        "en": "Native host monitoring, automatically enrolled with the global Pulse service. Requires Debian 12/13 or Ubuntu 24.04/26.04; no Docker required.",
+        "zh-CN": "自动接入全局 Pulse 监控主机，采集主机指标。支持 Debian 12/13、Ubuntu 24.04/26.04，无需 Docker。"
+      },
+      "license": "Apache-2.0",
+      "hostAccess": true,
+      "artifacts": [
+        {
+          "name": "pulse-agent",
+          "operatingSystem": "linux",
+          "architecture": "amd64",
+          "url": "https://github.com/petauron/pulse/releases/download/v0.1.0-alpha.3/pulse-v0.1.0-alpha.3-linux-x86_64.tar.gz",
+          "sha256": "e1f4a6d895df0569413546fddbd688ec4c82df99e502eca7a558e51e3a75a34b",
+          "format": "tar.gz",
+          "stripComponents": 1
+        },
+        {
+          "name": "pulse-agent",
+          "operatingSystem": "linux",
+          "architecture": "arm64",
+          "url": "https://github.com/petauron/pulse/releases/download/v0.1.0-alpha.3/pulse-v0.1.0-alpha.3-linux-aarch64.tar.gz",
+          "sha256": "129ae613720edee9217c9295e35413616d021ad8de849f4751369c3eb7724050",
+          "format": "tar.gz",
+          "stripComponents": 1
+        }
+      ],
+      "config": [
+        {
+          "key": "node_region",
+          "type": "string",
+          "label": {
+            "en": "Country code",
+            "zh-CN": "国家或地区代码"
+          },
+          "description": {
+            "en": "Optional ISO country code such as SG or US. A manual code takes priority over automatic discovery; omitted upgrade fields preserve existing settings.",
+            "zh-CN": "可选 ISO 国家或地区代码，例如 SG、US。手动代码优先于自动查询；升级时未填写的字段保留现有设置。"
+          },
+          "required": false,
+          "secret": false,
+          "default": ""
+        },
+        {
+          "key": "geoip_provider",
+          "type": "string",
+          "label": {
+            "en": "Country discovery",
+            "zh-CN": "自动国家或地区查询"
+          },
+          "description": {
+            "en": "geojs (default), ipinfo, or disabled. The provider sees the public egress IP and Agent version, never Pulse credentials or metrics. Omit on upgrade to retain the current choice.",
+            "zh-CN": "填写 geojs（默认）、ipinfo 或 disabled。查询服务会看到出口公网 IP 和探针版本，不会收到 Pulse 凭据或监控指标。升级时留空保留当前选择。"
+          },
+          "required": false,
+          "secret": false,
+          "default": "geojs"
+        },
+        {
+          "key": "service_url",
+          "type": "string",
+          "label": {
+            "en": "Private Pulse service URL",
+            "zh-CN": "Private Pulse service URL"
+          },
+          "description": {
+            "en": "Provided by the product integration or administrator.",
+            "zh-CN": "由产品集成层或管理员提供。"
+          },
+          "required": true,
+          "secret": false
+        },
+        {
+          "key": "node_name",
+          "type": "string",
+          "label": {
+            "en": "Node name",
+            "zh-CN": "Node name"
+          },
+          "description": {
+            "en": "Provided by the product integration or administrator.",
+            "zh-CN": "由产品集成层或管理员提供。"
+          },
+          "required": true,
+          "secret": false
+        },
+        {
+          "key": "node_group",
+          "type": "string",
+          "label": {
+            "en": "Node group",
+            "zh-CN": "Node group"
+          },
+          "description": {
+            "en": "Provided by the product integration or administrator.",
+            "zh-CN": "由产品集成层或管理员提供。"
+          },
+          "required": true,
+          "secret": false,
+          "default": ""
+        },
+        {
+          "key": "enrollment_token",
+          "type": "string",
+          "label": {
+            "en": "Pulse enrollment token",
+            "zh-CN": "Pulse enrollment token"
+          },
+          "description": {
+            "en": "Provided by the product integration or administrator.",
+            "zh-CN": "由产品集成层或管理员提供。"
+          },
+          "required": true,
+          "secret": true
+        }
+      ],
+      "packageRevision": 1,
+      "runtime": {
+        "kind": "systemd",
+        "version": 1,
+        "storage": [
+          {
+            "name": "state",
+            "persistent": true
+          }
+        ],
+        "systemd": {
+          "artifact": "pulse-agent",
+          "executable": "pulse-agent",
+          "files": [
+            {
+              "path": "pulse-agent",
+              "executable": true
+            }
+          ],
+          "user": "vastora-pulse",
+          "stateDirectories": [
+            "state"
+          ],
+          "credentials": {
+            "enrollment-token": "enrollment_token"
+          },
+          "environment": {
+            "PULSE_SERVICE_URL": {
+              "config": "service_url"
+            },
+            "PULSE_NODE_NAME": {
+              "config": "node_name"
+            },
+            "PULSE_NODE_GROUP": {
+              "config": "node_group"
+            },
+            "PULSE_NODE_REGION": {
+              "config": "node_region"
+            },
+            "PULSE_GEOIP_PROVIDER": {
+              "config": "geoip_provider"
+            },
+            "PULSE_CREDENTIALS_PATH": {
+              "runtime": {
+                "kind": "state-directory",
+                "name": "state",
+                "path": "agent-credentials.json"
+              }
+            },
+            "PULSE_ENROLLMENT_TOKEN_FILE": {
+              "runtime": {
+                "kind": "credential-file",
+                "name": "enrollment-token"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

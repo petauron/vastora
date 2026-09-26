@@ -9,7 +9,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/recovery"
 )
 
@@ -44,7 +43,7 @@ func (s *Store) RegisterExternalRecoveryEvidence(ctx context.Context, value Exte
 	if err != nil {
 		return errors.New("center: application recovery ownership is unavailable")
 	}
-	policy, supported := catalog.OfficialRecoveryPolicy(appKey, version)
+	policy, supported := recovery.OfficialRecoveryPolicy(appKey, version)
 	if !supported || policy.Consistency == "reconstructible" {
 		return errors.New("center: application does not declare this external backup contract")
 	}
@@ -63,7 +62,7 @@ func (s *Store) RegisterExternalRecoveryEvidence(ctx context.Context, value Exte
 	return err
 }
 
-func (s *Store) evaluateExternalRecoveryEvidence(ctx context.Context, component *RecoveryComponent, policy catalog.RecoveryPolicy, appKey, version string, now time.Time) error {
+func (s *Store) evaluateExternalRecoveryEvidence(ctx context.Context, component *RecoveryComponent, policy recovery.RecoveryPolicy, appKey, version string, now time.Time) error {
 	var encoded []byte
 	var verifiedAt string
 	if err := s.db.QueryRowContext(ctx, `SELECT artifact_json, verified_at FROM recovery_evidence WHERE component_key = ?`, component.Key).Scan(&encoded, &verifiedAt); err != nil {

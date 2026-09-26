@@ -206,20 +206,3 @@ func TestCompletedMeridianReplacementRemovesOnlyStoppedOwnedResidue(t *testing.T
 		t.Fatalf("current Meridian runtime changed: %#v err=%v", current, err)
 	}
 }
-
-func TestMeridianUninstallRemovesVerifiedLegacyReplacementResidue(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("current", meridianXrayContainer, true)
-	engine.containers["current"].labels = applicationResourceLabels(meridianKey, "xray", threeXUITestApplicationID, "meridian-runtime-r2")
-	engine.containers["current"].labels[xrayWorkerRuntimeLabel] = "xray"
-	engine.containers["current"].image = xrayWorkerImageReference
-	engine.add("legacy-residue", meridianXrayCleanupContainer, false)
-	if err := uninstallDockerApp(context.Background(), engine, meridianKey, threeXUITestApplicationID, true); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{meridianXrayContainer, meridianXrayCleanupContainer} {
-		if _, err := engine.resolve(name); !errdefs.IsNotFound(err) {
-			t.Fatalf("Meridian uninstall retained %s: %v", name, err)
-		}
-	}
-}

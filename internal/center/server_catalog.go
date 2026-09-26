@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 func (s *Server) handleOfficialCatalog(writer http.ResponseWriter, request *http.Request) {

@@ -65,6 +65,54 @@ func TestAgentUninstallRetainsOwnershipUntilAllBinariesAreRemoved(t *testing.T) 
 	}
 }
 
+func TestAgentUninstallPreservesApplicationDataInPlaceByDefault(t *testing.T) {
+	for _, deleteData := range []bool{false, true} {
+		t.Run(map[bool]string{false: "retain", true: "delete"}[deleteData], func(t *testing.T) {
+			environment := newAgentUninstallFixture(t)
+			paths := []string{"packages/vastora-pkg-fixture/resources.json", "packages/vastora-pkg-fixture/backups/snapshot/data.tar", "meridian/state.db", "xray-worker/config.json", "agent.db", "agent.key", "unknown/data"}
+			for _, relative := range paths {
+				path := filepath.Join(environment.dataDir, relative)
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(relative), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for attempt := 0; attempt < 2; attempt++ {
+				if err := uninstallAgentHostWithEnvironment(context.Background(), deleteData, true, false, environment); err != nil {
+					t.Fatal(err)
+				}
+				assertUninstallPathsAbsent(t, environment.unitPath, environment.binaryPaths[0], environment.binaryPaths[1])
+				if deleteData {
+					assertUninstallPathsAbsent(t, environment.dataDir)
+					continue
+				}
+				for _, relative := range paths {
+					raw, err := os.ReadFile(filepath.Join(environment.dataDir, relative))
+					if err != nil || string(raw) != relative {
+						t.Fatalf("retained data changed: %s: %v", relative, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestAgentStateCleanupRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := t.TempDir()
+	link := filepath.Join(root, "agent")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, deleteData := range []bool{false, true} {
+		if err := removeAgentState(link, deleteData); err == nil {
+			t.Fatal("symlink state directory accepted")
+		}
+	}
+}
+
 func TestAgentUninstallStopsOnTailscaleCommandFailure(t *testing.T) {
 	for _, failure := range []string{"logout", "disable"} {
 		t.Run(failure, func(t *testing.T) {

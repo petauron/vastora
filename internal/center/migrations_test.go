@@ -533,6 +533,17 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TRIGGER deployments_block_during_package_maintenance`,
+		`DROP TRIGGER deployment_updates_block_during_package_maintenance`,
+		`DROP TRIGGER commands_block_during_package_maintenance`,
+		`DROP TRIGGER command_updates_block_during_package_maintenance`,
+		`DROP TABLE application_maintenance`,
+		`DROP TABLE application_adoptions`,
+		`DROP TABLE application_resources`,
+		`DROP TABLE catalog_legacy_evidence`,
+		`ALTER TABLE deployments DROP COLUMN package_revision`,
+		`ALTER TABLE deployments DROP COLUMN manifest_sha256`,
+		`ALTER TABLE deployments DROP COLUMN authorized_capabilities_json`,
 		`DROP TABLE meridian_deployments`,
 		`DROP TRIGGER application_commands_block_during_meridian_cutover`,
 		`DROP TRIGGER application_command_updates_block_during_meridian_cutover`,

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -83,6 +83,7 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 		)
 		WHERE a.node_id = ? AND a.status = 'running' AND a.runtime_generation < ?
 		AND a.app_key <> ?
+		AND EXISTS (SELECT 1 FROM application_resources resource WHERE resource.application_id=a.id AND resource.adoption_state='ready' AND resource.package_revision>0)
 		AND d.state = 'succeeded' AND d.operation IN ('install', 'upgrade', 'configure')
 		AND NOT EXISTS (
 			SELECT 1 FROM deployments active WHERE active.application_id = a.id
@@ -143,6 +144,9 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation)
 			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'configure', 0, 'pending', '', ?, ?, ?, ?)`, deploymentID, agentID, app.appKey, appVersion, manifestJSON, app.configJSON, app.serviceAddress, newSecretID, nullableSQLString(app.registryCredentialID), formattedNow, formattedNow, app.applicationID, generation); err != nil {
 			return fmt.Errorf("center: queue application runtime migration: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET package_revision=(SELECT package_revision FROM deployments WHERE id=?),manifest_sha256=(SELECT manifest_sha256 FROM deployments WHERE id=?),authorized_capabilities_json=(SELECT authorized_capabilities_json FROM deployments WHERE id=?) WHERE id=?`, app.deploymentID, app.deploymentID, app.deploymentID, deploymentID); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', updated_at = ? WHERE id = ?`, formattedNow, app.applicationID); err != nil {
 			return err

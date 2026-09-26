@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { execFileSync } from "node:child_process";
 
 const root = path.resolve(import.meta.dirname, "..");
 const centerDir = path.join(root, "internal", "center");
@@ -13,6 +14,21 @@ const centerSource = fs.readdirSync(centerDir)
   .map((name) => fs.readFileSync(path.join(centerDir, name), "utf8"))
   .join("\n");
 const packageSources = new Map();
+// Catalog is a pinned external protocol, not a second local implementation.
+// Resolve the same Go module used by Center, including an explicit development
+// workspace when present. Generation must fail if that dependency is missing.
+let catalogModuleDir = execFileSync("go", ["list", "-m", "-f", "{{.Dir}}", "github.com/petauron/catalog"], { cwd: root, encoding: "utf8" }).trim();
+// Fresh CI checkouts may have the version in go.mod without its source cache.
+// Download only that pinned dependency; never resolve an unversioned latest.
+if (!catalogModuleDir) {
+  const downloaded = JSON.parse(execFileSync("go", ["mod", "download", "-json", "github.com/petauron/catalog"], { cwd: root, encoding: "utf8" }));
+  if (downloaded.Error) throw new Error("unable to download the pinned catalog module");
+  catalogModuleDir = downloaded.Dir;
+}
+if (!catalogModuleDir) throw new Error("the pinned catalog module is unavailable");
+const catalogSourceDir = path.join(catalogModuleDir, "catalog");
+const externalCatalogSource = fs.readdirSync(catalogSourceDir).filter(name => name.endsWith(".go") && !name.endsWith("_test.go")).sort().map(name => fs.readFileSync(path.join(catalogSourceDir, name), "utf8")).join("\n");
+const externalSchemas = {};
 const internalSource = fs.readdirSync(path.join(root, "internal"), { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .flatMap((entry) => {
@@ -24,6 +40,8 @@ const internalSource = fs.readdirSync(path.join(root, "internal"), { withFileTyp
     return sources;
   })
   .join("\n");
+
+packageSources.set("catalog", externalCatalogSource);
 
 const routePattern = /mux\.HandleFunc\("(GET|POST|PUT|PATCH|DELETE) (\/api\/v1\/[^\"]+)",\s*(?:s\.requireAuth\((true|false),\s*)?s\.(handle[A-Za-z0-9]+)\)?\)/g;
 const routes = [];
@@ -127,7 +145,7 @@ function queryParameters(source) {
   return [...names].sort().map((name) => ({ name, in: "query", required: false, schema: { type: "string" } }));
 }
 
-function schemaForGoType(rawType) {
+function schemaForGoType(rawType, scope) {
   let type = rawType.trim();
   let nullable = false;
   if (type.startsWith("*")) {
@@ -136,9 +154,10 @@ function schemaForGoType(rawType) {
   }
   let schema;
   if (type.startsWith("[]")) {
-    schema = type === "[]byte" ? { type: "string", contentEncoding: "base64" } : { type: "array", items: schemaForGoType(type.slice(2)) };
+    schema = type === "[]byte" ? { type: "string", contentEncoding: "base64" } : { type: "array", items: schemaForGoType(type.slice(2), scope) };
   } else if (type.startsWith("map[")) {
-    schema = { type: "object", additionalProperties: true };
+    const valueType = /^map\[string\](.+)$/.exec(type)?.[1];
+    schema = { type: "object", additionalProperties: valueType ? schemaForGoType(valueType, scope) : true };
   } else if (type === "string" || type === "time.Time") {
     schema = type === "time.Time" ? { type: "string", format: "date-time" } : { type: "string" };
   } else if (["int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64"].includes(type)) {
@@ -151,18 +170,26 @@ function schemaForGoType(rawType) {
     schema = {};
   } else {
     const name = type.split(".").at(-1);
-    const source = type.includes(".") ? packageSources.get(type.split(".")[0]) ?? "" : internalSource;
+    const sourceScope = type.includes(".") ? type.split(".")[0] : scope;
+    const source = sourceScope ? packageSources.get(sourceScope) ?? "" : internalSource;
     const match = source.match(new RegExp(`type\\s+${name}\\s+struct\\s*\\{([\\s\\S]*?)\\n\\}`));
-    schema = match ? schemaForStructFields(match[1]) : { type: "object", additionalProperties: true };
+    if (sourceScope === "catalog" && match) {
+      const key = `Catalog${name}`;
+      if (!externalSchemas[key]) {
+        externalSchemas[key] = {}; // Break recursive Value.array/object cycles.
+        externalSchemas[key] = schemaForStructFields(match[1], "catalog");
+      }
+      schema = { $ref: `#/components/schemas/${key}` };
+    } else schema = match ? schemaForStructFields(match[1]) : { type: "object", additionalProperties: true };
   }
   return nullable ? { anyOf: [schema, { type: "null" }] } : schema;
 }
 
-function schemaForStructFields(fields) {
+function schemaForStructFields(fields, scope) {
   const properties = {};
   const pattern = /^\s*[A-Za-z0-9_]+\s+([^\s`]+)\s+`json:"([^",]+)[^"]*"`/gm;
   for (const match of fields.matchAll(pattern)) {
-    if (match[2] !== "-") properties[match[2]] = schemaForGoType(match[1]);
+    if (match[2] !== "-") properties[match[2]] = schemaForGoType(match[1], scope);
   }
   if (Object.keys(properties).length === 0) return { type: "object", additionalProperties: true };
   return { type: "object", additionalProperties: false, properties };
@@ -458,15 +485,79 @@ for (const route of routes) {
     operation.requestBody.content["application/json"].schema.required = ["sessionId", "digest", "receipt"];
     operation.responses["200"].headers = noStoreHeaders;
   }
+  if (route.handler === "handleCreateDeployment") {
+    const schema = operation.requestBody.content["application/json"].schema;
+    schema.required = ["agentId", "appKey", "config"];
+    schema.properties.operation = { type: "string", enum: ["install", "upgrade", "configure", "uninstall"], default: "install" };
+    schema.properties.config = { type: "object", additionalProperties: { type: ["string", "boolean", "number"] }, description: "Administrator-provided fields only; product-managed fields are supplied by Center and must not be submitted." };
+    schema.properties.packageRevision = { type: "integer", minimum: 1, maximum: 9007199254740991 };
+    schema.properties.manifestSha256 = { type: "string", pattern: "^[a-f0-9]{64}$" };
+    schema.properties.authorizedCapabilities = { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 }, description: "Explicit administrator grants. Omission may retain existing grants, never authorize an expansion. Unknown or undeclared grants fail closed." };
+    schema.oneOf = [
+      { properties: { operation: { enum: ["install", "upgrade"] } }, required: ["packageRevision", "manifestSha256"] },
+      { properties: { operation: { enum: ["configure", "uninstall"] } }, required: ["operation"] },
+    ];
+    operation.parameters ||= [];
+    operation.parameters.push({ name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" }, description: "Stable operation key for product-generated one-time credential operations; retain it for an exact retry." });
+    operation.description = "Install/upgrade requires the exact reviewed catalog package revision and canonical manifest SHA256. Stale identity, unsupported node runtime, missing grants, expired trust or pending/blocked adoption rejects admission. Configuration/uninstall use recorded resources. Uninstall retains data unless deleteData is explicitly true. Catalog refresh never creates this task.";
+    operation.responses["201"].content["application/json"].schema = schemaForGoType("DeploymentView");
+  } else if (["handleListDeployments", "handleListApplications", "handleListAgents"].includes(route.handler)) {
+    const [field, type] = { handleListDeployments: ["deployments", "DeploymentView"], handleListApplications: ["applications", "ApplicationView"], handleListAgents: ["agents", "AgentView"] }[route.handler];
+    const item = schemaForGoType(type);
+    if (type === "ApplicationView") {
+      item.properties.installedPackageRevision.minimum = 0;
+      item.properties.availablePackageRevision.minimum = 0;
+      item.properties.adoptionState.enum = ["pending", "ready", "blocked"];
+      item.properties.adoptionState.description = "Historical instances stay pending/blocked until read-only resource adoption succeeds. ready does not imply application upgrade or healthy runtime.";
+    }
+    if (type === "AgentView") {
+      item.properties.capabilities.properties.executorVersions.description = "Supported executor protocol versions, keyed by runtime kind (for example docker/systemd). No application-ID allowlist.";
+      item.properties.capabilities.properties.runtimeCapabilities.description = "Available execution capabilities. Availability is not administrator permission approval.";
+    }
+    operation.responses["200"].content["application/json"].schema = { type: "object", required: [field], additionalProperties: false, properties: { [field]: { type: "array", items: item } } };
+  } else if (route.handler === "handleAdoptApplication") {
+    operation.summary = "Verify and Adopt Historical Application Resources";
+    operation.description = "Maintenance-only management-record adoption based on the historical installed manifest and actual owned resources. Does not pull, rebuild, restart, reconfigure, expand permissions or migrate application data. Requires separate Center, Agent and application-data backups. Unknown ownership or unresolved node work blocks adoption; no repair reinstall. A 202 response means queued, not adopted; observe task and application adoptionState.";
+    const schema = operation.requestBody.content["application/json"].schema;
+    schema.required = ["backupsConfirmed"];
+    schema.properties.backupsConfirmed.const = true;
+    operation.responses["202"].content["application/json"].schema = { type: "object", required: ["taskId"], additionalProperties: false, properties: { taskId: { type: "string", minLength: 1 } } };
+  } else if (route.handler === "handleQueueApplicationMaintenance") {
+    operation.summary = "Queue Managed Application Logs, Backup or Restore";
+    operation.description = "Uses verified instance resource ownership and recorded package identity, never caller-supplied paths, commands or current catalog substitutions. Pending adoption or unresolved work blocks maintenance. Restore accepts only an instance-recorded backup from the same package version; cross-version rollback requires matched offline recovery. Unknown outcomes retain evidence and require reconciliation, not automatic replay. Logs are bounded and known delivered credentials are redacted.";
+    const schema = operation.requestBody.content["application/json"].schema;
+    schema.required = ["action"];
+    schema.properties.action.enum = ["logs", "backup", "restore"];
+    schema.properties.backupId = { type: "string", minLength: 1, maxLength: 128, pattern: /^[^/\\\x00\r\n]+$/.source, description: "Opaque backup identifier already recorded for this instance, not a host path." };
+    schema.oneOf = [
+      { properties: { action: { const: "restore" } }, required: ["backupId"] },
+      { properties: { action: { enum: ["logs", "backup"] } }, not: { required: ["backupId"] } },
+    ];
+    operation.responses["202"].content["application/json"].schema = { type: "object", required: ["taskId"], additionalProperties: false, properties: { taskId: { type: "string", minLength: 1 } } };
+  } else if (route.handler === "handleApplicationMaintenance") {
+    operation.summary = "Read Application Maintenance Result";
+    operation.description = "Returns task status and bounded redacted logs or an opaque backup ID. Never returns resource receipts, host backup paths or delivered secret values. A queued task is not proof of backup or restoration. reconciliationRequired means the actual outcome must be resolved before further changes.";
+    operation.responses["200"].content["application/json"].schema = schemaForGoType("ApplicationMaintenanceView");
+  } else if (route.handler === "handleApplicationBackups") {
+    operation.summary = "List Recorded Application Backups";
+    operation.description = "Returns instance-recorded backup IDs, package version, creation time, logical resource names and current restorable status. Does not discover arbitrary host files or expose backup paths/digests. restorable does not prove a successful restoration drill; cross-version and unverified historical Docker restores remain blocked.";
+    operation.responses["200"].content["application/json"].schema = { type: "array", items: schemaForGoType("ApplicationBackupView") };
+  }
   if (route.handler === "handleListSources" || route.handler === "handleListApps") {
     const sources = route.handler === "handleListSources";
     const field = sources ? "sources" : "apps";
     operation.description = sources
       ? "Catalog source status. The reserved vastora-official identity is anchored to independently provisioned TUF trust, not the editable source name or URL. Catalog revision and expiry describe the last verified cache; a failed refresh does not replace it."
-      : "Available catalog entries. installBlocked means the cached entry may be displayed but cannot authorize a new install or upgrade. Existing application recovery, configuration and uninstall use their recorded manifests.";
+      : "Available catalog entries with schema 4 runtime declarations, packageRevision and canonical manifestSha256. Unknown runtime capabilities block only the affected package/node. installBlocked entries remain displayable but cannot authorize install/upgrade. managedConfigFields are Center-controlled product inputs: clients must not render or send them. Existing configuration/uninstall uses recorded manifests.";
+    const item = schemaForGoType(sources ? "CatalogSource" : "AppView");
+    if (!sources) {
+      item.required = ["key", "sourceId", "app", "fetchedAt", "manifestSha256"];
+      item.properties.manifestSha256.pattern = "^[a-f0-9]{64}$";
+      item.properties.managedConfigFields.description = "Configuration keys owned by the Center product integration, not browser input or secret values.";
+    }
     operation.responses["200"].content["application/json"].schema = {
       type: "object", required: [field], additionalProperties: false,
-      properties: { [field]: { type: "array", items: schemaForGoType(sources ? "CatalogSource" : "AppView") } },
+      properties: { [field]: { type: "array", items: item } },
     };
   } else if (route.handler === "handleOfficialCatalog") {
     operation.description = "Returns the last accepted official target, including signed identity, channel, revision and lifetime. This endpoint alone is not a signature proof: independent clients must verify the upstream TUF repository with their own trusted root. Expired cache may be returned for display only. Missing or damaged cache returns 404.";
@@ -573,6 +664,22 @@ for (const route of routes) {
   document.paths[route.path][route.method] = operation;
 }
 
+if (externalSchemas.CatalogAppManifest) {
+  externalSchemas.CatalogAppManifest.required = ["id", "version", "packageRevision", "runtime", "name", "description", "license", "config"];
+  externalSchemas.CatalogAppManifest.properties.packageRevision.minimum = 1;
+  externalSchemas.CatalogAppManifest.properties.runtime = { $ref: "#/components/schemas/CatalogRuntimeSpec" };
+}
+if (externalSchemas.CatalogOfficialTarget) {
+  externalSchemas.CatalogOfficialTarget.properties.catalog = schemaForGoType("catalog.Catalog");
+  externalSchemas.CatalogCatalog.properties.schemaVersion = { type: "integer", const: 4 };
+}
+if (externalSchemas.CatalogRuntimeSpec) {
+  externalSchemas.CatalogRuntimeSpec.required = ["kind", "version"];
+  externalSchemas.CatalogRuntimeSpec.properties.version.minimum = 1;
+  externalSchemas.CatalogRuntimeSpec.additionalProperties = true;
+  externalSchemas.CatalogRuntimeSpec.description = "Versioned runtime contract. Future valid kinds/versions retain their signed fields for display but cannot execute without matching Agent support. Canonical validation is owned by the pinned catalog module.";
+}
+Object.assign(document.components.schemas, externalSchemas);
 const output = `${JSON.stringify(document, null, 2)}\n`;
 const outputPath = path.join(root, "docs", "openapi.json");
 if (process.argv.includes("--check")) {

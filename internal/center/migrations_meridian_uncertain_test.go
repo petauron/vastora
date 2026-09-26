@@ -37,10 +37,7 @@ func TestVersion94ProjectsUncertainMeridianFailureForExplicitRecovery(t *testing
 		t.Fatal(err)
 	}
 
-	migrated, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	migrated := openBeforeCatalogMaintenanceForTest(t, directory)
 	t.Cleanup(func() { _ = migrated.Close() })
 	var endpointStatus, deploymentStatus, lastError string
 	if err := migrated.db.QueryRowContext(ctx, `SELECT endpoint.status,deployment.status,endpoint.last_error FROM meridian_endpoints endpoint JOIN meridian_deployments deployment ON deployment.endpoint_id=endpoint.id WHERE endpoint.id='uncertain-endpoint'`).Scan(&endpointStatus, &deploymentStatus, &lastError); err != nil {
@@ -56,4 +53,5 @@ func TestVersion94ProjectsUncertainMeridianFailureForExplicitRecovery(t *testing
 	if info, err := os.Stat(backups[0]); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("pre-migration backup permissions: %v", err)
 	}
+	finishCatalogMaintenanceFixture(t, migrated, directory)
 }

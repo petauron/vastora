@@ -921,7 +921,7 @@ func TestOfficialCatalogMetadataExposesTrustedRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	payload, err := os.ReadFile("../../catalog/catalog.json")
+	payload, err := os.ReadFile("testdata/reviewed-catalog-v4.json")
 	if err != nil {
 		t.Fatal(err)
 	}

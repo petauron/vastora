@@ -52,7 +52,7 @@ func TestOfficialTrustMigrationDropsOnlySupersededTrust(t *testing.T) {
 			t.Fatal(err)
 		}
 		fixture.publicKey = publicKey
-		fixture.envelope = signedCatalogEnvelope(t, privateKey, catalogLifecycleManifest("1.0.0", "Migration fixture"))
+		fixture.envelope = signedLegacyCatalogAuditFixture(t, privateKey, catalogLifecycleManifest("1.0.0", "Migration fixture"))
 		if _, err := db.ExecContext(ctx, `INSERT INTO catalog_sources(id, display_name, url, public_key, enabled, refresh_seconds, generation, revision, created_at)
 			VALUES(?, ?, ?, ?, 1, 3600, ?, 7, '2026-09-11T00:00:00Z')`, fixture.id, fixture.name, fixture.url, fixture.publicKey, fixture.generation); err != nil {
 			t.Fatal(err)
@@ -92,7 +92,8 @@ func TestOfficialTrustMigrationDropsOnlySupersededTrust(t *testing.T) {
 		{`SELECT COUNT(*) FROM pragma_table_info('deployments') WHERE name = 'pre_dispatch_application_status' AND dflt_value = '''failed''' AND "notnull" = 1`, 1},
 		{`SELECT COUNT(*) FROM catalog_cache WHERE source_id='vastora-official'`, 0},
 		{`SELECT COUNT(*) FROM settings WHERE key='official_catalog_signing_key'`, 0},
-		{`SELECT COUNT(*) FROM catalog_cache WHERE source_id='private-fixture'`, 1},
+		{`SELECT COUNT(*) FROM catalog_cache WHERE source_id='private-fixture'`, 0},
+		{`SELECT COUNT(*) FROM catalog_legacy_evidence WHERE source_id='private-fixture'`, 1},
 		{`SELECT COUNT(*) FROM catalog_manifest_history WHERE manifest_sha256='retained-history'`, 1},
 		{`SELECT COUNT(*) FROM settings WHERE key='unrelated-fixture' AND value='preserve'`, 1},
 	} {
@@ -144,8 +145,8 @@ func TestOfficialTrustMigrationDropsOnlySupersededTrust(t *testing.T) {
 			t.Fatalf("backup changed signed cache for %s: %v", fixture.id, err)
 		}
 		if fixture.id == "private-fixture" {
-			if err := migrated.db.QueryRowContext(ctx, `SELECT envelope FROM catalog_cache WHERE source_id=?`, fixture.id).Scan(&envelope); err != nil || !bytes.Equal(envelope, fixture.envelope) {
-				t.Fatalf("migration changed retained private cache: %v", err)
+			if err := migrated.db.QueryRowContext(ctx, `SELECT payload FROM catalog_legacy_evidence WHERE source_id=?`, fixture.id).Scan(&envelope); err != nil || !bytes.Equal(envelope, fixture.envelope) {
+				t.Fatalf("migration changed retained private audit evidence: %v", err)
 			}
 		}
 		for _, database := range []*sql.DB{backup, migrated.db} {

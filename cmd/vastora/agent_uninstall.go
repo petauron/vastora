@@ -336,7 +336,7 @@ func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtime
 		},
 		tailscaleHostsPath: "/etc/hosts",
 		purgeRuntime: func(ctx context.Context, deleteData bool) error {
-			return agent.PurgeManagedRuntime(ctx, deleteData, authorize)
+			return agent.PurgeManagedRuntime(ctx, dataDir, deleteData, authorize)
 		},
 		run: runHostCommand,
 	})
@@ -510,7 +510,7 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 	if err := authorize(ctx, "files"); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(environment.dataDir); err != nil {
+	if err := removeAgentState(environment.dataDir, deleteData); err != nil {
 		return fmt.Errorf("remove Agent state: %w", err)
 	}
 	if unitOwned {
@@ -525,6 +525,36 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 	// privacy drop-in but failed before systemd reloaded their disappearance.
 	if output, err := environment.run(ctx, "systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("reload systemd after Agent removal: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+func removeAgentState(directory string, deleteData bool) error {
+	info, err := os.Lstat(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("refusing to clean an unrecognized Agent state directory")
+	}
+	if deleteData {
+		return os.RemoveAll(directory)
+	}
+	// Backups and application bind mounts can live inside this directory.
+	// Keep them, their resource receipts, and recovery keys at their original
+	// paths. Unknown entries are retained too, never guessed to be disposable.
+	if err := os.Remove(filepath.Join(directory, agent.HostInstallStateName)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return os.Remove(directory)
 	}
 	return nil
 }

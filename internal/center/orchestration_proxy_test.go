@@ -498,7 +498,7 @@ func TestDisabledAgentCredentialIsRevoked(t *testing.T) {
 	if len(agents) != 1 || agents[0].Status != "disabled" || agents[0].Connected {
 		t.Fatalf("disabled Agent state is incorrect: %#v", agents)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: json.RawMessage(`{"debug":false}`)}); err == nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")}); err == nil {
 		t.Fatal("disabled Agent accepted a deployment")
 	}
 	if _, err := store.ConfirmNetworkProfile(ctx, node.ID, networking.Profile{ServiceAddress: "10.0.0.80", LANAddress: "10.0.0.80", EnabledKinds: []string{networking.KindLAN}}); err == nil {

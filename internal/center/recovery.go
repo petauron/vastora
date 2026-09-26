@@ -14,7 +14,6 @@ import (
 
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/backupcrypto"
-	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/recovery"
 	"github.com/petauron/vastora/internal/secret"
 )
@@ -22,21 +21,21 @@ import (
 const recoveryMaxAge = 24 * time.Hour
 
 type RecoveryComponent struct {
-	Key            string                  `json:"key"`
-	Kind           string                  `json:"kind"`
-	ID             string                  `json:"id"`
-	SiteID         string                  `json:"siteId,omitempty"`
-	NodeID         string                  `json:"nodeId,omitempty"`
-	Classification string                  `json:"classification"`
-	State          string                  `json:"state"`
-	Reason         string                  `json:"reason"`
-	Release        string                  `json:"release"`
-	SchemaVersion  int                     `json:"schemaVersion,omitempty"`
-	IdentityHash   string                  `json:"identityHash,omitempty"`
-	Dependencies   []string                `json:"dependencies"`
-	LastVerifiedAt *time.Time              `json:"lastVerifiedAt,omitempty"`
-	ArtifactDigest string                  `json:"artifactDigest,omitempty"`
-	BackupPolicy   *catalog.RecoveryPolicy `json:"backupPolicy,omitempty"`
+	Key            string                   `json:"key"`
+	Kind           string                   `json:"kind"`
+	ID             string                   `json:"id"`
+	SiteID         string                   `json:"siteId,omitempty"`
+	NodeID         string                   `json:"nodeId,omitempty"`
+	Classification string                   `json:"classification"`
+	State          string                   `json:"state"`
+	Reason         string                   `json:"reason"`
+	Release        string                   `json:"release"`
+	SchemaVersion  int                      `json:"schemaVersion,omitempty"`
+	IdentityHash   string                   `json:"identityHash,omitempty"`
+	Dependencies   []string                 `json:"dependencies"`
+	LastVerifiedAt *time.Time               `json:"lastVerifiedAt,omitempty"`
+	ArtifactDigest string                   `json:"artifactDigest,omitempty"`
+	BackupPolicy   *recovery.RecoveryPolicy `json:"backupPolicy,omitempty"`
 }
 
 type RecoveryReadiness struct {
@@ -116,7 +115,7 @@ func (s *Store) RecoveryReadiness(ctx context.Context) (RecoveryReadiness, error
 		}
 		appMetadata[id] = [2]string{appKey, version}
 		component := RecoveryComponent{Key: "application:" + id, Kind: "application", ID: id, SiteID: site, NodeID: node, Classification: "application_owned", State: "action_required", Reason: "external_application_backup_and_restore_evidence_required", Release: Version, Dependencies: []string{"center", "agent:" + node}}
-		if policy, supported := catalog.OfficialRecoveryPolicy(appKey, version); supported {
+		if policy, supported := recovery.OfficialRecoveryPolicy(appKey, version); supported {
 			component.BackupPolicy = &policy
 			if policy.Consistency == "reconstructible" {
 				component.Classification = "reconstructible"

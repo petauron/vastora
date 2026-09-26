@@ -90,6 +90,11 @@ func TestApplyMeridianRevisionOnlyDoesNotMutateDockerContainer(t *testing.T) {
 	// Docker's ExecAttach dials this host directly. The client accepts an
 	// HTTP URL for ordinary requests, but its hijack dialer needs tcp://.
 	executor := ApplicationExecutor{Store: store, DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}
+	// A completed one-shot adoption is required before any v4 runtime action.
+	packageReceipt := &InstanceResources{Version: 1, ApplicationID: state.ApplicationID, AppKey: meridianKey, Runtime: "docker", State: "ready", Resources: []RuntimeResource{{Kind: "container", LogicalName: "xray", Name: meridianXrayContainer, ID: containerID, SHA256: strings.Split(xrayWorkerImageReference, "@sha256:")[1], StartedAt: startedAt, Component: "xray"}}}
+	if err := (PackageExecutor{StateDirectory: store.dataDir}).save(packageReceipt); err != nil {
+		t.Fatal(err)
+	}
 	result, err := executor.ApplyMeridianRuntime(ctx, task)
 	if err != nil || result.Validate(task.Desired) != nil || result.Receipt.Revision != 8 {
 		t.Fatalf("no-reload apply receipt=%#v err=%v", result.Receipt, err)

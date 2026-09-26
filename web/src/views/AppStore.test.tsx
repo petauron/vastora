@@ -11,9 +11,9 @@ import { AppHostAccessNote, AppIdentityBadge, isOfficialProduct } from "./AppIde
 
 function app(id = "pulse-agent", sourceId = "vastora-official"): AppView {
   return {
-    key: `${sourceId}/${id}`, sourceId, fetchedAt: "2026-09-11T00:00:00Z",
+    key: `${sourceId}/${id}`, sourceId, fetchedAt: "2026-09-11T00:00:00Z", manifestSha256: "a".repeat(64),
     app: {
-      id, version: "0.1.0-alpha.2", name: id === "pulse"
+      id, version: "0.1.0-alpha.2", packageRevision: 1, runtime: { kind: id === "pulse" ? "docker" : "systemd", version: 1 }, name: id === "pulse"
         ? { en: "Pulse", "zh-CN": "Pulse 监控主机" }
         : { en: "Pulse Agent", "zh-CN": "Pulse 探针" },
       description: { en: "Collect host metrics without Docker.", "zh-CN": "采集主机监控指标，无需 Docker。" },
@@ -135,6 +135,19 @@ describe("app store cards", () => {
     expect(container.textContent).toContain("Host app");
     expect(container.textContent).not.toContain("Privileged");
     expect(container.textContent).toContain("Not installed");
+  });
+
+  it("keeps unsupported package reasons visible while other catalog entries remain installable", () => {
+    const supported = app("new-native", "community");
+    const unsupported = app("new-future", "community");
+    unsupported.app.runtime!.requiredCapabilities = ["future-device"];
+    const data = { apps: [supported, unsupported], sources: [], applications: [], services: [], publications: [], agents: [{ id: "node", name: "Node", connected: true, capabilities: { executorVersions: { systemd: 1 }, runtimeCapabilities: [] }, networkProfile: { serviceAddress: "10.0.0.2" } }] } as unknown as AppData;
+    const container = markup(<AppStore data={data} language="en" onInstall={vi.fn()} />);
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>("button")];
+    expect(buttons).toHaveLength(2);
+    expect(buttons.map(button => button.disabled)).toEqual([false, true]);
+    expect(container.textContent).toContain("Missing node capabilities: future-device");
+    expect(container.textContent).toContain("r1");
   });
 
   it("passes the exact app to installation and prevents disabled clicks", () => {

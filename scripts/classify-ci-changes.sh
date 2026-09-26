@@ -45,7 +45,7 @@ while IFS= read -r path; do
     web/*) web=true ;;
   esac
   case "$path" in
-    deploy/*|scripts/*|install.sh|catalog/*|Dockerfile*|release-please-config.json) deployment=true ;;
+    deploy/*|scripts/*|install.sh|catalog/*|internal/center/testdata/reviewed-catalog-v4.json|Dockerfile*|release-please-config.json) deployment=true ;;
   esac
   case "$path" in
     Dockerfile.center|.dockerignore|catalog/trust/*|go.mod|go.sum|web/package.json|web/package-lock.json) container=true ;;

@@ -97,9 +97,16 @@ export function gatewaysForKind(data: AppData, service: Service, kind: Publicati
   });
 }
 
-export function canInstall(agent: AgentView, appKey?: string) {
-  const native = appKey === "vastora-official/komari-agent" || appKey === "vastora-official/pulse-agent";
-  return agent.connected && (native || agent.capabilities.docker) && Boolean(agent.networkProfile);
+export function packageNodeBlocker(agent: AgentView, app: AppView | undefined, language: Language) {
+  const runtime = app?.app.runtime;
+  if (!runtime) return copy(language, "需要 schema 4 安装配方。", "A schema 4 recipe is required.");
+  if (agent.capabilities.executorVersions?.[runtime.kind] !== runtime.version) return copy(language, `节点不支持执行器 ${runtime.kind} v${runtime.version}，请升级 Agent。`, `The node does not support executor ${runtime.kind} v${runtime.version}. Upgrade its Agent.`);
+  const missing = runtime.requiredCapabilities?.filter((value) => !agent.capabilities.runtimeCapabilities?.includes(value)) ?? [];
+  return missing.length ? copy(language, `节点缺少能力：${missing.join(", ")}`, `Missing node capabilities: ${missing.join(", ")}`) : "";
+}
+
+export function canInstall(agent: AgentView, app?: AppView) {
+  return agent.connected && !packageNodeBlocker(agent, app, "en") && Boolean(agent.networkProfile);
 }
 
 export function pulsePrivateAccess(data: AppData) {
@@ -111,7 +118,8 @@ export function pulsePrivateAccess(data: AppData) {
 export function eligibleAppNodes(data: AppData, appKey: string) {
   if (appKey === "vastora-official/pulse" && data.applications.some((app) => app.appKey === appKey && (isInstalledApplication(app) || isActiveApplication(app.status)))) return [];
   if (appKey === "vastora-official/pulse-agent" && !pulsePrivateAccess(data)) return [];
-  return data.agents.filter((agent) => canInstall(agent, appKey) && !data.applications.some((app) => app.nodeId === agent.id && app.appKey === appKey && (isInstalledApplication(app) || isActiveApplication(app.status))));
+  const manifest = data.apps.find((app) => app.key === appKey);
+  return data.agents.filter((agent) => canInstall(agent, manifest) && !data.applications.some((app) => app.nodeId === agent.id && app.appKey === appKey && (isInstalledApplication(app) || isActiveApplication(app.status))));
 }
 
 export function isActiveApplication(status: string) {
@@ -157,10 +165,11 @@ export function installBlocker(data: AppData, appKey: string, language: Language
   if (appKey === "vastora-official/pulse-agent" && !pulsePrivateAccess(data)) return copy(language, "先为 Pulse 监控主机添加私网 HTTPS 入口。", "Add a private HTTPS access point to the Pulse service first.");
   if (data.agents.length === 0) return copy(language, "先添加一台节点，再安装应用。", "Add a node before installing apps.");
   if (!data.agents.some((agent) => agent.connected)) return copy(language, "没有在线节点。请检查 Agent 服务。", "No node is online. Check the Agent service.");
-  const native = appKey === "vastora-official/komari-agent" || appKey === "vastora-official/pulse-agent";
-  if (!native && !data.agents.some((agent) => agent.connected && agent.capabilities.docker)) return copy(language, "在线节点没有 Docker 应用能力。", "Online nodes do not provide Docker app capability.");
-  if (!data.agents.some((agent) => canInstall(agent, appKey))) return copy(language, "请先在“网络”页面确认节点地址。", "Confirm a node address on the Network page first.");
-  if (data.agents.every((agent) => !canInstall(agent, appKey) || data.applications.some((application) => application.nodeId === agent.id && application.appKey === appKey && (isInstalledApplication(application) || isActiveApplication(application.status))))) return copy(language, "所有可用节点都已安装或正在安装此应用。", "This app is already installed or being installed on every eligible node.");
+  const manifest = data.apps.find((app) => app.key === appKey);
+  const online = data.agents.filter((agent) => agent.connected);
+  if (online.every((agent) => packageNodeBlocker(agent, manifest, language))) return online.map((agent) => `${agent.name}: ${packageNodeBlocker(agent, manifest, language)}`).join("; ");
+  if (!data.agents.some((agent) => canInstall(agent, manifest))) return copy(language, "请先在“网络”页面确认节点地址。", "Confirm a node address on the Network page first.");
+  if (data.agents.every((agent) => !canInstall(agent, manifest) || data.applications.some((application) => application.nodeId === agent.id && application.appKey === appKey && (isInstalledApplication(application) || isActiveApplication(application.status))))) return copy(language, "所有可用节点都已安装或正在安装此应用。", "This app is already installed or being installed on every eligible node.");
   return copy(language, "当前没有符合条件的节点。", "No eligible node is currently available.");
 }
 

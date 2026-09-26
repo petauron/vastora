@@ -66,6 +66,10 @@ func (s *Store) releaseClaimedTask(ctx context.Context, agentID string, task Age
 		if err == nil {
 			_, err = tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'deploying'`, now, task.ApplicationID)
 		}
+	case "application.adopt":
+		result, err = tx.ExecContext(ctx, `UPDATE application_adoptions SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
+	case "application.maintenance":
+		result, err = tx.ExecContext(ctx, `UPDATE application_maintenance SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
 	default:
 		return fmt.Errorf("center: cannot release unsupported claimed task kind %q", task.Kind)
 	}
@@ -97,6 +101,10 @@ func (s *Store) RenewTaskLease(ctx context.Context, agentID, credential, taskID 
 	var result sql.Result
 	var err error
 	switch {
+	case strings.HasPrefix(taskID, "application-maintenance-"):
+		result, err = s.db.ExecContext(ctx, `UPDATE application_maintenance SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=? AND lease_expires_at>?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	case strings.HasPrefix(taskID, "application-adopt-"):
+		result, err = s.db.ExecContext(ctx, `UPDATE application_adoptions SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=? AND lease_expires_at>?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case strings.HasPrefix(taskID, "ip-quality-"):
 		result, err = s.db.ExecContext(ctx, `UPDATE ip_quality_checks SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=? AND lease_expires_at>?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case strings.HasPrefix(taskID, "node-diagnostic-"):
@@ -230,6 +238,8 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		{`SELECT id, 1 FROM xray_configuration_recoveries WHERE agent_id=? AND action='inspect' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "xray.configuration.inspect"},
 		{`SELECT id, 1 FROM xray_configuration_recoveries WHERE agent_id=? AND action<>'inspect' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "xray.configuration.apply"},
 		{`SELECT id, 1 FROM deployments WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "application.apply"},
+		{`SELECT id, 1 FROM application_adoptions WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "application.adopt"},
+		{`SELECT id, 1 FROM application_maintenance WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "application.maintenance"},
 		{`SELECT 'landing-proxy-' || node_id || '-r' || desired_revision,desired_revision FROM landing_proxy_states WHERE node_id=? AND status='applying' AND lease_expires_at<>'' AND lease_expires_at<=?`, "landing.proxy.apply"},
 		{`SELECT 'landing-server-' || node_id || '-r' || desired_revision, desired_revision FROM landing_server_states WHERE node_id=? AND status='applying' AND lease_expires_at<>'' AND lease_expires_at<=?`, "landing.server.apply"},
 		{`SELECT id, 1 FROM application_commands WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "application.command"},
@@ -260,6 +270,18 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 	}
 	if len(expired) == 0 {
 		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE application_resources SET adoption_state='blocked',last_error='Package maintenance interrupted; operator verification required',updated_at=? WHERE application_id IN (SELECT application_id FROM application_maintenance WHERE agent_id=? AND state='running' AND action<>'logs' AND lease_expires_at<>'' AND lease_expires_at<=?)`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE application_maintenance SET state='failed',reconciliation_required=1,lease_expires_at='',error='Package maintenance interrupted; operator verification required',updated_at=? WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE application_resources SET adoption_state='blocked',last_error='Resource inspection interrupted; operator verification required',updated_at=? WHERE application_id IN (SELECT application_id FROM application_adoptions WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?)`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE application_adoptions SET state='failed',lease_expires_at='',error='Resource inspection interrupted; operator verification required',updated_at=? WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE ip_quality_checks SET state='failed',lease_expires_at='',error='interrupted',updated_at=? WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err

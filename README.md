@@ -12,8 +12,12 @@ when the Center is unavailable.
 ## What is implemented now
 
 - A Go `vastora` CLI with a Center HTTP API, one-time Agent enrollment,
-  authenticated Agent heartbeats, Agent-local encrypted credentials, and portable
-  Catalog key generation, validation, signing, and verification commands.
+  authenticated Agent heartbeats and Agent-local encrypted credentials.
+- Schema 4 catalog consumption from the pinned independent
+  [petauron/catalog](https://github.com/petauron/catalog) module, with generic
+  Docker/systemd execution contracts. Catalog signing/publishing tools belong
+  to that repository, not the Vastora CLI. Production cutover remains gated by
+  the [maintenance and adoption checklist](docs/catalog-release-guide.md).
 - Browser-based first-administrator setup with a username, Argon2id password
   hashing, and authenticated sessions.
 - AES-256-GCM encrypted secrets in SQLite, multi-source catalog persistence,

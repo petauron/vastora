@@ -19,10 +19,7 @@ func TestLocalRealityRemovalMigrationPreservesOperationsAndGuards(t *testing.T) 
 	if err := old.Close(); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openBeforeCatalogMaintenanceForTest(t, directory)
 	defer store.Close()
 	var rowID, attempt, required, requested int
 	var input, result, state, lease, message, created, updated string
@@ -61,4 +58,5 @@ func TestLocalRealityRemovalMigrationPreservesOperationsAndGuards(t *testing.T) 
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("missing pre-migration backup: %v %v", backups, err)
 	}
+	finishCatalogMaintenanceFixture(t, store, directory)
 }

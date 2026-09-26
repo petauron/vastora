@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/ipquality"
@@ -111,18 +111,20 @@ func taskOutcomeIsUncertain(err error) bool {
 }
 
 type Capabilities struct {
-	IPQuality             bool `json:"ipQuality"`
-	NetworkDiagnostics    bool `json:"networkDiagnostics"`
-	ReturnRoute           bool `json:"returnRoute"`
-	BandwidthDiagnostics  bool `json:"bandwidthDiagnostics"`
-	LandingEgressIP       bool `json:"landingEgressIP"`
-	MeridianLinkBandwidth bool `json:"meridianLinkBandwidth"`
-	HostProfile           bool `json:"hostProfile"`
-	Docker                bool `json:"docker"`
-	Gateway               bool `json:"gateway"`
-	Tunnel                bool `json:"tunnel"`
-	Metrics               bool `json:"metrics"`
-	Logs                  bool `json:"logs"`
+	ExecutorVersions      map[string]int `json:"executorVersions,omitempty"`
+	RuntimeCapabilities   []string       `json:"runtimeCapabilities,omitempty"`
+	IPQuality             bool           `json:"ipQuality"`
+	NetworkDiagnostics    bool           `json:"networkDiagnostics"`
+	ReturnRoute           bool           `json:"returnRoute"`
+	BandwidthDiagnostics  bool           `json:"bandwidthDiagnostics"`
+	LandingEgressIP       bool           `json:"landingEgressIP"`
+	MeridianLinkBandwidth bool           `json:"meridianLinkBandwidth"`
+	HostProfile           bool           `json:"hostProfile"`
+	Docker                bool           `json:"docker"`
+	Gateway               bool           `json:"gateway"`
+	Tunnel                bool           `json:"tunnel"`
+	Metrics               bool           `json:"metrics"`
+	Logs                  bool           `json:"logs"`
 }
 
 type Enrollment struct {
@@ -134,6 +136,12 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	PackageMaintenance        *PackageMaintenanceTask              `json:"packageMaintenance,omitempty"`
+	HistoricalManifest        json.RawMessage                      `json:"historicalManifest,omitempty"`
+	PackageRevision           int                                  `json:"packageRevision,omitempty"`
+	ManifestSHA256            string                               `json:"manifestSha256,omitempty"`
+	AuthorizedCapabilities    []string                             `json:"authorizedCapabilities,omitempty"`
+	Resources                 *InstanceResources                   `json:"resources,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
@@ -194,6 +202,8 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
+	Resources            *InstanceResources                  `json:"resources,omitempty"`
 	IPQuality            *ipquality.Result                   `json:"ipQuality,omitempty"`
 	NodeDiagnostics      *nodediagnostics.Result             `json:"nodeDiagnostics,omitempty"`
 	PulseEnrollment      *pulse.EnrollmentResult             `json:"pulseEnrollment,omitempty"`

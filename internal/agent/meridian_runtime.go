@@ -111,7 +111,8 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 	if state.Pending == nil {
 		return state, nil
 	}
-	if pendingImageReference != xrayWorkerImageReference {
+	receipt, receiptErr := e.ApplicationResources(state.ApplicationID)
+	if receiptErr != nil || !receiptAuthorizesImage(receipt, pendingImageReference) {
 		return state, errors.New("agent: Meridian pending image is not the audited Agent runtime")
 	}
 	active, err := os.ReadFile(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory, "config.json"))
@@ -196,8 +197,12 @@ func (e ApplicationExecutor) replaceMeridianPendingState(ctx context.Context, st
 }
 
 func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meridianruntime.Task) (result meridianruntime.Result, resultErr error) {
-	if e.Store == nil || task.Validate() != nil || task.ImageReference != xrayWorkerImageReference {
+	if e.Store == nil || task.Validate() != nil {
 		return result, errors.New("agent: invalid Meridian runtime task")
+	}
+	receipt, receiptErr := e.ApplicationResources(task.ApplicationID)
+	if receiptErr != nil || !receiptAuthorizesImage(receipt, task.ImageReference) {
+		return result, errors.New("agent: Meridian runtime image is not authorized by the installed package receipt")
 	}
 	state, err := e.Store.loadMeridianRuntimeState(ctx)
 	if errors.Is(err, errApplicationNotInstalled) {
@@ -350,13 +355,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	deployment := DeploymentTask{ID: "meridian-runtime-r" + fmt.Sprint(task.Desired.Revision), AppKey: meridianKey, ApplicationID: task.ApplicationID}
 	options := xrayWorkerContainerOptions(deployment, task.ImageReference, active, hy2Enabled, task.PreserveLegacyAliases)
 	meridianContainerLandingPolicy(&options, task.Peers)
-	restore := func(recoveryContext context.Context) error {
-		if len(previousActive) == 0 {
-			return nil
-		}
-		return e.Store.writeExactMeridianConfig(previousActive)
-	}
-	sha, err := replaceXrayWorkerContainer(ctx, docker, options, func() error {
+	sha, err := e.applyMeridianContainer(ctx, docker, options, func() error {
 		if err := e.beginMeridianLandingHandover(ctx, docker, &state, task); err != nil {
 			return err
 		}
@@ -374,7 +373,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 			return errors.New("agent: promoted Meridian configuration digest changed")
 		}
 		return nil
-	}, restore)
+	})
 	if err != nil {
 		return result, err
 	}
@@ -444,7 +443,7 @@ func (e ApplicationExecutor) ensureCleanMeridianContainerIdentity(ctx context.Co
 	}
 	options := xrayWorkerContainerOptions(deployment, task.ImageReference, active, hy2Enabled, false)
 	meridianContainerLandingPolicy(&options, state.AppliedPeers)
-	sha, err := replaceXrayWorkerContainer(ctx, docker, options, func() error {
+	sha, err := e.applyMeridianContainer(ctx, docker, options, func() error {
 		state.HandoverPending = true
 		if err := e.Store.saveMeridianRuntimeState(ctx, state); err != nil {
 			return err
@@ -463,7 +462,7 @@ func (e ApplicationExecutor) ensureCleanMeridianContainerIdentity(ctx context.Co
 			return errors.New("agent: cleaned Meridian runtime digest changed")
 		}
 		return nil
-	}, nil)
+	})
 	if err != nil {
 		return err
 	}

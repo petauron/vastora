@@ -6,12 +6,61 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/secret"
 )
+
+// Product integrations supply these values; they are not administrator input.
+// This view is used only for form validation, never signing or package identity.
+func managedConfigFields(appKey string) []string {
+	switch appKey {
+	case cpaAppKey:
+		return []string{"timezone", "management_key", "api_key"}
+	case "vastora-official/keeper":
+		return []string{"cpa_base_url", "cpa_management_key"}
+	case pulseAgentAppKey:
+		return []string{"service_url", "node_name", "node_group", "enrollment_token"}
+	default:
+		return nil
+	}
+}
+
+func userInputManifest(manifest catalog.AppManifest, appKey string) catalog.AppManifest {
+	managed := managedConfigFields(appKey)
+	manifest.Config = slices.DeleteFunc(slices.Clone(manifest.Config), func(field catalog.ConfigField) bool {
+		return slices.Contains(managed, field.Key)
+	})
+	return manifest
+}
+
+func (s *Store) withCPAEndpoint(ctx context.Context, agentID string, raw json.RawMessage) (json.RawMessage, error) {
+	var endpoint, protocol string
+	if err := s.db.QueryRowContext(ctx, `SELECT sv.endpoint,sv.protocol FROM services sv JOIN applications a ON a.id=sv.application_id
+		WHERE a.node_id=? AND a.app_key=? AND a.status='running' AND sv.name='api' AND sv.status IN ('running','ready','publishing')`, agentID, cpaAppKey).Scan(&endpoint, &protocol); err != nil {
+		return nil, errors.New("center: Keeper requires a ready private CPA endpoint on this Agent")
+	}
+	u, err := url.Parse(protocol + "://" + endpoint)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, errors.New("center: CPA endpoint is invalid")
+	}
+	address := net.ParseIP(u.Hostname())
+	if !networking.IsPrivateServiceAddress(u.Hostname()) || address == nil || address.IsLoopback() {
+		return nil, errors.New("center: CPA endpoint must use the confirmed private service address")
+	}
+	values, err := decodeJSONObject(raw, "center: Keeper configuration is invalid")
+	if err != nil {
+		return nil, err
+	}
+	values["cpa_base_url"], _ = json.Marshal(u.String())
+	return json.Marshal(values)
+}
 
 func removeJSONObjectKeys(raw json.RawMessage, keys ...string) (json.RawMessage, error) {
 	values, err := decodeJSONObject(raw, "center: deployment configuration must be a JSON object")
