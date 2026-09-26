@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.247](https://github.com/petauron/vastora/compare/v0.1.0-alpha.246...v0.1.0-alpha.247) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** restore domain targets for IPv6 landing ([#723](https://github.com/petauron/vastora/issues/723)) ([4a37d5b](https://github.com/petauron/vastora/commit/4a37d5beef4052eb482daea9a8036fb8792c8889))
+
 ## [0.1.0-alpha.246](https://github.com/petauron/vastora/compare/v0.1.0-alpha.245...v0.1.0-alpha.246) (2026-09-26)
 
 
