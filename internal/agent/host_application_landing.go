@@ -569,7 +569,7 @@ func validateLandingLocalEgress(address string) error {
 			if err == nil && ip.String() == address {
 				network, target := "udp4", "1.1.1.1"
 				if ip.To4() == nil {
-					network, target = "udp6", "2606:4700:4700::1111"
+					network, target = "udp6", "2001:4860:4860::8888"
 				}
 				connection, err := net.DialUDP(network, &net.UDPAddr{IP: ip}, &net.UDPAddr{IP: net.ParseIP(target), Port: 53})
 				if err != nil {

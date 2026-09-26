@@ -9,7 +9,16 @@
     { "value": "149.112.112.112", "reason": "Well-known public DNS resolver fixture" }
   ],
   "allowedPublicIPv6": [
-    { "value": "2001:4860:4860::8888", "reason": "Well-known public DNS resolver fixture" }
+    { "value": "2001:4860:4860::8888", "reason": "Well-known public DNS resolver fixture" },
+    {"value": "2000::", "reason": "IPv6 global unicast allocation boundary used by the egress firewall"},
+    {"value": "2001::", "reason": "IANA IETF protocol assignment prefix boundary"},
+    {"value": "2002::", "reason": "IANA 6to4 transition prefix boundary"},
+    {"value": "3fff::", "reason": "RFC 9637 documentation prefix boundary"},
+    {"value": "::ffff:1", "reason": "Scanner token for the standard IPv4-mapped address rejection fixture"},
+    {"value": "64:ff9b::a00:1", "reason": "RFC 6052 translation of RFC1918 10.0.0.1 rejection fixture"},
+    {"value": "2002:a00:1::1", "reason": "RFC 3056 6to4 embedding RFC1918 10.0.0.1 rejection fixture"},
+    {"value": "2001::1", "reason": "IANA Teredo prefix rejection fixture"},
+    {"value": "3fff::1", "reason": "RFC 9637 documentation address rejection fixture"}
   ],
   "allowedDomainRoots": [
     { "value": "example.com", "reason": "RFC 2606 documentation domain" },
