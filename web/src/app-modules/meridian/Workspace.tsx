@@ -40,7 +40,7 @@ export function MeridianWorkspace({ group, data, language, mutate, onManage, onU
     </div>
     <Tabs value={page} onValueChange={(value) => { if (typeof value === "string") setPage(value); }}>
       <TabsList variant="line" aria-label={copy(language, "Meridian 视图", "Meridian views")}>{manifest.pages.filter((item) => item.surface === "tab").map((item) => <TabsTrigger key={item.id} value={item.id}>{item.title[language]}</TabsTrigger>)}</TabsList>
-      <TabsContent value="nodes"><Table aria-label={copy(language, "Meridian 节点", "Meridian nodes")} className="apps-instance-table block lg:table lg:table-fixed">
+      <TabsContent value="nodes" className="overflow-hidden rounded-lg border"><Table aria-label={copy(language, "Meridian 节点", "Meridian nodes")} className="apps-instance-table block lg:table lg:table-fixed">
         <TableHeader className="hidden lg:table-header-group"><TableRow><TableHead className="w-[24%]">{copy(language, "节点", "Node")}</TableHead><TableHead className="w-[48%]">{copy(language, "质量与解锁", "Quality & availability")}</TableHead><TableHead className="w-[12%]">{copy(language, "状态", "Status")}</TableHead><TableHead className="w-[10%]">{copy(language, "连接", "Connections")}</TableHead><TableHead className="w-[6%]"><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead></TableRow></TableHeader>
         <TableBody className="block lg:table-row-group"><TableRow className="block bg-muted/30 lg:table-row"><TableCell colSpan={5} className="block text-xs lg:table-cell">{copy(language, "线路机", "Entry nodes")} {instances.length}</TableCell></TableRow>
           {instances.map((instance) => {
