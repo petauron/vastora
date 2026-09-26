@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-const AssessmentVersion = "meridian-v3"
-const IPv6AssessmentVersion = "meridian-ipv6-v1"
+const AssessmentVersion = "meridian-v4"
+const IPv6AssessmentVersion = "meridian-ipv6-v2"
 const EvidenceMaxAge = 24 * time.Hour
 
 type Preferences struct {
@@ -114,6 +114,18 @@ func (r Report) sourceFresh(source string, now time.Time) bool {
 	return false
 }
 
+// Type evidence remains useful after the report expires, but never for a
+// different address or an observation that has not actually succeeded.
+func (r Report) typeSourceAvailable(source string, now time.Time) bool {
+	for _, item := range r.Observations {
+		if item.Source == source {
+			stamp, err := time.Parse(time.RFC3339Nano, item.CheckedAt)
+			return item.Status == "ok" && sameIP(item.Address, r.Address) && err == nil && !stamp.After(now.Add(5*time.Second))
+		}
+	}
+	return false
+}
+
 func sameIP(a, b string) bool {
 	ip := net.ParseIP(a)
 	return ip != nil && ip.Equal(net.ParseIP(b))
@@ -142,30 +154,31 @@ func Assess(report *Report, checkedAt string, changed bool, now time.Time, prefe
 	total := 0
 	for _, evidence := range r.UsageTypes {
 		// Reports stored before terminal formatting was stripped can still be
-		// displayed. Keep their age/provenance checks unchanged for scoring.
+		// displayed. Type labels retain historical evidence for the same IP.
 		evidence.Value = normalizedValue(evidence.Value, 48)
 		a.TypeEvidence = append(a.TypeEvidence, evidence)
 		kind := usageType(evidence.Value)
-		if kind == "" || seen[evidence.Source] || !r.sourceFresh(evidence.Source, now) {
+		if kind == "" || seen[evidence.Source] || !r.typeSourceAvailable(evidence.Source, now) {
 			continue
 		}
 		seen[evidence.Source] = true
 		counts[kind]++
 		total++
 	}
-	for _, rule := range types {
-		if counts[rule.name] >= 2 && counts[rule.name]*3 >= total*2 {
-			a.IPType = rule.name
-		}
+	most := 0
+	for _, count := range counts {
+		most = max(most, count)
 	}
 	possible := []typeRule{}
 	for _, rule := range types {
-		// A single vote cannot exclude other types. Conflicting multiple votes
-		// constrain the interval to the types actually supported by evidence.
-		if rule.name == a.IPType || a.IPType == "unknown" && (total < 2 || counts[rule.name] > 0) {
+		// Use the largest source vote. Ties remain explicit candidates.
+		if most == 0 || counts[rule.name] == most {
 			possible = append(possible, rule)
 			a.TypeCandidates = append(a.TypeCandidates, rule.name)
 		}
+	}
+	if most > 0 && len(possible) == 1 {
+		a.IPType = possible[0].name
 	}
 	typePart := Contribution{ID: "type", Weight: typeWeight, Min: typeWeight, Missing: []string{}}
 	for _, rule := range possible {
