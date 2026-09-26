@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.239](https://github.com/petauron/vastora/compare/v0.1.0-alpha.238...v0.1.0-alpha.239) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** distinguish incomplete scores from unchecked exits ([#706](https://github.com/petauron/vastora/issues/706)) ([8f41cb6](https://github.com/petauron/vastora/commit/8f41cb66efbe00124e0e13ce4d1c83596da6d4be))
+
 ## [0.1.0-alpha.238](https://github.com/petauron/vastora/compare/v0.1.0-alpha.237...v0.1.0-alpha.238) (2026-09-26)
 
 
