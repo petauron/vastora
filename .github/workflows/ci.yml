@@ -44,7 +44,7 @@ jobs:
     if: github.event_name == 'pull_request' && vars.VASTORA_CI_MODE == 'alpha'
     needs: changes
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,6 +59,9 @@ jobs:
       - name: Check Go formatting and API contract
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: make go-format-check
+      - name: Verify Meridian bandwidth execution and forward migration
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
+        run: go test ./internal/agent ./internal/center -run 'TestMeridianLink|TestVersion9[67]Preserves' -count=1
       - name: Check deployment syntax and release workflow contracts
         if: needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'
         run: |

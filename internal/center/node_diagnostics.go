@@ -32,7 +32,9 @@ const nodeDiagnosticsSchema80SQL = `CREATE TABLE node_diagnostic_checks (
  PRIMARY KEY(agent_id,kind)
 );`
 
-var nodeDiagnosticsSchemaSQL = strings.Replace(nodeDiagnosticsSchema80SQL, "'node.international-bandwidth'))", "'node.international-bandwidth','node.host-profile','meridian.link-bandwidth','meridian.link-bandwidth-server'))", 1)
+var nodeDiagnosticsSchema96SQL = strings.Replace(nodeDiagnosticsSchema80SQL, "'node.international-bandwidth'))", "'node.international-bandwidth','node.host-profile','meridian.link-bandwidth','meridian.link-bandwidth-server'))", 1)
+
+var nodeDiagnosticsSchemaSQL = strings.Replace(nodeDiagnosticsSchema96SQL, "PRIMARY KEY(agent_id,kind)", "pair_key TEXT NOT NULL DEFAULT '',\n PRIMARY KEY(agent_id,kind,pair_key)", 1)
 
 type NodeDiagnosticView struct {
 	AgentID        string                                    `json:"agentId"`
@@ -182,7 +184,7 @@ func (s *Store) StartNodeDiagnostic(ctx context.Context, agentID, kind string) e
 	id = "node-diagnostic-" + id
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	_, err = tx.ExecContext(ctx, `INSERT INTO node_diagnostic_checks(agent_id,kind,id,bind_address,target_revision,targets_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)
- ON CONFLICT(agent_id,kind) DO UPDATE SET id=excluded.id,bind_address=excluded.bind_address,target_revision=excluded.target_revision,targets_json=excluded.targets_json,state='pending',attempt=0,lease_expires_at='',error='',created_at=excluded.created_at,updated_at=excluded.updated_at`, agentID, kind, id, input.BindAddress, carrierTargetRevision, string(targetsJSON), now, now)
+ ON CONFLICT(agent_id,kind,pair_key) DO UPDATE SET id=excluded.id,bind_address=excluded.bind_address,target_revision=excluded.target_revision,targets_json=excluded.targets_json,state='pending',attempt=0,lease_expires_at='',error='',created_at=excluded.created_at,updated_at=excluded.updated_at`, agentID, kind, id, input.BindAddress, carrierTargetRevision, string(targetsJSON), now, now)
 	if err != nil {
 		return err
 	}
