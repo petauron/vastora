@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.235](https://github.com/petauron/vastora/compare/v0.1.0-alpha.234...v0.1.0-alpha.235) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** show only flag before landing names ([#698](https://github.com/petauron/vastora/issues/698)) ([c52645c](https://github.com/petauron/vastora/commit/c52645c9e11d15883f37c5da50d3797969884408))
+
 ## [0.1.0-alpha.234](https://github.com/petauron/vastora/compare/v0.1.0-alpha.233...v0.1.0-alpha.234) (2026-09-26)
 
 
