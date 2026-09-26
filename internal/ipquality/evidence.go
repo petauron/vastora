@@ -56,8 +56,8 @@ func (r *Report) RecordObservations(now time.Time) {
 		}
 		for _, service := range r.Services {
 			if "service:"+service.Name == name {
-				switch strings.ToLower(service.Status) {
-				case "yes", "no", "org", "originals only":
+				switch serviceOutcome(service.Status) {
+				case "yes", "no":
 					status = "ok"
 				}
 			}

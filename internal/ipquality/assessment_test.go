@@ -76,7 +76,7 @@ func TestAssessmentIPQSOnlyConservativeScore(t *testing.T) {
 	r.IPPure.RiskScore = &risk
 	r.RecordObservations(assessmentTime)
 	a := assessFixture(r)
-	if a.Version != "meridian-v2" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
+	if a.Version != "meridian-v3" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
 		t.Fatalf("IPQS-only absence must produce a transparent lower bound: %+v", a)
 	}
 	r.Scores = append(r.Scores, Score{"IPQS", "100"})
@@ -111,7 +111,7 @@ func TestAssessmentTypeEvidenceAndConflict(t *testing.T) {
 	}
 	r.UsageTypes[1].Value = "ISP"
 	a := assessFixture(r)
-	if a.Score != nil || a.Min != 79 || a.Max != 100 || a.IPType != "unknown" {
+	if a.Score == nil || *a.Score != 79 || a.Status != "conservative" || a.Min != 79 || a.Max != 100 || a.IPType != "unknown" || !slices.Contains(a.Missing, "type") {
 		t.Fatalf("conflicting type: %+v", a)
 	}
 	r.UsageTypes = append(r.UsageTypes, Classification{"ipapi", "Hosting"})
@@ -120,8 +120,18 @@ func TestAssessmentTypeEvidenceAndConflict(t *testing.T) {
 		t.Fatalf("two-thirds consensus rejected: %+v", a)
 	}
 	r.UsageTypes = r.UsageTypes[:1]
-	if a := assessFixture(r); a.IPType != "unknown" || len(a.TypeCandidates) != 4 {
+	if a := assessFixture(r); a.IPType != "unknown" || len(a.TypeCandidates) != 4 || a.Score != nil {
 		t.Fatalf("single provider established type: %+v", a)
+	}
+	r.UsageTypes = []Classification{{"IPinfo", "Business"}, {"ipregistry", "Business"}, {"ipapi", "Hosting"}, {"AbuseIPDB", "Business"}, {"IP2LOCATION", "Hosting"}}
+	r.Scores = slices.DeleteFunc(r.Scores, func(s Score) bool { return s.Source == "IPQS" })
+	r.RecordObservations(assessmentTime)
+	a = assessFixture(r)
+	if a.Status != "conservative" || a.Score == nil || *a.Score != 75 || a.Max != 89 || a.IPType != "unknown" || !slices.Equal(a.Missing, []string{"type", "IPQS"}) {
+		t.Fatalf("type conflict and unavailable IPQS did not retain a bounded score: %+v", a)
+	}
+	if a := Assess(nil, "", false, assessmentTime, DefaultPreferences()); a.Score != nil || a.Status != "partial" {
+		t.Fatalf("no report received a synthetic score: %+v", a)
 	}
 }
 
@@ -158,6 +168,52 @@ func TestAssessmentRiskAndServiceSemantics(t *testing.T) {
 	a = assessFixture(r)
 	if a.Advice != "recheck" || len(a.RequiredFailed) != 0 || !slices.Contains(a.RequiredUnknown, "ChatGPT") {
 		t.Fatalf("probe failure became blocked service: %+v", a)
+	}
+}
+
+func TestAssessmentIPQualityDisplayStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		service string
+		status  string
+		weight  int
+	}{
+		{"DisneyPlus", "Block", 4},
+		{"Netflix", "NF.Only", 6},
+		{"ChatGPT", "APPOnly", 15},
+		{"ChatGPT", "WebOnly", 15},
+		{"Youtube", "China", 2},
+		{"Youtube", "NoPrem.", 2},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			r := assessmentReport("ISP")
+			for i := range r.Services {
+				if r.Services[i].Name == tc.service {
+					r.Services[i].Status = tc.status
+				}
+			}
+			r.Scores = slices.DeleteFunc(r.Scores, func(s Score) bool { return s.Source == "IPQS" })
+			r.RecordObservations(assessmentTime)
+			a := assessFixture(r)
+			if a.Status != "conservative" || a.Score == nil || *a.Score != 90-tc.weight || !slices.Equal(a.Missing, []string{"IPQS"}) {
+				t.Fatalf("known restriction became missing or unlocked: %+v", a)
+			}
+			if slices.Contains(DefaultPreferences().RequiredServices, tc.service) && (a.Advice != "compare" || !slices.Contains(a.RequiredFailed, tc.service)) {
+				t.Fatalf("required restriction did not suggest comparison: %+v", a)
+			}
+		})
+	}
+	for _, status := range []string{"Failed", "Pending", "Unrecognized"} {
+		r := assessmentReport("ISP")
+		for i := range r.Services {
+			if r.Services[i].Name == "ChatGPT" {
+				r.Services[i].Status = status
+			}
+		}
+		r.RecordObservations(assessmentTime)
+		a := assessFixture(r)
+		if a.Score != nil || a.Advice != "recheck" || len(a.RequiredFailed) != 0 || !slices.Contains(a.RequiredUnknown, "ChatGPT") {
+			t.Fatalf("unknown probe result became negative evidence: %+v", a)
+		}
 	}
 }
 

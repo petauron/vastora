@@ -16,6 +16,12 @@ describe("IP quality presentation", () => {
     expect(unlockLabel("zh-CN", "null")).toBe("未知");
     expect(unlockLabel("zh-CN", " Yes ")).toBe("解锁");
     expect(unlockLabel("zh-CN", "No")).toBe("未解锁");
+    expect(unlockLabel("zh-CN", "Block")).toBe("未解锁");
+    expect(unlockLabel("zh-CN", "NF.Only")).toBe("仅自制");
+    expect(unlockLabel("zh-CN", "APPOnly")).toBe("仅 APP");
+    expect(unlockLabel("zh-CN", "WebOnly")).toBe("仅网页");
+    expect(unlockLabel("zh-CN", "China")).toBe("中国");
+    expect(unlockLabel("zh-CN", "NoPrem.")).toBe("禁会员");
   });
   it("removes terminal formatting in detail and list labels", () => {
     const status = "x1b[42mx1b[37m Yes x1b[0m";

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const AssessmentVersion = "meridian-v2"
+const AssessmentVersion = "meridian-v3"
 const EvidenceMaxAge = 24 * time.Hour
 
 type Preferences struct {
@@ -270,10 +270,12 @@ func Assess(report *Report, checkedAt string, changed bool, now time.Time, prefe
 		score := a.Min
 		a.Score = &score
 		a.Grade = grade(score)
-	} else if len(a.Missing) == 1 && a.Missing[0] == "IPQS" {
-		// A missing IPQS response contributes its worst possible zero points.
-		// Keep the evidence interval and missing source visible; this is a
-		// conservative decision score, never an inferred IPQS risk value.
+	} else if !slices.ContainsFunc(a.Missing, func(source string) bool {
+		return source != "IPQS" && (source != "type" || total < 2)
+	}) {
+		// Missing IPQS contributes zero. Conflicting usage classifications use
+		// the lowest contribution and cap among the evidenced candidate types.
+		// Keep the interval and missing evidence; never infer a provider value.
 		a.Status = "conservative"
 		score := a.Min
 		a.Score = &score
@@ -304,8 +306,8 @@ func serviceState(r Report, name, region string, now time.Time) string {
 		if item.Name != name {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(item.Status)) {
-		case "no", "org", "originals only":
+		switch serviceOutcome(item.Status) {
+		case "no":
 			return "no"
 		case "yes":
 			if region != "" && item.RegionCode == "" {
@@ -318,6 +320,20 @@ func serviceState(r Report, name, region string, now time.Time) string {
 		}
 	}
 	return "unknown"
+}
+
+// IPQuality's English JSON uses display labels such as Block and NF.Only.
+// Restricted app/web access and unavailable Premium are not full unlocks.
+// Probe failures remain unknown rather than becoming negative evidence.
+func serviceOutcome(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "yes":
+		return "yes"
+	case "no", "block", "org", "originals only", "nf.only", "apponly", "webonly", "china", "noprem.":
+		return "no"
+	default:
+		return "unknown"
+	}
 }
 
 func grade(score int) string {
