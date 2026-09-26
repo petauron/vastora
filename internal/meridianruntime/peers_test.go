@@ -50,7 +50,7 @@ func peerResultFixture(task Task, now time.Time) Result {
 			EgressID: peer.EgressID, Identity: peer.Identity,
 			Status: landing.MonitorStatus{
 				Revision: task.Desired.Revision, State: "healthy", LinkState: "direct", TCP: true, UDP: false,
-				CheckedAt: now.Add(-time.Second), AllowedUntil: now.Add(5 * time.Second), ExitIPv4: "1.1.1.1",
+				CheckedAt: now.Add(-time.Second), AllowedUntil: now.Add(5 * time.Second), ExitIP: "1.1.1.1",
 			},
 		})
 	}
@@ -234,10 +234,10 @@ func TestRuntimePeerHealthIsFreshTCPOnlyAndPeerScoped(t *testing.T) {
 		"unbounded lease": func(status *landing.MonitorStatus) {
 			status.AllowedUntil = status.CheckedAt.Add(landing.AllowLifetime + time.Nanosecond)
 		},
-		"no exit": func(status *landing.MonitorStatus) { status.ExitIPv4 = "" },
+		"no exit": func(status *landing.MonitorStatus) { status.ExitIP = "" },
 	}
 	for _, address := range []string{"invalid", "0.0.0.0", "10.0.0.1", "100.64.0.10", "127.0.0.1", "169.254.1.1", "172.16.0.1", "192.168.0.1", "192.0.2.1", "198.18.0.1", "198.51.100.1", "203.0.113.1", "224.0.0.1", "255.255.255.255", "2001:db8::1", netip.AddrFrom16(netip.MustParseAddr("1.1.1.1").As16()).String()} {
-		cases["nonpublic exit "+address] = func(status *landing.MonitorStatus) { status.ExitIPv4 = address }
+		cases["nonpublic exit "+address] = func(status *landing.MonitorStatus) { status.ExitIP = address }
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

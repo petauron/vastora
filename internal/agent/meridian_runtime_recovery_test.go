@@ -32,7 +32,7 @@ func TestMeridianRevisionOnlyKeepsRuntimeGateAndFreshReceipt(t *testing.T) {
 	}
 	peer := state.AppliedPeers[0]
 	checkedAt := time.Now().UTC().Add(-time.Second)
-	status := landing.MonitorStatus{Revision: state.Applied.Revision, State: "healthy", LinkState: "direct", TCP: true, ExitIPv4: "1.1.1.1", CheckedAt: checkedAt, AllowedUntil: checkedAt.Add(landing.AllowLifetime)}
+	status := landing.MonitorStatus{Revision: state.Applied.Revision, State: "healthy", LinkState: "direct", TCP: true, ExitIP: "1.1.1.1", CheckedAt: checkedAt, AllowedUntil: checkedAt.Add(landing.AllowLifetime)}
 	store.landingDone = make(chan struct{})
 	store.meridianMonitorRevision, store.meridianMonitorSHA256 = state.Applied.Revision, state.Applied.ConfigSHA256
 	store.meridianMonitorSource = cloneMeridianSource(state.AppliedSource)

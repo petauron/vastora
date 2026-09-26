@@ -32,6 +32,7 @@ type NodeCapabilities struct {
 	NetworkDiagnostics    bool `json:"networkDiagnostics"`
 	ReturnRoute           bool `json:"returnRoute"`
 	BandwidthDiagnostics  bool `json:"bandwidthDiagnostics"`
+	LandingEgressIP       bool `json:"landingEgressIP"`
 	MeridianLinkBandwidth bool `json:"meridianLinkBandwidth"`
 	HostProfile           bool `json:"hostProfile"`
 	Docker                bool `json:"docker"`

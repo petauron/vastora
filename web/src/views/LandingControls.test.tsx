@@ -113,5 +113,5 @@ it("renders global latency as read-only state", async () => {
   await act(async () => { root?.render(<LandingProvider enabled><MeridianNetworkMatrix instances={[{ application: { id: "entry-one", nodeId: "source-one" }, realityServices: [] } as unknown as InstalledAppInstance]} language="zh-CN" /></LandingProvider>); });
   expect(container.textContent).toContain("12 ms");
   expect(container.textContent).toContain("128 ms");
-  expect(container.querySelector(".text-destructive")?.textContent).toContain("128 ms");
+  expect(Array.from(container.querySelectorAll(".text-destructive")).some((element) => element.textContent === "128 ms")).toBe(true);
 });

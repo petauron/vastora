@@ -216,7 +216,7 @@ describe("network and app views", () => {
     );
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("订阅主机");
-    expect(container.textContent).toContain("2 个节点 · 1 台订阅主机");
+    expect(container.textContent).toContain("2 个线路机 · 1 台订阅主机");
     expect(container.querySelector('[data-app-group]')?.tagName).toBe("SECTION");
     expect(container.querySelectorAll("[data-app-group]")).toHaveLength(1);
     expect(container.querySelectorAll("[data-application-id]")).toHaveLength(2);
