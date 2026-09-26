@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.229](https://github.com/petauron/vastora/compare/v0.1.0-alpha.228...v0.1.0-alpha.229) (2026-09-26)
+
+
+### Bug Fixes
+
+* **network:** prevent STUN-only home relay selection ([#685](https://github.com/petauron/vastora/issues/685)) ([79b8091](https://github.com/petauron/vastora/commit/79b809188b66eaaa880ba48315a6def1a6763c7a))
+
 ## [0.1.0-alpha.228](https://github.com/petauron/vastora/compare/v0.1.0-alpha.227...v0.1.0-alpha.228) (2026-09-26)
 
 
