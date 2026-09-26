@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.238](https://github.com/petauron/vastora/compare/v0.1.0-alpha.237...v0.1.0-alpha.238) (2026-09-26)
+
+
+### Features
+
+* **meridian:** separate IP quality reports by egress address ([#704](https://github.com/petauron/vastora/issues/704)) ([ea18045](https://github.com/petauron/vastora/commit/ea180454997e6ba2b6b2ecdd98fa1b826546a017))
+
 ## [0.1.0-alpha.237](https://github.com/petauron/vastora/compare/v0.1.0-alpha.236...v0.1.0-alpha.237) (2026-09-26)
 
 
