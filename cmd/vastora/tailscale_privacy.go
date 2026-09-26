@@ -205,14 +205,7 @@ func verifyTailscaleDERPMap(payload []byte, desired agent.TailscaleIsolationDesi
 	if len(derpMap.Regions) == 0 {
 		return errTailscaleDERPMapNotReady
 	}
-	allowed := map[int]bool{desired.RelayRegionID: false}
-	for _, regionID := range desired.STUNOnlyRegionIDs {
-		if regionID <= 0 || regionID == desired.RelayRegionID {
-			return errors.New("verify Tailscale DERP map: desired region policy is invalid")
-		}
-		allowed[regionID] = true
-	}
-	if len(derpMap.Regions) != len(allowed) {
+	if len(derpMap.Regions) != 1 {
 		return errors.New("verify Tailscale DERP map: an unexpected relay or STUN region is advertised")
 	}
 	controlURL, _ := url.Parse(desired.ControlURL)
@@ -225,17 +218,8 @@ func verifyTailscaleDERPMap(payload []byte, desired agent.TailscaleIsolationDesi
 		}
 	}
 	for regionID, region := range derpMap.Regions {
-		stunOnly, expected := allowed[regionID]
-		if !expected || region.RegionID != 0 && region.RegionID != regionID || len(region.Nodes) == 0 {
-			return errors.New("verify Tailscale DERP map: an unexpected or invalid region is advertised")
-		}
-		if stunOnly {
-			for _, node := range region.Nodes {
-				if !node.STUNOnly || node.DERPPort != 0 {
-					return errors.New("verify Tailscale DERP map: an external STUN region can relay traffic")
-				}
-			}
-			continue
+		if region.RegionID != 0 && region.RegionID != regionID || len(region.Nodes) == 0 {
+			return errors.New("verify Tailscale DERP map: an invalid region is advertised")
 		}
 		if regionID != desired.RelayRegionID || region.RegionCode != "vastora" {
 			return errors.New("verify Tailscale DERP map: the managed relay region is invalid")
@@ -290,21 +274,8 @@ func validateTailscaleIsolationDesiredState(desired agent.TailscaleIsolationDesi
 		addresses = append(addresses, address)
 	}
 	desired.ControlAddresses = addresses
-	if desired.RelayRegionID < 0 || desired.RelayRegionID == 0 && len(desired.STUNOnlyRegionIDs) > 0 {
+	if desired.RelayRegionID < 0 {
 		return agent.TailscaleIsolationDesiredState{}, errors.New("configure Tailscale isolation: DERP region policy is invalid")
-	}
-	seenRegions := map[int]struct{}{}
-	if desired.RelayRegionID > 0 {
-		seenRegions[desired.RelayRegionID] = struct{}{}
-	}
-	for _, regionID := range desired.STUNOnlyRegionIDs {
-		if regionID <= 0 {
-			return agent.TailscaleIsolationDesiredState{}, errors.New("configure Tailscale isolation: STUN-only region is invalid")
-		}
-		if _, exists := seenRegions[regionID]; exists {
-			return agent.TailscaleIsolationDesiredState{}, errors.New("configure Tailscale isolation: DERP region policy contains duplicates")
-		}
-		seenRegions[regionID] = struct{}{}
 	}
 	return desired, nil
 }
