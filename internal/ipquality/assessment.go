@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const AssessmentVersion = "meridian-v2"
+const AssessmentVersion = "meridian-v3"
 const EvidenceMaxAge = 24 * time.Hour
 
 type Preferences struct {
@@ -270,10 +270,12 @@ func Assess(report *Report, checkedAt string, changed bool, now time.Time, prefe
 		score := a.Min
 		a.Score = &score
 		a.Grade = grade(score)
-	} else if len(a.Missing) == 1 && a.Missing[0] == "IPQS" {
-		// A missing IPQS response contributes its worst possible zero points.
-		// Keep the evidence interval and missing source visible; this is a
-		// conservative decision score, never an inferred IPQS risk value.
+	} else if !slices.ContainsFunc(a.Missing, func(source string) bool {
+		return source != "IPQS" && (source != "type" || total < 2)
+	}) {
+		// Missing IPQS contributes zero. Conflicting usage classifications use
+		// the lowest contribution and cap among the evidenced candidate types.
+		// Keep the interval and missing evidence; never infer a provider value.
 		a.Status = "conservative"
 		score := a.Min
 		a.Score = &score

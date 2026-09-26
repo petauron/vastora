@@ -18,7 +18,7 @@ afterEach(() => {
 
 function assessment(): IPQualityAssessment {
   return {
-    version: "meridian-v2", status: "partial", min: 75, max: 100, grade: "unknown", ipType: "residential",
+    version: "meridian-v3", status: "partial", min: 75, max: 100, grade: "unknown", ipType: "residential",
     typeCandidates: ["residential"], typeEvidence: [{ source: "IPinfo", value: "ISP" }],
     contributions: [{ id: "ippure", min: 0, max: 25, weight: 25, missing: ["IPPure"] }], missing: ["IPPure"],
     advice: "recheck", reasons: ["incomplete"], requiredFailed: [], requiredUnknown: [],
@@ -32,12 +32,12 @@ it("keeps missing evidence as an interval and reveals policy only on expansion",
   root = createRoot(container);
   await act(async () => root?.render(<AssessmentSummary language="zh-CN" assessment={assessment()} />));
   expect(container.textContent).toContain("待检测");
-  expect(container.textContent).not.toContain("Meridian 评分 v2");
+  expect(container.textContent).not.toContain("Meridian 评分 v3");
   const trigger = container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
   expect(trigger.getAttribute("aria-expanded")).toBe("false");
   await act(async () => trigger.click());
   expect(trigger.getAttribute("aria-expanded")).toBe("true");
-  expect(container.textContent).toContain("Meridian 评分 v2");
+  expect(container.textContent).toContain("Meridian 评分 v3");
   expect(container.textContent).toContain("IPPure");
   expect(container.textContent).toContain("0～25 / 25");
 });
@@ -56,8 +56,8 @@ it("labels an IPQS-only lower bound and explains its interval", async () => {
   expect(container.textContent).not.toContain("保守分");
   expect(container.textContent).toContain("可直连");
   await act(async () => container.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click());
-  expect(container.textContent).toContain("63～73");
-  expect(container.textContent).toContain("该项按 0 / 10 分");
+  expect(container.textContent).toContain("待确认：IPQS");
+  expect(container.textContent).toContain("按最低可能贡献计算 63 分");
 });
 
 it("does not display a formal number for expired or changed-IP results", () => {

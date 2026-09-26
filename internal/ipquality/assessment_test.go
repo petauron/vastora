@@ -76,7 +76,7 @@ func TestAssessmentIPQSOnlyConservativeScore(t *testing.T) {
 	r.IPPure.RiskScore = &risk
 	r.RecordObservations(assessmentTime)
 	a := assessFixture(r)
-	if a.Version != "meridian-v2" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
+	if a.Version != "meridian-v3" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
 		t.Fatalf("IPQS-only absence must produce a transparent lower bound: %+v", a)
 	}
 	r.Scores = append(r.Scores, Score{"IPQS", "100"})
@@ -111,7 +111,7 @@ func TestAssessmentTypeEvidenceAndConflict(t *testing.T) {
 	}
 	r.UsageTypes[1].Value = "ISP"
 	a := assessFixture(r)
-	if a.Score != nil || a.Min != 79 || a.Max != 100 || a.IPType != "unknown" {
+	if a.Score == nil || *a.Score != 79 || a.Status != "conservative" || a.Min != 79 || a.Max != 100 || a.IPType != "unknown" || !slices.Contains(a.Missing, "type") {
 		t.Fatalf("conflicting type: %+v", a)
 	}
 	r.UsageTypes = append(r.UsageTypes, Classification{"ipapi", "Hosting"})
@@ -120,8 +120,18 @@ func TestAssessmentTypeEvidenceAndConflict(t *testing.T) {
 		t.Fatalf("two-thirds consensus rejected: %+v", a)
 	}
 	r.UsageTypes = r.UsageTypes[:1]
-	if a := assessFixture(r); a.IPType != "unknown" || len(a.TypeCandidates) != 4 {
+	if a := assessFixture(r); a.IPType != "unknown" || len(a.TypeCandidates) != 4 || a.Score != nil {
 		t.Fatalf("single provider established type: %+v", a)
+	}
+	r.UsageTypes = []Classification{{"IPinfo", "Business"}, {"ipregistry", "Business"}, {"ipapi", "Hosting"}, {"AbuseIPDB", "Business"}, {"IP2LOCATION", "Hosting"}}
+	r.Scores = slices.DeleteFunc(r.Scores, func(s Score) bool { return s.Source == "IPQS" })
+	r.RecordObservations(assessmentTime)
+	a = assessFixture(r)
+	if a.Status != "conservative" || a.Score == nil || *a.Score != 75 || a.Max != 89 || a.IPType != "unknown" || !slices.Equal(a.Missing, []string{"type", "IPQS"}) {
+		t.Fatalf("type conflict and unavailable IPQS did not retain a bounded score: %+v", a)
+	}
+	if a := Assess(nil, "", false, assessmentTime, DefaultPreferences()); a.Score != nil || a.Status != "partial" {
+		t.Fatalf("no report received a synthetic score: %+v", a)
 	}
 }
 
