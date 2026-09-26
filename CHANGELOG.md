@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.237](https://github.com/petauron/vastora/compare/v0.1.0-alpha.236...v0.1.0-alpha.237) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** use configured site locations in node rows ([#702](https://github.com/petauron/vastora/issues/702)) ([c57867e](https://github.com/petauron/vastora/commit/c57867ee7881feb8022f6817f4b101ac8ce245b5))
+
 ## [0.1.0-alpha.236](https://github.com/petauron/vastora/compare/v0.1.0-alpha.235...v0.1.0-alpha.236) (2026-09-26)
 
 
