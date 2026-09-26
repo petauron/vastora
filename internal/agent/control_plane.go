@@ -49,12 +49,11 @@ type Client struct {
 }
 
 type TailscaleIsolationDesiredState struct {
-	ControlURL        string   `json:"controlUrl"`
-	ControlAddresses  []string `json:"controlAddresses"`
-	ControlAliases    []string `json:"controlAliases,omitempty"`
-	StaticEndpoints   []string `json:"staticEndpoints"`
-	RelayRegionID     int      `json:"relayRegionId,omitempty"`
-	STUNOnlyRegionIDs []int    `json:"stunOnlyRegionIds,omitempty"`
+	ControlURL       string   `json:"controlUrl"`
+	ControlAddresses []string `json:"controlAddresses"`
+	ControlAliases   []string `json:"controlAliases,omitempty"`
+	StaticEndpoints  []string `json:"staticEndpoints"`
+	RelayRegionID    int      `json:"relayRegionId,omitempty"`
 }
 
 type HostDecommissioner interface {
