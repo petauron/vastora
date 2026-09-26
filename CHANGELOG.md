@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.228](https://github.com/petauron/vastora/compare/v0.1.0-alpha.227...v0.1.0-alpha.228) (2026-09-26)
+
+
+### Features
+
+* **meridian:** show link bandwidth in the node list ([#683](https://github.com/petauron/vastora/issues/683)) ([6581f4b](https://github.com/petauron/vastora/commit/6581f4b4b766252cf37a1a88b8c897521ff3ea17))
+
 ## [0.1.0-alpha.227](https://github.com/petauron/vastora/compare/v0.1.0-alpha.226...v0.1.0-alpha.227) (2026-09-26)
 
 
