@@ -7073,6 +7073,21 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "landingEgressAddresses": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "address": {
+                          "type": "string"
+                        },
+                        "interface": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
                   "publicKey": {
                     "type": "string",
                     "contentEncoding": "base64"
@@ -11383,6 +11398,21 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
+                "egressAddresses": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "address": {
+                        "type": "string"
+                      },
+                      "interface": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
                 "egressIp": {
                   "type": "string"
                 },

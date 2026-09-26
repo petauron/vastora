@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 97
+const centerSchemaVersion = 98
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -196,6 +196,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE RESTRICT,
 			roles_json BLOB NOT NULL DEFAULT '[]',
 			capabilities_json BLOB NOT NULL DEFAULT '{}',
+			landing_egress_addresses_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(landing_egress_addresses_json)),
 			gateway_healthy INTEGER NOT NULL DEFAULT 0,
 			runtime_recovery TEXT NOT NULL DEFAULT '',
 			runtime_generation INTEGER NOT NULL DEFAULT 0,

@@ -8,6 +8,7 @@ import "testing"
 func removePostVersion85TablesForFixture(t *testing.T, store *Store) {
 	t.Helper()
 	for _, statement := range []string{
+		`ALTER TABLE agents DROP COLUMN landing_egress_addresses_json`,
 		`DROP TRIGGER application_commands_block_during_meridian_cutover`,
 		`DROP TRIGGER application_command_updates_block_during_meridian_cutover`,
 		`DROP TRIGGER deployments_block_during_meridian_cutover`,

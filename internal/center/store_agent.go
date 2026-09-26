@@ -17,6 +17,7 @@ import (
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
@@ -685,6 +686,13 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
+	if err := landing.ValidateEgressAddresses(heartbeat.LandingEgressAddresses); err != nil {
+		return err
+	}
+	if heartbeat.LandingEgressAddresses == nil {
+		heartbeat.LandingEgressAddresses = []landing.EgressAddress{}
+	}
+	egressAddressesJSON, _ := json.Marshal(heartbeat.LandingEgressAddresses)
 	rolesJSON, _ := json.Marshal(heartbeat.Roles)
 	capabilitiesJSON, _ := json.Marshal(heartbeat.Capabilities)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -716,6 +724,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET x25519_public_key = CASE WHEN length(x25519_public_key) = 0 THEN ? ELSE x25519_public_key END, version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_recovery = ?, runtime_generation = ?, remote_update_supported = ?, tailscale_ownership = ?, last_seen_at = ?, public_egress_address = CASE WHEN ? THEN ? ELSE public_egress_address END, public_egress_bind_address = CASE WHEN ? THEN ? ELSE public_egress_bind_address END, public_egress_mode = CASE WHEN ? THEN ? ELSE public_egress_mode END, public_egress_observed_at = CASE WHEN ? THEN ? ELSE public_egress_observed_at END WHERE id = ?`, heartbeat.PublicKey, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.RuntimeRecovery, heartbeat.ApplicationRuntimeGeneration, heartbeat.RemoteUpdateSupported, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), replacePublicEgress, publicEgress.Address, replacePublicEgress, publicEgress.BindAddress, replacePublicEgress, publicEgress.Mode, replacePublicEgress, publicEgressObservedAt, id); err != nil {
 		return fmt.Errorf("center: record agent heartbeat: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE agents SET landing_egress_addresses_json=? WHERE id=?`, egressAddressesJSON, id); err != nil {
+		return err
 	}
 	if err := saveRuntimeRecoveryApplications(ctx, tx, id, heartbeat.RuntimeRecoveryApplications); err != nil {
 		return err
