@@ -16,8 +16,9 @@ export function LandingEgressIP({ server, language, disabled, save }: {
   const [address, setAddress] = useState(server.egressIp ?? "");
   const candidates = server.egressAddresses ?? [];
   const value = mode === "auto" ? "" : address.trim();
-  return <details className="mt-2 text-xs">
-    <summary className="cursor-pointer break-all">{copy(language, "出口 IP", "Egress IP")}: {server.egressIp || copy(language, "自动 IPv4", "Automatic IPv4")}</summary>
+  return <section aria-label={copy(language, "出口 IP", "Egress IP")} className="text-xs">
+    <h4 className="font-medium">{copy(language, "出口 IP", "Egress IP")}</h4>
+    <p className="mt-1 break-all text-muted-foreground">{server.egressIp || copy(language, "自动 IPv4", "Automatic IPv4")}</p>
     <form className="mt-2 flex flex-col gap-2" onSubmit={(event) => { event.preventDefault(); if (!disabled && server.egressSupported && (mode === "auto" || value)) void save(value); }}>
       <SelectControl aria-label={copy(language, `${server.name} 出口方式`, `${server.name} egress mode`)} value={mode} onValueChange={setMode} disabled={disabled || !server.egressSupported} options={[
         { value: "auto", label: copy(language, "自动 IPv4", "Automatic IPv4") },
@@ -31,5 +32,5 @@ export function LandingEgressIP({ server, language, disabled, save }: {
       {server.egressError ? <p role="alert" className="break-words text-destructive">{server.egressError}</p> : null}
       <Button type="submit" size="sm" variant="outline" disabled={disabled || !server.egressSupported || value === (server.egressIp ?? "") || mode === "fixed" && !value}>{copy(language, "应用出口 IP", "Apply egress IP")}</Button>
     </form>
-  </details>;
+  </section>;
 }

@@ -1,6 +1,5 @@
 import { ApplicationUpdate, ApplicationPrimaryStatus, ApplicationStatus, AccessStatus } from "./apps/InstalledApplicationPrimitives";
 import { useId, useState, type ReactNode } from "react";
-import { LandingManager, LandingNotice, LandingTableRows } from "./LandingControls";
 import { EllipsisIcon, ExternalLinkIcon, MonitorIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
 import { api } from "../api";
 import type { Mutate } from "../App";
@@ -54,16 +53,13 @@ export function DefaultInstalledAppWorkspace({ group, language, mutate, onManage
     </Header>
     <Content className={cn("flex min-w-0 flex-col", threeXUI ? "gap-3" : "gap-4")}>
       {legacyThreeXUI && group.legacyControllers.length > 0 ? <ControllerConvergence group={group} language={language} onManage={onManage} /> : null}
-      {threeXUI ? <LandingNotice language={language} /> : null}
       <div className={cn("flex flex-wrap items-center gap-3", threeXUI ? "apps-three-xui-toolbar py-2" : "justify-between")}>
         <InputGroup className={threeXUI ? "w-full sm:w-48" : "max-w-xs"}>
           <InputGroupInput type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={copy(language, "搜索节点", "Search nodes")} placeholder={copy(language, "搜索节点…", "Search nodes…")} />
           <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
         </InputGroup>
         {!threeXUI ? <p role="status" className="text-xs text-muted-foreground">{copy(language, `${instances.length} 个节点`, `${instances.length} node(s)`)}</p> : null}
-        {group.controller ? <ControllerBand instance={group.controller} language={language} onClients={onClients} onManage={onManage} onUpgrade={onUpgrade}>
-          {threeXUI ? <LandingManager language={language} /> : null}
-        </ControllerBand> : threeXUI ? <div className="ml-auto"><LandingManager language={language} /></div> : null}
+        {group.controller ? <ControllerBand instance={group.controller} language={language} onClients={onClients} onManage={onManage} onUpgrade={onUpgrade} /> : null}
       </div>
       <Table aria-label={threeXUI ? copy(language, `${name} 节点`, `${name} nodes`) : copy(language, `${name} 已安装实例`, `${name} installed instances`)} className="apps-instance-table block lg:table lg:table-fixed">
         <TableHeader className="hidden lg:table-header-group">
@@ -79,7 +75,6 @@ export function DefaultInstalledAppWorkspace({ group, language, mutate, onManage
           {threeXUI ? <TableRow className="block bg-muted/30 hover:bg-muted/30 lg:table-row"><TableCell colSpan={5} className="block text-xs font-medium lg:table-cell">{copy(language, "线路机", "Entry nodes")} <span className="ml-1 text-muted-foreground">{instances.length}</span></TableCell></TableRow> : null}
           {instances.map((instance) => <InstalledInstanceRow instance={instance} key={instance.application.id} language={language} mutate={mutate} onManage={onManage} onUpgrade={onUpgrade} onReality={onReality} showSite={showSite} threeXUI={threeXUI} />)}
           {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 5 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 Xray 节点", "No Xray nodes configured")}</TableCell></TableRow> : null}
-          {threeXUI ? <LandingTableRows language={language} search={search} /> : null}
         </TableBody>
       </Table>
     </Content>

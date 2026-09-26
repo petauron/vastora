@@ -5,7 +5,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "../api";
 import type { LandingView } from "../landing-types";
 import type { AgentView } from "../types";
-import { LandingManager, LandingProvider } from "./LandingControls";
+import { LandingProvider } from "./LandingControls";
+import { LandingTableRows } from "@/app-modules/meridian/LandingNodes";
 import { MeridianNetworkMatrix } from "@/app-modules/meridian/NetworkMatrix";
 import type { InstalledAppInstance } from "./installed-apps-model";
 import { selectedLandingLatencies } from "./landingLatency";
@@ -62,14 +63,16 @@ it("sorts measured global landing latency from fastest to slowest", () => {
   expect(selectedLandingLatencies(view, "source-one", "entry-one").map((pair) => pair.server.nodeId)).toEqual(["b", "a", "c"]);
 });
 
-it("reports global and per-server rollout counts", async () => {
+it("shows per-server routes and settings inline with locations", async () => {
   vi.spyOn(api, "landing").mockResolvedValue(overview());
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => { root?.render(<LandingProvider enabled><LandingManager language="zh-CN" /></LandingProvider>); });
-  await act(async () => { container.querySelector<HTMLButtonElement>("button")?.click(); });
-  expect(document.body.textContent).toContain("2 个 VLESS 入口 · 3 个组合就绪 · 1 个失败 · 2 个暂缓发布");
+  await act(async () => { root?.render(<LandingProvider enabled><table><tbody><LandingTableRows language="zh-CN" search="" /></tbody></table></LandingProvider>); });
+  expect(container.textContent).toContain("美国");
+  expect(container.textContent).toContain("台湾");
+  expect(container.textContent).not.toContain("管理落地机");
+  await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="落地 B 落地设置"]')?.click(); });
   expect(document.body.textContent).toContain("2 个入口 · 1 就绪 · 1 失败 · 2 暂缓");
 });
 
@@ -80,8 +83,8 @@ it("removes an in-use server through the global draining operation", async () =>
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => { root?.render(<LandingProvider enabled><LandingManager language="zh-CN" /></LandingProvider>); });
-  await act(async () => { container.querySelector<HTMLButtonElement>("button")?.click(); });
+  await act(async () => { root?.render(<LandingProvider enabled><table><tbody><LandingTableRows language="zh-CN" search="" /></tbody></table></LandingProvider>); });
+  await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="落地 B 落地设置"]')?.click(); });
   await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="移除 落地 B"]')?.click(); });
   expect(update).toHaveBeenCalledWith(["a"], 4, { a: "US" }, expect.any(AbortSignal));
 });
@@ -96,8 +99,7 @@ it("repairs missing landing regions before republishing subscriptions", async ()
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => { root?.render(<LandingProvider enabled agents={agents}><LandingManager language="zh-CN" /></LandingProvider>); });
-  await act(async () => { container.querySelector<HTMLButtonElement>("button")?.click(); });
+  await act(async () => { root?.render(<LandingProvider enabled agents={agents}><table><tbody><LandingTableRows language="zh-CN" search="" /></tbody></table></LandingProvider>); });
   await act(async () => {});
   const repair = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("同步地区并修复订阅"));
   expect(repair).toBeTruthy();
