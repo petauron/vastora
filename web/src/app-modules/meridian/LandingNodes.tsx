@@ -30,7 +30,7 @@ function selectedRegions(state: LandingState, nodeIds: string[]) {
   }));
 }
 
-export function LandingTableRows({ language, search, onSubscriptions }: { language: Language; search: string; onSubscriptions?: () => void }) {
+export function LandingTableRows({ language, search, siteNames, onSubscriptions }: { language: Language; search: string; siteNames?: Record<string, string>; onSubscriptions?: () => void }) {
   const state = useLanding();
   const quality = useIPQuality();
   const [adding, setAdding] = useState(false);
@@ -50,7 +50,7 @@ export function LandingTableRows({ language, search, onSubscriptions }: { langua
         <TableRow data-landing-node-id={server.nodeId} className="grid grid-cols-2 gap-x-4 gap-y-3 py-3 lg:table-row lg:py-0">
           <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
             <div className="flex items-center gap-2"><RegionFlag code={state.regions[server.nodeId]} language={language} /><span className="min-w-0 break-words font-medium">{server.name}</span></div>
-            <p className="mt-1 text-xs text-muted-foreground"><NodeLocation nodeId={server.nodeId} regionCode={state.regions[server.nodeId]} language={language} /> · {server.egressIp?.includes(":") ? "IPv6" : "IPv4"}</p>
+            <p className="mt-1 text-xs text-muted-foreground"><NodeLocation regionCode={state.regions[server.nodeId]} siteName={siteNames?.[server.nodeId]} language={language} /> · {server.egressIp?.includes(":") ? "IPv6" : "IPv4"}</p>
           </TableCell>
           <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><IPQualityButton nodeId={server.nodeId} name={server.name} language={language} /></TableCell>
           <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><span className="inline-flex items-center gap-2"><span aria-hidden="true" className={cn("apps-status-dot", server.status === "ready" ? "bg-latency-fast" : ["failed", "offline"].includes(server.status) ? "bg-destructive" : "bg-muted-foreground")} />{copy(language, statusLabels[server.status][0], statusLabels[server.status][1])}</span></TableCell>

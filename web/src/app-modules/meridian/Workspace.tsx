@@ -19,13 +19,14 @@ import { copy } from "@/views/shared";
 import { MeridianNetworkMatrix } from "./NetworkMatrix";
 import { manifest } from "./manifest";
 
-export function MeridianWorkspace({ group, language, mutate, onManage, onUpgrade, onClients, showSite }: AppWorkspaceProps) {
+export function MeridianWorkspace({ group, data, language, mutate, onManage, onUpgrade, onClients, showSite }: AppWorkspaceProps) {
   const landing = useLanding();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState<string>(manifest.pages[0].id);
   const search = query.trim().toLocaleLowerCase();
   const entries = group.instances.filter(showInstalledNode);
   const instances = entries.filter((instance) => !search || [instance.agent?.name, instance.application.nodeId, instance.siteName, ...instance.realityServices.map((service) => service.displayName)].some((value) => value?.toLocaleLowerCase().includes(search)));
+  const siteNames = Object.fromEntries(data.agents.map((agent) => [agent.id, data.sites.find((site) => site.id === agent.siteId)?.name ?? ""]));
   const controller = group.controller;
   const controllerWebIDs = new Set(controller?.services.filter((service) => service.protocol === "http" || service.protocol === "https").map((service) => service.id));
   const controllerAttention = controller?.publications.some((publication) => controllerWebIDs.has(publication.serviceId) && publicationNeedsAttention(publication));
@@ -47,7 +48,7 @@ export function MeridianWorkspace({ group, language, mutate, onManage, onUpgrade
             const service = instance.realityServices[0];
             const hy2Only = service?.protocols?.includes("hy2") && !service.protocols.includes("vless");
             return <TableRow key={instance.application.id} data-application-id={instance.application.id} className="grid grid-cols-2 gap-x-4 gap-y-3 py-4 lg:table-row lg:py-0">
-              <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><div className="flex items-center gap-2"><RegionFlag code={service?.regionCode} language={language} /><span className="font-medium">{name}</span></div><p className="mt-1 text-xs text-muted-foreground"><NodeLocation nodeId={instance.application.nodeId} regionCode={service?.regionCode} language={language} />{showSite ? ` · ${instance.siteName}` : ""} · {service?.protocols?.map((protocol) => protocol.toUpperCase()).join(" / ")}</p></TableCell>
+              <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><div className="flex items-center gap-2"><RegionFlag code={service?.regionCode} language={language} /><span className="font-medium">{name}</span></div><p className="mt-1 text-xs text-muted-foreground"><NodeLocation regionCode={service?.regionCode} siteName={showSite ? instance.siteName : undefined} language={language} />{service?.protocols?.length ? ` · ${service.protocols.map((protocol) => protocol.toUpperCase()).join(" / ")}` : ""}</p></TableCell>
               <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><IPQualityButton nodeId={instance.application.nodeId} name={name} language={language} linkBandwidth /></TableCell>
               <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "应用状态", "Application")}</p><ApplicationStatus instance={instance} language={language} onUpgrade={onUpgrade} /></TableCell>
               <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "公网入口", "Public access")}</p>{hy2Only ? <Badge variant="outline">{copy(language, "HY2 已配置", "HY2 configured")}</Badge> : <AccessStatus services={instance.realityServices} publications={instance.realityPublications} language={language} threeXUI />}</TableCell>
@@ -55,7 +56,7 @@ export function MeridianWorkspace({ group, language, mutate, onManage, onUpgrade
             </TableRow>;
           })}
           {!instances.length ? <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">{copy(language, "没有匹配的线路机", "No matching entry nodes")}</TableCell></TableRow> : null}
-          <LandingTableRows language={language} search={search} onSubscriptions={controller && !controller.locked ? () => onClients(controller.application) : undefined} />
+          <LandingTableRows language={language} search={search} siteNames={siteNames} onSubscriptions={controller && !controller.locked ? () => onClients(controller.application) : undefined} />
         </TableBody>
       </Table></TabsContent>
       <TabsContent value="network"><MeridianNetworkMatrix instances={instances} language={language} /></TabsContent>
