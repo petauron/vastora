@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { copy } from "./shared";
 import { RegionFlag } from "./RegionFlag";
 import { routeLine, type RouteTier } from "./returnRouteModel";
-import { checkPending, cleanIPQualityValue, ipClassification, ipQualityError, ipQualitySummary, unlockLabel, unlockTypeLabel } from "./ipQualityModel";
+import { checkPending, cleanIPQualityValue, ipClassification, ipQualityError, ipQualitySummary, unlockLabel, unlockServiceLabel, unlockServices, unlockTypeLabel } from "./ipQualityModel";
 import { AssessmentBadge, AssessmentSummary } from "./IPAssessment";
 import { IPQualityComparison } from "./IPQualityComparison";
 import { MeridianLinkBandwidth } from "./MeridianLinkBandwidth";
@@ -68,7 +68,7 @@ function RiskFactorMatrix({ language, factors }: { language: Language; factors: 
 
 function UnlockMatrix({ language, services }: { language: Language; services: IPQualityService[] }) {
   if (!services.length) return <p className="text-xs text-muted-foreground">{copy(language, "暂无解锁结果", "No availability results")}</p>;
-  return <Table className="table-fixed text-xs"><TableHeader><TableRow><TableHead className="h-7 w-20 px-1">{copy(language, "服务", "Service")}</TableHead>{services.map((service) => <TableHead key={service.name} className="h-7 px-1 text-center text-[11px]" title={service.name}>{service.name === "AmazonPrimeVideo" ? "Prime Video" : service.name === "DisneyPlus" ? "Disney+" : service.name}</TableHead>)}</TableRow></TableHeader><TableBody>
+  return <Table className="table-fixed text-xs"><TableHeader><TableRow><TableHead className="h-7 w-20 px-1">{copy(language, "服务", "Service")}</TableHead>{services.map((service) => <TableHead key={service.name} className="h-7 px-1 text-center text-[11px]" title={service.name}>{unlockServiceLabel(service.name)}</TableHead>)}</TableRow></TableHeader><TableBody>
     <TableRow><TableCell className="px-1 py-1 text-muted-foreground">{copy(language, "结果", "Status")}</TableCell>{services.map((service) => {
       const status = cleanIPQualityValue(service.status).toLowerCase();
       return <TableCell key={service.name} className={cn("px-1 py-1 text-center font-medium", status === "yes" ? "text-latency-fast" : status === "no" ? "text-destructive" : "text-muted-foreground")}>{unlockLabel(language, service.status)}</TableCell>;
@@ -78,13 +78,13 @@ function UnlockMatrix({ language, services }: { language: Language; services: IP
   </TableBody></Table>;
 }
 
-function UnlockIndicators({ check, language }: { check: IPQualityCheck; language: Language }) {
-  const summary = ipQualitySummary(language, check);
-  return <span aria-label={summary} className="inline-flex shrink-0 items-center gap-1.5">{["Netflix", "ChatGPT"].map((name) => {
-    const service = check.report?.services.find((item) => item.name === name);
+function UnlockIndicators({ check, language, current }: { check?: IPQualityCheck; language: Language; current: boolean }) {
+  return <span className="flex min-w-0 flex-wrap gap-1">{unlockServices.map((name) => {
+    const service = current ? check?.report?.services.find((item) => item.name === name) : undefined;
     const status = cleanIPQualityValue(service?.status).toLowerCase();
-    const label = unlockLabel(language, service?.status);
-    return <span aria-hidden="true" className={cn("size-2.5 shrink-0 rounded-[2px] border", status === "yes" ? "border-transparent bg-latency-fast" : status === "no" ? "border-destructive bg-transparent" : "border-muted-foreground/40 bg-muted")} key={name} title={`${name} · ${label}`} />;
+    const label = current ? unlockLabel(language, service?.status) : copy(language, "待检测", "Check needed");
+    const mark = status === "yes" ? "✓" : status === "no" ? "×" : status === "org" || status === "originals only" ? copy(language, "自", "O") : status === "failed" || status === "fail" || status === "error" ? "!" : "?";
+    return <span aria-label={`${unlockServiceLabel(name)} ${label}`} className={cn("inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-xs leading-4", status === "yes" ? "border-latency-fast/40 text-latency-fast" : status === "no" ? "border-destructive/40 text-destructive" : "border-border text-muted-foreground")} key={name} title={`${unlockServiceLabel(name)} · ${label}`}><span>{unlockServiceLabel(name, true)}</span><span aria-hidden="true" className="font-semibold">{current ? mark : "?"}</span></span>;
   })}</span>;
 }
 
@@ -252,10 +252,10 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
     }
   };
   const summary = state.error ? copy(language, "节点诊断 · 读取失败", "Node diagnostics · Unavailable") : includeIPQuality ? ipQualitySummary(language, check) : copy(language, "主机与网络诊断", "Host and network diagnostics");
-  const showUnlockIndicators = Boolean(!state.error && check?.report && !check.stale && !check.error && !active);
+  const currentUnlocks = Boolean(!state.error && check?.state === "succeeded" && check.report && !check.stale && !check.error && check.assessment?.status !== "expired" && check.assessment?.status !== "ip_changed");
   return <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) { setTab(includeIPQuality ? "quality" : "network"); setError(""); void state.refresh(); } }}>
-    <SheetTrigger render={<Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "h-auto min-h-6 max-w-full justify-start px-1 py-0 text-left text-xs text-muted-foreground max-md:min-h-11"} />} aria-label={compact ? copy(language, `查看 ${name} 的节点诊断`, `View node diagnostics for ${name}`) : copy(language, `查看 ${name} 的节点诊断：${summary}`, `View node diagnostics for ${name}: ${summary}`)} title={compact ? copy(language, "查看节点诊断", "View node diagnostics") : summary}>
-      {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="inline-flex min-w-0 items-center gap-2 overflow-hidden">{check?.assessment && !state.error ? <AssessmentBadge language={language} assessment={check.assessment} /> : null}{showUnlockIndicators && check ? <UnlockIndicators check={check} language={language} /> : <span className="truncate whitespace-nowrap">{summary}</span>}</span><ChevronRightIcon className="shrink-0" aria-hidden="true" /></>}
+    <SheetTrigger render={<Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "h-auto min-h-11 max-w-full justify-start px-1 py-1 text-left text-xs text-muted-foreground"} />} aria-label={compact ? copy(language, `查看 ${name} 的节点诊断`, `View node diagnostics for ${name}`) : copy(language, `查看 ${name} 的节点诊断：${summary}`, `View node diagnostics for ${name}: ${summary}`)} title={compact ? copy(language, "查看节点诊断", "View node diagnostics") : summary}>
+      {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="flex min-w-0 flex-col items-start gap-1"><span className="flex items-center gap-2"><AssessmentBadge language={language} assessment={!state.error ? check?.assessment : undefined} />{!currentUnlocks ? <span className="text-xs text-muted-foreground">{summary}</span> : null}</span><UnlockIndicators check={check} language={language} current={currentUnlocks} /></span><ChevronRightIcon className="ml-auto shrink-0" aria-hidden="true" /></>}
     </SheetTrigger>
     {open ? <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-6xl">
       <SheetHeader className="pr-12">

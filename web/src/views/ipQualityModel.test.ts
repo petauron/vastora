@@ -23,7 +23,7 @@ describe("IP quality presentation", () => {
     expect(unlockLabel("zh-CN", status)).toBe("解锁");
     expect(unlockTypeLabel("zh-CN", type)).toBe("原生");
     const check: IPQualityCheck = { agentId: "node", id: "check", state: "succeeded", stale: false, updatedAt: "", report: { address: "203.0.113.8", version: "test", scores: [], services: [{ name: "Netflix", status }, { name: "ChatGPT", status }] } };
-    expect(ipQualitySummary("zh-CN", check)).toBe("Netflix 解锁 · ChatGPT 解锁");
+    expect(ipQualitySummary("zh-CN", check)).toBe("ChatGPT 解锁 · Netflix 解锁 · Disney+ 未知 · YouTube 未知 · Prime Video 未知 · TikTok 未知 · Reddit 未知");
   });
   it("labels pending, failed and stale results without claiming success", () => {
     const check: IPQualityCheck = { agentId: "node", id: "check", state: "succeeded", stale: true, updatedAt: "", report: { address: "203.0.113.8", version: "test", scores: [], services: [{ name: "Netflix", status: "Yes" }] } };

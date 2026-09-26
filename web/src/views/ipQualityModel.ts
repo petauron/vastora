@@ -12,6 +12,15 @@ export function cleanIPQualityValue(value?: string) {
 }
 
 type ClassificationTone = "good" | "warning" | "bad" | "neutral";
+export const unlockServices = ["ChatGPT", "Netflix", "DisneyPlus", "Youtube", "AmazonPrimeVideo", "TikTok", "Reddit"] as const;
+
+export function unlockServiceLabel(name: string, compact = false) {
+  const labels: Record<string, [string, string]> = {
+    ChatGPT: ["GPT", "ChatGPT"], Netflix: ["NF", "Netflix"], DisneyPlus: ["D+", "Disney+"],
+    Youtube: ["YT", "YouTube"], AmazonPrimeVideo: ["Prime", "Prime Video"], TikTok: ["TikTok", "TikTok"], Reddit: ["Reddit", "Reddit"],
+  };
+  return labels[name]?.[compact ? 0 : 1] ?? name;
+}
 const classificationLabels: Record<string, [string, string, ClassificationTone]> = {
   business: ["商业", "Business", "warning"], commercial: ["商业", "Business", "warning"],
   isp: ["家宽", "ISP", "good"], "line isp": ["家宽", "Line ISP", "good"],
@@ -77,10 +86,11 @@ export function ipQualitySummary(language: Language, check?: IPQualityCheck) {
   if (checkPending(check)) return check?.state === "pending" ? copy(language, "IP 质量 · 等待检测", "IP quality · Queued") : copy(language, "IP 质量 · 检测中", "IP quality · Checking");
   if (check?.error) return copy(language, "IP 质量 · 检测未完成", "IP quality · Check incomplete");
   if (check?.stale) return copy(language, "IP 质量 · 需重新检测", "IP quality · Stale result");
+  if (check?.assessment?.status === "expired" || check?.assessment?.status === "ip_changed") return copy(language, "IP 质量 · 需重新检测", "IP quality · Stale result");
   if (!check?.report) return copy(language, "IP 质量 · 未检测", "IP quality · Not checked");
-  const services = ["Netflix", "ChatGPT"].map((name) => {
+  const services = unlockServices.map((name) => {
     const service = check.report!.services.find((item) => item.name === name);
-    return `${name} ${unlockLabel(language, service?.status)}`;
+    return `${unlockServiceLabel(name)} ${unlockLabel(language, service?.status)}`;
   });
   return services.join(" · ");
 }

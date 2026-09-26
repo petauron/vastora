@@ -7,10 +7,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { copy } from "./shared";
 
 export function assessmentLabel(language: Language, assessment?: IPQualityAssessment) {
-  if (!assessment) return copy(language, "未检测", "Not checked");
-  if (assessment.status === "ip_changed") return copy(language, "IP 已变化", "IP changed");
-  if (assessment.status === "expired") return copy(language, "结果已过期", "Expired");
-  return assessment.score == null ? copy(language, `暂评 ${assessment.min}～${assessment.max}`, `Provisional ${assessment.min}–${assessment.max}`) : `${assessment.score} / 100`;
+  if (!assessment || assessment.status === "ip_changed" || assessment.status === "expired" || assessment.score == null) {
+    return copy(language, "待检测", "Check needed");
+  }
+  return String(assessment.score);
 }
 
 export function assessmentType(language: Language, type: IPQualityAssessment["ipType"]) {
@@ -23,9 +23,11 @@ export function assessmentAdvice(language: Language, value: IPQualityAssessment[
 }
 
 export function AssessmentBadge({ language, assessment }: { language: Language; assessment?: IPQualityAssessment }) {
-  const grade = assessment?.grade ?? "unknown";
+  const hasScore = assessment?.score != null && assessment.status !== "expired" && assessment.status !== "ip_changed";
+  const grade = hasScore ? assessment.grade : "unknown";
   const labels = { excellent: ["优秀", "Excellent"], premium: ["优质", "Premium"], good: ["良好", "Good"], fair: ["一般", "Fair"], poor: ["较差", "Poor"], unknown: ["待确认", "Unconfirmed"] };
-  return <Badge variant="outline" className={`quality-grade quality-grade-${grade}`}>{assessmentLabel(language, assessment)} · {copy(language, labels[grade][0], labels[grade][1])}</Badge>;
+  const label = assessmentLabel(language, assessment);
+  return <Badge variant="outline" className={`quality-grade quality-grade-${grade}`} aria-label={hasScore ? copy(language, `评分 ${label}，${labels[grade][0]}`, `Score ${label}, ${labels[grade][1]}`) : label}>{label}</Badge>;
 }
 
 export function AssessmentSummary({ language, assessment, report, checkedAt }: { language: Language; assessment?: IPQualityAssessment; report?: IPQualityReport; checkedAt?: string }) {
@@ -45,7 +47,6 @@ export function AssessmentSummary({ language, assessment, report, checkedAt }: {
       <p className="font-medium">{copy(language, "Meridian 评分 v2 · 出口适用性", "Meridian score v2 · Exit suitability")}</p>
       {assessment.status === "conservative" ? <p>{copy(language, `仅缺 IPQS：该项按 0 / 10 分计算，显示 ${assessment.score} 分；完整区间为 ${assessment.min}～${assessment.max}。未推测 IPQS 原分。`, `Only IPQS is missing: its contribution is set to 0 / 10, showing ${assessment.score} points; the full range is ${assessment.min}–${assessment.max}. No IPQS value was inferred.`)}</p> : null}
       <Table className="text-xs"><TableHeader><TableRow><TableHead>{copy(language, "维度", "Dimension")}</TableHead><TableHead>{copy(language, "贡献 / 满分", "Contribution / Weight")}</TableHead><TableHead>{copy(language, "缺失项", "Missing")}</TableHead></TableRow></TableHeader><TableBody>{assessment.contributions.map((part) => <TableRow key={part.id}><TableCell>{labels[part.id] ? copy(language, ...labels[part.id]) : part.id}</TableCell><TableCell className="tabular-nums">{number(part.min)}{part.min !== part.max ? `～${number(part.max)}` : ""} / {part.weight}</TableCell><TableCell>{part.missing.join("、") || "—"}</TableCell></TableRow>)}</TableBody></Table>
-      <p>{copy(language, "类型上限：家宽 100 · 移动 95 · 商业 89 · 机房 79", "Type caps: Residential 100 · Mobile 95 · Business 89 · Hosting 79")}</p>
       <p>{copy(language, "类型证据", "Type evidence")}: {assessment.typeEvidence.map((item) => `${item.source}: ${item.value}`).join(" · ") || "—"}</p>
       <p>{copy(language, "来源原分（越低风险越低）", "Original provider scores (lower risk is better)")}: {report?.scores.filter((item) => ["SCAMALYTICS", "IPQS", "AbuseIPDB"].includes(item.source)).map((item) => `${item.source} ${item.value}`).join(" · ") || "—"}</p>
       <p>IPPure: {report?.ippure?.status === "ok" ? `${report.ippure.riskScore} / 100` : report?.ippure?.status === "unsupported" ? copy(language, "IPv6 暂无评分", "IPv6 risk unavailable") : report?.ippure?.status === "ip_mismatch" ? copy(language, "返回 IP 不匹配", "Returned IP mismatch") : copy(language, "未取得有效结果", "No valid result")}</p>
