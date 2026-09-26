@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowRightLeftIcon, CheckCircle2Icon, KeyRoundIcon, PencilIcon, PlusIcon, RadioTowerIcon, RouteIcon, ShieldAlertIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
-import { api } from "../api";
-import type { AppData, Mutate } from "../App";
-import type { MeridianAccount, MeridianAccountCreated } from "../meridian-types";
-import type { Application, ApplicationCommand } from "../types";
-import type { Language } from "../translations";
-import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
+import { api } from "@/api";
+import type { AppData, Mutate } from "@/App";
+import type { MeridianAccount, MeridianAccountCreated } from "@/meridian-types";
+import type { Application, ApplicationCommand } from "@/types";
+import type { Language } from "@/translations";
+import { useApplicationCommandExecutor } from "@/hooks/use-application-command-executor";
 import { SelectControl } from "@/components/SelectControl";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -17,11 +17,11 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CopyButton, StateBadge, TechnicalError, copy, userError } from "./shared";
-import { RegionCombobox, regionBaseName } from "./RegionCombobox";
-import { IPQualityComparison } from "./IPQualityComparison";
-import { assessmentLabel } from "./IPAssessment";
-import type { IPQualityCheck } from "../ip-quality-types";
+import { CopyButton, StateBadge, TechnicalError, copy, userError } from "@/views/shared";
+import { RegionCombobox, regionBaseName } from "@/views/RegionCombobox";
+import { IPQualityComparison } from "@/views/IPQualityComparison";
+import { assessmentLabel } from "@/views/IPAssessment";
+import type { IPQualityCheck } from "@/ip-quality-types";
 
 const gibibyte = 1024 ** 3;
 

@@ -1,12 +1,12 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { Language } from "../translations";
-import type { InstalledAppInstance } from "./installed-apps-model";
-import { useLanding } from "./LandingControls";
-import { NodeDiagnosticsButton, useIPQuality } from "./IPQuality";
-import { LinkBandwidthSummary } from "./LinkBandwidthSummary";
-import { RegionFlag } from "./RegionFlag";
-import { landingLatencyColor, selectedLandingLatencies } from "./landingLatency";
-import { copy } from "./shared";
+import type { Language } from "@/translations";
+import type { InstalledAppInstance } from "@/views/installed-apps-model";
+import { useLanding } from "@/views/LandingControls";
+import { NodeDiagnosticsButton, useIPQuality } from "@/views/IPQuality";
+import { LinkBandwidthSummary } from "@/views/LinkBandwidthSummary";
+import { RegionFlag } from "@/views/RegionFlag";
+import { landingLatencyColor, selectedLandingLatencies } from "@/views/landingLatency";
+import { copy } from "@/views/shared";
 
 export function MeridianNetworkMatrix({ instances, language }: { instances: InstalledAppInstance[]; language: Language }) {
   const landing = useLanding();

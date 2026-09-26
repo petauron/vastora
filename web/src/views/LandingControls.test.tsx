@@ -6,7 +6,7 @@ import { api } from "../api";
 import type { LandingView } from "../landing-types";
 import type { AgentView } from "../types";
 import { LandingManager, LandingProvider } from "./LandingControls";
-import { MeridianNetworkMatrix } from "./MeridianNetworkMatrix";
+import { MeridianNetworkMatrix } from "@/app-modules/meridian/NetworkMatrix";
 import type { InstalledAppInstance } from "./installed-apps-model";
 import { selectedLandingLatencies } from "./landingLatency";
 

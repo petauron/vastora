@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
-import type { LandingView } from "../landing-types";
-import type { NodeDiagnosticCheck } from "../node-diagnostics-types";
-import type { AgentView } from "../types";
-import type { Language } from "../translations";
+import { api } from "@/api";
+import type { LandingView } from "@/landing-types";
+import type { NodeDiagnosticCheck } from "@/node-diagnostics-types";
+import type { AgentView } from "@/types";
+import type { Language } from "@/translations";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { copy } from "./shared";
+import { copy } from "@/views/shared";
 
 export function MeridianLinkBandwidth({ nodeId, language, checks, agents, refresh }: { nodeId: string; language: Language; checks: NodeDiagnosticCheck[]; agents: AgentView[]; refresh: () => Promise<void> }) {
   const [landing, setLanding] = useState<LandingView | null>(null);

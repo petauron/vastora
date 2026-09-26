@@ -25,7 +25,8 @@ import { installedAppGroups } from "./installed-apps-model";
 import { ApplicationCredentialsSheet, InstalledAppDetails } from "./apps/ApplicationDetails";
 import { DeploymentSheet, PublicationSheet, type DeploymentEditor } from "./apps/DeploymentSheets";
 import { RealityRenameSheet, SubscriptionSheet, UninstallSheet } from "./apps/SubscriptionSheets";
-import { MeridianManagerSheet } from "./MeridianManagerSheet";
+import { AppManager } from "@/app-workspaces/AppManager";
+import { appWorkspace } from "@/app-workspaces/registry";
 
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
 
@@ -44,7 +45,8 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
   const [subscriptionApplication, setSubscriptionApplication] = useState<Application | null>(null);
   const [clientsApplication, setClientsApplication] = useState<Application | null>(null);
   const [migrationApplication, setMigrationApplication] = useState<Application | null>(null);
-	const [meridianApplication, setMeridianApplication] = useState<Application | null>(null);
+	const [appManagerKey, setAppManagerKey] = useState("");
+	const [appManagerApplication, setAppManagerApplication] = useState<Application | null>(null);
 	const [managedApplicationID, setManagedApplicationID] = useState<string | null>(null);
 	const [recoveringTask, setRecoveringTask] = useState("");
   const [section, setSection] = useState<"installed" | "store">(() => data.applications.some(isInstalledApplication) ? "installed" : "store");
@@ -130,7 +132,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
         </TabsList>
 
       <TabsContent value="installed" className="flex flex-col gap-4">
-	        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <InstalledApps groups={installedGroups} agents={data.agents} language={language} mutate={mutate} onClients={(application) => application.appKey === "vastora-official/meridian" ? setMeridianApplication(application) : setClientsApplication(application)} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onReality={setRealityApplication} />}
+	        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <InstalledApps groups={installedGroups} data={data} language={language} mutate={mutate} onClients={(application) => { if (appWorkspace(application.appKey)) { setAppManagerKey(application.appKey); setAppManagerApplication(application); } else { setClientsApplication(application); } }} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onReality={setRealityApplication} />}
       </TabsContent>
 
       <TabsContent value="store" className="flex flex-col gap-4">
@@ -149,7 +151,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
           onConfigure={() => openFromDetails(() => openChange(managedInstance.application, "configure"))}
           onCredentials={() => openFromDetails(() => setCredentialApplication(managedInstance.application))}
           onMigrate={() => openFromDetails(() => setMigrationApplication(managedInstance.application))}
-          onMeridian={() => openFromDetails(() => setMeridianApplication(managedInstance.application))}
+          onAppManager={(moduleKey) => openFromDetails(() => { setAppManagerKey(moduleKey); setAppManagerApplication(managedInstance.application); })}
           onPublish={(service) => openFromDetails(() => setPublicationService(service))}
           onReality={() => openFromDetails(() => setRealityApplication(managedInstance.application))}
           onRenameReality={(service) => openFromDetails(() => setRealityRenameService(service))}
@@ -183,7 +185,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 	      <ThreeXUIClientsSheet advancedURL={clientsApplication ? data.deployments.find((value) => value.applicationId === clientsApplication.id && value.state === "succeeded" && value.operation !== "uninstall")?.accessUrl : undefined} application={clientsApplication} language={language} onClose={() => setClientsApplication(null)} siteTimezone={clientsApplication ? data.sites.find((site) => site.id === clientsApplication.siteId)?.timezone : undefined} />
 	      <ApplicationCredentialsSheet application={credentialApplication} language={language} onClose={() => setCredentialApplication(null)} />
 	      <ThreeXUIControllerMigrationSheet application={migrationApplication} data={data} language={language} mutate={mutate} onClose={() => setMigrationApplication(null)} />
-      <MeridianManagerSheet application={meridianApplication} data={data} language={language} mutate={mutate} onClose={() => setMeridianApplication(null)} />
+      <AppManager moduleKey={appManagerKey} application={appManagerApplication} data={data} language={language} mutate={mutate} onClose={() => setAppManagerApplication(null)} />
       <UninstallSheet application={uninstallApplication} app={uninstallApplication ? catalogByKey.get(uninstallApplication.appKey) : undefined} language={language} onClose={() => setUninstallApplication(null)} onSubmit={async (application, deleteData) => { await mutate(() => api.createDeployment(application.nodeId, application.appKey, {}, "uninstall", deleteData), copy(language, "卸载任务已创建。", "Uninstall task created.")); setUninstallApplication(null); }} />
     </section>
   );
