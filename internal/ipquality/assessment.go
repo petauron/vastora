@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-const AssessmentVersion = "meridian-v3"
+const AssessmentVersion = "meridian-v4"
+const IPv6AssessmentVersion = "meridian-ipv6-v2"
 const EvidenceMaxAge = 24 * time.Hour
 
 type Preferences struct {
@@ -70,14 +71,17 @@ type typeRule struct {
 }
 
 var typeRules = []typeRule{{"residential", 20, 100}, {"mobile", 17, 95}, {"business", 10, 89}, {"hosting", 5, 79}}
-var scoreWeights = []struct {
+
+type weightedItem struct {
 	name   string
 	weight float64
-}{{"SCAMALYTICS", 10}, {"IPQS", 10}, {"AbuseIPDB", 5}}
-var unlockWeights = []struct {
-	name   string
-	weight float64
-}{{"ChatGPT", 15}, {"Netflix", 6}, {"DisneyPlus", 4}, {"Youtube", 2}, {"AmazonPrimeVideo", 2}, {"TikTok", 1}}
+}
+
+var scoreWeights = []weightedItem{{"SCAMALYTICS", 10}, {"IPQS", 10}, {"AbuseIPDB", 5}}
+var unlockWeights = []weightedItem{{"ChatGPT", 15}, {"Netflix", 6}, {"DisneyPlus", 4}, {"Youtube", 2}, {"AmazonPrimeVideo", 2}, {"TikTok", 1}}
+var ipv6TypeRules = []typeRule{{"residential", 30, 100}, {"mobile", 26, 95}, {"business", 18, 89}, {"hosting", 10, 79}}
+var ipv6ScoreWeights = []weightedItem{{"IPQS", 20}, {"AbuseIPDB", 5}}
+var ipv6UnlockWeights = []weightedItem{{"ChatGPT", 22}, {"Netflix", 10}, {"DisneyPlus", 6}, {"Youtube", 3}, {"AmazonPrimeVideo", 3}, {"TikTok", 1}}
 
 func usageType(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -110,6 +114,18 @@ func (r Report) sourceFresh(source string, now time.Time) bool {
 	return false
 }
 
+// Type evidence remains useful after the report expires, but never for a
+// different address or an observation that has not actually succeeded.
+func (r Report) typeSourceAvailable(source string, now time.Time) bool {
+	for _, item := range r.Observations {
+		if item.Source == source {
+			stamp, err := time.Parse(time.RFC3339Nano, item.CheckedAt)
+			return item.Status == "ok" && sameIP(item.Address, r.Address) && err == nil && !stamp.After(now.Add(5*time.Second))
+		}
+	}
+	return false
+}
+
 func sameIP(a, b string) bool {
 	ip := net.ParseIP(a)
 	return ip != nil && ip.Equal(net.ParseIP(b))
@@ -118,6 +134,24 @@ func sameIP(a, b string) bool {
 // A result from the original check is not evidence for a different IP or a
 // later check. Unknown provider values retain their entire possible range.
 func Assess(report *Report, checkedAt string, changed bool, now time.Time, preferences Preferences) Assessment {
+	a := assessAt(report, checkedAt, changed, now, preferences)
+	if a.Status != "expired" {
+		return a
+	}
+	// Reconstruct the saved result at acquisition time. Age changes its
+	// recommendation eligibility, not the measured result for the same IP.
+	stamp, err := time.Parse(time.RFC3339Nano, checkedAt)
+	if err != nil || stamp.After(now) {
+		return a
+	}
+	historical := assessAt(report, checkedAt, changed, stamp, preferences)
+	historical.Status = "expired"
+	historical.Advice = "recheck"
+	historical.Reasons = []string{"expired"}
+	return historical
+}
+
+func assessAt(report *Report, checkedAt string, changed bool, now time.Time, preferences Preferences) Assessment {
 	a := Assessment{Version: AssessmentVersion, Status: "partial", Grade: "unknown", IPType: "unknown",
 		TypeCandidates: []string{}, TypeEvidence: []Classification{}, Contributions: []Contribution{}, Missing: []string{},
 		Advice: "recheck", Reasons: []string{}, RequiredFailed: []string{}, RequiredUnknown: []string{}, Preferences: preferences}
@@ -125,47 +159,60 @@ func Assess(report *Report, checkedAt string, changed bool, now time.Time, prefe
 	if report != nil {
 		r = *report
 	}
+	ip := net.ParseIP(r.Address)
+	ipv6 := ip != nil && ip.To4() == nil
+	types, sources, unlocks := typeRules, scoreWeights, unlockWeights
+	typeWeight, unlockWeight := 20.0, 30.0
+	if ipv6 {
+		a.Version = IPv6AssessmentVersion
+		types, sources, unlocks = ipv6TypeRules, ipv6ScoreWeights, ipv6UnlockWeights
+		typeWeight, unlockWeight = 30, 45
+	}
 	counts, seen := map[string]int{}, map[string]bool{}
 	total := 0
 	for _, evidence := range r.UsageTypes {
 		// Reports stored before terminal formatting was stripped can still be
-		// displayed. Keep their age/provenance checks unchanged for scoring.
+		// displayed. Type labels retain historical evidence for the same IP.
 		evidence.Value = normalizedValue(evidence.Value, 48)
 		a.TypeEvidence = append(a.TypeEvidence, evidence)
 		kind := usageType(evidence.Value)
-		if kind == "" || seen[evidence.Source] || !r.sourceFresh(evidence.Source, now) {
+		if kind == "" || seen[evidence.Source] || !r.typeSourceAvailable(evidence.Source, now) {
 			continue
 		}
 		seen[evidence.Source] = true
 		counts[kind]++
 		total++
 	}
-	for _, rule := range typeRules {
-		if counts[rule.name] >= 2 && counts[rule.name]*3 >= total*2 {
-			a.IPType = rule.name
-		}
+	most := 0
+	for _, count := range counts {
+		most = max(most, count)
 	}
 	possible := []typeRule{}
-	for _, rule := range typeRules {
-		// A single vote cannot exclude other types. Conflicting multiple votes
-		// constrain the interval to the types actually supported by evidence.
-		if rule.name == a.IPType || a.IPType == "unknown" && (total < 2 || counts[rule.name] > 0) {
+	for _, rule := range types {
+		// Use the largest source vote. Ties remain explicit candidates.
+		if most == 0 || counts[rule.name] == most {
 			possible = append(possible, rule)
 			a.TypeCandidates = append(a.TypeCandidates, rule.name)
 		}
 	}
-	typePart := Contribution{ID: "type", Weight: 20, Min: 20, Missing: []string{}}
+	if most > 0 && len(possible) == 1 {
+		a.IPType = possible[0].name
+	}
+	typePart := Contribution{ID: "type", Weight: typeWeight, Min: typeWeight, Missing: []string{}}
 	for _, rule := range possible {
 		typePart.Min = math.Min(typePart.Min, rule.points)
 		typePart.Max = math.Max(typePart.Max, rule.points)
 	}
 	if a.IPType == "unknown" {
 		typePart.Missing = append(typePart.Missing, "type")
+		if ipv6 {
+			typePart.Min = 0
+		}
 	}
 	a.Contributions = append(a.Contributions, typePart)
 
 	risk := Contribution{ID: "sources", Weight: 25, Missing: []string{}}
-	for _, source := range scoreWeights {
+	for _, source := range sources {
 		value, valid := 0.0, false
 		for _, raw := range r.Scores {
 			if raw.Source != source.name {
@@ -185,14 +232,17 @@ func Assess(report *Report, checkedAt string, changed bool, now time.Time, prefe
 		}
 	}
 	a.Contributions = append(a.Contributions, risk)
-	ipPure := Contribution{ID: "ippure", Weight: 25, Max: 25, Missing: []string{"IPPure"}}
-	if p := r.IPPure; p != nil && p.Status == "ok" && p.Provider == IPPureProvider && p.RiskScore != nil && *p.RiskScore >= 0 && *p.RiskScore <= 100 && sameIP(p.Address, r.Address) && freshAt(p.CheckedAt, now) {
-		ipPure.Min = 25 * (1 - *p.RiskScore/100)
-		ipPure.Max, ipPure.Missing = ipPure.Min, []string{}
+	ipPure := Contribution{}
+	if !ipv6 {
+		ipPure = Contribution{ID: "ippure", Weight: 25, Max: 25, Missing: []string{"IPPure"}}
+		if p := r.IPPure; p != nil && p.Status == "ok" && p.Provider == IPPureProvider && p.RiskScore != nil && *p.RiskScore >= 0 && *p.RiskScore <= 100 && sameIP(p.Address, r.Address) && freshAt(p.CheckedAt, now) {
+			ipPure.Min = 25 * (1 - *p.RiskScore/100)
+			ipPure.Max, ipPure.Missing = ipPure.Min, []string{}
+		}
+		a.Contributions = append(a.Contributions, ipPure)
 	}
-	a.Contributions = append(a.Contributions, ipPure)
-	unlock := Contribution{ID: "unlock", Weight: 30, Missing: []string{}}
-	for _, item := range unlockWeights {
+	unlock := Contribution{ID: "unlock", Weight: unlockWeight, Missing: []string{}}
+	for _, item := range unlocks {
 		switch serviceState(r, item.name, preferences.TargetRegion, now) {
 		case "yes":
 			unlock.Min += item.weight
@@ -223,7 +273,11 @@ func Assess(report *Report, checkedAt string, changed bool, now time.Time, prefe
 	}
 	lo, hi := 100.0, 0.0
 	for _, rule := range possible {
-		lo = math.Min(lo, math.Min(rule.cap, rule.points+risk.Min+ipPure.Min+unlock.Min))
+		points := rule.points
+		if ipv6 && a.IPType == "unknown" {
+			points = 0
+		}
+		lo = math.Min(lo, math.Min(rule.cap, points+risk.Min+ipPure.Min+unlock.Min))
 		hi = math.Max(hi, math.Min(rule.cap, rule.points+risk.Max+ipPure.Max+unlock.Max))
 	}
 	a.Min, a.Max = roundedScore(lo), roundedScore(hi)
@@ -234,7 +288,7 @@ func Assess(report *Report, checkedAt string, changed bool, now time.Time, prefe
 	// The earliest successful observation determines when this assessment must
 	// be refreshed, not the later receipt time at the Center.
 	for _, observation := range r.Observations {
-		if observation.Status != "ok" {
+		if observation.Status != "ok" || ipv6 && observation.Source == "SCAMALYTICS" {
 			continue
 		}
 		if stamp, err := time.Parse(time.RFC3339Nano, observation.CheckedAt); err == nil {
@@ -244,7 +298,7 @@ func Assess(report *Report, checkedAt string, changed bool, now time.Time, prefe
 			}
 		}
 	}
-	if p := r.IPPure; p != nil && p.Status == "ok" {
+	if p := r.IPPure; !ipv6 && p != nil && p.Status == "ok" {
 		if stamp, err := time.Parse(time.RFC3339Nano, p.CheckedAt); err == nil {
 			until := stamp.Add(EvidenceMaxAge)
 			if expiry.IsZero() || until.Before(expiry) {
@@ -270,12 +324,12 @@ func Assess(report *Report, checkedAt string, changed bool, now time.Time, prefe
 		score := a.Min
 		a.Score = &score
 		a.Grade = grade(score)
-	} else if !slices.ContainsFunc(a.Missing, func(source string) bool {
+	} else if ipv6 || !slices.ContainsFunc(a.Missing, func(source string) bool {
 		return source != "IPQS" && (source != "type" || total < 2)
 	}) {
-		// Missing IPQS contributes zero. Conflicting usage classifications use
-		// the lowest contribution and cap among the evidenced candidate types.
-		// Keep the interval and missing evidence; never infer a provider value.
+		// IPv6 missing evidence contributes zero without redistributing weights.
+		// IPv4 retains its IPQS/type-only lower-bound rule. Both keep the
+		// evidence interval for comparisons and never infer provider values.
 		a.Status = "conservative"
 		score := a.Min
 		a.Score = &score

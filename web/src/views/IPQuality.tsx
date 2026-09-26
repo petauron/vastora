@@ -16,7 +16,7 @@ import { copy } from "./shared";
 import { RegionFlag } from "./RegionFlag";
 import { routeLine, type RouteTier } from "./returnRouteModel";
 import { canonicalIPQualityAddress, checkPending, cleanIPQualityValue, ipClassification, ipQualityCheckForAddress, ipQualityError, ipQualityFamilyLabel, ipQualitySummary, landingQualityAddress, unlockLabel, unlockServiceLabel, unlockServices, unlockTypeLabel } from "./ipQualityModel";
-import { AssessmentBadge, AssessmentSummary } from "./IPAssessment";
+import { AssessmentBadge, AssessmentSummary, AssessmentTypeBadge } from "./IPAssessment";
 import { IPQualityComparison } from "./IPQualityComparison";
 import { MeridianLinkBandwidth } from "@/app-modules/meridian/LinkBandwidth";
 
@@ -280,13 +280,13 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
     }
   };
   const summary = state.error ? copy(language, "节点诊断 · 读取失败", "Node diagnostics · Unavailable") : includeIPQuality ? ipQualitySummary(language, listCheck) : copy(language, "主机与网络诊断", "Host and network diagnostics");
-  const listUnlocks = Boolean(!state.error && listCheck?.state === "succeeded" && listCheck.report && !listCheck.stale && !listCheck.error && listCheck.assessment?.status !== "expired" && listCheck.assessment?.status !== "ip_changed");
-  const currentUnlocks = Boolean(!state.error && check?.state === "succeeded" && check.report && !check.stale && !check.error && check.assessment?.status !== "expired" && check.assessment?.status !== "ip_changed");
+  const listUnlocks = Boolean(!state.error && listCheck?.state === "succeeded" && listCheck.report && !listCheck.stale && !listCheck.error && listCheck.assessment?.status !== "ip_changed");
+  const currentUnlocks = Boolean(!state.error && check?.state === "succeeded" && check.report && !check.stale && !check.error && check.assessment?.status !== "ip_changed");
   const broadcast = currentUnlocks && report?.ippure?.status === "ok" ? report.ippure.broadcast : undefined;
   const ipOrigin = broadcast === true ? copy(language, "广播 IP", "Broadcast IP") : broadcast === false ? copy(language, "原生 IP", "Native IP") : copy(language, "未知", "Unknown");
   return <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) { setTab(includeIPQuality ? "quality" : "network"); setSelection(null); setError(""); void state.refresh(); } }}>
     <SheetTrigger render={<Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "quality-list-trigger h-auto min-h-11 w-full max-w-full justify-start gap-2 px-0 py-1 text-left text-xs text-muted-foreground"} />} aria-label={compact ? copy(language, `查看 ${name} 的节点诊断`, `View node diagnostics for ${name}`) : copy(language, `查看 ${name} 的节点诊断：${summary}`, `View node diagnostics for ${name}: ${summary}`)} title={compact ? copy(language, "查看节点诊断", "View node diagnostics") : summary}>
-      {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="flex shrink-0 flex-col items-center gap-0.5"><span className="text-[10px]" title={currentAddress}>{currentAddress ? currentAddress.includes(":") ? "IPv6" : "IPv4" : "IP"}</span><AssessmentBadge language={language} assessment={!state.error && !listCheck?.stale ? listCheck?.assessment : undefined} /></span><UnlockIndicators check={listCheck} language={language} current={listUnlocks} /><ChevronRightIcon className="ml-auto shrink-0" aria-hidden="true" /></>}
+      {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="flex shrink-0 flex-col items-center gap-0.5"><span className="text-[10px]" title={currentAddress}>{currentAddress ? currentAddress.includes(":") ? "IPv6" : "IPv4" : "IP"}</span><span className="flex items-center gap-1.5"><AssessmentBadge language={language} assessment={!state.error && !listCheck?.stale ? listCheck?.assessment : undefined} /><AssessmentTypeBadge language={language} assessment={!state.error && !listCheck?.stale && listCheck?.report ? listCheck.assessment : undefined} checkedAt={listCheck?.checkedAt} /></span></span><UnlockIndicators check={listCheck} language={language} current={listUnlocks} /><ChevronRightIcon className="ml-auto shrink-0" aria-hidden="true" /></>}
     </SheetTrigger>
     {open ? <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-6xl">
       <SheetHeader className="pr-12">
@@ -337,7 +337,6 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
                 const hasKnownScale = Number.isFinite(risk) && risk >= 0 && risk <= 100;
                 return <div key={value.source} className="grid grid-cols-[100px_minmax(0,1fr)_56px] items-center gap-2 text-xs"><span className="truncate text-muted-foreground" title={value.source}>{value.source}</span><span className="h-1.5 rounded-full bg-muted">{hasKnownScale ? <span className="block h-full rounded-full bg-primary" style={{ width: `${risk}%` }} /> : null}</span><span className="text-right font-medium tabular-nums">{value.value}</span></div>;
               })}{!report.scores.length ? <p className="text-xs text-muted-foreground">{copy(language, "暂无评分数据", "No score data")}</p> : null}</div>
-              {report.ippure?.status === "unsupported" ? <p className="mt-1 text-xs text-muted-foreground">IPPure · {copy(language, "IPv6 不支持", "IPv6 unsupported")}</p> : null}
             </section>
             <section className="border-t pt-2" aria-label={copy(language, "风险因子", "Risk factors")}>
               <h3 className="mb-1 text-xs font-semibold text-latency-fast">{copy(language, "三 · 风险因子", "3 · Risk factors")}</h3>

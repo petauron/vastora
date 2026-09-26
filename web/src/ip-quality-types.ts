@@ -24,7 +24,7 @@ export type IPQualityAssessment = {
   score?: number; min: number; max: number;
   grade: "excellent" | "premium" | "good" | "fair" | "poor" | "unknown";
   ipType: "residential" | "mobile" | "business" | "hosting" | "unknown";
-  typeCandidates: string[]; typeEvidence: IPQualityClassification[];
+  typeCandidates: IPQualityAssessment["ipType"][]; typeEvidence: IPQualityClassification[];
   contributions: { id: string; weight: number; min: number; max: number; missing: string[] }[];
   missing: string[]; advice: "direct" | "compare" | "recheck"; reasons: string[];
   requiredFailed: string[]; requiredUnknown: string[]; preferences: IPQualityPreferences;

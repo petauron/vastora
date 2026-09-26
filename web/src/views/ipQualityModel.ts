@@ -119,11 +119,12 @@ export function ipQualitySummary(language: Language, check?: IPQualityCheck) {
   if (checkPending(check)) return check?.state === "pending" ? copy(language, "IP 质量 · 等待检测", "IP quality · Queued") : copy(language, "IP 质量 · 检测中", "IP quality · Checking");
   if (check?.error) return copy(language, "IP 质量 · 检测未完成", "IP quality · Check incomplete");
   if (check?.stale) return copy(language, "IP 质量 · 需重新检测", "IP quality · Stale result");
-  if (check?.assessment?.status === "expired" || check?.assessment?.status === "ip_changed") return copy(language, "IP 质量 · 需重新检测", "IP quality · Stale result");
+  if (check?.assessment?.status === "ip_changed") return copy(language, "IP 质量 · 需重新检测", "IP quality · Stale result");
   if (!check?.report) return copy(language, "IP 质量 · 未检测", "IP quality · Not checked");
   const services = unlockServices.map((name) => {
     const service = check.report!.services.find((item) => item.name === name);
     return `${unlockServiceLabel(name)} ${unlockLabel(language, service?.status)}`;
   });
-  return services.join(" · ");
+  const history = check.assessment?.status === "expired" ? copy(language, `历史检测 ${check.checkedAt ? new Date(check.checkedAt).toLocaleString(language) : ""} · `, `Historical check ${check.checkedAt ? new Date(check.checkedAt).toLocaleString(language) : ""} · `) : "";
+  return history + services.join(" · ");
 }

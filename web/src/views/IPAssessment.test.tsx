@@ -18,11 +18,12 @@ afterEach(() => {
 
 function assessment(): IPQualityAssessment {
   return {
-    version: "meridian-v3", status: "partial", min: 75, max: 100, grade: "unknown", ipType: "residential",
+    version: "meridian-v4", status: "partial", min: 75, max: 100, grade: "unknown", ipType: "residential",
     typeCandidates: ["residential"], typeEvidence: [{ source: "IPinfo", value: "ISP" }],
     contributions: [{ id: "ippure", min: 0, max: 25, weight: 25, missing: ["IPPure"] }], missing: ["IPPure"],
     advice: "recheck", reasons: ["incomplete"], requiredFailed: [], requiredUnknown: [],
     preferences: { requiredServices: ["ChatGPT", "Netflix", "DisneyPlus"], targetRegion: "" },
+    validUntil: "2026-09-27T13:42:38Z",
   };
 }
 
@@ -31,13 +32,13 @@ it("keeps missing evidence as an interval and reveals policy only on expansion",
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root?.render(<AssessmentSummary language="zh-CN" assessment={assessment()} />));
-  expect(container.textContent).toContain("待检测");
-  expect(container.textContent).not.toContain("Meridian 评分 v3");
+  expect(container.textContent).toContain("数据不足");
+  expect(container.textContent).not.toContain("Meridian IPv4 评分 v4");
   const trigger = container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
   expect(trigger.getAttribute("aria-expanded")).toBe("false");
   await act(async () => trigger.click());
   expect(trigger.getAttribute("aria-expanded")).toBe("true");
-  expect(container.textContent).toContain("Meridian 评分 v3");
+  expect(container.textContent).toContain("Meridian IPv4 评分 v4");
   expect(container.textContent).toContain("IPPure");
   expect(container.textContent).toContain("0～25 / 25");
 });
@@ -60,9 +61,10 @@ it("labels an IPQS-only lower bound and explains its interval", async () => {
   expect(container.textContent).toContain("按最低可能贡献计算 63 分");
 });
 
-it("does not display a formal number for expired or changed-IP results", () => {
-  expect(assessmentLabel("zh-CN", { ...assessment(), status: "expired" })).toBe("待检测");
-  expect(assessmentLabel("zh-CN", { ...assessment(), status: "ip_changed" })).toBe("待检测");
+it("retains historical scores while hiding changed-IP results", () => {
+  expect(assessmentLabel("zh-CN", { ...assessment(), validUntil: undefined })).toBe("待检测");
+  expect(assessmentLabel("zh-CN", { ...assessment(), status: "expired", score: 63 })).toBe("63");
+  expect(assessmentLabel("zh-CN", { ...assessment(), status: "ip_changed", score: 63 })).toBe("待检测");
 });
 
 it("loads comparisons on demand, separates partial rows, and only selects a form value", async () => {
@@ -86,4 +88,23 @@ it("loads comparisons on demand, separates partial rows, and only selects a form
   await act(async () => choose.click());
   expect(select).toHaveBeenCalledWith("landing");
   expect(mutate).not.toHaveBeenCalled();
+});
+
+it("shows an IPv6 number with its own rule and no excluded providers", async () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  const ipv6: IPQualityAssessment = {
+    ...assessment(), version: "meridian-ipv6-v2", status: "conservative", score: 71, min: 71, max: 97,
+    grade: "good", missing: ["IPQS", "AbuseIPDB", "TikTok"], advice: "direct",
+    contributions: [{ id: "sources", min: 0, max: 25, weight: 25, missing: ["IPQS", "AbuseIPDB"] }],
+  };
+  await act(async () => root?.render(<AssessmentSummary language="zh-CN" assessment={ipv6} />));
+  expect(assessmentLabel("zh-CN", ipv6)).toBe("71");
+  expect(container.textContent).not.toContain("数据不足");
+  await act(async () => container.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click());
+  expect(container.textContent).toContain("Meridian IPv6 评分 v2");
+  expect(container.textContent).not.toContain("IPPure");
+  expect(container.textContent).not.toContain("SCAMALYTICS");
+  expect(container.textContent).toContain("0 / 25");
 });

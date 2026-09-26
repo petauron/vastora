@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.1.0-alpha.243](https://github.com/petauron/vastora/compare/v0.1.0-alpha.242...v0.1.0-alpha.243) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** retain historical exit scores and unlock results ([#714](https://github.com/petauron/vastora/issues/714)) ([208b4fd](https://github.com/petauron/vastora/commit/208b4fdb65a0a375d6dcf1d8177bb81fe661f2d0))
+
+## [0.1.0-alpha.242](https://github.com/petauron/vastora/compare/v0.1.0-alpha.241...v0.1.0-alpha.242) (2026-09-26)
+
+
+### Features
+
+* **meridian:** use plurality and historical evidence for IP types ([#712](https://github.com/petauron/vastora/issues/712)) ([9e8ea5a](https://github.com/petauron/vastora/commit/9e8ea5a0f4bd8a09a2843ec017618859ad089462))
+
+## [0.1.0-alpha.241](https://github.com/petauron/vastora/compare/v0.1.0-alpha.240...v0.1.0-alpha.241) (2026-09-26)
+
+
+### Features
+
+* **meridian:** highlight residential exits in node lists ([#710](https://github.com/petauron/vastora/issues/710)) ([028e47a](https://github.com/petauron/vastora/commit/028e47a0b1511bdae0148aa1c84cd640e9eddb62))
+
+## [0.1.0-alpha.240](https://github.com/petauron/vastora/compare/v0.1.0-alpha.239...v0.1.0-alpha.240) (2026-09-26)
+
+
+### Features
+
+* **meridian:** introduce independent IPv6 exit scores ([#708](https://github.com/petauron/vastora/issues/708)) ([f0f2a65](https://github.com/petauron/vastora/commit/f0f2a65e8e98abd54129381162af8bcd934c80e4))
+
+## [0.1.0-alpha.239](https://github.com/petauron/vastora/compare/v0.1.0-alpha.238...v0.1.0-alpha.239) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** distinguish incomplete scores from unchecked exits ([#706](https://github.com/petauron/vastora/issues/706)) ([8f41cb6](https://github.com/petauron/vastora/commit/8f41cb66efbe00124e0e13ce4d1c83596da6d4be))
+
 ## [0.1.0-alpha.238](https://github.com/petauron/vastora/compare/v0.1.0-alpha.237...v0.1.0-alpha.238) (2026-09-26)
 
 

@@ -76,7 +76,7 @@ func TestAssessmentIPQSOnlyConservativeScore(t *testing.T) {
 	r.IPPure.RiskScore = &risk
 	r.RecordObservations(assessmentTime)
 	a := assessFixture(r)
-	if a.Version != "meridian-v3" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
+	if a.Version != "meridian-v4" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
 		t.Fatalf("IPQS-only absence must produce a transparent lower bound: %+v", a)
 	}
 	r.Scores = append(r.Scores, Score{"IPQS", "100"})
@@ -93,8 +93,8 @@ func TestAssessmentIPQSOnlyConservativeScore(t *testing.T) {
 	r = assessmentReport("Hosting")
 	r.Scores = []Score{{"SCAMALYTICS", "0"}, {"AbuseIPDB", "14"}}
 	r.RecordObservations(assessmentTime)
-	if expired := Assess(&r, assessmentTime.Format(time.RFC3339Nano), false, assessmentTime.Add(EvidenceMaxAge+time.Second), DefaultPreferences()); expired.Status != "expired" || expired.Score != nil {
-		t.Fatalf("expired conservative score remained usable: %+v", expired)
+	if expired := Assess(&r, assessmentTime.Format(time.RFC3339Nano), false, assessmentTime.Add(EvidenceMaxAge+time.Second), DefaultPreferences()); expired.Status != "expired" || expired.Score == nil {
+		t.Fatalf("historical conservative score disappeared: %+v", expired)
 	}
 }
 
@@ -117,17 +117,17 @@ func TestAssessmentTypeEvidenceAndConflict(t *testing.T) {
 	r.UsageTypes = append(r.UsageTypes, Classification{"ipapi", "Hosting"})
 	r.RecordObservations(assessmentTime)
 	if a := assessFixture(r); a.IPType != "hosting" {
-		t.Fatalf("two-thirds consensus rejected: %+v", a)
+		t.Fatalf("plurality rejected: %+v", a)
 	}
 	r.UsageTypes = r.UsageTypes[:1]
-	if a := assessFixture(r); a.IPType != "unknown" || len(a.TypeCandidates) != 4 || a.Score != nil {
-		t.Fatalf("single provider established type: %+v", a)
+	if a := assessFixture(r); a.IPType != "hosting" || len(a.TypeCandidates) != 1 || a.Score == nil {
+		t.Fatalf("single available provider not used: %+v", a)
 	}
 	r.UsageTypes = []Classification{{"IPinfo", "Business"}, {"ipregistry", "Business"}, {"ipapi", "Hosting"}, {"AbuseIPDB", "Business"}, {"IP2LOCATION", "Hosting"}}
 	r.Scores = slices.DeleteFunc(r.Scores, func(s Score) bool { return s.Source == "IPQS" })
 	r.RecordObservations(assessmentTime)
 	a = assessFixture(r)
-	if a.Status != "conservative" || a.Score == nil || *a.Score != 75 || a.Max != 89 || a.IPType != "unknown" || !slices.Equal(a.Missing, []string{"type", "IPQS"}) {
+	if a.Status != "conservative" || a.Score == nil || *a.Score != 80 || a.Max != 89 || a.IPType != "business" || !slices.Equal(a.Missing, []string{"IPQS"}) {
 		t.Fatalf("type conflict and unavailable IPQS did not retain a bounded score: %+v", a)
 	}
 	if a := Assess(nil, "", false, assessmentTime, DefaultPreferences()); a.Score != nil || a.Status != "partial" {
@@ -238,7 +238,7 @@ func TestAssessmentRegionAndFreshness(t *testing.T) {
 		status  string
 	}{{true, assessmentTime, "ip_changed"}, {false, assessmentTime.Add(24*time.Hour + time.Second), "expired"}} {
 		a := Assess(&r, assessmentTime.Format(time.RFC3339Nano), tc.changed, tc.now, DefaultPreferences())
-		if a.Status != tc.status || a.Score != nil || a.Advice != "recheck" {
+		if a.Status != tc.status || (a.Score == nil) != tc.changed || a.Advice != "recheck" {
 			t.Fatalf("stale score remained usable: %+v", a)
 		}
 	}
@@ -316,5 +316,121 @@ func TestAssessmentSelectedUnweightedServiceMustBeKnown(t *testing.T) {
 	a := Assess(&r, assessmentTime.Format(time.RFC3339Nano), false, assessmentTime, p)
 	if a.Score != nil || a.Advice != "recheck" || !slices.Contains(a.Missing, "Reddit") {
 		t.Fatal("unknown selected service entered ranking")
+	}
+}
+
+func ipv6AssessmentReport(kind string) Report {
+	r := assessmentReport(kind)
+	r.Address = "2001:db8::8"
+	r.IPPure = nil
+	r.Scores = []Score{{"IPQS", "0"}, {"AbuseIPDB", "0"}}
+	r.RecordObservations(assessmentTime)
+	return r
+}
+
+func TestIPv6AssessmentWeightsAndCaps(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		want int
+	}{{"ISP", 100}, {"Mobile ISP", 95}, {"Business", 88}, {"Hosting", 79}} {
+		t.Run(tc.kind, func(t *testing.T) {
+			a := assessFixture(ipv6AssessmentReport(tc.kind))
+			if a.Version != IPv6AssessmentVersion || a.Score == nil || *a.Score != tc.want || a.Status != "complete" || len(a.Contributions) != 3 {
+				t.Fatalf("IPv6 weights/caps: %+v", a)
+			}
+		})
+	}
+	r := ipv6AssessmentReport("ISP")
+	r.Scores = []Score{{"IPQS", "100"}, {"AbuseIPDB", "100"}}
+	a := assessFixture(r)
+	if a.Score == nil || *a.Score != 75 {
+		t.Fatalf("residential identity must not erase risk: %+v", a)
+	}
+}
+
+func TestIPv6MissingEvidenceContributesZero(t *testing.T) {
+	r := ipv6AssessmentReport("ISP")
+	r.Scores = nil
+	for i := range r.Services {
+		switch r.Services[i].Name {
+		case "AmazonPrimeVideo":
+			r.Services[i].Status = "Block"
+		case "TikTok":
+			r.Services[i].Status = "Failed"
+		}
+	}
+	r.RecordObservations(assessmentTime)
+	a := assessFixture(r)
+	if a.Score == nil || *a.Score != 71 || a.Status != "conservative" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS", "AbuseIPDB", "TikTok"}) {
+		t.Fatalf("missing supported evidence must not prevent a numeric score: %+v", a)
+	}
+	r.UsageTypes = nil
+	r.RecordObservations(assessmentTime)
+	a = assessFixture(r)
+	if a.Score == nil || *a.Score != 41 || a.IPType != "unknown" || a.Contributions[0].Min != 0 {
+		t.Fatalf("unknown type must not receive free points: %+v", a)
+	}
+	for i := range r.Services {
+		if r.Services[i].Name == "ChatGPT" {
+			r.Services[i].Status = "Block"
+		}
+	}
+	r.RecordObservations(assessmentTime)
+	if a = assessFixture(r); a.Advice != "compare" || !slices.Contains(a.RequiredFailed, "ChatGPT") {
+		t.Fatalf("required failure must remain actionable: %+v", a)
+	}
+}
+
+func TestIPv6EvidenceBoundaries(t *testing.T) {
+	r := ipv6AssessmentReport("ISP")
+	for i := range r.Observations {
+		if r.Observations[i].Source == "IPQS" {
+			r.Observations[i].Address = "203.0.113.8"
+		}
+	}
+	if a := assessFixture(r); a.Score == nil || *a.Score != 80 || !slices.Contains(a.Missing, "IPQS") {
+		t.Fatalf("IPv4 evidence must not score IPv6: %+v", a)
+	}
+	r = ipv6AssessmentReport("ISP")
+	r.IPPure = assessmentReport("ISP").IPPure
+	r.IPPure.CheckedAt = assessmentTime.Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	for i := range r.Observations {
+		if r.Observations[i].Source == "SCAMALYTICS" {
+			r.Observations[i].Status = "ok"
+			r.Observations[i].CheckedAt = r.IPPure.CheckedAt
+		}
+	}
+	if a := assessFixture(r); a.Score == nil || *a.Score != 100 || a.Status != "complete" {
+		t.Fatalf("excluded providers must not affect IPv6 freshness: %+v", a)
+	}
+	stamp := assessmentTime.Format(time.RFC3339Nano)
+	if a := Assess(&r, stamp, true, assessmentTime, DefaultPreferences()); a.Score != nil || a.Status != "ip_changed" {
+		t.Fatalf("changed IP retained score: %+v", a)
+	}
+	if a := Assess(&r, stamp, false, assessmentTime.Add(25*time.Hour), DefaultPreferences()); a.Score == nil || a.Status != "expired" {
+		t.Fatalf("expired report lost its historical score: %+v", a)
+	}
+	if a := Assess(nil, "", false, assessmentTime, DefaultPreferences()); a.Score != nil {
+		t.Fatalf("absent report acquired score: %+v", a)
+	}
+	v4, v6 := assessFixture(assessmentReport("Hosting")), assessFixture(ipv6AssessmentReport("ISP"))
+	if recommended, _, delta := Compare(v4, v6, true); recommended || delta != nil {
+		t.Fatal("different scoring rules must not produce a score improvement recommendation")
+	}
+}
+
+func TestHistoricalTypeKeepsSameIPProvenance(t *testing.T) {
+	r := assessmentReport("ISP")
+	stamp := assessmentTime.Format(time.RFC3339Nano)
+	a := Assess(&r, stamp, false, assessmentTime.Add(25*time.Hour), DefaultPreferences())
+	if a.Status != "expired" || a.IPType != "residential" || a.Score == nil || *a.Score != 100 || a.Advice != "recheck" {
+		t.Fatalf("historical result should survive with recheck advice: %+v", a)
+	}
+	for i := range r.Observations {
+		r.Observations[i].Address = "203.0.113.9"
+	}
+	a = Assess(&r, stamp, false, assessmentTime.Add(25*time.Hour), DefaultPreferences())
+	if a.IPType != "unknown" {
+		t.Fatalf("different IP supplied historical type: %+v", a)
 	}
 }
