@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.225](https://github.com/petauron/vastora/compare/v0.1.0-alpha.224...v0.1.0-alpha.225) (2026-09-26)
+
+
+### Bug Fixes
+
+* **nodes:** restore disabled nodes through fresh enrollment ([#677](https://github.com/petauron/vastora/issues/677)) ([0bc2395](https://github.com/petauron/vastora/commit/0bc23950d1a9f1c185c7f9bcf01b43d9857bfad1))
+
 ## [0.1.0-alpha.224](https://github.com/petauron/vastora/compare/v0.1.0-alpha.223...v0.1.0-alpha.224) (2026-09-26)
 
 
