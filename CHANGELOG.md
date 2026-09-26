@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.240](https://github.com/petauron/vastora/compare/v0.1.0-alpha.239...v0.1.0-alpha.240) (2026-09-26)
+
+
+### Features
+
+* **meridian:** introduce independent IPv6 exit scores ([#708](https://github.com/petauron/vastora/issues/708)) ([f0f2a65](https://github.com/petauron/vastora/commit/f0f2a65e8e98abd54129381162af8bcd934c80e4))
+
 ## [0.1.0-alpha.239](https://github.com/petauron/vastora/compare/v0.1.0-alpha.238...v0.1.0-alpha.239) (2026-09-26)
 
 
