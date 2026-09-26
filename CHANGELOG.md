@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.231](https://github.com/petauron/vastora/compare/v0.1.0-alpha.230...v0.1.0-alpha.231) (2026-09-26)
+
+
+### Features
+
+* **apps:** let Meridian own its workspace and page manifest ([#690](https://github.com/petauron/vastora/issues/690)) ([65f1d93](https://github.com/petauron/vastora/commit/65f1d93ed4ddf89c2393057bd339efc6380d0f0c))
+
 ## [0.1.0-alpha.230](https://github.com/petauron/vastora/compare/v0.1.0-alpha.229...v0.1.0-alpha.230) (2026-09-26)
 
 
