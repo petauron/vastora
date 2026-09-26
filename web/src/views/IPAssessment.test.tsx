@@ -23,6 +23,7 @@ function assessment(): IPQualityAssessment {
     contributions: [{ id: "ippure", min: 0, max: 25, weight: 25, missing: ["IPPure"] }], missing: ["IPPure"],
     advice: "recheck", reasons: ["incomplete"], requiredFailed: [], requiredUnknown: [],
     preferences: { requiredServices: ["ChatGPT", "Netflix", "DisneyPlus"], targetRegion: "" },
+    validUntil: "2026-09-27T13:42:38Z",
   };
 }
 
@@ -31,7 +32,7 @@ it("keeps missing evidence as an interval and reveals policy only on expansion",
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root?.render(<AssessmentSummary language="zh-CN" assessment={assessment()} />));
-  expect(container.textContent).toContain("待检测");
+  expect(container.textContent).toContain("数据不足");
   expect(container.textContent).not.toContain("Meridian 评分 v3");
   const trigger = container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
   expect(trigger.getAttribute("aria-expanded")).toBe("false");
@@ -61,6 +62,7 @@ it("labels an IPQS-only lower bound and explains its interval", async () => {
 });
 
 it("does not display a formal number for expired or changed-IP results", () => {
+  expect(assessmentLabel("zh-CN", { ...assessment(), validUntil: undefined })).toBe("待检测");
   expect(assessmentLabel("zh-CN", { ...assessment(), status: "expired" })).toBe("待检测");
   expect(assessmentLabel("zh-CN", { ...assessment(), status: "ip_changed" })).toBe("待检测");
 });

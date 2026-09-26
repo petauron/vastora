@@ -7,8 +7,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { copy } from "./shared";
 
 export function assessmentLabel(language: Language, assessment?: IPQualityAssessment) {
-  if (!assessment || assessment.status === "ip_changed" || assessment.status === "expired" || assessment.score == null) {
+  if (!assessment || assessment.status === "ip_changed" || assessment.status === "expired") {
     return copy(language, "待检测", "Check needed");
+  }
+  if (assessment.score == null) {
+    return assessment.status === "partial" && assessment.validUntil ? copy(language, "数据不足", "Insufficient data") : copy(language, "待检测", "Check needed");
   }
   return String(assessment.score);
 }
@@ -27,7 +30,9 @@ export function AssessmentBadge({ language, assessment }: { language: Language; 
   const grade = hasScore ? assessment.grade : "unknown";
   const labels = { excellent: ["优秀", "Excellent"], premium: ["优质", "Premium"], good: ["良好", "Good"], fair: ["一般", "Fair"], poor: ["较差", "Poor"], unknown: ["待确认", "Unconfirmed"] };
   const label = assessmentLabel(language, assessment);
-  return <Badge variant="outline" className={`quality-grade quality-grade-${grade}`} aria-label={hasScore ? copy(language, `评分 ${label}，${labels[grade][0]}`, `Score ${label}, ${labels[grade][1]}`) : label}>{label}</Badge>;
+  const incomplete = assessment?.status === "partial" && assessment.validUntil;
+  const detail = incomplete ? copy(language, `已检测，评分数据不足：${assessment.missing.map((item) => item === "type" ? "IP 类型" : item).join("、")}`, `Checked; insufficient scoring data: ${assessment.missing.join(", ")}`) : undefined;
+  return <Badge variant="outline" className={`quality-grade quality-grade-${grade}`} title={detail} aria-label={hasScore ? copy(language, `评分 ${label}，${labels[grade][0]}`, `Score ${label}, ${labels[grade][1]}`) : detail ?? label}>{label}</Badge>;
 }
 
 export function AssessmentSummary({ language, assessment, report, checkedAt }: { language: Language; assessment?: IPQualityAssessment; report?: IPQualityReport; checkedAt?: string }) {
@@ -45,6 +50,7 @@ export function AssessmentSummary({ language, assessment, report, checkedAt }: {
     </div>
     {expanded ? <div id={id} className="flex flex-col gap-2 rounded-lg border p-3 text-xs">
       <p className="font-medium">{copy(language, `Meridian 评分 ${assessment.version.replace(/^meridian-/, "")} · 出口适用性`, `Meridian score ${assessment.version.replace(/^meridian-/, "")} · Exit suitability`)}</p>
+      {assessment.status === "partial" && assessment.validUntil ? <p>{copy(language, `已有检测结果，但缺少评分数据：${assessment.missing.map((item) => item === "type" ? "IP 类型" : item).join("、")}。当前无法计算总分，已取得的检测结果仍可查看。`, `Results are available, but scoring data is missing: ${assessment.missing.join(", ")}. A total score is unavailable; collected results remain available.`)}</p> : null}
       {assessment.status === "conservative" ? <p>{copy(language, `待确认：${assessment.missing.map((item) => item === "type" ? "IP 类型" : item).join("、")}。按最低可能贡献计算 ${assessment.score} 分，未推测来源原值。`, `Unconfirmed: ${assessment.missing.join(", ")}. The score of ${assessment.score} uses minimum possible contributions; no provider values were inferred.`)}</p> : null}
       <Table className="text-xs"><TableHeader><TableRow><TableHead>{copy(language, "维度", "Dimension")}</TableHead><TableHead>{copy(language, "贡献 / 满分", "Contribution / Weight")}</TableHead><TableHead>{copy(language, "缺失项", "Missing")}</TableHead></TableRow></TableHeader><TableBody>{assessment.contributions.map((part) => <TableRow key={part.id}><TableCell>{labels[part.id] ? copy(language, ...labels[part.id]) : part.id}</TableCell><TableCell className="tabular-nums">{number(part.min)}{part.min !== part.max ? `～${number(part.max)}` : ""} / {part.weight}</TableCell><TableCell>{part.missing.join("、") || "—"}</TableCell></TableRow>)}</TableBody></Table>
       <p>{copy(language, "类型证据", "Type evidence")}: {assessment.typeEvidence.map((item) => `${item.source}: ${item.value}`).join(" · ") || "—"}</p>
