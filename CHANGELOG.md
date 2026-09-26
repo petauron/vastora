@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.224](https://github.com/petauron/vastora/compare/v0.1.0-alpha.223...v0.1.0-alpha.224) (2026-09-26)
+
+
+### Features
+
+* **meridian:** show entry and landing nodes in one list ([#675](https://github.com/petauron/vastora/issues/675)) ([7872a12](https://github.com/petauron/vastora/commit/7872a129d0f99a05d87a27cd4f37e0535fa771b9))
+
 ## [0.1.0-alpha.223](https://github.com/petauron/vastora/compare/v0.1.0-alpha.222...v0.1.0-alpha.223) (2026-09-26)
 
 
