@@ -33,12 +33,12 @@ it("keeps missing evidence as an interval and reveals policy only on expansion",
   root = createRoot(container);
   await act(async () => root?.render(<AssessmentSummary language="zh-CN" assessment={assessment()} />));
   expect(container.textContent).toContain("数据不足");
-  expect(container.textContent).not.toContain("Meridian 评分 v3");
+  expect(container.textContent).not.toContain("Meridian IPv4 评分 v3");
   const trigger = container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
   expect(trigger.getAttribute("aria-expanded")).toBe("false");
   await act(async () => trigger.click());
   expect(trigger.getAttribute("aria-expanded")).toBe("true");
-  expect(container.textContent).toContain("Meridian 评分 v3");
+  expect(container.textContent).toContain("Meridian IPv4 评分 v3");
   expect(container.textContent).toContain("IPPure");
   expect(container.textContent).toContain("0～25 / 25");
 });
@@ -88,4 +88,23 @@ it("loads comparisons on demand, separates partial rows, and only selects a form
   await act(async () => choose.click());
   expect(select).toHaveBeenCalledWith("landing");
   expect(mutate).not.toHaveBeenCalled();
+});
+
+it("shows an IPv6 number with its own rule and no excluded providers", async () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  const ipv6: IPQualityAssessment = {
+    ...assessment(), version: "meridian-ipv6-v1", status: "conservative", score: 71, min: 71, max: 97,
+    grade: "good", missing: ["IPQS", "AbuseIPDB", "TikTok"], advice: "direct",
+    contributions: [{ id: "sources", min: 0, max: 25, weight: 25, missing: ["IPQS", "AbuseIPDB"] }],
+  };
+  await act(async () => root?.render(<AssessmentSummary language="zh-CN" assessment={ipv6} />));
+  expect(assessmentLabel("zh-CN", ipv6)).toBe("71");
+  expect(container.textContent).not.toContain("数据不足");
+  await act(async () => container.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click());
+  expect(container.textContent).toContain("Meridian IPv6 评分 v1");
+  expect(container.textContent).not.toContain("IPPure");
+  expect(container.textContent).not.toContain("SCAMALYTICS");
+  expect(container.textContent).toContain("0 / 25");
 });
