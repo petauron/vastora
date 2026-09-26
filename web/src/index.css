@@ -162,6 +162,8 @@
     }
 }
 
+.quality-type-residential { color: var(--quality-excellent); background: color-mix(in srgb, var(--quality-excellent) 12%, transparent); border-color: color-mix(in srgb, var(--quality-excellent) 35%, transparent); font-weight: 600; }
+
 .quality-grade { color: var(--muted-foreground); }
 .quality-grade-excellent { color: var(--quality-excellent); }
 .quality-grade-premium { color: var(--quality-premium); }
