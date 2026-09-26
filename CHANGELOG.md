@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.227](https://github.com/petauron/vastora/compare/v0.1.0-alpha.226...v0.1.0-alpha.227) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** restore built-in bandwidth tests and show per-landing results ([#681](https://github.com/petauron/vastora/issues/681)) ([fd67284](https://github.com/petauron/vastora/commit/fd67284354a1b21e925fee2e477f9a0ef5ba8f89))
+
 ## [0.1.0-alpha.226](https://github.com/petauron/vastora/compare/v0.1.0-alpha.225...v0.1.0-alpha.226) (2026-09-26)
 
 
