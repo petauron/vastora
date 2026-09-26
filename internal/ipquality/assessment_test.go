@@ -76,7 +76,7 @@ func TestAssessmentIPQSOnlyConservativeScore(t *testing.T) {
 	r.IPPure.RiskScore = &risk
 	r.RecordObservations(assessmentTime)
 	a := assessFixture(r)
-	if a.Version != "meridian-v3" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
+	if a.Version != "meridian-v4" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
 		t.Fatalf("IPQS-only absence must produce a transparent lower bound: %+v", a)
 	}
 	r.Scores = append(r.Scores, Score{"IPQS", "100"})
@@ -117,17 +117,17 @@ func TestAssessmentTypeEvidenceAndConflict(t *testing.T) {
 	r.UsageTypes = append(r.UsageTypes, Classification{"ipapi", "Hosting"})
 	r.RecordObservations(assessmentTime)
 	if a := assessFixture(r); a.IPType != "hosting" {
-		t.Fatalf("two-thirds consensus rejected: %+v", a)
+		t.Fatalf("plurality rejected: %+v", a)
 	}
 	r.UsageTypes = r.UsageTypes[:1]
-	if a := assessFixture(r); a.IPType != "unknown" || len(a.TypeCandidates) != 4 || a.Score != nil {
-		t.Fatalf("single provider established type: %+v", a)
+	if a := assessFixture(r); a.IPType != "hosting" || len(a.TypeCandidates) != 1 || a.Score == nil {
+		t.Fatalf("single available provider not used: %+v", a)
 	}
 	r.UsageTypes = []Classification{{"IPinfo", "Business"}, {"ipregistry", "Business"}, {"ipapi", "Hosting"}, {"AbuseIPDB", "Business"}, {"IP2LOCATION", "Hosting"}}
 	r.Scores = slices.DeleteFunc(r.Scores, func(s Score) bool { return s.Source == "IPQS" })
 	r.RecordObservations(assessmentTime)
 	a = assessFixture(r)
-	if a.Status != "conservative" || a.Score == nil || *a.Score != 75 || a.Max != 89 || a.IPType != "unknown" || !slices.Equal(a.Missing, []string{"type", "IPQS"}) {
+	if a.Status != "conservative" || a.Score == nil || *a.Score != 80 || a.Max != 89 || a.IPType != "business" || !slices.Equal(a.Missing, []string{"IPQS"}) {
 		t.Fatalf("type conflict and unavailable IPQS did not retain a bounded score: %+v", a)
 	}
 	if a := Assess(nil, "", false, assessmentTime, DefaultPreferences()); a.Score != nil || a.Status != "partial" {
@@ -416,5 +416,21 @@ func TestIPv6EvidenceBoundaries(t *testing.T) {
 	v4, v6 := assessFixture(assessmentReport("Hosting")), assessFixture(ipv6AssessmentReport("ISP"))
 	if recommended, _, delta := Compare(v4, v6, true); recommended || delta != nil {
 		t.Fatal("different scoring rules must not produce a score improvement recommendation")
+	}
+}
+
+func TestHistoricalTypeKeepsSameIPProvenance(t *testing.T) {
+	r := assessmentReport("ISP")
+	stamp := assessmentTime.Format(time.RFC3339Nano)
+	a := Assess(&r, stamp, false, assessmentTime.Add(25*time.Hour), DefaultPreferences())
+	if a.Status != "expired" || a.IPType != "residential" || a.Score != nil {
+		t.Fatalf("historical type should survive without reviving expired score: %+v", a)
+	}
+	for i := range r.Observations {
+		r.Observations[i].Address = "203.0.113.9"
+	}
+	a = Assess(&r, stamp, false, assessmentTime.Add(25*time.Hour), DefaultPreferences())
+	if a.IPType != "unknown" {
+		t.Fatalf("different IP supplied historical type: %+v", a)
 	}
 }

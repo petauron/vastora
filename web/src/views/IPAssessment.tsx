@@ -21,9 +21,13 @@ export function assessmentType(language: Language, type: IPQualityAssessment["ip
   return copy(language, names[type][0], names[type][1]);
 }
 
-export function AssessmentTypeBadge({ language, assessment }: { language: Language; assessment?: IPQualityAssessment }) {
-  const type = assessment && assessment.status !== "expired" && assessment.status !== "ip_changed" ? assessment.ipType : "unknown";
-  return <Badge variant="outline" className={type === "residential" ? "quality-type-residential" : "text-muted-foreground"}>{assessmentType(language, type)}</Badge>;
+export function AssessmentTypeBadge({ language, assessment, checkedAt }: { language: Language; assessment?: IPQualityAssessment; checkedAt?: string }) {
+  const available = assessment && assessment.status !== "ip_changed";
+  const type = available ? assessment.ipType : "unknown";
+  const candidates = available && type === "unknown" && assessment.typeCandidates.length < 4 ? assessment.typeCandidates : [];
+  const label = candidates.length > 1 ? candidates.map((value) => assessmentType(language, value)).join("／") : assessmentType(language, type);
+  const title = checkedAt ? copy(language, `检测于 ${new Date(checkedAt).toLocaleString(language)}${assessment?.status === "expired" ? " · 历史类型" : ""}`, `Checked ${new Date(checkedAt).toLocaleString(language)}${assessment?.status === "expired" ? " · Historical type" : ""}`) : undefined;
+  return <Badge variant="outline" title={title} className={type === "residential" ? "quality-type-residential" : "text-muted-foreground"}>{label}</Badge>;
 }
 
 export function assessmentAdvice(language: Language, value: IPQualityAssessment["advice"]) {
@@ -45,7 +49,7 @@ export function AssessmentSummary({ language, assessment, report, checkedAt }: {
   const id = useId();
   if (!assessment) return null;
   const labels: Record<string, [string, string]> = { type: ["IP 类型", "IP type"], sources: ["来源风险", "Provider risk"], ippure: ["IPPure", "IPPure"], unlock: ["实际解锁", "Availability"] };
-  const ipv6 = assessment.version === "meridian-ipv6-v1";
+  const ipv6 = assessment.version === "meridian-ipv6-v2";
   const ruleName = ipv6 ? "Meridian IPv6" : "Meridian IPv4";
   const ruleVersion = assessment.version.replace(/^meridian-(?:ipv6-)?/, "");
   const riskSources = ipv6 ? ["IPQS", "AbuseIPDB"] : ["SCAMALYTICS", "IPQS", "AbuseIPDB"];
