@@ -1,5 +1,7 @@
 import { Fragment, useId, useState } from "react";
 import { ChevronDownIcon, PlusIcon, SlidersHorizontalIcon } from "lucide-react";
+import type { AppData, Mutate } from "@/App";
+import { MeridianRoutes } from "./Routes";
 import { api } from "@/api";
 import type { LandingView } from "@/landing-types";
 import type { Language } from "@/translations";
@@ -31,7 +33,7 @@ function selectedRegions(state: LandingState, nodeIds: string[]) {
   }));
 }
 
-export function LandingTableRows({ language, search, siteNames, onSubscriptions }: { language: Language; search: string; siteNames?: Record<string, string>; onSubscriptions?: () => void }) {
+export function LandingTableRows({ language, search, siteNames, data, mutate }: { language: Language; search: string; siteNames?: Record<string, string>; data: AppData; mutate: Mutate }) {
   const state = useLanding();
   const quality = useIPQuality();
   const [adding, setAdding] = useState(false);
@@ -42,7 +44,7 @@ export function LandingTableRows({ language, search, siteNames, onSubscriptions 
     <TableRow className="block bg-muted/30 hover:bg-muted/30 lg:table-row"><TableCell colSpan={5} className="block lg:table-cell">
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xs font-medium">{copy(language, "落地机", "Landing nodes")} <span className="ml-1 text-muted-foreground">{servers.length}</span></h3><Button variant="ghost" size="sm" aria-expanded={adding} aria-controls={`${id}-add`} onClick={() => setAdding(!adding)}><PlusIcon data-icon="inline-start" />{copy(language, "添加落地机", "Add landing node")}</Button></div>
     </TableCell></TableRow>
-    {adding && state ? <TableRow className="block hover:bg-transparent lg:table-row"><TableCell colSpan={5} className="block whitespace-normal lg:table-cell"><div id={`${id}-add`} className="max-w-xl py-3"><AddLandingNode state={state} language={language} onAdded={() => setAdding(false)} /></div></TableCell></TableRow> : null}
+    {adding && state ? <TableRow className="block hover:bg-transparent lg:table-row"><TableCell colSpan={5} className="block whitespace-normal lg:table-cell"><div id={`${id}-add`} className="max-w-xl py-3"><AddLandingNode state={state} language={language} onAdded={(nodeId) => { setAdding(false); setExpanded(nodeId); }} /></div></TableCell></TableRow> : null}
     {state ? <LandingPoolNotice state={state} language={language} /> : null}
     {state?.failed || !state?.view ? <TableRow className="block lg:table-row"><TableCell colSpan={5} className="block text-xs text-muted-foreground lg:table-cell">{state?.failed ? copy(language, "落地机读取失败", "Unable to load landing nodes") : copy(language, "正在读取落地机…", "Loading landing nodes…")}</TableCell></TableRow> : servers.map((server) => {
       const open = expanded === server.nodeId;
@@ -55,14 +57,13 @@ export function LandingTableRows({ language, search, siteNames, onSubscriptions 
           </TableCell>
           <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><IPQualityButton nodeId={server.nodeId} name={server.name} language={language} egressAddress={server.egressIp ?? ""} landingEgress /></TableCell>
           <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><span className="inline-flex items-center gap-2"><span aria-hidden="true" className={cn("apps-status-dot", server.status === "ready" ? "bg-latency-fast" : ["failed", "offline"].includes(server.status) ? "bg-destructive" : "bg-muted-foreground")} />{copy(language, statusLabels[server.status][0], statusLabels[server.status][1])}</span></TableCell>
-          <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><LandingSubscriptions server={server} language={language} /></TableCell>
+          <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><LandingSubscriptions server={server} language={language} onConfigure={() => setExpanded(open ? null : server.nodeId)} /></TableCell>
           <TableCell className="col-span-2 p-0 lg:px-2 lg:py-3"><div className="flex justify-end"><Button variant="ghost" size="icon-sm" className="max-lg:min-h-11 max-lg:min-w-11" aria-label={copy(language, `${server.name} 落地设置`, `${server.name} landing settings`)} aria-expanded={open} aria-controls={panelId} onClick={() => setExpanded(open ? null : server.nodeId)}>{open ? <ChevronDownIcon aria-hidden="true" /> : <SlidersHorizontalIcon aria-hidden="true" />}</Button></div></TableCell>
         </TableRow>
-        {open ? <TableRow className="block bg-muted/20 hover:bg-muted/20 lg:table-row"><TableCell colSpan={5} className="block whitespace-normal lg:table-cell"><div id={panelId} className="grid gap-6 py-4 md:grid-cols-2">
+        {open ? <TableRow className="block bg-muted/20 hover:bg-muted/20 lg:table-row"><TableCell colSpan={5} className="block whitespace-normal lg:table-cell"><div id={panelId} className="grid gap-5 py-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
           <LandingEgressIP key={`${server.nodeId}:${server.egressRevision}`} server={server} language={language} disabled={state.busy || state.failed || !["ready", "failed"].includes(server.status)} save={(address) => state.change((signal) => api.setLandingEgress(server.nodeId, server.egressRevision ?? 0, address, signal))} />
-          <div className="flex flex-col items-start gap-3 text-xs"><h4 className="font-medium">{copy(language, "订阅路由", "Subscription routes")}</h4><p className="text-muted-foreground">{copy(language, `${server.eligibleEntries} 个入口 · ${server.readyCombinations} 就绪 · ${server.failedCombinations} 失败 · ${server.withheldCombinations} 暂缓`, `${server.eligibleEntries} entries · ${server.readyCombinations} ready · ${server.failedCombinations} failed · ${server.withheldCombinations} withheld`)}</p>
-            {onSubscriptions ? <Button size="sm" variant="outline" onClick={onSubscriptions}>{copy(language, "配置账号路由", "Configure account routes")}</Button> : null}
-            <p className="text-muted-foreground">{copy(language, "添加落地机后，在账号路由中选择才会加入对应订阅。", "Select this landing node in account routes to include it in that subscription.")}</p>
+          <MeridianRoutes data={data} language={language} mutate={mutate} egressNodeId={server.nodeId} landingServers={state.view?.servers} />
+          <details className="border-t pt-2 text-xs text-muted-foreground xl:col-span-2"><summary className="w-fit cursor-pointer">{copy(language, "落地管理", "Manage exit")}</summary><div className="mt-2">
             <Button variant="ghost" size="sm" disabled={state.busy || state.failed || server.status === "draining"} aria-label={copy(language, `移除 ${server.name}`, `Remove ${server.name}`)} onClick={() => {
               const view = state.view;
               if (!view) return;
@@ -70,7 +71,7 @@ export function LandingTableRows({ language, search, siteNames, onSubscriptions 
               void state.change((signal) => api.selectLanding(nodeIds, view.revision, selectedRegions(state, nodeIds), signal));
             }}>{copy(language, "移除此落地机", "Remove landing node")}</Button>
             {server.status === "draining" ? <p role="status" className="text-muted-foreground">{copy(language, "正在停止发布并清理会话、路由和授权。", "Stopping publication and draining sessions, routes and grants.")}</p> : null}
-          </div>
+          </div></details>
         </div></TableCell></TableRow> : null}
       </Fragment>;
     })}
@@ -79,12 +80,12 @@ export function LandingTableRows({ language, search, siteNames, onSubscriptions 
   </>;
 }
 
-function LandingSubscriptions({ server, language }: { server: Server; language: Language }) {
+function LandingSubscriptions({ server, language, onConfigure }: { server: Server; language: Language; onConfigure: () => void }) {
   const empty = !server.readyCombinations && !server.failedCombinations && !server.withheldCombinations;
-  return <div className="flex flex-col gap-1 text-xs"><span className={server.readyCombinations ? "text-latency-fast" : "text-muted-foreground"}>{empty ? copy(language, "未加入订阅", "Not in subscriptions") : copy(language, `${server.readyCombinations} 个组合就绪`, `${server.readyCombinations} routes ready`)}</span>{server.failedCombinations > 0 ? <span className="text-destructive">{copy(language, `${server.failedCombinations} 个失败`, `${server.failedCombinations} failed`)}</span> : null}{server.withheldCombinations > 0 ? <span className="text-muted-foreground">{copy(language, `${server.withheldCombinations} 个暂缓`, `${server.withheldCombinations} withheld`)}</span> : null}</div>;
+  return <div className="flex flex-col gap-1 text-xs"><button type="button" onClick={onConfigure} className={server.readyCombinations ? "w-fit text-latency-fast hover:underline" : "w-fit text-primary hover:underline"}>{empty ? copy(language, "加入订阅", "Add to subscription") : copy(language, `${server.readyCombinations} 条线路`, `${server.readyCombinations} routes`)}</button>{server.failedCombinations > 0 ? <span className="text-destructive">{copy(language, `${server.failedCombinations} 个失败`, `${server.failedCombinations} failed`)}</span> : null}{server.withheldCombinations > 0 ? <span className="text-muted-foreground">{copy(language, `${server.withheldCombinations} 个暂缓`, `${server.withheldCombinations} withheld`)}</span> : null}</div>;
 }
 
-function AddLandingNode({ state, language, onAdded }: { state: LandingState; language: Language; onAdded: () => void }) {
+function AddLandingNode({ state, language, onAdded }: { state: LandingState; language: Language; onAdded: (nodeId: string) => void }) {
   const quality = useIPQuality();
   const [candidateID, setCandidateID] = useState("");
   const id = useId();
@@ -97,7 +98,7 @@ function AddLandingNode({ state, language, onAdded }: { state: LandingState; lan
     event.preventDefault();
     if (disabled || !view || !candidate || !regionReady || view.nodeIds.length >= 16) return;
     const nodeIds = [...view.nodeIds, candidate.nodeId];
-    if (await state.change((signal) => api.selectLanding(nodeIds, view.revision, selectedRegions(state, nodeIds), signal))) onAdded();
+    if (await state.change((signal) => api.selectLanding(nodeIds, view.revision, selectedRegions(state, nodeIds), signal))) onAdded(candidate.nodeId);
   }}><FieldGroup><Field><FieldLabel htmlFor={id}>{copy(language, "选择落地节点", "Choose a landing node")}</FieldLabel><div className="flex gap-2">
     <Select items={candidates.map((item) => ({ value: item.nodeId, label: item.name }))} value={candidate?.nodeId ?? null} disabled={disabled || !candidates.length || (view?.nodeIds.length ?? 0) >= 16} onValueChange={(value) => setCandidateID(value ?? "")}>
       <SelectTrigger id={id} className="min-w-0 flex-1"><SelectValue placeholder={copy(language, "选择节点", "Choose a node")} /></SelectTrigger><SelectContent className="apps-workspace"><SelectGroup>{candidates.map((item) => <SelectItem key={item.nodeId} value={item.nodeId}><RegionFlag code={state.regions[item.nodeId]} language={language} />{item.name} · {assessmentLabel(language, ipQualityCheckForAddress(quality?.checks ?? [], item.nodeId)?.assessment)}</SelectItem>)}</SelectGroup></SelectContent>
