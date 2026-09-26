@@ -33,7 +33,7 @@ func (e *executionFlowExecutor) Maintain(context.Context) error {
 	return errors.New("periodic mutation must not run")
 }
 
-func (e *executionFlowExecutor) Deploy(context.Context, agent.DeploymentTask) (agent.ApplicationTaskResult, error) {
+func (e *executionFlowExecutor) Deploy(_ context.Context, task agent.DeploymentTask) (agent.ApplicationTaskResult, error) {
 	e.calls.Add(1)
 	if e.fail {
 		return agent.ApplicationTaskResult{}, errors.New("simulated operation failure")
@@ -41,6 +41,15 @@ func (e *executionFlowExecutor) Deploy(context.Context, agent.DeploymentTask) (a
 	var result agent.ApplicationTaskResult
 	if err := json.Unmarshal(cpaApplicationResult("10.0.0.19"), &result); err != nil {
 		return result, err
+	}
+	// The simulated Docker effect still returns the exact admitted package
+	// identity; execution projection no longer accepts service-only success.
+	result.Resources = &agent.InstanceResources{
+		Version: 1, ApplicationID: task.ApplicationID, AppKey: task.AppKey,
+		Runtime: task.Manifest.Runtime.Kind, PackageVersion: task.Manifest.Version,
+		PackageRevision: task.PackageRevision, ManifestSHA256: task.ManifestSHA256,
+		AuthorizedCapabilities: task.AuthorizedCapabilities, State: "ready", TaskID: task.ID,
+		Resources: []agent.RuntimeResource{{Kind: "container", LogicalName: "cpa", Name: "isolated-flow-cpa", ID: "fixture-container-id"}},
 	}
 	return result, nil
 }
@@ -95,12 +104,12 @@ func TestExecutionAgentCenterFlow(t *testing.T) {
 			if err := local.SaveConnection(ctx, agent.Connection{AgentID: node.ID, Name: "execution-flow", CenterURL: server.URL, Credential: node.Credential, PrivateKey: private}); err != nil {
 				t.Fatal(err)
 			}
-			deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: json.RawMessage(`{"debug":false}`)})
+			deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 			if err != nil {
 				t.Fatal(err)
 			}
 			executor := &executionFlowExecutor{fail: mode == "failure" || mode == "abandon"}
-			client := agent.Client{HTTPClient: server.Client(), Executor: executor, Capabilities: agent.Capabilities{Docker: true}}
+			client := agent.Client{HTTPClient: server.Client(), Executor: executor, Capabilities: agent.Capabilities{Docker: true, ExecutorVersions: map[string]int{"docker": 1, "systemd": 1}, RuntimeCapabilities: []string{"root"}}}
 			defer func() {
 				if executor.restored.Load() != 0 || executor.maintained.Load() != 0 {
 					t.Fatalf("execution loop bypassed authorization: restore=%d maintenance=%d", executor.restored.Load(), executor.maintained.Load())

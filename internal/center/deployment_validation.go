@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 func validateApplicationResult(manifest catalog.AppManifest, appKey, role string, configJSON []byte, serviceAddress string, result ApplicationTaskResult) error {

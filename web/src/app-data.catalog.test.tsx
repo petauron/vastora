@@ -13,7 +13,7 @@ import { AppsView } from "./views/AppsView";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const status: CenterStatus = { version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" };
-const node = { id: "node", name: "Test node", connected: true, credentialRevoked: false, status: "active", siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.2" } } as AgentView;
+const node: AgentView = { id: "node", name: "Test node", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 0, enrolledAt: "2026-09-26T00:00:00Z", lastSeenAt: "2026-09-26T00:00:00Z", siteId: "site", roles: ["worker"], connected: true, credentialRevoked: false, capabilities: { docker: true, gateway: false, tunnel: false, metrics: false, logs: false, executorVersions: { docker: 1, systemd: 1 }, runtimeCapabilities: [] }, networkCandidates: [], networkProfile: { serviceAddress: "10.0.0.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: false, remoteUpdateSupported: true };
 const official: CatalogSource = {
   id: "vastora-official", displayName: "Vastora Official", url: "https://downloads.example.com/vastora/catalog",
   publicKey: "", customCASet: false, bearerTokenSet: false, enabled: true, status: "pending", refreshIntervalSeconds: 3600,
@@ -21,8 +21,8 @@ const official: CatalogSource = {
 
 function catalogApp(sourceId: string): AppView {
   const name = sourceId === "vastora-official" ? "示例应用" : "第三方工具";
-  return { key: `${sourceId}/notes`, sourceId, fetchedAt: "2026-09-12T00:00:00Z", app: {
-    id: "notes", version: "2.0.0", name: { "zh-CN": name, en: name }, description: { "zh-CN": "目录应用", en: "Catalog app" }, hostAccess: false,
+  return { key: `${sourceId}/notes`, sourceId, fetchedAt: "2026-09-12T00:00:00Z", manifestSha256: "a".repeat(64), app: {
+    id: "notes", version: "2.0.0", packageRevision: 1, runtime: { kind: "docker", version: 1 }, name: { "zh-CN": name, en: name }, description: { "zh-CN": "目录应用", en: "Catalog app" }, hostAccess: false,
     config: [{ key: "label", label: { "zh-CN": "名称", en: "Name" }, description: { "zh-CN": "显示名称", en: "Display name" }, type: "string", required: false, secret: false }],
   } };
 }

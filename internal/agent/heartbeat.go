@@ -109,6 +109,11 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	}
 	heartbeatURL := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/heartbeat"
 	runtimeRecovery, runtimeRecoveryApplications := store.runtimeRecovery()
+	if executor, ok := c.Executor.(interface {
+		PackageCapabilities(bool) (map[string]int, []string)
+	}); ok {
+		c.Capabilities.ExecutorVersions, c.Capabilities.RuntimeCapabilities = executor.PackageCapabilities(c.Capabilities.Docker)
+	}
 	payload := map[string]any{
 		"landingEgressAddresses": egressAddresses,
 		"publicKey":              publicKey,

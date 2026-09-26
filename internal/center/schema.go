@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 99
+const centerSchemaVersion = 100
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -136,9 +136,15 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			source_id TEXT NOT NULL,
 			app_id TEXT NOT NULL,
 			version TEXT NOT NULL,
+			package_revision INTEGER NOT NULL CHECK(package_revision >= 0),
 			manifest_sha256 TEXT NOT NULL,
 			first_seen_at TEXT NOT NULL,
-			PRIMARY KEY(source_id, app_id, version)
+			PRIMARY KEY(source_id, app_id, version, package_revision)
+		)`,
+		`CREATE TABLE catalog_legacy_evidence (
+			source_id TEXT PRIMARY KEY,
+			payload BLOB NOT NULL,
+			public_key BLOB NOT NULL
 		)`,
 		`CREATE TABLE registry_credentials (
 			id TEXT PRIMARY KEY,
@@ -298,6 +304,16 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			WHEN NEW.app_key = 'vastora-official/3x-ui' AND NEW.role = 'master' AND NEW.status IN ('pending', 'deploying', 'running')
 			AND EXISTS (SELECT 1 FROM applications existing WHERE existing.app_key = 'vastora-official/3x-ui' AND existing.role = 'master' AND existing.status IN ('pending', 'deploying', 'running'))
 			BEGIN SELECT RAISE(ABORT, 'a global 3x-ui subscription controller already exists'); END`,
+		`CREATE TABLE application_resources (
+			application_id TEXT PRIMARY KEY REFERENCES applications(id) ON DELETE CASCADE,
+			manifest_sha256 TEXT NOT NULL DEFAULT '',
+			package_revision INTEGER NOT NULL DEFAULT 0,
+			authorized_capabilities_json BLOB NOT NULL DEFAULT '[]',
+			resources_json BLOB NOT NULL DEFAULT '{}',
+			adoption_state TEXT NOT NULL CHECK(adoption_state IN ('pending', 'ready', 'blocked')),
+			last_error TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		)`,
 		`CREATE TRIGGER applications_one_global_three_x_ui_master_update
 			BEFORE UPDATE OF app_key, role, status ON applications
 			WHEN NEW.app_key = 'vastora-official/3x-ui' AND NEW.role = 'master' AND NEW.status IN ('pending', 'deploying', 'running')
@@ -620,6 +636,9 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
 			app_key TEXT NOT NULL,
 			app_version TEXT NOT NULL,
+			package_revision INTEGER NOT NULL DEFAULT 0,
+			manifest_sha256 TEXT NOT NULL DEFAULT '',
+			authorized_capabilities_json BLOB NOT NULL DEFAULT '[]',
 			manifest_json BLOB NOT NULL,
 			config_json BLOB NOT NULL,
 			service_address TEXT NOT NULL DEFAULT '',
@@ -642,6 +661,18 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			change_proposal_id TEXT
 		)`,
 		`CREATE UNIQUE INDEX deployments_one_active_task_idx ON deployments(agent_id, app_key) WHERE state IN ('pending', 'running') OR reconciliation_required = 1`,
+		`CREATE TABLE application_adoptions (
+			id TEXT PRIMARY KEY,
+			application_id TEXT NOT NULL UNIQUE REFERENCES applications(id) ON DELETE CASCADE,
+			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+			deployment_id TEXT NOT NULL REFERENCES deployments(id),
+			state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed')),
+			attempt INTEGER NOT NULL DEFAULT 0,
+			lease_expires_at TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 		`CREATE UNIQUE INDEX deployments_change_proposal_idx ON deployments(change_proposal_id) WHERE change_proposal_id IS NOT NULL`,
 		`CREATE TABLE application_credential_rotations (
 			id TEXT PRIMARY KEY,
@@ -878,6 +909,9 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	}
 	if _, err := tx.ExecContext(ctx, executionSchemaSQL); err != nil {
 		return fmt.Errorf("center: initialize execution schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, applicationMaintenanceSchemaSQL); err != nil {
+		return fmt.Errorf("center: initialize application maintenance schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, ipQualitySchemaSQL); err != nil {
 		return fmt.Errorf("center: initialize IP quality schema: %w", err)

@@ -32,7 +32,7 @@ func TestInstalledUpdateExecutionDoesNotBlockOrdinaryWork(t *testing.T) {
 			if _, err := store.db.Exec(`INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at) VALUES('installed-update-execution',?,'installed-update','agent.update',1,'old-session','digest',X'00',?,'reported',?,?,?)`, node.ID, state, expires, now, now); err != nil {
 				t.Fatal(err)
 			}
-			deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+			deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -162,12 +162,12 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
           onUpgrade={() => openFromDetails(() => openChange(managedInstance.application, "upgrade"))}
         /> : null}
       </Sheet>
-      <DeploymentSheet data={data} editor={deploymentEditor} language={language} onClose={() => setDeploymentEditor(null)} onSubmit={async (agent, app, config, operation, role, registryCredentialId) => {
+      <DeploymentSheet data={data} editor={deploymentEditor} language={language} onClose={() => setDeploymentEditor(null)} onSubmit={async (agent, app, config, operation, role, registryCredentialId, authorizedCapabilities) => {
         let result: Deployment | undefined;
 		const scope = deploymentSecretScope(agent.id, app.key, operation);
 		const operationKey = app.key === "vastora-official/3x-ui" && operation === "install" && role !== "worker" || app.key === "vastora-official/pulse" && (operation === "install" || operation === "upgrade") ? secretOperation(scope) : undefined;
         const messages = { install: copy(language, "安装任务已创建。可在活动中查看进度。", "Install task created. Follow progress in Activity."), upgrade: copy(language, "升级任务已创建。", "Upgrade task created."), configure: copy(language, "配置任务已创建。", "Configuration task created.") };
-        await mutate(async () => { result = await api.createDeployment(agent.id, app.key, config, operation, false, role, registryCredentialId, operationKey); }, messages[operation]);
+        await mutate(async () => { result = await api.createDeployment(agent.id, app.key, config, operation, false, role, registryCredentialId, operationKey, authorizedCapabilities, operation === "configure" ? undefined : { packageRevision: app.app.packageRevision ?? 0, manifestSha256: app.manifestSha256 ?? "" }); }, messages[operation]);
         if (result?.oneTimeCredentials && operationKey) setCredentials({ ...result.oneTimeCredentials, deploymentId: result.id, operationKey, scope });
 		else if (result && operationKey) clearSecretOperation(scope);
         setDeploymentEditor(null);

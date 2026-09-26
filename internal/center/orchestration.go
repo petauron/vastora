@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/meridianruntime"
@@ -27,6 +27,8 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
+	Resources            json.RawMessage                     `json:"resources,omitempty"`
 	Services             []ApplicationServiceResult          `json:"services"`
 	GeneratedSecrets     map[string]string                   `json:"generatedSecrets,omitempty"`
 	ApplicationCommand   *RealityCommandResult               `json:"applicationCommand,omitempty"`
@@ -45,13 +47,17 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 	if err := tx.QueryRowContext(ctx, `SELECT site_id, capabilities_json FROM agents WHERE id = ?`, request.AgentID).Scan(&siteID, &capabilitiesJSON); err != nil {
 		return "", errors.New("center: target node not found")
 	}
-	var capabilities NodeCapabilities
-	if json.Unmarshal(capabilitiesJSON, &capabilities) != nil || (!nativeApplication(request.AppKey) && !capabilities.Docker) {
-		return "", errors.New("center: target node does not report Docker capability")
+	if request.Operation != "uninstall" || manifest.Runtime != nil {
+		if err := requireNodeRuntime(ctx, tx, request.AgentID, manifest); err != nil {
+			return "", err
+		}
 	}
 	var applicationID string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE node_id = ? AND app_key = ?`, request.AgentID, request.AppKey).Scan(&applicationID)
 	if errors.Is(err, sql.ErrNoRows) {
+		if request.Operation != "install" {
+			return "", errors.New("center: existing application was not found")
+		}
 		var randomErr error
 		applicationID, randomErr = randomToken(18)
 		if randomErr != nil {
@@ -61,17 +67,14 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 		if len(manifest.Images) != 0 {
 			image = manifest.Images[0].Reference
 		}
-		runtime := "docker"
-		if nativeApplication(request.AppKey) {
-			runtime = "host"
-		}
+		runtime := packageRuntimeName(manifest)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
 			VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`, applicationID, manifest.Name.English, request.AgentID, siteID, request.AppKey, image, runtime, request.Role, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 			return "", fmt.Errorf("center: create application: %w", err)
 		}
 	} else if err != nil {
 		return "", fmt.Errorf("center: read application: %w", err)
-	} else if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', site_id = ?, runtime = CASE WHEN app_key IN (?, ?) THEN 'host' ELSE runtime END, role = CASE WHEN ? = 'install' THEN ? ELSE role END, updated_at = ? WHERE id = ?`, siteID, komariAppKey, pulseAgentAppKey, request.Operation, request.Role, now.Format(time.RFC3339Nano), applicationID); err != nil {
+	} else if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', site_id = ?, runtime = CASE WHEN ?='uninstall' THEN runtime ELSE ? END, role = CASE WHEN ? = 'install' THEN ? ELSE role END, updated_at = ? WHERE id = ?`, siteID, request.Operation, packageRuntimeName(manifest), request.Operation, request.Role, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return "", fmt.Errorf("center: update application: %w", err)
 	}
 	if request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role == threeXUIRoleMaster {
@@ -100,47 +103,60 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 	return applicationID, nil
 }
 
+// Retire control-plane access after either a confirmed uninstall or explicit
+// offline-node removal. This makes no claim that remote resources were removed.
+func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time, cleanups *[]publicationCleanup) error {
+	var uninstallAppKey string
+	if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&uninstallAppKey); err != nil {
+		return err
+	}
+	values, err := s.applicationPublicationCleanups(ctx, tx, applicationID)
+	if err != nil {
+		return err
+	}
+	if uninstallAppKey == meridianAppKey {
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET enabled=0,runtime_healthy=0,status='revoked',last_error='',updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?) AND status<>'revoked'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_credentials SET enabled=0,updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?)`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM meridian_deployments WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?)`, applicationID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=0,status='retired',last_error='',updated_at=? WHERE application_id=? AND status<>'retired'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'stopped', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'stopped', updated_at = ? WHERE application_id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1,
+		cleanup_pending = CASE WHEN dns_record_id <> '' OR access_application_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
+		cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ?
+		WHERE service_id IN (SELECT id FROM services WHERE application_id = ?) AND status <> 'stopped'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+		return err
+	}
+	if err := s.queueAffectedGateways(ctx, tx, applicationID, now); err != nil {
+		return err
+	}
+	*cleanups = append(*cleanups, values...)
+	return nil
+}
+
 func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, executedRuntimeGeneration int, result ApplicationTaskResult, now time.Time, cleanups *[]publicationCleanup) error {
+	var receiptAppKey string
+	if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&receiptAppKey); err != nil {
+		return err
+	}
+	if err := storePackageReceipt(ctx, tx, deploymentID, applicationID, receiptAppKey, operation, result.Resources, now); err != nil {
+		return err
+	}
 	if operation == "uninstall" {
-		var uninstallAppKey string
-		if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&uninstallAppKey); err != nil {
-			return err
-		}
-		values, err := s.applicationPublicationCleanups(ctx, tx, applicationID)
-		if err != nil {
-			return err
-		}
-		if uninstallAppKey == meridianAppKey {
-			if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET enabled=0,runtime_healthy=0,status='revoked',last_error='',updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?) AND status<>'revoked'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE meridian_credentials SET enabled=0,updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?)`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM meridian_deployments WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?)`, applicationID); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=0,status='retired',last_error='',updated_at=? WHERE application_id=? AND status<>'retired'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'stopped', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'stopped', updated_at = ? WHERE application_id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1,
-			cleanup_pending = CASE WHEN dns_record_id <> '' OR access_application_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
-			cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ?
-			WHERE service_id IN (SELECT id FROM services WHERE application_id = ?) AND status <> 'stopped'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return err
-		}
-		if err := s.queueAffectedGateways(ctx, tx, applicationID, now); err != nil {
-			return err
-		}
-		*cleanups = append(*cleanups, values...)
-		return nil
+		return s.retireApplicationManagement(ctx, tx, applicationID, now, cleanups)
 	}
 	var siteID, appKey, role string
 	if err := tx.QueryRowContext(ctx, `SELECT site_id, app_key, role FROM applications WHERE id = ?`, applicationID).Scan(&siteID, &appKey, &role); err != nil {
@@ -158,7 +174,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	if len(manifest.Images) != 0 {
 		installedImage = manifest.Images[0].Reference
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status='running',image=?,runtime_generation=?,runtime=CASE WHEN app_key IN (?, ?) THEN 'host' ELSE runtime END,updated_at=? WHERE id=?`, installedImage, executedRuntimeGeneration, komariAppKey, pulseAgentAppKey, now.Format(time.RFC3339Nano), applicationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status='running',image=?,runtime_generation=?,runtime=?,updated_at=? WHERE id=?`, installedImage, executedRuntimeGeneration, packageRuntimeName(manifest), now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return err
 	}
 	if appKey == threeXUIAppKey && role == threeXUIRoleWorker {
@@ -532,8 +548,10 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		return nil, err
 	}
 	availableVersions := make(map[string]string, len(apps))
+	availableRevisions := make(map[string]int, len(apps))
 	for _, app := range apps {
 		availableVersions[app.Key] = app.App.Version
+		availableRevisions[app.Key] = app.App.PackageRevision
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.name, a.node_id, a.site_id, a.app_key, a.image, a.status, a.runtime, a.role,
 		CASE WHEN a.app_key = 'vastora-official/3x-ui' THEN COALESCE(control.controller_application_id, '') ELSE '' END,
@@ -541,8 +559,9 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		CASE WHEN a.app_key = 'vastora-official/3x-ui' AND a.role = 'worker' AND COALESCE(n.master_application_id, '') <> COALESCE(control.controller_application_id, '') THEN 'VLESS node is linked to a legacy controller; finish global convergence first' ELSE COALESCE(n.last_error, '') END,
 		COALESCE(b.state, ''), COALESCE(b.updated_at, ''),
 		COALESCE(CASE WHEN latest.operation IN ('install', 'upgrade', 'configure') THEN latest.app_version ELSE '' END, ''),
-		a.created_at, a.updated_at
+		a.created_at, a.updated_at, COALESCE(latest.package_revision,0), COALESCE(resources.adoption_state,''), COALESCE(resources.last_error,'')
 		FROM applications a
+		LEFT JOIN application_resources resources ON resources.application_id=a.id
 		LEFT JOIN three_x_ui_nodes n ON n.worker_application_id = a.id
 		LEFT JOIN three_x_ui_control_plane control ON control.id = 1
 		LEFT JOIN three_x_ui_backups b ON b.application_id = a.id
@@ -561,7 +580,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		var value ApplicationView
 		var created, updated string
 		var restorePointAt string
-		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated); err != nil {
+		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated, &value.InstalledPackageRevision, &value.AdoptionState, &value.AdoptionError); err != nil {
 			return nil, err
 		}
 		if restorePointAt != "" {
@@ -572,7 +591,9 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 			value.RestorePointAt = &parsed
 		}
 		value.AvailableVersion = availableVersions[value.AppKey]
-		value.UpdateAvailable = value.InstalledVersion != "" && semver.Compare(canonicalAppVersion(value.AvailableVersion), canonicalAppVersion(value.InstalledVersion)) > 0
+		value.AvailablePackageRevision = availableRevisions[value.AppKey]
+		comparison := semver.Compare(canonicalAppVersion(value.AvailableVersion), canonicalAppVersion(value.InstalledVersion))
+		value.UpdateAvailable = value.InstalledVersion != "" && (comparison > 0 || comparison == 0 && value.AvailablePackageRevision > value.InstalledPackageRevision)
 		value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 		result = append(result, value)

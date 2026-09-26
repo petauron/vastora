@@ -334,7 +334,7 @@ func TestAssistantCPACredentialRotationRequiresApprovalAndKeepsSecretsOutOfModel
 		t.Fatal(err)
 	}
 	node := enrollOrchestrationNode(t, store, "assistant-cpa-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.93", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.93", LANAddress: "10.0.0.93", EnabledKinds: []string{networking.KindLAN}})
-	install, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	install, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}

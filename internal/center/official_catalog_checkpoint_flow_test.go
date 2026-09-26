@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/sigstore/sigstore/pkg/signature"
 	"github.com/theupdateframework/go-tuf/v2/metadata"
 )
@@ -108,7 +108,7 @@ func TestOfficialCatalogContractFailureRetainsRevocationAcrossRestart(t *testing
 	if err := store.ConfigureOfficialCatalog(ctx, origin); err != nil {
 		t.Fatal(err)
 	}
-	rawCatalog, err := os.ReadFile("../../catalog/catalog.json")
+	rawCatalog, err := os.ReadFile("testdata/reviewed-catalog-v4.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,11 +153,10 @@ func TestOfficialCatalogContractFailureRetainsRevocationAcrossRestart(t *testing
 		t.Fatal(err)
 	}
 	rejected := app
-	rejected.Version = "99.0.1"
-	rejected.HostAccess = true // Valid catalog syntax, unsupported executor permission.
+	rejected.Description.English += " republished immutable recipe"
 	publish(rotatedRoot, newSigners, 2, rejected, before.Acceptance)
-	if count, err := refresh(); err == nil || count != 0 || !strings.Contains(err.Error(), "unsupported executor contract") {
-		t.Fatalf("expected executor contract rejection after verified rotation: count=%d err=%v", count, err)
+	if count, err := refresh(); err == nil || count != 0 || !strings.Contains(err.Error(), "immutable catalog manifest changed") {
+		t.Fatalf("expected immutable recipe rejection after verified rotation: count=%d err=%v", count, err)
 	}
 	checkpoint, retainedTarget, err := store.OfficialCatalogTrust(ctx, "stable")
 	if err != nil {
@@ -174,8 +173,8 @@ func TestOfficialCatalogContractFailureRetainsRevocationAcrossRestart(t *testing
 	}
 	assertRetained(checkpoint, retainedTarget)
 	var rejectedHistory int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM catalog_manifest_history WHERE source_id = ? AND app_id = ? AND version = ?`, OfficialCatalogSourceID, app.ID, rejected.Version).Scan(&rejectedHistory); err != nil || rejectedHistory != 0 {
-		t.Fatalf("rejected catalog entered immutable history: count=%d err=%v", rejectedHistory, err)
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM catalog_manifest_history WHERE source_id = ? AND app_id = ? AND version = ?`, OfficialCatalogSourceID, app.ID, rejected.Version).Scan(&rejectedHistory); err != nil || rejectedHistory != 1 {
+		t.Fatalf("rejected catalog changed original immutable history: count=%d err=%v", rejectedHistory, err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)

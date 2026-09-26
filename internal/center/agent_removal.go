@@ -308,7 +308,7 @@ func (s *Store) prepareAgentRemoval(ctx context.Context, id string) error {
 	for _, app := range apps {
 		var cleanups []publicationCleanup
 		// This is desired-state retirement, NOT a fabricated Agent completion.
-		if err = s.completeApplication(ctx, tx, "", app, "uninstall", 0, ApplicationTaskResult{}, now, &cleanups); err != nil {
+		if err = s.retireApplicationManagement(ctx, tx, app, now, &cleanups); err != nil {
 			return err
 		}
 	}

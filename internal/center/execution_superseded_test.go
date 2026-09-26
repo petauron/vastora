@@ -26,7 +26,7 @@ func TestSupersededFailedLandingExecutionReleasesFence(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+				deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 				if err != nil {
 					t.Fatal(err)
 				}

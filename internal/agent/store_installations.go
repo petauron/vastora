@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -123,7 +123,10 @@ func (s *Store) AppliedInstallation(ctx context.Context, appKey string) (Applied
 	value.Manifest = state.Manifest
 	value.ApplicationRole = state.ApplicationRole
 	if value.Manifest.ID != "" {
-		if catalog.ValidateApp(value.Manifest) != nil || !strings.HasSuffix(value.AppKey, "/"+value.Manifest.ID) || value.Version != value.Manifest.Version {
+		// Historical v3 manifests remain encrypted audit evidence. They are not
+		// executable recipes; the v4 executor requires one-shot verified adoption.
+		legacyEvidence := value.Manifest.PackageRevision == 0 && value.Manifest.Runtime == nil
+		if (!legacyEvidence && catalog.ValidateApp(value.Manifest) != nil) || !strings.HasSuffix(value.AppKey, "/"+value.Manifest.ID) || value.Version != value.Manifest.Version {
 			return AppliedInstallation{}, errors.New("agent: persisted application manifest is invalid")
 		}
 	}

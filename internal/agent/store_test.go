@@ -19,7 +19,7 @@ func TestAppliedStatePersistsSecretsLocally(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	task := komariTestTask("https://example.invalid/komari-agent", strings.Repeat("0", 64))
+	task := packageTestTask(t)
 	status, err := store.RecordApplied(context.Background(), AppliedInstallation{
 		InstanceID: "komari-main", AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest,
 		Config: json.RawMessage(`{"timezone":"UTC"}`), Secrets: json.RawMessage(`{"apiKey":"not-in-status"}`),
@@ -49,13 +49,13 @@ func TestAppliedStatePersistsSecretsLocally(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT sealed_state FROM applied_installations WHERE instance_id = ?`, "komari-main").Scan(&sealedState); err != nil {
 		t.Fatal(err)
 	}
-	for _, privateValue := range []string{"UTC", "not-in-status", "komari-agent"} {
+	for _, privateValue := range []string{"UTC", "not-in-status", task.Manifest.ID} {
 		if strings.Contains(string(sealedState), privateValue) {
 			t.Fatalf("sealed application state leaked %q", privateValue)
 		}
 	}
 	restorable, err := store.RestorableInstallations(context.Background())
-	if err != nil || len(restorable) != 1 || restorable[0].Manifest.ID != "komari-agent" || string(restorable[0].Secrets) != `{"apiKey":"not-in-status"}` {
+	if err != nil || len(restorable) != 1 || restorable[0].Manifest.ID != task.Manifest.ID || string(restorable[0].Secrets) != `{"apiKey":"not-in-status"}` {
 		t.Fatalf("restorable state = %#v, err=%v", restorable, err)
 	}
 }
@@ -182,7 +182,17 @@ func TestAgentSchemaV8PurgesOnlyUnrestorableLegacyState(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := komariTestTask("https://example.invalid/komari-agent", strings.Repeat("0", 64))
-	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets}); err != nil {
+	// Historical v3 data is written as its original encrypted audit evidence,
+	// not passed through the current v4 installation admission path.
+	legacyState, err := json.Marshal(sealedApplicationState{Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := secret.Seal(store.key, legacyState, applicationStateContext(task.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO applied_installations(instance_id,app_key,version,sealed_state,config_hash,applied_at) VALUES(?,?,?,?,?,?)`, task.ID, task.AppKey, task.Manifest.Version, sealed, strings.Repeat("0", 64), store.now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`DROP TABLE meridian_runtime_state; DROP TABLE landing_controller_state;

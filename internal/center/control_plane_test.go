@@ -185,7 +185,7 @@ func TestLegacyAgentCannotLeaseTaskBeforeEncryptionIdentityBackfill(t *testing.T
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET x25519_public_key = X'' WHERE id = ?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestLegacyAgentCannotLeaseTaskBeforeEncryptionIdentityBackfill(t *testing.T
 		t.Fatalf("task was leased before encryption identity backfill: state=%q err=%v", state, err)
 	}
 	publicKey := testAgentPublicKey(t)
-	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{PublicKey: publicKey, Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{PublicKey: publicKey, Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true, ExecutorVersions: map[string]int{"docker": 1, "systemd": 1}, RuntimeCapabilities: []string{"root"}}, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential); err != nil || task == nil || task.ID != deployment.ID {
@@ -216,7 +216,7 @@ func TestDeploymentLeasesBoundRegistryCredentialOnlyToMatchingImageTask(t *testi
 	}
 	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{
 		AgentID: node.ID, AppKey: cpaAppKey, RegistryCredentialID: &credential.ID,
-		Config: json.RawMessage(`{"debug":false}`),
+		Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -249,14 +249,14 @@ func TestRegistryCredentialBindingCanBePreservedAndExplicitlyCleared(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, RegistryCredentialID: &credential.ID, Config: json.RawMessage(`{"debug":false}`)})
+	initial, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, RegistryCredentialID: &credential.ID, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET state = 'succeeded' WHERE id = ?`, initial.ID); err != nil {
 		t.Fatal(err)
 	}
-	preserved, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", Config: json.RawMessage(`{"debug":true}`)})
+	preserved, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", Config: json.RawMessage(`{"debug":true}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestRegistryCredentialBindingCanBePreservedAndExplicitlyCleared(t *testing.
 		t.Fatal(err)
 	}
 	clear := ""
-	cleared, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", RegistryCredentialID: &clear, Config: json.RawMessage(`{"debug":false}`)})
+	cleared, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", RegistryCredentialID: &clear, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestRegistryCredentialRotationAndSafeDeletion(t *testing.T) {
 	if rotated.ID != credential.ID || rotated.Host != credential.Host || rotated.Username != "robot-new" {
 		t.Fatalf("rotated credential = %#v", rotated)
 	}
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, RegistryCredentialID: &credential.ID, Config: json.RawMessage(`{"debug":false}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, RegistryCredentialID: &credential.ID, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestRegistryCredentialRotationAndSafeDeletion(t *testing.T) {
 		t.Fatalf("active Registry binding deletion = %v", err)
 	}
 	clear := ""
-	cleared, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", RegistryCredentialID: &clear, Config: json.RawMessage(`{"debug":true}`)})
+	cleared, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", RegistryCredentialID: &clear, Config: json.RawMessage(`{"debug":true}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}

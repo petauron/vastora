@@ -11,9 +11,12 @@ import (
 	"github.com/petauron/vastora/internal/platform"
 )
 
+func testCapabilityGrant(capabilities ...string) *[]string { return &capabilities }
+
 func installCPA(t *testing.T, store *Store, node AgentCredential, address string) string {
 	t.Helper()
-	deployment, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: json.RawMessage(`{"debug":false}`)})
+	grants := []string{"root"}
+	deployment, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: &grants})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,9 +46,38 @@ func completeNextTask(t *testing.T, store *Store, node AgentCredential, kind str
 	if task.Kind != kind {
 		t.Fatalf("got task kind %q, want %q", task.Kind, kind)
 	}
+	result = mockPackageResult(t, task, result)
 	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func mockPackageResult(t *testing.T, task *AgentTask, result json.RawMessage) json.RawMessage {
+	t.Helper()
+	if task.Kind == "application.apply" && task.PackageRevision > 0 {
+		// Simulate the authenticated executor's metadata-only completion receipt;
+		// this helper does not stand in for the runtime's isolated integration tests.
+		var output map[string]any
+		if len(result) == 0 {
+			output = map[string]any{}
+		} else if err := json.Unmarshal(result, &output); err != nil {
+			t.Fatal(err)
+		}
+		state := "ready"
+		if task.Operation == "uninstall" {
+			state = "retained"
+			if task.DeleteData {
+				state = "removed"
+			}
+		}
+		output["resources"] = map[string]any{"version": 1, "applicationId": task.ApplicationID, "appKey": task.AppKey, "taskId": task.ID, "runtime": task.Manifest.Runtime.Kind, "packageVersion": task.Manifest.Version, "packageRevision": task.PackageRevision, "manifestSha256": task.ManifestSHA256, "authorizedCapabilities": task.AuthorizedCapabilities, "state": state, "resources": []any{map[string]any{"kind": "container", "logicalName": "app", "name": "isolated-fixture-" + task.ApplicationID, "id": "fixture-container-id"}}}
+		var err error
+		result, err = json.Marshal(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return result
 }
 
 func openOrchestrationStore(t *testing.T) *Store {
@@ -54,7 +86,7 @@ func openOrchestrationStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := os.ReadFile("../../catalog/catalog.json")
+	payload, err := os.ReadFile("testdata/reviewed-catalog-v4.json")
 	if err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -100,8 +132,20 @@ func configureBuiltinHeadscaleForTest(t *testing.T, store *Store) {
 	}
 }
 
+func testRuntimeCapabilities(capabilities NodeCapabilities) NodeCapabilities {
+	if capabilities.ExecutorVersions == nil {
+		capabilities.ExecutorVersions = map[string]int{"systemd": 1}
+		if capabilities.Docker {
+			capabilities.ExecutorVersions["docker"] = 1
+		}
+		capabilities.RuntimeCapabilities = []string{"root", "host-network", "host-path", "devices"}
+	}
+	return capabilities
+}
+
 func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabilities NodeCapabilities, candidates []networking.Candidate, profile networking.Profile) AgentCredential {
 	t.Helper()
+	capabilities = testRuntimeCapabilities(capabilities)
 	ctx := context.Background()
 	enrollment, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: name, CenterURL: "https://center.example.com", Gateway: capabilities.Gateway, Tunnel: capabilities.Tunnel})
 	if err != nil {

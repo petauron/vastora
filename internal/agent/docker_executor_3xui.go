@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/containerd/errdefs"
-	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/mount"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/dockerruntime"
@@ -26,122 +24,6 @@ import (
 const (
 	threeXUIRealityPort = 443
 )
-
-func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentTask, bindAddress string) (string, error) {
-	if task.Manifest.ID != "3x-ui" || ValidateOfficialContract(task.Manifest) != nil {
-		return "", errors.New("agent: unsupported official 3x-ui package")
-	}
-	settings, err := decodeThreeXUIConfig(task.Config)
-	if err != nil {
-		return "", err
-	}
-	credentials, err := decodeThreeXUISecrets(task.Secrets)
-	if err != nil {
-		return "", err
-	}
-	// Recover a previously interrupted replacement before any registry access.
-	// An image pull failure must never leave the last known-good instance down.
-	if err := validateThreeXUIOwnership(ctx, docker, task.ApplicationID); err != nil {
-		return "", err
-	}
-	if err := requireNoInterruptedThreeXUIDeploy(ctx, docker); err != nil {
-		// Cleanup of a stale candidate/rollback marker can fail after this exact
-		// deployment was already promoted. Do not false-fail the committed task:
-		// the immutable deployment label lets the token fast path reconcile it,
-		// while maintenance keeps retrying non-critical marker cleanup.
-		committed, inspectErr := threeXUIRecoveryErrorIsPostCommitCleanup(ctx, docker, task.ID)
-		if inspectErr != nil || !committed {
-			cause := errors.Join(err, inspectErr)
-			if task.Attempt > 1 {
-				return "", uncertainTaskOutcome(cause)
-			}
-			return "", cause
-		}
-	}
-	if token, committed, err := committedThreeXUIDeploymentToken(ctx, docker, task.ID, bindAddress, settings.PanelPort); err != nil {
-		return "", uncertainTaskOutcome(err)
-	} else if committed {
-		baseURL := "http://" + net.JoinHostPort(bindAddress, strconv.Itoa(settings.PanelPort))
-		if _, err := threeXUIRequest(ctx, http.MethodPost, baseURL+"/panel/api/setting/all", token, map[string]any{}); err != nil {
-			return "", uncertainTaskOutcome(fmt.Errorf("agent: verify reconciled 3x-ui API: %w", err))
-		}
-		if _, err := reportedServices(ctx, task, bindAddress); err != nil {
-			return "", uncertainTaskOutcome(err)
-		}
-		return token, nil
-	}
-	imageRef, err := pullDeclaredImage(ctx, docker, task, "3x-ui")
-	if err != nil {
-		return "", fmt.Errorf("agent: pull 3x-ui image: %w", err)
-	}
-	exposedPorts, portBindings, err := threeXUIPorts(bindAddress, settings.PanelPort, task.ApplicationRole)
-	if err != nil {
-		return "", err
-	}
-	if err := preserveThreeXUIHY2Port(ctx, docker, exposedPorts, portBindings); err != nil {
-		return "", err
-	}
-	createOptions := client.ContainerCreateOptions{
-		Config: &container.Config{
-			Image:        imageRef,
-			Tty:          true,
-			ExposedPorts: exposedPorts,
-			Labels:       applicationResourceLabels(threeXUIKey, "3x-ui", task.ApplicationID, task.ID),
-			Env: []string{
-				"TZ=" + settings.Timezone,
-				"XUI_INIT_WEB_BASE_PATH=/",
-				"XUI_SKIP_HSTS=true",
-				"XUI_ENABLE_FAIL2BAN=" + strconv.FormatBool(settings.EnableFail2ban),
-				"XRAY_VMESS_AEAD_FORCED=" + strconv.FormatBool(settings.VMessAEADForced),
-			},
-		},
-		HostConfig: &container.HostConfig{
-			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
-			CapAdd:        []string{"NET_ADMIN", "NET_RAW"},
-			NetworkMode:   container.NetworkMode(dockerruntime.NetworkName),
-			PortBindings:  portBindings,
-			Mounts: []mount.Mount{
-				{Type: mount.TypeVolume, Source: threeXUIDatabaseVolume, Target: "/etc/x-ui"},
-				{Type: mount.TypeVolume, Source: "vastora-3x-ui-cert", Target: "/root/cert"},
-				{Type: mount.TypeVolume, Source: "vastora-3x-ui-acme", Target: "/root/.acme.sh"},
-			},
-		},
-		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.ThreeXUIAlias),
-		Name:             threeXUICandidateContainer,
-	}
-	if err := ensureOwnedApplicationVolumes(ctx, docker, applicationVolumes[threeXUIKey][1:], threeXUIKey, task.ApplicationID); err != nil {
-		return "", err
-	}
-	return replaceThreeXUIContainer(ctx, docker, createOptions, true, func(containerID string) (string, error) {
-		if err := configureThreeXUI(ctx, docker, containerID, bindAddress, settings.PanelPort, credentials); err != nil {
-			return "", err
-		}
-		apiToken, err := threeXUIAPIToken(ctx, docker, containerID)
-		if err != nil {
-			return "", err
-		}
-		if err := configureThreeXUISubscriptionRole(ctx, bindAddress, settings.PanelPort, apiToken, task.ApplicationRole); err != nil {
-			return apiToken, err
-		}
-		return apiToken, nil
-	}, func(containerID, apiToken string) error {
-		inspected, err := docker.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
-		if err != nil {
-			return fmt.Errorf("inspect promoted container: %w", err)
-		}
-		if inspected.Container.State == nil || !inspected.Container.State.Running {
-			return errors.New("promoted container is not running")
-		}
-		baseURL := "http://" + net.JoinHostPort(bindAddress, strconv.Itoa(settings.PanelPort))
-		if _, err := threeXUIRequest(ctx, http.MethodPost, baseURL+"/panel/api/setting/all", apiToken, map[string]any{}); err != nil {
-			return fmt.Errorf("verify promoted 3x-ui API: %w", err)
-		}
-		if _, err := reportedServices(ctx, task, bindAddress); err != nil {
-			return err
-		}
-		return nil
-	})
-}
 
 func threeXUIPorts(bindAddress string, panelPort int, role string) (dockernetwork.PortSet, dockernetwork.PortMap, error) {
 	if role != "master" {

@@ -20,7 +20,7 @@ func TestExecutionProjectionAndOutcomeCommitAtomically(t *testing.T) {
 			defer store.Close()
 			ctx := context.Background()
 			node := enrollOrchestrationNode(t, store, "atomic-result", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.19", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.19", LANAddress: "10.0.0.19", EnabledKinds: []string{networking.KindLAN}})
-			created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+			created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -53,7 +53,7 @@ func TestExecutionProjectionAndOutcomeCommitAtomically(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			result := cpaApplicationResult("10.0.0.19")
+			result := mockPackageResult(t, task, cpaApplicationResult("10.0.0.19"))
 			if failure == "invalid-result" {
 				result = json.RawMessage(`{"generatedSecrets":{"management_key":"retained-test-secret"}}`)
 			}

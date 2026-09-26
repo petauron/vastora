@@ -74,7 +74,7 @@ func (s *Store) prepareLandingXrayRuntimeMigration(ctx context.Context, task Dep
 	}
 	// The audited Meridian install only prepares its image. The complete runtime
 	// command, not package preparation, owns the one-way landing handover.
-	if task.AppKey == meridianKey && task.Operation == "install" && task.Manifest.ID == "meridian" && ValidateOfficialContract(task.Manifest) == nil {
+	if task.AppKey == meridianKey && task.Operation == "install" && task.Manifest.ID == "meridian" && validatePackageTask(task) == nil {
 		if state, err := s.landingRuntime(ctx); err != nil {
 			return nil, err
 		} else if state != nil && state.Route != nil && state.ApplicationID != task.ApplicationID {

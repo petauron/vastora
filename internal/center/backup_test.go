@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/backupcrypto"
-	"github.com/petauron/vastora/internal/catalog"
 )
 
 func TestOfficialCatalogRestoreRequiresRefreshAndPreservesReplayFloor(t *testing.T) {
@@ -80,7 +80,7 @@ func TestOfficialCatalogRestoreRequiresRefreshAndPreservesReplayFloor(t *testing
 		t.Fatal(err)
 	}
 	for _, app := range apps {
-		if app.InstallBlocked {
+		if requireCatalogRuntime(app.App) == nil && app.InstallBlocked {
 			t.Fatal("verified refresh did not reauthorize catalog")
 		}
 	}

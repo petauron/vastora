@@ -19,15 +19,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/agent"
-	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/sigstore/sigstore/pkg/signature"
 	"github.com/theupdateframework/go-tuf/v2/metadata"
 )
 
-// Real signed HTTPS publication -> authenticated Center API -> Agent typed
+// Real signed HTTPS publication -> authenticated Center API -> generic Agent
 // executor -> checksum-verified filesystem install -> reported completion.
 // Only systemd is simulated so this test never starts a host service. This is
 // an integration test of the update workflow, not a live Komari service test.
@@ -112,7 +112,7 @@ func TestOfficialCatalogIndependentUpdateThroughInstallWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := enrollOrchestrationNode(t, store, "catalog-test-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.45", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.45", LANAddress: "10.0.0.45", EnabledKinds: []string{networking.KindLAN}})
-	rawCatalog, err := os.ReadFile("../../catalog/catalog.json")
+	rawCatalog, err := os.ReadFile("testdata/reviewed-catalog-v4.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +129,7 @@ func TestOfficialCatalogIndependentUpdateThroughInstallWorkflow(t *testing.T) {
 	if template.ID == "" {
 		t.Fatal("missing compiled native executor fixture")
 	}
+	var offered catalog.AppManifest
 	publish := func(revision uint64, version string) catalog.AppManifest {
 		t.Helper()
 		app := template
@@ -180,6 +181,7 @@ func TestOfficialCatalogIndependentUpdateThroughInstallWorkflow(t *testing.T) {
 		if _, err := server.RefreshCatalogSource(ctx, OfficialCatalogSourceID); err != nil {
 			t.Fatal(err)
 		}
+		offered = app
 		return app
 	}
 	create := func(operation string, config json.RawMessage, authorize bool) *httptest.ResponseRecorder {
@@ -187,7 +189,16 @@ func TestOfficialCatalogIndependentUpdateThroughInstallWorkflow(t *testing.T) {
 		if config == nil {
 			config = json.RawMessage(`{}`)
 		}
-		body, err := json.Marshal(DeploymentRequest{AgentID: node.ID, AppKey: komariAppKey, Operation: operation, Config: config})
+		input := DeploymentRequest{AgentID: node.ID, AppKey: komariAppKey, Operation: operation, Config: config}
+		if operation == "install" || operation == "upgrade" {
+			_, _, digest, err := canonicalPackage(offered)
+			if err != nil {
+				t.Fatal(err)
+			}
+			revision := offered.PackageRevision
+			input.PackageRevision, input.ManifestSHA256 = &revision, digest
+		}
+		body, err := json.Marshal(input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -202,11 +213,18 @@ func TestOfficialCatalogIndependentUpdateThroughInstallWorkflow(t *testing.T) {
 		return response
 	}
 	hostRoot := t.TempDir()
+	hostRoot, err = filepath.EvalSymlinks(hostRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var commands []string
-	executor := agent.ApplicationExecutor{DockerSocket: "unix://" + filepath.Join(hostRoot, "absent-docker.sock"), Host: agent.SystemdHostApplicationManager{RootDir: hostRoot, HTTPClient: distribution.Client(), HostTarget: platform.Target{OS: "linux", Architecture: "amd64"}, RunCommand: func(_ context.Context, name string, args ...string) error {
+	executor := agent.ApplicationExecutor{PackageStateDirectory: filepath.Join(hostRoot, "agent-state"), DockerSocket: "unix://" + filepath.Join(hostRoot, "absent-docker.sock"), Host: agent.SystemdHostApplicationManager{RootDir: hostRoot, HTTPClient: distribution.Client(), HostTarget: platform.Target{OS: "linux", Architecture: "amd64"}, RunCommand: func(_ context.Context, name string, args ...string) error {
 		commands = append(commands, name+" "+strings.Join(args, " "))
 		return nil
+	}, ReadCommand: func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("MainPID=42\nInvocationID=test-systemd-instance\nActiveEnterTimestampMonotonic=100\n"), nil
 	}}}
+	var installedPath string
 	execute := func(operation, version string) {
 		t.Helper()
 		task := claimTask(t, store, node)
@@ -225,6 +243,14 @@ func TestOfficialCatalogIndependentUpdateThroughInstallWorkflow(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if result.Resources == nil {
+			t.Fatal("generic runtime did not report ownership receipt")
+		}
+		for _, resource := range result.Resources.Resources {
+			if resource.Kind == "file" && resource.LogicalName == "artifact:komari-agent" {
+				installedPath = filepath.Join(hostRoot, strings.TrimPrefix(resource.Path, "/"))
+			}
+		}
 		reported, err := json.Marshal(result)
 		if err != nil {
 			t.Fatal(err)
@@ -242,7 +268,9 @@ func TestOfficialCatalogIndependentUpdateThroughInstallWorkflow(t *testing.T) {
 		t.Fatalf("install returned %d: %s", response.Code, response.Body.String())
 	}
 	execute("install", first.Version)
-	installedPath := filepath.Join(hostRoot, "opt/komari/agent")
+	if installedPath == "" {
+		t.Fatal("generic runtime did not report installed executable")
+	}
 	firstBinary, err := os.ReadFile(installedPath)
 	if err != nil {
 		t.Fatal(err)

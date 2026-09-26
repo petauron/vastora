@@ -84,7 +84,7 @@ func TestPulseEnrollmentPrivateHTTPSAndNativeInstall(t *testing.T) {
 	if strings.Contains(string(installTask.Config), `"interval_seconds"`) {
 		t.Fatal("Center must not send a metrics interval override to the collector")
 	}
-	if err := store.CompleteTask(ctx, collector.ID, collector.Credential, installTask.ID, installTask.Attempt, true, "", json.RawMessage(`{"services":[]}`), installTask.RequiredRuntimeGeneration); err != nil {
+	if err := store.CompleteTask(ctx, collector.ID, collector.Credential, installTask.ID, installTask.Attempt, true, "", mockPackageResult(t, installTask, json.RawMessage(`{"services":[]}`)), installTask.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	var runtime string
@@ -142,10 +142,7 @@ func TestPulseMigrationPreservesExistingCommands(t *testing.T) {
 	if err := legacy.Close(); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openBeforeCatalogMaintenanceForTest(t, dir)
 	defer store.Close()
 	var rowid, attempt int
 	var input, state string
@@ -164,4 +161,5 @@ func TestPulseMigrationPreservesExistingCommands(t *testing.T) {
 	if err != nil || len(backups) != 1 {
 		t.Fatal("pre-migration backup missing")
 	}
+	finishCatalogMaintenanceFixture(t, store, dir)
 }

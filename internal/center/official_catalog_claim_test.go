@@ -91,7 +91,7 @@ func TestOfficialCatalogRejectionAndFailedEventAreAtomic(t *testing.T) {
 				installOfficialClaimCPA(t, store, node, "running")
 			}
 			queued, err := store.CreateDeployment(context.Background(), DeploymentRequest{
-				AgentID: node.ID, AppKey: cpaAppKey, Operation: operation, Config: json.RawMessage(`{"debug":false}`),
+				AgentID: node.ID, AppKey: cpaAppKey, Operation: operation, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root"),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -206,7 +206,7 @@ func newOfficialClaimStore(t *testing.T) (*Store, AgentCredential) {
 func installOfficialClaimCPA(t *testing.T, store *Store, node AgentCredential, status string) string {
 	t.Helper()
 	installed, err := store.CreateDeployment(context.Background(), DeploymentRequest{
-		AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`),
+		AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +238,7 @@ func installOfficialClaimCPA(t *testing.T, store *Store, node AgentCredential, s
 
 func queueOfficialClaimUpgrade(t *testing.T, store *Store, node AgentCredential) DeploymentView {
 	t.Helper()
-	queued, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"})
+	queued, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade", AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}

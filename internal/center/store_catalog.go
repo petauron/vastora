@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/distribution/reference"
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 const OfficialCatalogSourceID = "vastora-official"
@@ -74,13 +74,17 @@ type sourceCredential struct {
 }
 
 type AppView struct {
-	Key              string              `json:"key"`
-	SourceID         string              `json:"sourceId"`
-	App              catalog.AppManifest `json:"app"`
-	FetchedAt        time.Time           `json:"fetchedAt"`
-	CatalogExpiresAt *time.Time          `json:"catalogExpiresAt,omitempty"`
-	CatalogRevision  uint64              `json:"catalogRevision,omitempty"`
-	InstallBlocked   bool                `json:"installBlocked,omitempty"`
+	Key                  string              `json:"key"`
+	SourceID             string              `json:"sourceId"`
+	App                  catalog.AppManifest `json:"app"`
+	FetchedAt            time.Time           `json:"fetchedAt"`
+	CatalogExpiresAt     *time.Time          `json:"catalogExpiresAt,omitempty"`
+	CatalogRevision      uint64              `json:"catalogRevision,omitempty"`
+	InstallBlocked       bool                `json:"installBlocked,omitempty"`
+	InstallBlockedReason string              `json:"installBlockedReason,omitempty"`
+	ManifestSHA256       string              `json:"manifestSha256"`
+	ManagedConfigFields  []string            `json:"managedConfigFields,omitempty"`
+	PermissionDetails    []string            `json:"permissionDetails,omitempty"`
 }
 
 type RegistryCredential struct {
@@ -617,9 +621,9 @@ func recordCatalogManifestHistory(ctx context.Context, tx *sql.Tx, sourceID stri
 		digest := sha256.Sum256(encoded)
 		digestString := hex.EncodeToString(digest[:])
 		var existing string
-		err = tx.QueryRowContext(ctx, `SELECT manifest_sha256 FROM catalog_manifest_history WHERE source_id = ? AND app_id = ? AND version = ?`, sourceID, canonical.ID, canonical.Version).Scan(&existing)
+		err = tx.QueryRowContext(ctx, `SELECT manifest_sha256 FROM catalog_manifest_history WHERE source_id = ? AND app_id = ? AND version = ? AND package_revision = ?`, sourceID, canonical.ID, canonical.Version, canonical.PackageRevision).Scan(&existing)
 		if errors.Is(err, sql.ErrNoRows) {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO catalog_manifest_history(source_id, app_id, version, manifest_sha256, first_seen_at) VALUES(?, ?, ?, ?, ?)`, sourceID, canonical.ID, canonical.Version, digestString, now); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO catalog_manifest_history(source_id, app_id, version, package_revision, manifest_sha256, first_seen_at) VALUES(?, ?, ?, ?, ?, ?)`, sourceID, canonical.ID, canonical.Version, canonical.PackageRevision, digestString, now); err != nil {
 				return fmt.Errorf("center: record immutable catalog manifest %s/%s@%s: %w", sourceID, canonical.ID, canonical.Version, err)
 			}
 			continue
@@ -635,6 +639,9 @@ func recordCatalogManifestHistory(ctx context.Context, tx *sql.Tx, sourceID stri
 }
 
 func (s *Store) BackfillCatalogManifestHistory(ctx context.Context) error {
+	if err := s.backfillLegacyCatalogHistory(ctx); err != nil {
+		return err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT c.source_id, c.envelope, s.public_key FROM catalog_cache c JOIN catalog_sources s ON s.id = c.source_id ORDER BY c.source_id`)
 	if err != nil {
 		return fmt.Errorf("center: read cached catalogs for immutable history: %w", err)
@@ -683,6 +690,62 @@ func (s *Store) BackfillCatalogManifestHistory(ctx context.Context) error {
 		return fmt.Errorf("center: commit immutable catalog history backfill: %w", err)
 	}
 	return nil
+}
+
+// Historical catalogs are audit input only. Their original key is captured at
+// migration, so a later source-key rotation cannot reinterpret old evidence.
+func (s *Store) backfillLegacyCatalogHistory(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT source_id,payload,public_key FROM catalog_legacy_evidence ORDER BY source_id`)
+	if err != nil {
+		return err
+	}
+	type historical struct {
+		source    string
+		manifests []catalog.LegacyManifestEvidence
+	}
+	var values []historical
+	for rows.Next() {
+		var source string
+		var raw, key []byte
+		if err = rows.Scan(&source, &raw, &key); err != nil {
+			rows.Close()
+			return err
+		}
+		manifests, auditErr := catalog.AuditLegacyEnvelope(raw, ed25519.PublicKey(key))
+		if auditErr != nil {
+			rows.Close()
+			return fmt.Errorf("center: legacy catalog evidence %s cannot be verified: %w", source, auditErr)
+		}
+		values = append(values, historical{source: source, manifests: manifests})
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, value := range values {
+		for _, manifest := range value.manifests {
+			var existing string
+			err = tx.QueryRowContext(ctx, `SELECT manifest_sha256 FROM catalog_manifest_history WHERE source_id=? AND app_id=? AND version=? AND package_revision=0`, value.source, manifest.ID, manifest.Version).Scan(&existing)
+			if err == nil && existing != manifest.SHA256 {
+				return errors.New("center: legacy immutable manifest evidence changed")
+			}
+			if errors.Is(err, sql.ErrNoRows) {
+				_, err = tx.ExecContext(ctx, `INSERT INTO catalog_manifest_history(source_id,app_id,version,package_revision,manifest_sha256,first_seen_at) VALUES(?,?,?,0,?,?)`, value.source, manifest.ID, manifest.Version, manifest.SHA256, s.now().UTC().Format(time.RFC3339Nano))
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListApps(ctx context.Context) ([]AppView, error) {
@@ -734,6 +797,19 @@ func (s *Store) ListApps(ctx context.Context) ([]AppView, error) {
 		now := s.now().UTC()
 		for _, app := range value.Apps {
 			apps = append(apps, AppView{Key: OfficialCatalogSourceID + "/" + app.ID, SourceID: OfficialCatalogSourceID, App: app, FetchedAt: acceptance.ObservedAt, CatalogRevision: acceptance.Revision, CatalogExpiresAt: &acceptance.ExpiresAt, InstallBlocked: now.Before(acceptance.ObservedAt) || !now.Before(acceptance.ExpiresAt)})
+		}
+	}
+	for i := range apps {
+		_, _, digest, err := canonicalPackage(apps[i].App)
+		if err != nil {
+			return nil, err
+		}
+		apps[i].ManifestSHA256 = digest
+		apps[i].ManagedConfigFields = managedConfigFields(apps[i].Key)
+		apps[i].PermissionDetails = packagePermissionDetails(apps[i].App)
+		if err := requireCatalogRuntime(apps[i].App); err != nil {
+			apps[i].InstallBlocked = true
+			apps[i].InstallBlockedReason = err.Error()
 		}
 	}
 	return apps, nil

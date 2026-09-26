@@ -22,7 +22,7 @@ require_line "$ci_workflow" '    name: CI / gate'
 require_line "$center_dockerfile" 'COPY catalog/trust/ /app/catalog-trust/'
 require_line "$project_dir/.dockerignore" '**/*_test.go'
 require_line "$project_dir/deploy/center/compose.yaml" '${VASTORA_OFFICIAL_CATALOG_ROOT:-/app/catalog-trust/1.root.json}'
-require_line "$project_dir/.github/workflows/release.yml" 'go run ./cmd/catalog-check --catalog catalog/catalog.json --root-directory catalog/trust'
+require_line "$project_dir/.github/workflows/release.yml" 'go run github.com/petauron/catalog/cmd/catalog-check --catalog internal/center/testdata/reviewed-catalog-v4.json --root-directory catalog/trust'
 require_line "$ci_workflow" '    name: Go race tests'
 require_line "$ci_workflow" '    name: Go quality and security'
 require_line "$ci_workflow" '    name: Go cross-compile'
@@ -89,7 +89,7 @@ ci_frontend="$(printf '%s\n' 'web/src/App.tsx' | "$classifier" --files ci)"
 ci_lockfile="$(printf '%s\n' 'web/package-lock.json' | "$classifier" --files ci)"
 codeql_go="$(printf '%s\n' 'internal/center/server.go' | "$classifier" --files codeql)"
 ci_openapi="$(printf '%s\n' 'docs/openapi.json' | "$classifier" --files ci)"
-ci_catalog="$(printf '%s\n' 'catalog/catalog.json' | "$classifier" --files ci)"
+ci_catalog="$(printf '%s\n' 'internal/center/testdata/reviewed-catalog-v4.json' | "$classifier" --files ci)"
 ci_catalog_root="$(printf '%s\n' 'catalog/trust/1.root.json' | "$classifier" --files ci)"
 if ! printf '%s\n' "$ci_catalog" | grep -Fq 'container=false' || ! printf '%s\n' "$ci_catalog_root" | grep -Fq 'container=true'; then
   echo 'Catalog content is independently published; reviewed bootstrap roots must be packaged with Center.' >&2
