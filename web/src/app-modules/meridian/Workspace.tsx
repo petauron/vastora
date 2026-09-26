@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { EllipsisIcon, MonitorIcon, SearchIcon } from "lucide-react";
+import { EllipsisIcon, SearchIcon } from "lucide-react";
 import type { AppWorkspaceProps } from "@/app-workspaces/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,16 +32,16 @@ export function MeridianWorkspace({ group, data, language, mutate, onManage, onU
   const controllerAttention = controller?.publications.some((publication) => controllerWebIDs.has(publication.serviceId) && publicationNeedsAttention(publication));
   const accounts = manifest.pages.find((item) => item.surface === "manager")!;
   return <section aria-label="Meridian" className="apps-three-xui flex min-w-0 flex-col gap-3" data-app-workspace={manifest.appKey}>
-    <header><h2 className="text-base font-medium">Meridian</h2><p className="mt-1 text-xs text-muted-foreground">{copy(language, `${entries.length} 个线路机 · ${landing?.view?.servers.length ?? "—"} 个落地机`, `${entries.length} entry nodes · ${landing?.view?.servers.length ?? "—"} landing nodes`)}</p></header>
+    <header className="flex items-baseline gap-3"><h2 className="text-base font-medium">Meridian</h2><p className="text-xs text-muted-foreground">{copy(language, `${entries.length} 个线路机 · ${landing?.view?.servers.length ?? "—"} 个落地机`, `${entries.length} entry nodes · ${landing?.view?.servers.length ?? "—"} landing nodes`)}</p></header>
     <LandingNotice language={language} />
     <div className="apps-three-xui-toolbar flex flex-wrap items-center gap-3 py-2">
       <InputGroup className="w-full sm:w-48"><InputGroupInput type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={copy(language, "搜索节点", "Search nodes")} placeholder={copy(language, "搜索节点…", "Search nodes…")} /><InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon></InputGroup>
-      {controller ? <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2"><MonitorIcon aria-hidden="true" className="size-4 text-muted-foreground" /><span className="text-xs text-muted-foreground">{copy(language, "订阅主机", "Subscription controller")}</span><span className="text-sm">{controller.agent?.name ?? controller.application.nodeId}</span>{controller.activeChange || controller.application.status !== "running" ? <ApplicationPrimaryStatus instance={controller} language={language} /> : null}{controllerAttention ? <span className="text-xs text-destructive">{copy(language, "入口待处理", "Access needs attention")}</span> : null}<div className="ml-auto flex items-center gap-2"><ApplicationUpdate instance={controller} language={language} onUpgrade={onUpgrade} /><Button disabled={controller.locked} size="sm" variant="secondary" onClick={() => onClients(controller.application)}>{accounts.title[language]}</Button><Button size="icon-sm" variant="ghost" aria-label={copy(language, "管理订阅主机", "Manage subscription controller")} onClick={() => onManage(controller.application)}><EllipsisIcon aria-hidden="true" /></Button></div></div> : null}
+      {controller ? <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">{controller.activeChange || controller.application.status !== "running" ? <ApplicationPrimaryStatus instance={controller} language={language} /> : null}{controllerAttention ? <span className="text-xs text-destructive">{copy(language, "入口待处理", "Access needs attention")}</span> : null}<div className="ml-auto flex items-center gap-2"><ApplicationUpdate instance={controller} language={language} onUpgrade={onUpgrade} /><Button disabled={controller.locked} size="sm" variant="secondary" onClick={() => onClients(controller.application)}>{accounts.title[language]}</Button><Button size="icon-sm" variant="ghost" aria-label={copy(language, "管理订阅主机", "Manage subscription controller")} onClick={() => onManage(controller.application)}><EllipsisIcon aria-hidden="true" /></Button></div></div> : null}
     </div>
     <Tabs value={page} onValueChange={(value) => { if (typeof value === "string") setPage(value); }}>
       <TabsList variant="line" aria-label={copy(language, "Meridian 视图", "Meridian views")}>{manifest.pages.filter((item) => item.surface === "tab").map((item) => <TabsTrigger key={item.id} value={item.id}>{item.title[language]}</TabsTrigger>)}</TabsList>
       <TabsContent value="nodes"><Table aria-label={copy(language, "Meridian 节点", "Meridian nodes")} className="apps-instance-table block lg:table lg:table-fixed">
-        <TableHeader className="hidden lg:table-header-group"><TableRow><TableHead className="w-[24%]">{copy(language, "节点", "Node")}</TableHead><TableHead className="w-[48%]">{copy(language, "IP 质量与解锁", "IP quality & availability")}</TableHead><TableHead className="w-[12%]">{copy(language, "状态", "Status")}</TableHead><TableHead className="w-[10%]">{copy(language, "入口 / 订阅", "Access / routes")}</TableHead><TableHead className="w-[6%]"><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead></TableRow></TableHeader>
+        <TableHeader className="hidden lg:table-header-group"><TableRow><TableHead className="w-[24%]">{copy(language, "节点", "Node")}</TableHead><TableHead className="w-[48%]">{copy(language, "质量与解锁", "Quality & availability")}</TableHead><TableHead className="w-[12%]">{copy(language, "状态", "Status")}</TableHead><TableHead className="w-[10%]">{copy(language, "连接", "Connections")}</TableHead><TableHead className="w-[6%]"><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead></TableRow></TableHeader>
         <TableBody className="block lg:table-row-group"><TableRow className="block bg-muted/30 lg:table-row"><TableCell colSpan={5} className="block text-xs lg:table-cell">{copy(language, "线路机", "Entry nodes")} {instances.length}</TableCell></TableRow>
           {instances.map((instance) => {
             const name = instance.agent?.name ?? instance.application.nodeId;
@@ -56,7 +56,7 @@ export function MeridianWorkspace({ group, data, language, mutate, onManage, onU
             </TableRow>;
           })}
           {!instances.length ? <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">{copy(language, "没有匹配的线路机", "No matching entry nodes")}</TableCell></TableRow> : null}
-          <LandingTableRows language={language} search={search} siteNames={siteNames} onSubscriptions={controller && !controller.locked ? () => onClients(controller.application) : undefined} />
+          <LandingTableRows language={language} search={search} siteNames={siteNames} data={data} mutate={mutate} />
         </TableBody>
       </Table></TabsContent>
       <TabsContent value="network"><MeridianNetworkMatrix instances={instances} language={language} /></TabsContent>
