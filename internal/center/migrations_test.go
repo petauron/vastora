@@ -578,6 +578,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE recovery_evidence`,
 		`DROP TABLE agent_network_profile_recovery`,
 		`ALTER TABLE agents DROP COLUMN runtime_recovery`,
+		`ALTER TABLE agents DROP COLUMN landing_egress_addresses_json`,
 		`DROP INDEX deployments_change_proposal_idx`,
 		`DROP TRIGGER application_command_updates_block_during_three_x_ui_deployment`,
 		`DROP TRIGGER agent_enrollment_operation_secret_cleanup`,
