@@ -11,12 +11,10 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { cn } from "@/lib/utils";
 import { ServerIcon } from "lucide-react";
 import { copy, userError } from "./shared";
-import { landingLatencyColor, selectedLandingLatencies } from "./landingLatency";
 import { applyLandingLatencyEvent, freshLandingLatencies } from "./landingLatencyEvents";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { RegionFlag } from "./RegionFlag";
 import { IPQualityButton, useIPQuality } from "./IPQuality";
-import { LinkBandwidthSummary } from "./LinkBandwidthSummary";
 import { IPQualityComparison } from "./IPQualityComparison";
 import { assessmentLabel } from "./IPAssessment";
 import { useLandingRegions } from "./useLandingRegions";
@@ -33,21 +31,23 @@ type LandingContextValue = {
 
 const LandingContext = createContext<LandingContextValue | null>(null);
 
+export function useLanding() { return useContext(LandingContext); }
+
 export function LandingTableRows({ language, search }: { language: Language; search: string }) {
   const state = useContext(LandingContext);
   const servers = state?.view?.servers.filter((server) => !search || [server.name, server.nodeId].some((value) => value.toLocaleLowerCase().includes(search))) ?? [];
   const labels = { ready: ["可用", "Available"], pending: ["等待中", "Pending"], applying: ["正在配置", "Applying"], failed: ["配置失败", "Failed"], stopped: ["已停止", "Stopped"], offline: ["离线", "Offline"], draining: ["正在移除", "Removing"] } as const;
   return <>
-    <TableRow className="block bg-muted/30 hover:bg-muted/30 lg:table-row"><TableCell colSpan={6} className="block text-xs font-medium lg:table-cell">{copy(language, "落地机", "Landing nodes")} <span className="ml-1 text-muted-foreground">{servers.length}</span></TableCell></TableRow>
-    {state?.failed || !state?.view ? <TableRow className="block lg:table-row"><TableCell colSpan={6} className="block text-xs text-muted-foreground lg:table-cell">{state?.failed ? copy(language, "落地机读取失败", "Unable to load landing nodes") : copy(language, "正在读取落地机…", "Loading landing nodes…")}</TableCell></TableRow> : servers.map((server) => <TableRow key={server.nodeId} className="grid grid-cols-2 gap-x-4 gap-y-3 py-4 lg:table-row lg:py-0" data-landing-node-id={server.nodeId}>
+    <TableRow className="block bg-muted/30 hover:bg-muted/30 lg:table-row"><TableCell colSpan={5} className="block text-xs font-medium lg:table-cell">{copy(language, "落地机", "Landing nodes")} <span className="ml-1 text-muted-foreground">{servers.length}</span></TableCell></TableRow>
+    {state?.failed || !state?.view ? <TableRow className="block lg:table-row"><TableCell colSpan={5} className="block text-xs text-muted-foreground lg:table-cell">{state?.failed ? copy(language, "落地机读取失败", "Unable to load landing nodes") : copy(language, "正在读取落地机…", "Loading landing nodes…")}</TableCell></TableRow> : servers.map((server) => <TableRow key={server.nodeId} className="grid grid-cols-2 gap-x-4 gap-y-3 py-4 lg:table-row lg:py-0" data-landing-node-id={server.nodeId}>
       <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
         <div className="flex items-center gap-2"><RegionFlag code={state.regions[server.nodeId]} language={language} /><span className="min-w-0 break-words font-medium">{server.name}</span></div>
       </TableCell>
       <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><IPQualityButton nodeId={server.nodeId} name={server.name} language={language} /></TableCell>
       <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3"><span className="inline-flex items-center gap-2"><span aria-hidden="true" className={cn("apps-status-dot", server.status === "ready" ? "bg-latency-fast" : ["failed", "offline"].includes(server.status) ? "bg-destructive" : "bg-muted-foreground")} />{copy(language, labels[server.status][0], labels[server.status][1])}</span></TableCell>
-      <TableCell colSpan={3} className="min-w-0 p-0 text-xs text-muted-foreground whitespace-normal lg:px-2 lg:py-3">{copy(language, `${server.readyCombinations} 个组合就绪`, `${server.readyCombinations} combinations ready`)}</TableCell>
+      <TableCell colSpan={2} className="min-w-0 p-0 text-xs text-muted-foreground whitespace-normal lg:px-2 lg:py-3">{copy(language, `${server.readyCombinations} 个组合就绪`, `${server.readyCombinations} combinations ready`)}</TableCell>
     </TableRow>)}
-    {state?.view && !state.failed && !servers.length ? <TableRow className="block lg:table-row"><TableCell colSpan={6} className="block text-xs text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的落地机", "No matching landing nodes") : copy(language, "尚未添加落地机", "No landing nodes configured")}</TableCell></TableRow> : null}
+    {state?.view && !state.failed && !servers.length ? <TableRow className="block lg:table-row"><TableCell colSpan={5} className="block text-xs text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的落地机", "No matching landing nodes") : copy(language, "尚未添加落地机", "No landing nodes configured")}</TableCell></TableRow> : null}
   </>;
 }
 
@@ -269,31 +269,4 @@ export function LandingNotice({ language }: { language: Language }) {
       <Button type="button" variant="outline" size="sm" disabled={state.busy} onClick={state.refresh}>{copy(language, "刷新状态", "Refresh status")}</Button>
     </AlertDescription>
   </Alert>;
-}
-
-function latencyLabel(language: Language, latency: LandingView["latencies"][number] | undefined) {
-  if (latency?.state === "direct" && latency.latencyMs != null && Number.isFinite(latency.latencyMs) && latency.latencyMs >= 0) return `${latency.latencyMs < 1 ? "<1" : Math.round(latency.latencyMs)} ms`;
-  return latency?.state === "unavailable" ? copy(language, "无法直连", "Unavailable") : copy(language, "待检测", "Pending");
-}
-
-export function LandingNetwork({ applicationId, nodeId, language }: { applicationId: string; nodeId: string; language: Language }) {
-  const state = useContext(LandingContext);
-  const quality = useIPQuality();
-  const view = state?.view;
-  if (!state || !view || state.failed) return <span className="text-muted-foreground">—</span>;
-  const pairs = selectedLandingLatencies(view, nodeId, applicationId);
-  if (!pairs.length) return <span className="text-muted-foreground">—</span>;
-  return <div className="grid min-w-0 gap-y-0.5">
-    {pairs.map(({ server, latency }, index) => {
-      const measured = server?.status === "ready" && latency?.state === "direct" && latency.latencyMs != null && Number.isFinite(latency.latencyMs) && latency.latencyMs >= 0;
-      const unavailable = !server || ["offline", "failed", "stopped"].includes(server.status) || server.status === "ready" && latency?.state === "unavailable";
-      const label = measured ? latencyLabel(language, latency) : unavailable ? copy(language, "不可用", "Unavailable") : copy(language, "待检测", "Pending");
-      const check = quality?.diagnostics.find((value) => value.agentId === nodeId && value.kind === "meridian.link-bandwidth" && value.landingNodeId === server?.nodeId);
-      return <div className="flex min-w-0 items-center gap-2 text-xs leading-5 tabular-nums" key={server?.nodeId ?? `missing-${index}`}>
-        <span className="flex min-w-0 flex-1 items-center gap-1" title={server?.name}><RegionFlag code={server ? state.regions[server.nodeId] : undefined} language={language} /><span className="truncate">{server?.name ?? "—"}</span></span>
-        <span className={cn("shrink-0", unavailable ? "text-destructive" : measured ? landingLatencyColor(latency.latencyMs) : "text-muted-foreground")} title={copy(language, `落地延迟：${label}`, `Landing latency: ${label}`)}>{measured || unavailable ? label : "—"}</span>
-        <LinkBandwidthSummary check={check} language={language} unavailable={Boolean(quality?.error)} />
-      </div>;
-    })}
-  </div>;
 }
