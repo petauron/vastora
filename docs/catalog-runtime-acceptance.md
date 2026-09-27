@@ -4,10 +4,10 @@ This is an implementation checkpoint, not production approval. Vastora changes
 are reviewed in PR #716. Catalog publication is triggered manually after a
 successful application release; the Pulse notification PR #25 was closed. The shared
 module is published as petauron/catalog v0.2.0 and pinned without a development
-workspace replacement. The verification bullets below predate this dependency
-update and the schema 102 merge; they must be rerun before acceptance. Do not
-enable the independent publisher or run the
-maintenance cutover based on unit tests alone.
+workspace replacement. The earlier local-verification bullets below predate this
+dependency update and the schema 102 merge; current CI and the bounded historical
+copy rehearsal are recorded separately. Do not enable the independent publisher
+or run the maintenance cutover based on unit tests alone.
 
 ## Verified locally
 
@@ -37,6 +37,14 @@ upgrade, cold backup, data restore, logs and retained-data uninstall. These test
 use disposable hosted runners and neither execute production applications nor
 prove adoption of a historical production installation. They exposed and led to
 fixes for stale Docker resume IDs and systemd startup confirmation ordering.
+
+On 2026-09-27, PR #716 at `aed5509` passed the
+full manually dispatched CI run
+[36318150489](https://github.com/petauron/vastora/actions/runs/36318150489):
+Go quality/static analysis, race tests, web, security, cross-compile, both
+container-image-security architectures and the final gate. The PR's separate
+required checks also passed, including the Linux amd64/arm64 package host
+lifecycle. This verifies the branch, not a released or deployed Center/Agent.
 
 Production signing remains disabled. The catalog-signing environment is restricted
 to protected branches with administrator bypass disabled; online signer keys and
@@ -78,6 +86,16 @@ five applied installations; the three identity/ownership files matched their
 source bytes. The root-only temporary artifact and restored directory were
 removed. This covers one Agent only, not the other nodes, off-host storage or
 application-owned data.
+
+The same day, the current schema 102 migration test passed on a keyless, private
+copy of the live A1 schema 100 database after removing 894,377 `task_events`
+rows **from the copy only** to make transfer practical. The reduced copy passed
+SQLite `quick_check` and foreign-key checks before transfer, matched its remote
+SHA-256 byte-for-byte, and the test preserved the checked historical row digests,
+37 applications and 16 manifest identities while creating a pre-migration backup.
+This is a useful two-step migration rehearsal, but not an unmodified full-data
+rehearsal: the omitted event history and actual Agent resources remain outside
+its evidence. No running database, application or Agent was migrated or restarted.
 
 On 2026-09-27, a read-only preflight resolved the already published Pulse
 `v0.1.0-alpha.5` against its protected source commit and successful release run.
