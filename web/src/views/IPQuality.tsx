@@ -18,7 +18,7 @@ import { routeLine, type RouteTier } from "./returnRouteModel";
 import { canonicalIPQualityAddress, checkPending, cleanIPQualityValue, ipClassification, ipQualityCheckForAddress, ipQualityError, ipQualityFamilyLabel, ipQualitySummary, landingQualityAddress, unlockLabel, unlockServiceLabel, unlockServices, unlockTypeLabel } from "./ipQualityModel";
 import { AssessmentBadge, AssessmentSummary, AssessmentTypeBadge } from "./IPAssessment";
 import { IPQualityComparison } from "./IPQualityComparison";
-import { MeridianLinkBandwidth } from "@/app-modules/meridian/LinkBandwidth";
+import { MeridianLinkBandwidth } from "./MeridianLinkBandwidth";
 
 type QualityState = {
   checks: IPQualityCheck[]; targets: IPQualityTarget[]; diagnostics: NodeDiagnosticCheck[]; agents: AgentView[]; loading: boolean; error: boolean;

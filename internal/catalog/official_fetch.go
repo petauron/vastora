@@ -22,9 +22,10 @@ type OfficialFetchState struct {
 }
 
 type OfficialFetchResult struct {
-	Catalog Catalog
-	Target  []byte
-	State   OfficialFetchState
+	Catalog   Catalog
+	Target    []byte
+	UIBundles map[string][]byte
+	State     OfficialFetchState
 	// A verified TUF update may revoke keys even if later target retrieval or
 	// executor validation fails. Persist this independently of catalog acceptance.
 	Checkpoint *OfficialTrustCheckpoint
@@ -152,6 +153,33 @@ func fetchOfficial(ctx context.Context, origin, channel string, bootstrapRoot []
 	if err != nil {
 		return result, err
 	}
+	uiBundles := make(map[string][]byte)
+	for _, app := range value.Apps {
+		script, err := OfficialUITargetName(app.ID, app.Version)
+		if err != nil {
+			continue
+		}
+		style, _ := OfficialUIStylesheetTargetName(app.ID, app.Version)
+		_, scriptPresent := tuf.GetTopLevelTargets()[script]
+		_, stylePresent := tuf.GetTopLevelTargets()[style]
+		if scriptPresent != stylePresent {
+			return result, errors.New("catalog: incomplete official UI targets")
+		}
+		for _, name := range []string{script, style} {
+			asset, present := tuf.GetTopLevelTargets()[name]
+			if !present {
+				continue
+			}
+			if asset.Length <= 0 || asset.Length > MaxOfficialUIBytes {
+				return result, errors.New("catalog: invalid official UI target size")
+			}
+			_, content, err := tuf.DownloadTarget(asset, filepath.Join(dir, name), "")
+			if err != nil {
+				return result, err
+			}
+			uiBundles[name] = content
+		}
+	}
 	trusted := tuf.GetTrustedMetadataSet()
 	for _, expiry := range []time.Time{trusted.Root.Signed.Expires, trusted.Timestamp.Signed.Expires, trusted.Snapshot.Signed.Expires, trusted.Targets["targets"].Signed.Expires} {
 		if expiry.Before(acceptance.ExpiresAt) {
@@ -168,5 +196,5 @@ func fetchOfficial(ctx context.Context, origin, channel string, bootstrapRoot []
 			return result, err
 		}
 	}
-	return OfficialFetchResult{Catalog: value, Target: raw, State: OfficialFetchState{Metadata: metadata, Acceptance: acceptance}}, nil
+	return OfficialFetchResult{Catalog: value, Target: raw, UIBundles: uiBundles, State: OfficialFetchState{Metadata: metadata, Acceptance: acceptance}}, nil
 }

@@ -21,17 +21,21 @@ function fixture(t) {
   const releases = [];
   const ledgers = new Map();
   let active;
-  const stage = (output, revision) => {
+  const stage = (output, revision, uiFiles = []) => {
     mkdirSync(output);
     mkdirSync(path.join(output, "targets"));
     const target = Buffer.from(JSON.stringify({ revision, fixture: "signed target" }));
     const sha256 = checksum(target);
     for (const [name, raw] of Object.entries({ "1.root.json": '{"fixture":"independent root"}', [`${revision}.targets.json`]: `{"version":${revision}}`, [`${revision}.snapshot.json`]: `{"version":${revision}}`, "timestamp.json": `{"version":${revision}}`, [`targets/${sha256}.stable.json`]: target, "publication-state.json": JSON.stringify({ channel: "stable", revision, sha256 }), "manifest-history.json": JSON.stringify({ known: { "1.0.0": "b".repeat(64) } }) })) writeFileSync(path.join(output, name), raw);
+    for (const asset of uiFiles) {
+      const raw = readFileSync(asset);
+      writeFileSync(path.join(output, "targets", `${checksum(raw)}.${path.basename(asset)}`), raw);
+    }
   };
   const run = (command, args) => {
     calls.push({ command, args });
     const flag = name => args[args.indexOf(name) + 1];
-    if (command.endsWith("/catalog-publish")) { stage(flag("--output"), Number(flag("--revision"))); return Buffer.from(""); }
+    if (command.endsWith("/catalog-publish")) { stage(flag("--output"), Number(flag("--revision")), args.includes("--ui-bundle") ? [flag("--ui-bundle"), flag("--ui-style")] : []); return Buffer.from(""); }
     if (command.endsWith("/catalog-verify")) return Buffer.from("{}");
     if (command === "aws") {
       if (!active) { const error = new Error("absent"); error.stderr = "An error occurred (NoSuchKey)"; throw error; }
@@ -252,4 +256,23 @@ test("supersession cannot treat an unavailable or corrupt uploaded ledger as an 
     assert.equal(f.calls.filter(call => call.command.endsWith("/catalog-publish")).length, 1);
     assert.ok(!f.calls.some(call => call.command === "upload"));
   }
+});
+
+test("reviewed Meridian UI is signed with its catalog version and cannot change at that version", t => {
+  const f = fixture(t);
+  writeFileSync(f.options.catalog, JSON.stringify({ apps: [{ id: "meridian", version: "1.2.3" }] }));
+  const uiBundle = path.join(f.directory, "ui-meridian-1.2.3.js");
+  const uiStyle = path.join(f.directory, "ui-meridian-1.2.3.css");
+  writeFileSync(uiBundle, "export const apiVersion = 1");
+  writeFileSync(uiStyle, "body { color: white }");
+  const first = { ...f.options, uiBundle, uiStyle };
+  publishCatalog(first, f.run, f.upload);
+  const signer = f.calls.find(call => call.command.endsWith("/catalog-publish"));
+  assert.ok(signer.args.includes("--ui-bundle") && signer.args.includes("--ui-style"));
+  assert.throws(() => publishCatalog({ ...f.options, revision: 2, bootstrap: false, work: path.join(f.directory, "missing-ui") }, f.run, f.upload), /cannot be omitted/);
+  writeFileSync(uiBundle, "export const apiVersion = 2");
+  assert.throws(() => publishCatalog({ ...first, work: path.join(f.directory, "retry") }, f.run, f.upload), /Retry UI differs/);
+  const second = { ...first, revision: 2, bootstrap: false, work: path.join(f.directory, "run2") };
+  assert.throws(() => publishCatalog(second, f.run, f.upload), /changed without an application version/);
+  assert.equal(f.calls.filter(call => call.command.endsWith("/catalog-publish")).length, 1);
 });

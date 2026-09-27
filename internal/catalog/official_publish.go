@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sigstore/sigstore/pkg/signature"
@@ -15,8 +16,27 @@ import (
 // BuildOfficialRepository produces immutable objects and the final timestamp
 // pointer. It cannot generate/rotate roots or upload content. Publish all other
 // files before timestamp.json, under an exclusive channel publication lock.
-func BuildOfficialRepository(rootBytes, targetBytes []byte, channel string, previous OfficialAcceptance, now time.Time, signers map[string][]signature.Signer) (map[string][]byte, error) {
-	_, acceptance, err := ValidateOfficialTarget(targetBytes, channel, previous, now)
+const MaxOfficialUIBytes = 4 << 20
+
+func OfficialUITargetName(appID, version string) (string, error) {
+	if appID != "meridian" || !semverPattern.MatchString(version) {
+		return "", errors.New("catalog: unsupported official UI identity")
+	}
+	return "ui-" + appID + "-" + version + ".js", nil
+}
+
+func OfficialUIStylesheetTargetName(appID, version string) (string, error) {
+	name, err := OfficialUITargetName(appID, version)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(name, ".js") + ".css", nil
+}
+
+// UIBundles are reviewed application release assets. Their TUF target names
+// bind the owner and application version; the publisher signs exact bytes.
+func BuildOfficialRepository(rootBytes, targetBytes []byte, uiBundles map[string][]byte, channel string, previous OfficialAcceptance, now time.Time, signers map[string][]signature.Signer) (map[string][]byte, error) {
+	value, acceptance, err := ValidateOfficialTarget(targetBytes, channel, previous, now)
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +81,31 @@ func BuildOfficialRepository(rootBytes, targetBytes []byte, channel string, prev
 	targets := metadata.Targets(acceptance.ExpiresAt)
 	targets.Signed.Version = version
 	targets.Signed.Targets[channel+".json"] = target
+	allowedUI := make(map[string]struct{}, len(value.Apps))
+	for _, app := range value.Apps {
+		if name, err := OfficialUITargetName(app.ID, app.Version); err == nil {
+			allowedUI[name] = struct{}{}
+			style, _ := OfficialUIStylesheetTargetName(app.ID, app.Version)
+			allowedUI[style] = struct{}{}
+			_, scriptPresent := uiBundles[name]
+			_, stylePresent := uiBundles[style]
+			if scriptPresent != stylePresent {
+				return nil, fmt.Errorf("catalog: incomplete official UI bundle for %q", app.ID)
+			}
+		}
+	}
+	for name, raw := range uiBundles {
+		if _, ok := allowedUI[name]; !ok || len(raw) == 0 || len(raw) > MaxOfficialUIBytes {
+			return nil, fmt.Errorf("catalog: invalid official UI target %q", name)
+		}
+		file, err := metadata.TargetFile().FromBytes(name, raw, "sha256")
+		if err != nil {
+			return nil, err
+		}
+		targets.Signed.Targets[name] = file
+		hash := sha256.Sum256(raw)
+		files["targets/"+hex.EncodeToString(hash[:])+"."+name] = raw
+	}
 	targetsBytes, err := signOfficialRole(root, "targets", targets, signers["targets"])
 	if err != nil {
 		return nil, err

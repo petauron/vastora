@@ -11,7 +11,7 @@ import { uploadCatalog } from "./upload-catalog-r2.mjs";
 const assetName = "catalog-publication.json";
 const origin = "https://downloads.petauron.com/vastora/catalog/";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
-const fileName = name => /^(?:[1-9][0-9]*\.(?:root|targets|snapshot)\.json|targets\/[a-f0-9]{64}\.stable\.json|timestamp\.json|publication-state\.json|manifest-history\.json)$/.test(name);
+const fileName = name => /^(?:[1-9][0-9]*\.(?:root|targets|snapshot)\.json|targets\/[a-f0-9]{64}\.(?:stable\.json|ui-meridian-[0-9A-Za-z.+-]+\.(?:js|css))|timestamp\.json|publication-state\.json|manifest-history\.json)$/.test(name);
 
 function hasDurableLedger(release) {
   // GitHub creates a release before uploading its assets. A failed upload can
@@ -90,11 +90,21 @@ export function unpackPublication(bundle, directory) {
 }
 
 export function publishCatalog(options, run = execFileSync, upload = uploadCatalog) {
-  const { revision, commit, repository, work, rootDirectory, catalog, binDirectory, bucket, endpoint, bootstrap = false, supersede = false, runURL } = options;
+  const { revision, commit, repository, work, rootDirectory, catalog, binDirectory, bucket, endpoint, bootstrap = false, supersede = false, runURL, uiBundle, uiStyle } = options;
   // Report only fixed stage names. Child-process errors may contain protected
   // signer or storage details, so the workflow must never print them.
   const stage = name => console.error(`Catalog publication stage: ${name}`);
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "") || !work || !rootDirectory || !binDirectory || !catalog) throw new Error("Invalid publication configuration");
+  if (Boolean(uiBundle) !== Boolean(uiStyle)) throw new Error("Official UI script and stylesheet must be supplied together");
+  if (uiBundle) {
+    const meridian = JSON.parse(readFileSync(catalog)).apps?.find(app => app.id === "meridian");
+    const base = `ui-meridian-${meridian?.version ?? ""}`;
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(meridian?.version ?? "") || path.basename(uiBundle) !== `${base}.js` || path.basename(uiStyle) !== `${base}.css`) throw new Error("Reviewed Meridian UI version differs from the catalog");
+    for (const asset of [uiBundle, uiStyle]) {
+      const stat = lstatSync(asset);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 4 * 1024 * 1024) throw new Error("Invalid reviewed Meridian UI asset");
+    }
+  }
   mkdirSync(work, { mode: 0o700 }); // caller supplies a new, isolated workspace
   const execute = (command, args) => run(command, args, { stdio: ["ignore", "pipe", "pipe"], maxBuffer: 40 * 1024 * 1024 });
   const gh = (...args) => execute("gh", [...args, "--repo", repository]);
@@ -124,6 +134,13 @@ export function publishCatalog(options, run = execFileSync, upload = uploadCatal
   if (plan.resume) {
     bundle = readLedger(plan.resume);
     if (bundle.catalogSHA256 !== catalogSHA256) throw new Error("Retry catalog differs from the approved publication");
+    if (uiBundle) {
+      for (const asset of [uiBundle, uiStyle]) {
+        const name = path.basename(asset);
+        const targetName = Object.keys(bundle.files).find(file => file.startsWith("targets/") && file.endsWith(`.${name}`));
+        if (!targetName || !Buffer.from(bundle.files[targetName], "base64").equals(readFileSync(asset))) throw new Error("Retry UI differs from the approved publication");
+      }
+    }
     if (bundle.supersedesRevision !== undefined) {
       if (bundle.supersedesRevision !== plan.previous?.revision) throw new Error("Supersession predecessor differs from protected ledger");
       plan.superseded = plan.predecessors;
@@ -132,10 +149,19 @@ export function publishCatalog(options, run = execFileSync, upload = uploadCatal
   const storagePredecessors = plan.superseded?.filter(hasDurableLedger);
   const predecessor = storagePredecessors ? storagePredecessors[0] : plan.previous;
   if (predecessor) previous = readLedger(predecessor);
+  if (!uiBundle && Object.keys(previous?.files ?? {}).some(file => /^targets\/[a-f0-9]{64}\.ui-meridian-/.test(file))) throw new Error("Meridian UI cannot be omitted after its first signed publication");
   if (plan.resume) {
     unpackPublication(bundle, staged);
   } else {
     const args = ["--catalog", catalog, "--revision", String(revision), "--output", staged, "--valid-for", "168h"];
+    if (uiBundle) {
+      for (const asset of [uiBundle, uiStyle]) {
+        const name = path.basename(asset);
+        const previousName = Object.keys(previous?.files ?? {}).find(file => file.endsWith(`.${name}`) && file.startsWith("targets/"));
+        if (previousName && !Buffer.from(previous.files[previousName], "base64").equals(readFileSync(asset))) throw new Error("Official UI changed without an application version change");
+      }
+      args.push("--ui-bundle", uiBundle, "--ui-style", uiStyle);
+    }
     if (previous) {
       const prior = path.join(work, "previous");
       unpackPublication(previous, prior);
@@ -215,7 +241,7 @@ export function publishCatalog(options, run = execFileSync, upload = uploadCatal
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   try {
-    publishCatalog({ revision: Number(process.env.CATALOG_REVISION), commit: process.env.GITHUB_SHA, repository: process.env.GITHUB_REPOSITORY, work: process.env.CATALOG_WORK, rootDirectory: "catalog/trust", catalog: "catalog/catalog.json", binDirectory: process.env.CATALOG_BIN, bucket: process.env.R2_BUCKET_NAME, endpoint: process.env.R2_ENDPOINT, bootstrap: process.env.CATALOG_BOOTSTRAP === "true", supersede: process.env.CATALOG_SUPERSEDE === "true", runURL: `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`, keyFiles: Object.fromEntries(["targets", "snapshot", "timestamp"].map(role => [role, process.env[`CATALOG_${role.toUpperCase()}_KEY_FILE`]])) });
+    publishCatalog({ revision: Number(process.env.CATALOG_REVISION), commit: process.env.GITHUB_SHA, repository: process.env.GITHUB_REPOSITORY, work: process.env.CATALOG_WORK, rootDirectory: "catalog/trust", catalog: "catalog/catalog.json", binDirectory: process.env.CATALOG_BIN, bucket: process.env.R2_BUCKET_NAME, endpoint: process.env.R2_ENDPOINT, bootstrap: process.env.CATALOG_BOOTSTRAP === "true", supersede: process.env.CATALOG_SUPERSEDE === "true", runURL: `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`, uiBundle: process.env.CATALOG_UI_BUNDLE, uiStyle: process.env.CATALOG_UI_STYLE, keyFiles: Object.fromEntries(["targets", "snapshot", "timestamp"].map(role => [role, process.env[`CATALOG_${role.toUpperCase()}_KEY_FILE`]])) });
   } catch {
     console.error("Catalog publication was not confirmed. Preserve the draft and retry the original run; an expired or incomplete draft requires approved supersession with a higher revision. Never overwrite unconditionally.");
     process.exitCode = 1;

@@ -131,7 +131,7 @@ func TestOfficialCatalogContractFailureRetainsRevocationAcrossRestart(t *testing
 		value := base
 		value.Apps = []catalog.AppManifest{app}
 		target := encode(catalog.OfficialTarget{Source: catalog.OfficialSourceIdentity, Channel: "stable", Revision: revision, GeneratedAt: now, ExpiresAt: now.Add(time.Hour), Catalog: encode(value)})
-		next, err := catalog.BuildOfficialRepository(root, target, "stable", previous, time.Now().UTC(), signers)
+		next, err := catalog.BuildOfficialRepository(root, target, nil, "stable", previous, time.Now().UTC(), signers)
 		if err != nil {
 			t.Fatal(err)
 		}

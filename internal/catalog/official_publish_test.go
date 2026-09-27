@@ -1,10 +1,14 @@
 package catalog
 
 import (
+	"context"
 	"crypto"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -112,7 +116,7 @@ func TestOfficialPublicationVerifiesWithIndependentRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err := BuildOfficialRepository(rootBytes, targetBytes, "stable", OfficialAcceptance{}, now, signers)
+	files, err := BuildOfficialRepository(rootBytes, targetBytes, nil, "stable", OfficialAcceptance{}, now, signers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +149,7 @@ func TestOfficialPublicationVerifiesWithIndependentRoot(t *testing.T) {
 		t.Fatal("tampered target accepted")
 	}
 	signers["targets"] = signers["timestamp"]
-	if _, err := BuildOfficialRepository(rootBytes, targetBytes, "stable", OfficialAcceptance{}, now, signers); err == nil {
+	if _, err := BuildOfficialRepository(rootBytes, targetBytes, nil, "stable", OfficialAcceptance{}, now, signers); err == nil {
 		t.Fatal("unauthorized role key accepted")
 	}
 	sharedRoot, err := metadata.Root().FromBytes(rootBytes)
@@ -162,7 +166,85 @@ func TestOfficialPublicationVerifiesWithIndependentRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	signers["targets"] = signers["root"]
-	if _, err := BuildOfficialRepository(sharedBytes, targetBytes, "stable", OfficialAcceptance{}, now, signers); err == nil {
+	if _, err := BuildOfficialRepository(sharedBytes, targetBytes, nil, "stable", OfficialAcceptance{}, now, signers); err == nil {
 		t.Fatal("online publisher was allowed to share the offline root key")
+	}
+}
+
+func TestOfficialUIBundleIsVersionBoundAndSigned(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	root, signers := officialTestRoot(t, now)
+	payload, err := os.ReadFile("testdata/v3/valid-catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appCatalog, err := ParseCatalog(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appCatalog.Apps[0].ID = "meridian"
+	payload, err = json.Marshal(appCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := json.Marshal(OfficialTarget{Source: OfficialSourceIdentity, Channel: "stable", Revision: 1, GeneratedAt: now, ExpiresAt: now.Add(time.Hour), Catalog: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := OfficialUITargetName("meridian", "1.2.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := []byte("export function mount() {}")
+	style, err := OfficialUIStylesheetTargetName("meridian", "1.2.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets := map[string][]byte{name: bundle, style: []byte(".meridian{display:block}")}
+	files, err := BuildOfficialRepository(root, target, assets, "stable", OfficialAcceptance{}, now, signers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trusted, err := trustedmetadata.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trusted.UpdateTimestamp(files["timestamp.json"]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trusted.UpdateSnapshot(files["1.snapshot.json"], false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trusted.UpdateTargets(files["1.targets.json"]); err != nil {
+		t.Fatal(err)
+	}
+	if err := trusted.Targets["targets"].Signed.Targets[name].VerifyLengthHashes(bundle); err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(bundle)
+	if got := files["targets/"+hex.EncodeToString(hash[:])+"."+name]; string(got) != string(bundle) {
+		t.Fatal("signed UI bundle is missing from immutable targets")
+	}
+	directory := t.TempDir()
+	for path, raw := range files {
+		location := filepath.Join(directory, path)
+		if err := os.MkdirAll(filepath.Dir(location), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(location, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	verified, err := VerifyOfficialRepository(context.Background(), directory, "stable", root)
+	if err != nil || string(verified.UIBundles[name]) != string(bundle) || string(verified.UIBundles[style]) != string(assets[style]) {
+		t.Fatalf("signed UI bundle did not verify through the client path: %v", err)
+	}
+	if _, err := BuildOfficialRepository(root, target, map[string][]byte{name: bundle}, "stable", OfficialAcceptance{}, now, signers); err == nil {
+		t.Fatal("incomplete UI assets were published")
+	}
+	for _, invalid := range []string{"ui-meridian-1.2.4.js", "ui-pulse-1.2.3.js", "ui-cpa-1.2.3.js", "../ui-meridian-1.2.3.js"} {
+		if _, err := BuildOfficialRepository(root, target, map[string][]byte{invalid: bundle, style: assets[style]}, "stable", OfficialAcceptance{}, now, signers); err == nil {
+			t.Fatalf("invalid UI identity %q was accepted", invalid)
+		}
 	}
 }
