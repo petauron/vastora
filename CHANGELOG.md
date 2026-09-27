@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.248](https://github.com/petauron/vastora/compare/v0.1.0-alpha.247...v0.1.0-alpha.248) (2026-09-27)
+
+
+### Features
+
+* **nodes:** simplify fleet inventory ([#725](https://github.com/petauron/vastora/issues/725)) ([9ed56ab](https://github.com/petauron/vastora/commit/9ed56abc587b519df96571219e10adc1b0b1940f))
+
 ## [0.1.0-alpha.247](https://github.com/petauron/vastora/compare/v0.1.0-alpha.246...v0.1.0-alpha.247) (2026-09-26)
 
 
