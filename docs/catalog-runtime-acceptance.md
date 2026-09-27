@@ -40,7 +40,9 @@ Production signing remains disabled. The catalog-signing environment is restrict
 to protected branches with administrator bypass disabled; online signer keys and
 the operator-approved shared R2 secrets are configured. The production gate and
 historical maintenance acceptance remain outstanding. No production application
-or live catalog object was modified.
+or live catalog object was modified. Root v2 is public metadata signed by the
+original offline root key; v1 is retained unchanged. The long-lived expiry
+policy still needs review with the independent catalog PR before cutover.
 
 ## Required before release/cutover
 

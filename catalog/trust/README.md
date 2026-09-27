@@ -15,7 +15,7 @@ The publisher verifies from `1.root.json`, signs with the latest authorized
 online keys, and uploads the entire reviewed root chain under
 `vastora/catalog/`. Clients must receive a reviewed root independently of that
 download origin. The Center image copies this directory to `/app/catalog-trust/`
-and the packaged Compose command loads `/app/catalog-trust/1.root.json`. It
+and the packaged Compose command loads `/app/catalog-trust/2.root.json`. It
 never downloads that initial trust decision from the catalog origin. Bare-binary
 deployments must provide the reviewed file using `--official-catalog-root`.
 
@@ -32,7 +32,15 @@ performed by the development tests.
 targets, snapshot, and timestamp keys, each with a threshold of one.
 
 Root key ID: `e7892d2fba95f7f7cb9aa9cb62b9b8ebae0b993409d3a5485a2b38d9319ab0e4`.
+`2.root.json` is signed by the existing offline root key, preserves the same
+authorized public role keys, and extends the reviewed expiry to the end of year
+9999. The original `1.root.json` stays byte-for-byte unchanged for existing
+clients and migration history. Newly deployed Center instances start from v2;
+older clients can accept the signed rotation when the next catalog revision
+publishes it. Long-lived metadata trades bounded freeze detection for continued
+installation on new devices without a renewal task.
+
 This is single-maintainer custody, not a multi-party signing policy. The root
 private key remains outside the repository and GitHub. Only online role keys
 belong in the protected `catalog-signing` environment, restricted to protected
-branches and requiring an approved deployment.
+branches.

@@ -20,7 +20,8 @@ adoption or an application-data restore drill.
 
 See the independent [publishing guide](https://github.com/petauron/catalog/blob/main/docs/PUBLISHING.md)
 for manual workflow inputs, provenance verification, immutable ledgers, exact-byte
-retries, seven-day signatures and manual metadata renewal before expiry.
+retries, long-lived signed metadata and reviewed root rotation. No renewal
+workflow is required for an unchanged catalog.
 Ordinary updates do not modify protected `main` or open Vastora PRs. Routine
 signing uses protected catalog `main` and its protected environment without
 per-release approval; first registration, permissions and trust changes still
@@ -30,7 +31,14 @@ Origin stays `https://downloads.petauron.com/vastora/catalog/`, identity
 `vastora-official`, channel `stable`. Immutable objects precede conditional
 `timestamp.json` activation and public verification. Preserve other projects'
 objects and shared credentials. Serial publication preserves pending records;
-automatic runs cannot skip, overwrite or re-sign them.
+manual runs cannot skip, overwrite or re-sign them.
+
+The reviewed public root v2 is authorized by unchanged root v1 and remains valid
+through year 9999. Center packages v2 as the default bootstrap root. A catalog
+revision signs timestamp, snapshot, targets and target content through the same
+date. There is no recurring renewal. Previously accepted clients reject older
+revisions; a newly installed client cannot detect a mirror withholding a newer
+signed revision. This is the explicit availability versus freeze-detection tradeoff.
 
 ## Maintenance sequence
 
