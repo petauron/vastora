@@ -15,11 +15,14 @@
 | 应用数据卷 | application_owned | 外部备份系统保管完整卷集；不是 Center 备份的一部分 |
 | 镜像层、缓存、日志派生内容 | reconstructible | 按固定摘要重新取得镜像；不将缓存当作配置真相 |
 
-官方应用的备份合同在 `internal/catalog/recovery_policy.go`，独立于执行包版本，
+官方产品集成的备份合同在 `internal/recovery/application_policy.go`，独立于执行包版本，
 避免仅添加灾备元数据就强制升级运行中的应用。当前合同要求停止应用后备份完整卷集：
 3x-ui 的 db/cert/acme；CPA 的 auths/logs/plugins；Keeper 的 data。
 Komari Agent 从受管配置重建，其远端 Komari 面板的数据不在 Vastora 的保护范围。
-未知应用或未知版本显示 `unsupported`，不能猜测快照一致性。
+这个集群灾备清单与 schema 4 通用执行器的实例资源备份是不同边界；
+未登记产品灾备策略的应用显示 `unsupported`，不意味着通用运行时不能安装它，
+也不能据此猜测整套集群快照的一致性。目录迁移和仅管理记录接管的维护流程见
+[独立目录维护指南](catalog-release-guide.md)。接管前仍需分别完成 Center、Agent 和应用数据备份。
 保留数据卸载后的应用仍列入清单；仅明确完成“删除数据卸载”的记录才不再要求卷备份。
 
 ## 备份与登记

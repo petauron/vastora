@@ -28,6 +28,10 @@ func validateExecutionProjection(ctx context.Context, tx *sql.Tx, id string, suc
 		query = `SELECT state FROM xray_configuration_recoveries WHERE id=? AND agent_id=? AND attempt=?`
 	case "application.apply":
 		query = `SELECT state FROM deployments WHERE id=? AND agent_id=? AND attempt=?`
+	case "application.adopt":
+		query = `SELECT state FROM application_adoptions WHERE id=? AND agent_id=? AND attempt=?`
+	case "application.maintenance":
+		query = `SELECT state FROM application_maintenance WHERE id=? AND agent_id=? AND attempt=?`
 	case "application.command":
 		query = `SELECT state FROM application_commands WHERE id=? AND agent_id=? AND attempt=?`
 	case "agent.update":

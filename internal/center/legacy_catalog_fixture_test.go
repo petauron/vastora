@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 // Only historical lifecycle/migration tests may install the archived alpha.181
@@ -31,6 +31,14 @@ func seedLegacyProxyManifest(t *testing.T, store *Store) {
 	var manifest catalog.AppManifest
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		t.Fatal(err)
+	}
+	// Product-orchestration simulation only: the archived bytes above remain
+	// untouched for migration audits. This new test recipe is not an assertion
+	// that a legacy production installation was adopted or can run unmodified.
+	manifest.PackageRevision = 1
+	manifest.Runtime = &catalog.RuntimeSpec{Kind: "docker", Version: 1, Docker: &catalog.DockerRuntime{}}
+	for _, image := range manifest.Images {
+		manifest.Runtime.Docker.Containers = append(manifest.Runtime.Docker.Containers, catalog.Container{Name: image.Name, Image: image.Name})
 	}
 	value.Apps = append(value.Apps, manifest)
 	encoded, err := json.Marshal(value)

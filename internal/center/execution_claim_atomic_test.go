@@ -27,7 +27,7 @@ func TestExecutionClaimAuthorizationFailureRollsBackSelection(t *testing.T) {
 					version = "0.1.0-alpha.123"
 				}
 				if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
-					Version: version, Roles: roles, Capabilities: NodeCapabilities{Docker: true, Gateway: kind == "gateway.component.apply"},
+					Version: version, Roles: roles, Capabilities: NodeCapabilities{Docker: true, Gateway: kind == "gateway.component.apply", ExecutorVersions: map[string]int{"docker": 1, "systemd": 1}, RuntimeCapabilities: []string{"root"}},
 					ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, RemoteUpdateSupported: true,
 				}); err != nil {
 					t.Fatal(err)
@@ -35,7 +35,7 @@ func TestExecutionClaimAuthorizationFailureRollsBackSelection(t *testing.T) {
 				query := `SELECT status,attempt FROM gateway_components WHERE gateway_node_id=?`
 				identity := node.ID
 				if kind == "application.apply" {
-					d, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+					d, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 					if err != nil {
 						t.Fatal(err)
 					}

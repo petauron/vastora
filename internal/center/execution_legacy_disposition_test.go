@@ -18,7 +18,7 @@ func TestLegacyReceiptAbandonPreservesSecretsAndTerminatesExactAttempt(t *testin
 			defer store.Close()
 			ctx := context.Background()
 			node := enrollOrchestrationNode(t, store, "legacy-abandon", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.19", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.19", LANAddress: "10.0.0.19", EnabledKinds: []string{networking.KindLAN}})
-			if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)}); err != nil {
+			if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 				t.Fatal(err)
 			}
 			task := claimTask(t, store, node)

@@ -1,289 +1,32 @@
 package agent
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/platform"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
-
-	"github.com/petauron/vastora/internal/catalog"
-	"github.com/petauron/vastora/internal/platform"
 )
 
+// Historical paths are retained only for verified, one-shot ownership adoption.
 const (
-	komariBinaryPath         = "/opt/komari/agent"
-	komariConfigPath         = "/etc/komari-agent/config.json"
-	komariUnitPath           = "/etc/systemd/system/komari-agent.service"
-	komariRemovalJournalPath = "/var/lib/vastora/komari-uninstall.json"
-	maxArtifactBytes         = 64 << 20
-	komariUnitMarker         = "# Managed by Vastora\n"
+	komariBinaryPath = "/opt/komari/agent"
+	komariConfigPath = "/etc/komari-agent/config.json"
+	komariUnitPath   = "/etc/systemd/system/komari-agent.service"
+	komariUnitMarker = "# Managed by Vastora\n"
 )
 
 type SystemdHostApplicationManager struct {
-	RootDir    string
-	HTTPClient *http.Client
-	RunCommand func(context.Context, string, ...string) error
-	HostTarget platform.Target
-}
-
-type komariConfig struct {
-	Endpoint           string  `json:"endpoint"`
-	Token              string  `json:"token"`
-	Interval           float64 `json:"interval"`
-	InfoReportInterval int     `json:"info_report_interval"`
-	DisableAutoUpdate  bool    `json:"disable_auto_update"`
-	DisableWebSSH      bool    `json:"disable_web_ssh"`
-	IgnoreUnsafeCert   bool    `json:"ignore_unsafe_cert"`
-	ProtocolVersion    int     `json:"protocol_version"`
-}
-
-type komariRemovalJournal struct {
-	Version int                          `json:"version"`
-	Files   map[string]komariRemovalFile `json:"files"`
-}
-
-type komariRemovalFile struct {
-	Exists bool   `json:"exists"`
-	SHA256 string `json:"sha256,omitempty"`
-}
-
-func (manager SystemdHostApplicationManager) ApplyKomari(ctx context.Context, task DeploymentTask) error {
-	if task.Manifest.ID != "komari-agent" || ValidateOfficialContract(task.Manifest) != nil {
-		return errors.New("agent: unsupported Komari Agent package")
-	}
-	var input struct {
-		Endpoint string `json:"endpoint"`
-	}
-	var secretInput struct {
-		Token string `json:"token"`
-	}
-	if json.Unmarshal(task.Config, &input) != nil || json.Unmarshal(task.Secrets, &secretInput) != nil {
-		return errors.New("agent: invalid Komari Agent configuration")
-	}
-	endpoint, err := normalizedKomariEndpoint(input.Endpoint)
-	if err != nil || strings.TrimSpace(secretInput.Token) == "" || len(secretInput.Token) > 4096 {
-		return errors.New("agent: incomplete Komari Agent configuration")
-	}
-	target := manager.HostTarget
-	if target.OS == "" && target.Architecture == "" {
-		target, err = platform.Parse(runtime.GOOS, runtime.GOARCH)
-	} else {
-		target, err = platform.Parse(target.OS, target.Architecture)
-	}
-	if err != nil {
-		return fmt.Errorf("agent: install Komari Agent: %w", err)
-	}
-	artifact, err := declaredArtifact(task.Manifest, "komari-agent", target)
-	if err != nil {
-		return err
-	}
-	binary, err := manager.downloadArtifact(ctx, artifact)
-	if err != nil {
-		return err
-	}
-	if err := verifyArtifactELF(binary, target.Architecture); err != nil {
-		return err
-	}
-	config, err := json.MarshalIndent(komariConfig{
-		Endpoint: endpoint, Token: strings.TrimSpace(secretInput.Token), Interval: 3,
-		InfoReportInterval: 5, DisableAutoUpdate: true, DisableWebSSH: true,
-		IgnoreUnsafeCert: false, ProtocolVersion: 2,
-	}, "", "  ")
-	if err != nil {
-		return fmt.Errorf("agent: encode Komari Agent configuration: %w", err)
-	}
-	config = append(config, '\n')
-	unit := komariUnit()
-	paths := []string{manager.path(komariBinaryPath), manager.path(komariConfigPath), manager.path(komariUnitPath)}
-	snapshots := make([]hostFileSnapshot, 0, len(paths))
-	for _, path := range paths {
-		snapshot, captureErr := captureHostFile(path)
-		if captureErr != nil {
-			return captureErr
-		}
-		snapshots = append(snapshots, snapshot)
-	}
-	if snapshots[2].Exists && !bytes.Contains(snapshots[2].Data, []byte(komariUnitMarker)) {
-		return errors.New("agent: refusing to replace a Komari Agent service not managed by Vastora")
-	}
-	if !snapshots[2].Exists && (snapshots[0].Exists || snapshots[1].Exists) {
-		return errors.New("agent: refusing to replace Komari Agent files not managed by Vastora")
-	}
-	if err := preserveHostFiles(ctx, snapshots); err != nil {
-		return err
-	}
-	contents := [][]byte{binary, config, unit}
-	modes := []os.FileMode{0o755, 0o600, 0o644}
-	for index, path := range paths {
-		if err = ctx.Err(); err != nil {
-			break
-		}
-		if err = writeHostFileAtomic(path, contents[index], modes[index]); err != nil {
-			break
-		}
-	}
-	if err == nil {
-		err = manager.run(ctx, "systemctl", "daemon-reload")
-	}
-	if err == nil {
-		err = manager.run(ctx, "systemctl", "enable", "komari-agent.service")
-	}
-	if err == nil {
-		err = manager.run(ctx, "systemctl", "restart", "komari-agent.service")
-	}
-	if err == nil {
-		err = manager.run(ctx, "systemctl", "is-active", "--quiet", "komari-agent.service")
-	}
-	if err == nil {
-		return discardHostFileBackups(ctx, snapshots)
-	}
-	return uncertainTaskOutcome(fmt.Errorf("agent: apply Komari Agent: %w", err))
-}
-
-func komariUnit() []byte {
-	return []byte(komariUnitMarker + `[Unit]
-Description=Komari Agent
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/opt/komari/agent --config /etc/komari-agent/config.json
-WorkingDirectory=/opt/komari
-Restart=always
-RestartSec=5
-User=root
-
-[Install]
-WantedBy=multi-user.target
-`)
-}
-
-func (manager SystemdHostApplicationManager) RemoveKomari(ctx context.Context) error {
-	journal, err := manager.prepareKomariRemoval()
-	if err != nil || journal == nil {
-		return err
-	}
-	unitPath := manager.path(komariUnitPath)
-	paths := []string{unitPath, manager.path(komariConfigPath), manager.path(komariBinaryPath)}
-	unitExists := false
-	// A resumed uninstall may encounter a service or file replaced by the
-	// operator. Prove ownership of every remaining file before stopping it.
-	for _, path := range paths {
-		snapshot, err := validateJournaledKomariFile(path, journal)
-		if err != nil {
-			return err
-		}
-		if path == unitPath {
-			unitExists = snapshot.Exists
-		}
-	}
-	if unitExists {
-		if err := manager.run(ctx, "systemctl", "disable", "--now", "komari-agent.service"); err != nil {
-			return fmt.Errorf("agent: stop Komari Agent: %w", err)
-		}
-	}
-	for _, path := range paths {
-		if err := removeJournaledKomariFile(path, journal); err != nil {
-			return err
-		}
-	}
-	if err := manager.run(ctx, "systemctl", "daemon-reload"); err != nil {
-		return fmt.Errorf("agent: reload systemd after removing Komari Agent: %w", err)
-	}
-	return removeHostFile(manager.path(komariRemovalJournalPath))
-}
-
-func (manager SystemdHostApplicationManager) prepareKomariRemoval() (*komariRemovalJournal, error) {
-	journalPath := manager.path(komariRemovalJournalPath)
-	snapshot, err := captureHostFile(journalPath)
-	if err != nil {
-		return nil, fmt.Errorf("agent: read Komari Agent uninstall journal: %w", err)
-	}
-	if snapshot.Exists {
-		if snapshot.Mode&0o077 != 0 {
-			return nil, errors.New("agent: Komari Agent uninstall journal is not protected")
-		}
-		var journal komariRemovalJournal
-		if json.Unmarshal(snapshot.Data, &journal) != nil || journal.Version != 1 || len(journal.Files) != 3 {
-			return nil, errors.New("agent: invalid Komari Agent uninstall journal")
-		}
-		return &journal, nil
-	}
-	paths := []string{manager.path(komariUnitPath), manager.path(komariConfigPath), manager.path(komariBinaryPath)}
-	snapshots := make([]hostFileSnapshot, 0, len(paths))
-	for _, path := range paths {
-		snapshot, err := captureHostFile(path)
-		if err != nil {
-			return nil, err
-		}
-		snapshots = append(snapshots, snapshot)
-	}
-	if !snapshots[0].Exists {
-		if !snapshots[1].Exists && !snapshots[2].Exists {
-			return nil, nil
-		}
-		return nil, errors.New("agent: refusing to remove residual Komari Agent files without Vastora ownership evidence")
-	}
-	if !bytes.Contains(snapshots[0].Data, []byte(komariUnitMarker)) {
-		return nil, errors.New("agent: refusing to remove a Komari Agent service not managed by Vastora")
-	}
-	journal := &komariRemovalJournal{Version: 1, Files: make(map[string]komariRemovalFile, len(snapshots))}
-	for _, snapshot := range snapshots {
-		entry := komariRemovalFile{Exists: snapshot.Exists}
-		if snapshot.Exists {
-			digest := sha256.Sum256(snapshot.Data)
-			entry.SHA256 = hex.EncodeToString(digest[:])
-		}
-		journal.Files[snapshot.Path] = entry
-	}
-	raw, err := json.Marshal(journal)
-	if err != nil {
-		return nil, fmt.Errorf("agent: encode Komari Agent uninstall journal: %w", err)
-	}
-	if err := writeHostFileAtomic(journalPath, append(raw, '\n'), 0o600); err != nil {
-		return nil, fmt.Errorf("agent: persist Komari Agent uninstall journal: %w", err)
-	}
-	return journal, nil
-}
-
-func removeJournaledKomariFile(path string, journal *komariRemovalJournal) error {
-	snapshot, err := validateJournaledKomariFile(path, journal)
-	if err != nil || !snapshot.Exists {
-		return err
-	}
-	return removeHostFile(path)
-}
-
-func validateJournaledKomariFile(path string, journal *komariRemovalJournal) (hostFileSnapshot, error) {
-	expected, ok := journal.Files[path]
-	if !ok {
-		return hostFileSnapshot{}, errors.New("agent: Komari Agent uninstall journal does not cover a managed path")
-	}
-	snapshot, err := captureHostFile(path)
-	if err != nil || !snapshot.Exists {
-		return snapshot, err
-	}
-	if !expected.Exists {
-		return hostFileSnapshot{}, fmt.Errorf("agent: refusing to remove Komari Agent file created after uninstall began: %s", path)
-	}
-	digest := sha256.Sum256(snapshot.Data)
-	if hex.EncodeToString(digest[:]) != expected.SHA256 {
-		return hostFileSnapshot{}, fmt.Errorf("agent: refusing to remove changed Komari Agent file: %s", path)
-	}
-	return snapshot, nil
+	RootDir     string
+	HTTPClient  *http.Client
+	RunCommand  func(context.Context, string, ...string) error
+	ReadCommand func(context.Context, string, ...string) ([]byte, error)
+	HostTarget  platform.Target
 }
 
 func declaredArtifact(manifest catalog.AppManifest, name string, target platform.Target) (catalog.Artifact, error) {
@@ -293,45 +36,6 @@ func declaredArtifact(manifest catalog.AppManifest, name string, target platform
 		}
 	}
 	return catalog.Artifact{}, fmt.Errorf("agent: manifest does not declare %s for %s/%s", name, target.OS, target.Architecture)
-}
-
-func normalizedKomariEndpoint(value string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(value))
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("invalid Komari endpoint")
-	}
-	return strings.TrimRight(parsed.String(), "/"), nil
-}
-
-func (manager SystemdHostApplicationManager) downloadArtifact(ctx context.Context, artifact catalog.Artifact) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, artifact.URL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("agent: create application artifact download: %w", err)
-	}
-	client := manager.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute}
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("agent: download application artifact: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("agent: download application artifact: unexpected HTTP status %d", response.StatusCode)
-	}
-	content, err := io.ReadAll(io.LimitReader(response.Body, maxArtifactBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("agent: read application artifact: %w", err)
-	}
-	if len(content) == 0 || len(content) > maxArtifactBytes {
-		return nil, errors.New("agent: application artifact has an invalid size")
-	}
-	digest := sha256.Sum256(content)
-	if hex.EncodeToString(digest[:]) != artifact.SHA256 {
-		return nil, errors.New("agent: application artifact integrity check failed")
-	}
-	return content, nil
 }
 
 func (manager SystemdHostApplicationManager) path(absolute string) string {
@@ -375,43 +79,6 @@ func captureHostFile(path string) (hostFileSnapshot, error) {
 		return hostFileSnapshot{}, fmt.Errorf("agent: read managed host file %s: %w", path, err)
 	}
 	return hostFileSnapshot{Path: path, Data: data, Mode: info.Mode().Perm(), Exists: true}, nil
-}
-
-// Backups are recovery material, never an automatic rollback instruction.
-func preserveHostFiles(ctx context.Context, snapshots []hostFileSnapshot) error {
-	for _, snapshot := range snapshots {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if _, err := os.Lstat(snapshot.Path + ".previous"); !errors.Is(err, os.ErrNotExist) {
-			return errors.New("agent: retained host application backup requires explicit review")
-		}
-	}
-	for _, snapshot := range snapshots {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if snapshot.Exists {
-			if err := writeHostFileAtomic(snapshot.Path+".previous", snapshot.Data, 0o600); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func discardHostFileBackups(ctx context.Context, snapshots []hostFileSnapshot) error {
-	for _, snapshot := range snapshots {
-		if err := ctx.Err(); err != nil {
-			return uncertainTaskOutcome(err)
-		}
-		if snapshot.Exists {
-			if err := removeHostFile(snapshot.Path + ".previous"); err != nil {
-				return uncertainTaskOutcome(err)
-			}
-		}
-	}
-	return nil
 }
 
 func writeHostFileAtomic(path string, content []byte, mode os.FileMode) error {

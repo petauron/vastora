@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,13 +64,43 @@ func meridianHealthResult(projection meridianRuntimeProjection, now time.Time, h
 
 func completeMeridianHealthFixture(t *testing.T, store *Store, projection meridianRuntimeProjection, commandID string, result meridianruntime.Result) {
 	t.Helper()
-	raw, err := json.Marshal(ApplicationTaskResult{MeridianRuntime: &result})
+	raw, err := json.Marshal(ApplicationTaskResult{MeridianRuntime: &result, Resources: mockIntegratedResources(t, store, commandID)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.completeApplicationCommand(context.Background(), commitProjectionOnlyForTest, projection.agentID, commandID, 1, true, "", raw, false); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Domain tests model an already-installed generic package. They do not execute
+// Docker or prove resource adoption; those have separate runtime tests.
+func mockIntegratedResources(t *testing.T, store *Store, commandID string) json.RawMessage {
+	t.Helper()
+	var appID, appKey string
+	if err := store.db.QueryRow(`SELECT a.id,a.app_key FROM application_commands c JOIN applications a ON a.id=c.application_id WHERE c.id=?`, commandID).Scan(&appID, &appKey); err != nil {
+		t.Fatal(err)
+	}
+	receipt := map[string]any{"version": 1, "applicationId": appID, "appKey": appKey, "taskId": "fixture-install", "packageVersion": "fixture-version", "packageRevision": 1, "manifestSha256": strings.Repeat("a", 64), "runtime": "docker", "state": "ready", "authorizedCapabilities": []string{}, "resources": []any{map[string]string{"kind": "container", "id": "fixture-container"}}}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO application_resources(application_id,package_revision,manifest_sha256,authorized_capabilities_json,resources_json,adoption_state,updated_at) VALUES(?,1,?,'[]',?,'ready',?) ON CONFLICT(application_id) DO NOTHING`, appID, strings.Repeat("a", 64), raw, store.now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT resources_json FROM application_resources WHERE application_id=?`, appID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	receipt["taskId"] = commandID
+	raw, err = json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 func TestMeridianRuntimeSuccessNeedsPeerEvidenceAndHeartbeatRenewsWithoutRevisionChange(t *testing.T) {

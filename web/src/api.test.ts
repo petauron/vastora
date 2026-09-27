@@ -53,7 +53,12 @@ describe("Center API client", () => {
       "vastora-official/cpa",
       { timezone: "UTC", debug: false },
       "upgrade",
-      false
+      false,
+      undefined,
+      "registry-1",
+      "deployment-operation-1",
+      ["root"],
+      { packageRevision: 2, manifestSha256: "a".repeat(64) }
     );
 
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -62,13 +67,28 @@ describe("Center API client", () => {
     expect(init.credentials).toBe("same-origin");
     expect(init.method).toBe("POST");
     expect(new Headers(init.headers).get("X-CSRF-Token")).toBe("csrf-value");
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBe("deployment-operation-1");
     expect(JSON.parse(String(init.body))).toEqual({
       agentId: "agent-1",
       appKey: "vastora-official/cpa",
       config: { timezone: "UTC", debug: false },
       operation: "upgrade",
-      deleteData: false
+      deleteData: false,
+      registryCredentialId: "registry-1",
+      authorizedCapabilities: ["root"],
+      packageRevision: 2,
+      manifestSha256: "a".repeat(64)
     });
+  });
+
+  it.each(["configure", "uninstall"] as const)("does not bind %s of an installed package to the current catalog", async (operation) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "deployment-1" }), { status: 201, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.createDeployment("agent-1", "community/notes", {}, operation, false);
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body).toEqual({ agentId: "agent-1", appKey: "community/notes", config: {}, operation, deleteData: false });
+    expect(body).not.toHaveProperty("packageRevision");
+    expect(body).not.toHaveProperty("manifestSha256");
   });
 
   it("creates an independent service publication", async () => {

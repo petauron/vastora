@@ -132,6 +132,16 @@ func (s *Store) projectRetainedExecutionResult(ctx context.Context, id string, r
 	switch kind {
 	case "application.command":
 		err = s.projectApplicationCommand(ctx, tx, commit, agentID, taskID, attempt, true, "", evidence.Result, false)
+	case "application.adopt":
+		err = s.projectApplicationAdoption(ctx, tx, agentID, taskID, attempt, true, "", evidence.Result)
+		if err == nil {
+			err = commit(tx)
+		}
+	case "application.maintenance":
+		err = s.projectApplicationMaintenance(ctx, tx, agentID, taskID, attempt, true, "", evidence.Result, false)
+		if err == nil {
+			err = commit(tx)
+		}
 	case "application.apply":
 		_, _, err = s.projectApplicationDeployment(ctx, tx, agentID, taskID, attempt, true, "", evidence.Result, false, *evidence.ApplicationRuntimeGeneration)
 		if err == nil {
@@ -172,7 +182,7 @@ func retainedResultSupportsConfirmation(kind string, evidence executionResultEvi
 	switch kind {
 	case "application.apply":
 		return evidence.ApplicationRuntimeGeneration != nil
-	case "application.command", "landing.server.apply", "landing.proxy.apply", "gateway.routes.apply", "gateway.component.apply", "node.listener.apply", "tunnel.state.apply":
+	case "application.maintenance", "application.adopt", "application.command", "landing.server.apply", "landing.proxy.apply", "gateway.routes.apply", "gateway.component.apply", "node.listener.apply", "tunnel.state.apply":
 		return true
 	default:
 		return false
@@ -180,6 +190,12 @@ func retainedResultSupportsConfirmation(kind string, evidence executionResultEvi
 }
 
 func executionConfirmationStatement(task AgentTask, agentID string) (string, []any, error) {
+	if task.Kind == "application.maintenance" {
+		return `UPDATE application_maintenance SET state='running' WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed') AND NOT EXISTS(SELECT 1 FROM application_maintenance newer WHERE newer.application_id=application_maintenance.application_id AND newer.rowid>application_maintenance.rowid) AND NOT EXISTS(SELECT 1 FROM deployments newer WHERE newer.application_id=application_maintenance.application_id AND newer.rowid>(SELECT rowid FROM deployments WHERE id=application_maintenance.deployment_id))`, []any{task.ID, agentID, task.Attempt}, nil
+	}
+	if task.Kind == "application.adopt" {
+		return `UPDATE application_adoptions SET state='running' WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed')`, []any{task.ID, agentID, task.Attempt}, nil
+	}
 	if task.Kind == "application.command" {
 		return `UPDATE application_commands SET state='running' WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed') AND NOT EXISTS(SELECT 1 FROM application_commands newer WHERE newer.application_id=application_commands.application_id AND newer.rowid>application_commands.rowid)`, []any{task.ID, agentID, task.Attempt}, nil
 	}

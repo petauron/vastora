@@ -11,8 +11,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/petauron/vastora/internal/agent"
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 func (s *Store) ConfigureOfficialCatalog(ctx context.Context, origin string) error {
@@ -44,6 +43,14 @@ func readAcceptedOfficialCatalog(ctx context.Context, db interface {
 	if target.Source != catalog.OfficialSourceIdentity || target.Channel != channel || target.Revision != state.Acceptance.Revision {
 		return catalog.Catalog{}, state.Acceptance, errors.New("center: official cache identity mismatch")
 	}
+	// Keep the trusted legacy bytes and rollback high-water marks, but do not
+	// offer schema 3 recipes to the new executors after the maintenance switch.
+	var header struct {
+		SchemaVersion int `json:"schemaVersion"`
+	}
+	if json.Unmarshal(target.Catalog, &header) == nil && header.SchemaVersion == 3 {
+		return catalog.Catalog{}, state.Acceptance, nil
+	}
 	value, err := catalog.ParseCatalog(target.Catalog)
 	return value, state.Acceptance, err
 }
@@ -58,7 +65,7 @@ func authorizeOfficialManifest(ctx context.Context, tx *sql.Tx, channel string, 
 	if now.Before(acceptance.ObservedAt) || !now.Before(acceptance.ExpiresAt) {
 		return errors.New("center: refresh the official catalog before installing or upgrading")
 	}
-	if err := agent.ValidateOfficialContract(manifest); err != nil {
+	if err := requireCatalogRuntime(manifest); err != nil {
 		return err
 	}
 	expected, err := catalog.CanonicalAppManifest(manifest)
@@ -70,7 +77,7 @@ func authorizeOfficialManifest(ctx context.Context, tx *sql.Tx, channel string, 
 		return err
 	}
 	for _, app := range value.Apps {
-		if app.ID != manifest.ID || app.Version != manifest.Version {
+		if app.ID != manifest.ID || app.Version != manifest.Version || app.PackageRevision != manifest.PackageRevision {
 			continue
 		}
 		canonical, err := catalog.CanonicalAppManifest(app)
@@ -89,7 +96,8 @@ func authorizeOfficialManifest(ctx context.Context, tx *sql.Tx, channel string, 
 }
 
 // RefreshTrustedOfficialCatalog replaces accepted content only after the full
-// TUF and executor checks succeed. The root is supplied by program packaging,
+// TUF and structural checks succeed. Executor support is evaluated per node,
+// not used to discard other valid catalog entries. The root is supplied by program packaging,
 // never by the editable source record or by a fetched catalog.
 func (s *Store) RefreshTrustedOfficialCatalog(ctx context.Context, origin, channel string, root []byte) (int, error) {
 	previous, _, err := s.OfficialCatalogTrust(ctx, channel)
@@ -114,7 +122,7 @@ func (s *Store) RefreshTrustedOfficialCatalog(ctx context.Context, origin, chann
 }
 
 func (s *Store) acceptOfficialCatalog(ctx context.Context, origin string, result catalog.OfficialFetchResult, previous catalog.OfficialAcceptance) error {
-	if err := agent.ValidateOfficialCatalog(result.Catalog); err != nil {
+	if err := catalog.ValidateCatalog(result.Catalog); err != nil {
 		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

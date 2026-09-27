@@ -44,8 +44,8 @@ jobs:
       - name: Require reviewed catalog trust before creating a program release
         if: github.event_name != 'workflow_dispatch' || inputs.release_tag == ''
         run: |
-          test -s catalog/trust/1.root.json || { echo 'Provision the reviewed public catalog root before releasing Center.' >&2; exit 1; }
-          go run ./cmd/catalog-check --catalog catalog/catalog.json --root-directory catalog/trust
+          test -s catalog/trust/1.root.json && test -s catalog/trust/2.root.json || { echo 'Provision the reviewed public catalog root chain before releasing Center.' >&2; exit 1; }
+          sh scripts/check-independent-catalog.sh --catalog internal/center/testdata/reviewed-catalog-v4.json --root-directory catalog/trust
 
       - name: Create a release without updating the next release pull request
         id: release

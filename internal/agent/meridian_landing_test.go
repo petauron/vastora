@@ -202,7 +202,8 @@ func TestMeridianPreparationIsScopedAndDoesNotStopLegacyMonitor(t *testing.T) {
 		if manifest.ID != "meridian" {
 			continue
 		}
-		task := DeploymentTask{AppKey: meridianKey, ApplicationID: "meridian-application", Operation: "install", Manifest: manifest}
+		task := DeploymentTask{ID: "prepare-meridian", AppKey: meridianKey, ApplicationID: "meridian-application", Operation: "install", Manifest: manifest, AuthorizedCapabilities: manifest.Runtime.RequiredCapabilities}
+		packageTaskDigest(t, &task)
 		if checkpoint, err := store.prepareLandingXrayRuntimeMigration(context.Background(), task); err != nil || checkpoint != nil {
 			t.Fatalf("audited preparation changed runtime: %#v %v", checkpoint, err)
 		}

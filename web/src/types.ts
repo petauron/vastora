@@ -157,6 +157,10 @@ export type AssistantProposal = {
     appKey?: string;
     appName?: LocalizedText;
     version?: string;
+		packageRevision?: number;
+		manifestSha256?: string;
+		authorizedCapabilities?: string[];
+		permissionDetails?: string[];
 		role?: string;
 		credentialTarget?: "management" | "client";
 		impact?: string;
@@ -299,7 +303,7 @@ export type AgentView = {
   credentialRevoked: boolean;
   siteId: string;
   roles: string[];
-  capabilities: { docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean };
+  capabilities: { executorVersions?: Record<string, number>; runtimeCapabilities?: string[]; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean };
   networkCandidates: NetworkCandidate[];
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;
@@ -373,9 +377,15 @@ export type AppView = {
   catalogRevision?: number;
   catalogExpiresAt?: string;
   installBlocked?: boolean;
+  installBlockedReason?: string;
+  manifestSha256?: string;
+  managedConfigFields?: string[];
+  permissionDetails?: string[];
   app: {
     id: string;
     version: string;
+    packageRevision?: number;
+    runtime?: { kind: string; version: number; requiredCapabilities?: string[] };
     name: LocalizedText;
     description: LocalizedText;
     hostAccess?: boolean;
@@ -399,7 +409,7 @@ export type Site = { id: string; organizationId: string; name: string; code: str
 export type ThreeXUIRole = "master" | "worker";
 export type ThreeXUIBackup = { applicationId: string; revision: number; state: "pending" | "ready" | "failed"; sha256?: string; size: number; lastError?: string; updatedAt: string };
 export type ThreeXUIControllerMigration = { id: string; kind: "replace" | "consolidate"; siteId: string; sourceApplicationId: string; targetApplicationId: string; backupRevision: number; state: "backing_up" | "restoring" | "switching" | "ready" | "failed"; step: "backup" | "restore" | "cleanup" | "convert_worker" | "switch" | "complete"; lastError?: string; failedWorkerApplicationId?: string; backup?: ThreeXUIBackup; createdAt: string; updatedAt: string };
-export type Application = { id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; role?: ThreeXUIRole; controllerApplicationId?: string; nodeSyncStatus?: "pending" | "applying" | "ready" | "failed" | "stopped"; nodeSyncError?: string; restorePointState?: "pending" | "ready" | "failed"; restorePointAt?: string; installedVersion?: string; availableVersion?: string; updateAvailable: boolean; createdAt: string; updatedAt: string };
+export type Application = { id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; role?: ThreeXUIRole; controllerApplicationId?: string; nodeSyncStatus?: "pending" | "applying" | "ready" | "failed" | "stopped"; nodeSyncError?: string; restorePointState?: "pending" | "ready" | "failed"; restorePointAt?: string; installedVersion?: string; installedPackageRevision?: number; availablePackageRevision?: number; adoptionState?: "pending" | "ready" | "blocked"; adoptionError?: string; availableVersion?: string; updateAvailable: boolean; createdAt: string; updatedAt: string };
 export type ApplicationCredentials = { kind: "three_x_ui"; username: string; password: string } | { kind: "cpa"; managementKey: string; clientApiKey: string };
 export type ApplicationCredentialRotation = { id: string; applicationId: string; target: "management" | "client"; state: "preparing" | "pending" | "succeeded" | "failed" | "action_required"; cpaDeploymentId?: string; keeperDeploymentId?: string; lastError?: string; createdAt: string; updatedAt: string };
 export type Service = { protocols?: ("vless" | "hy2")[]; id: string; applicationId: string; siteId: string; name: string; displayName?: string; regionCode?: string; protocol: "http" | "https" | "tcp" | "udp"; containerPort: number; hostPort: number; endpoint: string; source: "catalog" | "observed"; appProtocol?: string; management: boolean; observedListen?: string; status: string; lastError?: string; guardStatus?: "pending" | "hardening" | "ready" | "action_required"; guardSummary?: string; actionRequiredReason?: string; createdAt: string; updatedAt: string };

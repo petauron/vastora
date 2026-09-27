@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 )
@@ -195,14 +195,14 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET registry_credential_id = ? WHERE application_id = ? AND state = 'succeeded'`, registryCredential.ID, applicationID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "downgraded-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationRuntimeGeneration: 0}); err != nil {
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "downgraded-runtime", Roles: []string{"worker"}, Capabilities: testRuntimeCapabilities(NodeCapabilities{Docker: true}), ApplicationRuntimeGeneration: 0}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET runtime_generation = 0 WHERE id = ?`, applicationID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
-		Version: "new-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true},
+		Version: "new-runtime", Roles: []string{"worker"}, Capabilities: testRuntimeCapabilities(NodeCapabilities{Docker: true}),
 		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration,
 	}); err != nil {
 		t.Fatal(err)
@@ -212,6 +212,7 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 		t.Fatalf("unexpected runtime migration task: %#v", task)
 	}
 	result := cpaApplicationResult("10.0.0.81")
+	result = mockPackageResult(t, task, result)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +221,7 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 		t.Fatalf("application runtime generation = %d, err=%v", generation, err)
 	}
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
-		Version: "new-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true},
+		Version: "new-runtime", Roles: []string{"worker"}, Capabilities: testRuntimeCapabilities(NodeCapabilities{Docker: true}),
 		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration,
 	}); err != nil {
 		t.Fatal(err)
@@ -322,21 +323,22 @@ func TestAgentRuntimeGenerationFencesClaimsAndResultEvidence(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "runtime-fence", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.83", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.83", LANAddress: "10.0.0.83", EnabledKinds: []string{networking.KindLAN}})
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "downgraded-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationRuntimeGeneration: 0}); err != nil {
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "downgraded-runtime", Roles: []string{"worker"}, Capabilities: testRuntimeCapabilities(NodeCapabilities{Docker: true}), ApplicationRuntimeGeneration: 0}); err != nil {
 		t.Fatal(err)
 	}
 	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential); err != nil || task != nil {
 		t.Fatalf("generation-zero Agent claim = %#v, err=%v", task, err)
 	}
-	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "current-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "current-runtime", Roles: []string{"worker"}, Capabilities: testRuntimeCapabilities(NodeCapabilities{Docker: true}), ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
 	result := cpaApplicationResult("10.0.0.83")
+	result = mockPackageResult(t, task, result)
 	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false); err == nil || !strings.Contains(err.Error(), "missing application runtime generation") {
 		t.Fatalf("result without executor generation was accepted: %v", err)
 	}
@@ -361,7 +363,7 @@ func TestNewerAgentCompletesOlderPendingRuntimeTaskAtExecutedGeneration(t *testi
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "runtime-forward-executor", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.85", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.85", LANAddress: "10.0.0.85", EnabledKinds: []string{networking.KindLAN}})
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,6 +375,7 @@ func TestNewerAgentCompletesOlderPendingRuntimeTaskAtExecutedGeneration(t *testi
 		t.Fatalf("required runtime generation = %d", task.RequiredRuntimeGeneration)
 	}
 	result := cpaApplicationResult("10.0.0.85")
+	result = mockPackageResult(t, task, result)
 	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, platform.ApplicationRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
@@ -394,11 +397,11 @@ func TestAgentRuntimeMigrationDoesNotReplaceFailedOperation(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET runtime_generation = 0 WHERE id = ?`, applicationID); err != nil {
 		t.Fatal(err)
 	}
-	blocker, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", Config: json.RawMessage(`{"debug":true}`)})
+	blocker, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", Config: json.RawMessage(`{"debug":true}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	heartbeat := NodeHeartbeat{Version: "new-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}
+	heartbeat := NodeHeartbeat{Version: "new-runtime", Roles: []string{"worker"}, Capabilities: testRuntimeCapabilities(NodeCapabilities{Docker: true}), ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +433,7 @@ func TestAgentRuntimeGenerationRecreatesGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
-		Version: "new-runtime", Roles: []string{"worker", "gateway"}, Capabilities: NodeCapabilities{Docker: true, Gateway: true}, GatewayHealthy: true,
+		Version: "new-runtime", Roles: []string{"worker", "gateway"}, Capabilities: testRuntimeCapabilities(NodeCapabilities{Docker: true, Gateway: true}), GatewayHealthy: true,
 		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration,
 	}); err != nil {
 		t.Fatal(err)
@@ -458,7 +461,7 @@ func TestAgentRuntimeGenerationPreservesInstalledKomariManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
-		Version: "new-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true},
+		Version: "new-runtime", Roles: []string{"worker"}, Capabilities: testRuntimeCapabilities(NodeCapabilities{Docker: true}),
 		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration,
 	}); err != nil {
 		t.Fatal(err)
@@ -618,7 +621,7 @@ func TestUninstallRemovesManagedHeadscaleDNS(t *testing.T) {
 	if err != nil || !strings.Contains(string(before), "cpa.tail.example.test") {
 		t.Fatalf("managed Headscale record was not created: %s err=%v", before, err)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "uninstall"}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "uninstall", AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 		t.Fatal(err)
 	}
 	completeNextTask(t, store, node, "application.apply", nil)

@@ -5,7 +5,8 @@ project_dir="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 temporary="$(mktemp -t vastora-runtime-images.XXXXXX)"
 trap 'rm -f "$temporary"' EXIT HUP INT TERM
 
-jq -r '.. | objects | .reference? // empty' "$project_dir/catalog/catalog.json" >"$temporary"
+# Consumer integration fixture only; authoritative recipes publish independently.
+jq -r '.. | objects | .reference? // empty' "$project_dir/internal/center/testdata/reviewed-catalog-v4.json" >"$temporary"
 grep -RhoE --include='*.go' --exclude='*_test.go' \
   '(docker.io|ghcr.io)/[^"[:space:]]+@sha256:[0-9a-f]{64}' \
   "$project_dir/cmd" "$project_dir/internal" >>"$temporary"

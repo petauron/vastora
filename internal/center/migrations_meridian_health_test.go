@@ -30,7 +30,14 @@ func TestVersion89RequiresFreshLandingHealthWithoutChangingIdentityOrQuota(t *te
 	}
 	t.Cleanup(func() { _ = migrated.Close() })
 	if after := meridianVersion88PreservedState(t, migrated.db); !reflect.DeepEqual(before, after) {
-		t.Fatal("migration changed Meridian identities, configuration, revisions, subscription material, or quota usage")
+		t.Fatal("migration changed Meridian identities, configuration, subscription material, or quota usage")
+	}
+	// Version 100 intentionally advances ready VLESS endpoints and their active
+	// grants, so their mutable revisions and health are checked separately.
+	var endpointDesired, endpointApplied, endpointHealthy int
+	var endpointStatus string
+	if err := migrated.db.QueryRow(`SELECT desired_revision,applied_revision,runtime_healthy,status FROM meridian_endpoints WHERE id='v88-health-endpoint'`).Scan(&endpointDesired, &endpointApplied, &endpointHealthy, &endpointStatus); err != nil || endpointDesired != 6 || endpointApplied != 5 || endpointHealthy != 0 || endpointStatus != "pending" {
+		t.Fatalf("destination migration endpoint revision=%d applied=%d healthy=%d status=%q err=%v", endpointDesired, endpointApplied, endpointHealthy, endpointStatus, err)
 	}
 	var sourceJSON string
 	if err := migrated.db.QueryRow(`SELECT source_peer_json FROM meridian_endpoints WHERE id='v88-health-endpoint'`).Scan(&sourceJSON); err != nil || sourceJSON != "{}" {
@@ -39,11 +46,11 @@ func TestVersion89RequiresFreshLandingHealthWithoutChangingIdentityOrQuota(t *te
 	for _, expected := range []struct {
 		id, status, message string
 	}{
-		{id: "ready", status: "blocked", message: "Awaiting fresh direct entry-to-landing runtime evidence."},
-		{id: "pending", status: "pending", message: "previous pending diagnostic"},
+		{id: "ready", status: "pending", message: ""},
+		{id: "pending", status: "pending", message: ""},
 		{id: "revoking", status: "revoking", message: "previous revoking diagnostic"},
 		{id: "revoked", status: "revoked", message: "previous revoked diagnostic"},
-		{id: "failed", status: "failed", message: "previous failed diagnostic"},
+		{id: "failed", status: "pending", message: ""},
 	} {
 		var status, message string
 		var healthy int
@@ -195,14 +202,14 @@ func meridianVersion88PreservedState(t *testing.T, db *sql.DB) map[string]string
 	queries := map[string]string{
 		"endpoints": `SELECT id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,
 			private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,
-			hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,desired_revision,applied_revision,runtime_healthy,legacy_retired,status,last_error,created_at,updated_at
+			hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,applied_revision,legacy_retired,created_at,updated_at
 			FROM meridian_endpoints ORDER BY id`,
 		"accounts":    `SELECT * FROM meridian_accounts ORDER BY id`,
 		"credentials": `SELECT * FROM meridian_credentials ORDER BY id`,
 		"usage":       `SELECT * FROM meridian_usage_watermarks ORDER BY credential_id`,
 		"snapshots":   `SELECT * FROM meridian_subscription_snapshots ORDER BY account_id`,
 		"secrets":     `SELECT * FROM secrets WHERE id GLOB 'v88-health-*' ORDER BY id`,
-		"grants":      `SELECT id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,mode,hide_native,enabled,desired_revision,applied_revision,created_at,updated_at FROM meridian_route_grants ORDER BY id`,
+		"grants":      `SELECT id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,mode,hide_native,enabled,applied_revision,created_at,updated_at FROM meridian_route_grants ORDER BY id`,
 	}
 	result := make(map[string]string, len(queries))
 	for name, query := range queries {

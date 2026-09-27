@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 func (s *Server) handleOfficialUIBundle(writer http.ResponseWriter, request *http.Request) {

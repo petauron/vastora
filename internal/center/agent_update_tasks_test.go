@@ -526,7 +526,7 @@ func TestAgentUpdateRolloutOfflineTasksRemainRecoverable(t *testing.T) {
 func heartbeatAgentUpdateVersion(t *testing.T, store *Store, node AgentCredential, version string, supported bool) {
 	t.Helper()
 	if err := store.RecordAgentHeartbeat(context.Background(), node.ID, node.Credential, NodeHeartbeat{
-		Version: version, Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true},
+		Version: version, Roles: []string{"worker"}, Capabilities: testRuntimeCapabilities(NodeCapabilities{Docker: true}),
 		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, RemoteUpdateSupported: supported,
 	}); err != nil {
 		t.Fatal(err)

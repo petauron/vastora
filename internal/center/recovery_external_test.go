@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/recovery"
 )
@@ -24,7 +23,7 @@ func TestExternalVolumeEvidenceCannotHideMissingOrChangedCoverage(t *testing.T) 
 	if _, err := store.db.Exec(`INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,operation,state,application_id,created_at,updated_at) VALUES('recovery-deployment',?,'vastora-official/cpa','7.2.130','{}','{}','install','succeeded','recovery-app',?,?)`, node.ID, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
-	policy, _ := catalog.OfficialRecoveryPolicy("vastora-official/cpa", "7.2.130")
+	policy, _ := recovery.OfficialRecoveryPolicy("vastora-official/cpa", "7.2.130")
 	digest := recovery.Digest([]byte("external encrypted artifact"))
 	value := ExternalRecoveryEvidence{FormatVersion: 1, ApplicationID: "recovery-app", NodeID: node.ID, SiteID: site, AppKey: "vastora-official/cpa", AppVersion: "7.2.130", PolicyVersion: policy.Version, Consistency: policy.Consistency, Volumes: policy.Volumes, Reference: "backup-system:restore-point-1", ArtifactDigest: digest, Encrypted: true, CreatedAt: now.Add(-time.Minute), RestoreVerifiedAt: now}
 	for _, scenario := range []string{"missing volume", "digest", "identity", "unencrypted", "stale", "reference credential"} {

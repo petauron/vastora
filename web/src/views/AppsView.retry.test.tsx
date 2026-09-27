@@ -26,11 +26,11 @@ function fixture(): AppData {
     registryCredentials: [], sources: [], organizations: [], sites: [], routes: [],
     actions: [], integrations: [], threeXUIControllerMigrations: [],
     agents: [
-      { id: "first", name: "Edge Node C", connected: true, credentialRevoked: false, siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.1" } },
-      { id: "failed-node", name: "Edge Node A", connected: true, credentialRevoked: false, siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.2" } },
+      { id: "first", name: "Edge Node C", connected: true, credentialRevoked: false, siteId: "site", capabilities: { docker: true, executorVersions: { docker: 1, systemd: 1 }, runtimeCapabilities: [] }, networkProfile: { serviceAddress: "10.0.0.1" } },
+      { id: "failed-node", name: "Edge Node A", connected: true, credentialRevoked: false, siteId: "site", capabilities: { docker: true, executorVersions: { docker: 1, systemd: 1 }, runtimeCapabilities: [] }, networkProfile: { serviceAddress: "10.0.0.2" } },
     ],
-    apps: [{ key: appKey, sourceId: "vastora-official", fetchedAt: "2026-09-11T00:00:00Z", app: {
-      id: "pulse-agent", version: "0.1.0-alpha.2", name: { en: "Collector", "zh-CN": "探针" },
+    apps: [{ key: appKey, sourceId: "vastora-official", fetchedAt: "2026-09-11T00:00:00Z", manifestSha256: "a".repeat(64), app: {
+      id: "pulse-agent", version: "0.1.0-alpha.2", packageRevision: 1, runtime: { kind: "systemd", version: 1 }, name: { en: "Collector", "zh-CN": "探针" },
       description: { en: "Host metrics", "zh-CN": "主机监控" }, hostAccess: true, config: [],
     } }],
     applications: [{ id: "monitor", appKey: "vastora-official/pulse", status: "running" }],

@@ -131,11 +131,11 @@ it("renders the exact proposal and uses only the trusted approval action", async
     conversationId: "conversation-1",
     runId: "run-1",
     kind: "install_application" as const,
-    summary: { action: "install", agentId: "agent-1", agentName: "上海节点", appKey: "vastora-official/3x-ui", appName: { en: "3x-ui", "zh-CN": "3x-ui" }, version: "3.7.0", impact: "Install one app", dataRetention: "Data is retained" },
+    summary: { action: "install", agentId: "agent-1", agentName: "上海节点", appKey: "vastora-official/3x-ui", appName: { en: "3x-ui", "zh-CN": "3x-ui" }, version: "3.7.0", packageRevision: 3, manifestSha256: "b".repeat(64), authorizedCapabilities: ["root", "host-network"], impact: "Install one app", dataRetention: "Data is retained" },
     digest: "a".repeat(64),
     targets: [{ kind: "agent", id: "agent-1" }],
     expectedRevision: "revision-1",
-    policyVersion: "install-application-v1",
+    policyVersion: "install-application-v2",
     risk: "medium" as const,
     status: "pending" as const,
     expiresAt: "2026-08-30T14:00:00Z",
@@ -157,6 +157,8 @@ it("renders the exact proposal and uses only the trusted approval action", async
   await vi.waitFor(() => expect(container.textContent).toContain("变更审批"));
   expect(container.textContent).toContain("上海节点");
   expect(container.textContent).toContain("3.7.0");
+  expect(container.textContent).toContain("配方修订: r3");
+  expect(container.textContent).toContain("批准后授权的权限: root, host-network");
   expect(container.textContent).toContain(proposal.digest);
   expect(container.textContent).toContain("聊天中的“确认”不会执行操作");
   const approve = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("批准此提案"));

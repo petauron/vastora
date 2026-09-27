@@ -28,8 +28,6 @@ func run(arguments []string) error {
 		return nil
 	case "status", "update", "uninstall":
 		return runLocalManagement(arguments)
-	case "catalog":
-		return runCatalog(arguments[1:])
 	case "center":
 		return runCenter(arguments[1:])
 	case "agent":
@@ -94,9 +92,5 @@ Usage:
   vastora agent update [--data-dir /var/lib/vastora/agent] [--center-url URL]
   vastora agent uninstall --purge
   vastora agent serve --data-dir DIR [--listen 127.0.0.1:8090]
-  vastora catalog keygen --out-dir DIR
-  vastora catalog validate --catalog FILE
-  vastora catalog sign --catalog FILE --private-key FILE --key-id ID --output FILE
-  vastora catalog verify --envelope FILE --public-key FILE
 `)
 }

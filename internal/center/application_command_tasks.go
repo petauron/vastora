@@ -432,6 +432,15 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 		return s.completeMeridianLegacyExport(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == meridianruntime.ApplyKind {
+		if succeeded {
+			var result ApplicationTaskResult
+			if json.Unmarshal(rawResult, &result) != nil {
+				return errors.New("center: invalid Meridian runtime result")
+			}
+			if err := storeIntegratedPackageReceipt(ctx, tx, taskID, applicationID, appKey, result.Resources, s.now()); err != nil {
+				return err
+			}
+		}
 		return s.completeMeridianRuntimeCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == meridianruntime.LegacyRetireKind {

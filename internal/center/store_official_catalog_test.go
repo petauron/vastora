@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 func TestOfficialTrustTransactionAndReplayState(t *testing.T) {
@@ -19,7 +19,7 @@ func TestOfficialTrustTransactionAndReplayState(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	now := s.now().UTC()
-	payload, err := os.ReadFile("../catalog/testdata/v3/valid-catalog.json")
+	payload, err := os.ReadFile("testdata/reviewed-catalog-v4.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestOfficialCheckpointPreservesAcceptedCatalogAndExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	value, err := os.ReadFile("../../catalog/catalog.json")
+	value, err := os.ReadFile("testdata/reviewed-catalog-v4.json")
 	if err != nil {
 		t.Fatal(err)
 	}

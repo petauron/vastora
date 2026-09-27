@@ -23,7 +23,7 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalogPayload, err := os.ReadFile("../../catalog/catalog.json")
+	catalogPayload, err := os.ReadFile("testdata/reviewed-catalog-v4.json")
 	if err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestStoredThreeXUICredentialsRequireAdministratorReauthenticationAndAreAudi
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalogPayload, err := os.ReadFile("../../catalog/catalog.json")
+	catalogPayload, err := os.ReadFile("testdata/reviewed-catalog-v4.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestApplicationResultSurvivesFailedResponseAndRestartUntilAcknowledged(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalogPayload, err := os.ReadFile("../../catalog/catalog.json")
+	catalogPayload, err := os.ReadFile("testdata/reviewed-catalog-v4.json")
 	if err != nil {
 		store.Close()
 		t.Fatal(err)

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 func TestOpenMigratesVersion3WithoutLosingPublicationsOrRoutes(t *testing.T) {
@@ -269,7 +269,7 @@ func TestVersion27MigrationBackfillsImmutableCatalogHistory(t *testing.T) {
 	}
 	manifest := catalogLifecycleManifest("1.0.0", "Migrated manifest")
 	setCatalogIntegerDefault(&manifest, `1e0`)
-	rawEnvelope := signedCatalogEnvelope(t, privateKey, manifest)
+	rawEnvelope := signedLegacyCatalogAuditFixture(t, privateKey, manifest)
 	fetchedAt := time.Date(2026, 8, 30, 4, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
 	if _, err := db.ExecContext(ctx, `INSERT INTO catalog_sources(id, display_name, url, public_key, enabled, refresh_seconds, created_at)
 		VALUES(?, ?, ?, ?, 1, 3600, ?)`, "migration-source", "Migration source", "https://catalog.example.invalid", publicKey, fetchedAt); err != nil {
@@ -293,7 +293,7 @@ func TestVersion27MigrationBackfillsImmutableCatalogHistory(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT generation, revision, last_checked_at FROM catalog_sources WHERE id = ?`, "migration-source").Scan(&generation, &revision, &checkedAt); err != nil {
 		t.Fatal(err)
 	}
-	if generation == "" || revision != 1 || checkedAt != fetchedAt {
+	if generation == "" || revision != 1 || checkedAt != "" {
 		t.Fatalf("migrated source generation=%q revision=%d checkedAt=%q", generation, revision, checkedAt)
 	}
 	if err := store.db.QueryRowContext(ctx, `SELECT version FROM catalog_manifest_history WHERE source_id = ? AND app_id = ?`, "migration-source", "catalog-app").Scan(&historyVersion); err != nil {
@@ -302,10 +302,19 @@ func TestVersion27MigrationBackfillsImmutableCatalogHistory(t *testing.T) {
 	if historyVersion != "1.0.0" {
 		t.Fatalf("backfilled immutable version = %q", historyVersion)
 	}
-	changed := catalogLifecycleManifest("1.0.0", "Changed after migration")
+	var recipeRevision int
+	if err := store.db.QueryRow(`SELECT package_revision FROM catalog_manifest_history WHERE source_id='migration-source' AND app_id='catalog-app'`).Scan(&recipeRevision); err != nil || recipeRevision != 0 {
+		t.Fatalf("legacy recipe revision=%d err=%v", recipeRevision, err)
+	}
+	// A v4 recipe is a new identity; its revision 1 never rewrites historical 0.
+	changed := catalogLifecycleManifest("1.0.0", "New declarative recipe")
 	setCatalogIntegerDefault(&changed, `1`)
+	if err := commitCatalogForTest(ctx, store, "migration-source", signedCatalogEnvelope(t, privateKey, changed), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	changed.Apps[0].Description.English = "changed revision 1"
 	if err := commitCatalogForTest(ctx, store, "migration-source", signedCatalogEnvelope(t, privateKey, changed), "", ""); err == nil || !strings.Contains(err.Error(), "immutable catalog manifest changed") {
-		t.Fatalf("migrated immutable history was bypassed: %v", err)
+		t.Fatalf("new recipe immutable history was bypassed: %v", err)
 	}
 	if _, err := catalog.CanonicalAppManifest(manifest.Apps[0]); err != nil {
 		t.Fatalf("migration fixture is invalid: %v", err)

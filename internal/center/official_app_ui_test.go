@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/theupdateframework/go-tuf/v2/metadata"
 )
 
@@ -104,7 +104,7 @@ func TestOfficialUIBundleSchemaMigratesForwardWithBackup(t *testing.T) {
 	if err := upgraded.db.QueryRow(`SELECT count(*) FROM official_app_ui_history`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("UI version history was not created empty: %d %v", count, err)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v100-before-v101-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v100-before-v102-*.db"))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("pre-migration backup missing: %v %v", backups, err)
 	}

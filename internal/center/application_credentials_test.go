@@ -29,7 +29,7 @@ func TestCPACredentialLifecycleGeneratesPreservesRevealsAndRotates(t *testing.T)
 	}
 	node := enrollOrchestrationNode(t, store, "cpa-credentials", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.95", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.95", LANAddress: "10.0.0.95", EnabledKinds: []string{networking.KindLAN}})
 
-	install, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	install, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestCPACredentialLifecycleGeneratesPreservesRevealsAndRotates(t *testing.T)
 		t.Fatalf("CPA reveal response status=%d cache=%q body=%q", revealResponse.Code, revealResponse.Header().Get("Cache-Control"), revealResponse.Body.String())
 	}
 
-	configure, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", Config: json.RawMessage(`{"debug":true}`)})
+	configure, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", Config: json.RawMessage(`{"debug":true}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +179,7 @@ func completeApplicationTaskForCredentialTest(t *testing.T, store *Store, node A
 		services = append(services, ApplicationServiceResult{Name: "client-api", Protocol: "http", ContainerPort: port, HostPort: port, Address: address})
 	}
 	result, _ := json.Marshal(ApplicationTaskResult{Services: services})
+	result = mockPackageResult(t, task, result)
 	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}

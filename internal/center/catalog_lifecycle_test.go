@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 func TestCatalogSourceLifecycleAndWriteOnlyCredentials(t *testing.T) {
@@ -546,11 +546,13 @@ func catalogLifecycleManifest(version, description string) catalog.Catalog {
 		GeneratedAt:   time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC),
 		Apps: []catalog.AppManifest{{
 			ID: "catalog-app", Version: version,
-			Name:        catalog.LocalizedText{English: "Catalog app", SimplifiedChinese: "目录应用"},
-			Description: catalog.LocalizedText{English: description, SimplifiedChinese: "目录应用描述"},
-			License:     "Apache-2.0",
-			Images:      []catalog.Image{{Name: "app", Reference: "example.invalid/catalog-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
-			Config:      []catalog.ConfigField{},
+			PackageRevision: 1,
+			Runtime:         &catalog.RuntimeSpec{Kind: "docker", Version: 1, Docker: &catalog.DockerRuntime{Containers: []catalog.Container{{Name: "main", Image: "app"}}}},
+			Name:            catalog.LocalizedText{English: "Catalog app", SimplifiedChinese: "目录应用"},
+			Description:     catalog.LocalizedText{English: description, SimplifiedChinese: "目录应用描述"},
+			License:         "Apache-2.0",
+			Images:          []catalog.Image{{Name: "app", Reference: "example.invalid/catalog-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+			Config:          []catalog.ConfigField{},
 		}},
 	}
 }

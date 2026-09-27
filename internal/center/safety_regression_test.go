@@ -34,7 +34,7 @@ func TestCreateDeploymentRequiresConfirmedServiceAddress(t *testing.T) {
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
 		Version:      "test",
 		Roles:        []string{"worker"},
-		Capabilities: NodeCapabilities{Docker: true},
+		Capabilities: testRuntimeCapabilities(NodeCapabilities{Docker: true}),
 		NetworkCandidates: []networking.Candidate{{
 			Address:   "10.0.0.91",
 			Interface: "eth0",
@@ -45,9 +45,10 @@ func TestCreateDeploymentRequiresConfirmedServiceAddress(t *testing.T) {
 	}
 
 	_, err = store.CreateDeployment(ctx, DeploymentRequest{
-		AgentID: node.ID,
-		AppKey:  cpaAppKey,
-		Config:  json.RawMessage(`{"debug":false}`),
+		AgentID:                node.ID,
+		AppKey:                 cpaAppKey,
+		Config:                 json.RawMessage(`{"debug":false}`),
+		AuthorizedCapabilities: testCapabilityGrant("root"),
 	})
 	if err == nil || !strings.Contains(err.Error(), "confirm the Agent private service address") {
 		t.Fatalf("deployment without a confirmed service address was accepted: %v", err)
@@ -73,7 +74,7 @@ func TestHeartbeatFiltersVirtualInterfacesAndInvalidatesTheirOldProfile(t *testi
 	}}, networking.Profile{ServiceAddress: "10.0.0.93", LANAddress: "10.0.0.93", EnabledKinds: []string{networking.KindLAN}})
 
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
-		Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true},
+		Version: "test", Roles: []string{"worker"}, Capabilities: testRuntimeCapabilities(NodeCapabilities{Docker: true}),
 		NetworkCandidates: []networking.Candidate{
 			{Address: "10.0.0.93", Interface: "docker0", Kind: networking.KindLAN},
 			{Address: "10.77.0.6", Interface: "wg0", Kind: networking.KindLAN},

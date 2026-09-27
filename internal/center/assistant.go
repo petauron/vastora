@@ -14,11 +14,11 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 const (
-	assistantPolicyVersion = "install-application-v1"
+	assistantPolicyVersion = "install-application-v2-package-grants"
 	assistantProposalTTL   = 15 * time.Minute
 )
 
@@ -311,7 +311,10 @@ func (s *Store) PreviewAssistantInstall(ctx context.Context, request assistantIn
 	if !found {
 		return assistantInstallPreview{}, errors.New("center: assistant application was not found in a verified Catalog")
 	}
-	for _, field := range app.Config {
+	if err := requireNodeRuntime(ctx, s.db, request.AgentID, app); err != nil {
+		return assistantInstallPreview{}, err
+	}
+	for _, field := range userInputManifest(app, request.AppKey).Config {
 		if field.Secret {
 			return assistantInstallPreview{}, errors.New("center: assistant installation cannot collect secret application fields; use the trusted application form")
 		}
@@ -323,7 +326,7 @@ func (s *Store) PreviewAssistantInstall(ctx context.Context, request assistantIn
 	} else if request.Role != "" {
 		return assistantInstallPreview{}, errors.New("center: application role is valid only for 3x-ui")
 	}
-	if _, _, err := normalizeDeploymentConfig(app, request.Config); err != nil {
+	if _, _, err := normalizeDeploymentConfig(userInputManifest(app, request.AppKey), request.Config); err != nil {
 		return assistantInstallPreview{}, err
 	}
 	var activeTasks int
@@ -340,10 +343,14 @@ func (s *Store) PreviewAssistantInstall(ctx context.Context, request assistantIn
 	manifestJSON, _ := json.Marshal(app)
 	revision := assistantDigest(map[string]any{"agentId": request.AgentID, "agentStatus": agentStatus, "agentLastSeen": agentLastSeen, "serviceAddress": serviceAddress, "manifest": json.RawMessage(manifestJSON), "activeTasks": activeTasks, "installed": active.Installed})
 	risk := "low"
-	if app.HostAccess || request.AppKey == threeXUIAppKey {
+	if app.HostAccess || len(app.Runtime.RequiredCapabilities) > 0 || request.AppKey == threeXUIAppKey {
 		risk = "medium"
 	}
-	summary := assistantJSON(map[string]any{"action": "install", "agentId": request.AgentID, "agentName": agentName, "appKey": request.AppKey, "appName": app.Name, "version": app.Version, "role": request.Role, "impact": "Installs one verified Catalog application on one Agent.", "dataRetention": "Application data remains until a separate uninstall explicitly deletes it."})
+	_, _, manifestDigest, err := canonicalPackage(app)
+	if err != nil {
+		return assistantInstallPreview{}, err
+	}
+	summary := assistantJSON(map[string]any{"action": "install", "agentId": request.AgentID, "agentName": agentName, "appKey": request.AppKey, "appName": app.Name, "version": app.Version, "packageRevision": app.PackageRevision, "manifestSha256": manifestDigest, "authorizedCapabilities": app.Runtime.RequiredCapabilities, "permissionDetails": packagePermissionDetails(app), "role": request.Role, "impact": "Installs one verified Catalog application on one Agent with exactly the listed permissions.", "dataRetention": "Application data remains until a separate uninstall explicitly deletes it."})
 	targets := assistantJSON([]map[string]string{{"kind": "agent", "id": request.AgentID}, {"kind": "application", "id": request.AppKey}})
 	requestJSON, _ := json.Marshal(request)
 	digest := assistantDigest(map[string]any{"request": json.RawMessage(requestJSON), "summary": summary, "targets": targets, "revision": revision, "policy": assistantPolicyVersion, "risk": risk})
@@ -460,7 +467,15 @@ func (s *Store) ApplyAssistantProposal(ctx context.Context, adminID, proposalID,
 		if json.Unmarshal(request, &install) != nil {
 			return AssistantExecutionView{}, errors.New("center: assistant install proposal request is invalid")
 		}
-		deployment, createErr := s.CreateDeployment(ctx, DeploymentRequest{AgentID: install.AgentID, AppKey: install.AppKey, Role: install.Role, Config: install.Config, Operation: "install", ChangeProposalID: proposalID, SecretOperationOwner: "assistant:" + adminID, SecretOperationKey: proposalID})
+		var approvedPackage struct {
+			PackageRevision        int      `json:"packageRevision"`
+			ManifestSHA256         string   `json:"manifestSha256"`
+			AuthorizedCapabilities []string `json:"authorizedCapabilities"`
+		}
+		if json.Unmarshal(proposal.Summary, &approvedPackage) != nil || approvedPackage.PackageRevision < 1 || len(approvedPackage.ManifestSHA256) != 64 {
+			return AssistantExecutionView{}, errors.New("center: assistant approval has no exact package permission grant")
+		}
+		deployment, createErr := s.CreateDeployment(ctx, DeploymentRequest{AgentID: install.AgentID, AppKey: install.AppKey, Role: install.Role, Config: install.Config, Operation: "install", PackageRevision: &approvedPackage.PackageRevision, ManifestSHA256: approvedPackage.ManifestSHA256, AuthorizedCapabilities: &approvedPackage.AuthorizedCapabilities, ChangeProposalID: proposalID, SecretOperationOwner: "assistant:" + adminID, SecretOperationKey: proposalID})
 		if createErr != nil {
 			return AssistantExecutionView{}, createErr
 		}

@@ -6,16 +6,12 @@ on:
     - cron: "53 3 * * 1"
   pull_request:
     paths:
-      - 'catalog/**'
-      - 'internal/catalog/**'
+      - 'catalog/trust/**'
       - 'internal/agent/**'
       - 'internal/center/**'
-      - 'cmd/catalog-*/**'
-      - 'scripts/*catalog*.mjs'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/catalog-check.yml'
-      - '.github/workflows/catalog-publish.yml'
 
 permissions:
   contents: read
@@ -25,8 +21,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  runtime-host:
+    name: Package host lifecycle (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Resolve test-only image to immutable digest
+        run: |
+          docker --host unix:///var/run/docker.sock pull busybox:1.37
+          fixture_image=$(docker --host unix:///var/run/docker.sock image inspect busybox:1.37 --format '{{index .RepoDigests 0}}')
+          echo "VASTORA_PACKAGE_TEST_IMAGE=$fixture_image" >> "$GITHUB_ENV"
+      - name: Exercise actual Docker and systemd on disposable host
+        run: |
+          go test -c -tags=integration -o "$RUNNER_TEMP/package-host.test" ./internal/agent
+          sudo env GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted \
+            VASTORA_PACKAGE_HOST_INTEGRATION=1 VASTORA_PACKAGE_TEST_IMAGE="$VASTORA_PACKAGE_TEST_IMAGE" \
+            "$RUNNER_TEMP/package-host.test" -test.run '^TestPackageRealHostLifecycle$' -test.v -test.timeout=10m
   verify:
-    if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -35,18 +57,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Verify signed metadata and publication tools
-        run: go test ./internal/catalog ./cmd/catalog-check ./cmd/catalog-publish ./cmd/catalog-verify -count=1
-      - name: Verify atomic upload transport without credentials
-        run: node --test scripts/upload-catalog-r2.test.mjs scripts/publish-catalog.test.mjs scripts/catalog-signing-job.test.mjs
-      - name: Check reviewed catalog against compiled executors
-        run: |
-          if test -f catalog/trust/1.root.json; then
-            go run ./cmd/catalog-check --catalog catalog/catalog.json --root-directory catalog/trust
-          else
-            go run ./cmd/catalog-check --catalog catalog/catalog.json
-          fi
-      - name: Verify executor contracts and accepted catalog persistence
-        run: go test ./internal/agent ./internal/center -run 'Test.*(Official|Catalog)' -count=1
-      - name: Verify native artifact checks before installation mutations
-        run: go test ./internal/agent -run 'Test(SystemdKomari|Pulse|ArtifactELF)' -count=1
+      - name: Validate shared protocol and retained bootstrap trust
+        run: sh scripts/check-independent-catalog.sh --catalog internal/center/testdata/reviewed-catalog-v4.json --root-directory catalog/trust
+      - name: Verify generic executors, admission, and forward migration
+        run: go test ./internal/agent ./internal/center -count=1 -timeout=10m

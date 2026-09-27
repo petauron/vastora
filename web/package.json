@@ -7,8 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "vitest run && npm run test:contracts",
-    "test:contracts": "node scripts/validate-catalog-contracts.mjs"
+    "test": "vitest run"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

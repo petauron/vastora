@@ -23,6 +23,12 @@ func (s *Server) handleCreateDeployment(writer http.ResponseWriter, request *htt
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
+	if input.Operation == "" || input.Operation == "install" || input.Operation == "upgrade" {
+		if input.PackageRevision == nil || *input.PackageRevision < 1 || len(input.ManifestSHA256) != 64 {
+			writeError(writer, http.StatusBadRequest, errors.New("center: select and confirm an exact catalog package revision before deploying"))
+			return
+		}
+	}
 	input.SecretOperationOwner = authenticatedSecretOwner(request)
 	input.SecretOperationKey = request.Header.Get("Idempotency-Key")
 	deployment, err := s.store.CreateDeployment(request.Context(), input)
