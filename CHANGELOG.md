@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.1.0-alpha.247](https://github.com/petauron/vastora/compare/v0.1.0-alpha.246...v0.1.0-alpha.247) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** restore domain targets for IPv6 landing ([#723](https://github.com/petauron/vastora/issues/723)) ([4a37d5b](https://github.com/petauron/vastora/commit/4a37d5beef4052eb482daea9a8036fb8792c8889))
+
+## [0.1.0-alpha.246](https://github.com/petauron/vastora/compare/v0.1.0-alpha.245...v0.1.0-alpha.246) (2026-09-26)
+
+
+### Bug Fixes
+
+* **landing:** restore IPv6 egress interface discovery ([#721](https://github.com/petauron/vastora/issues/721)) ([f40e6a7](https://github.com/petauron/vastora/commit/f40e6a7a5e5cac9dfd830070adae3c4f4feb283e))
+
+## [0.1.0-alpha.245](https://github.com/petauron/vastora/compare/v0.1.0-alpha.244...v0.1.0-alpha.245) (2026-09-26)
+
+
+### Bug Fixes
+
+* **meridian:** align inline controls and frame node panels ([#719](https://github.com/petauron/vastora/issues/719)) ([7d26551](https://github.com/petauron/vastora/commit/7d265510e1f6dc982e1146e5d502aa14ed9e38b1))
+
+## [0.1.0-alpha.244](https://github.com/petauron/vastora/compare/v0.1.0-alpha.243...v0.1.0-alpha.244) (2026-09-26)
+
+
+### Features
+
+* **meridian:** simplify MVP exit and subscription controls ([#717](https://github.com/petauron/vastora/issues/717)) ([e320b0e](https://github.com/petauron/vastora/commit/e320b0e09abb2b0c27ebd022dada0bbef35494e5))
+
 ## [0.1.0-alpha.243](https://github.com/petauron/vastora/compare/v0.1.0-alpha.242...v0.1.0-alpha.243) (2026-09-26)
 
 

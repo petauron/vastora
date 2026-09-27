@@ -3,6 +3,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "../api";
+import { emptyAppData } from "../app-data";
+
+const data = emptyAppData({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.test" });
+const mutate = vi.fn(async (operation: () => Promise<unknown>) => { await operation(); });
 import type { LandingView } from "../landing-types";
 import type { AgentView } from "../types";
 import { LandingProvider } from "./LandingControls";
@@ -68,12 +72,14 @@ it("shows per-server routes and settings inline with locations", async () => {
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => { root?.render(<LandingProvider enabled><table><tbody><LandingTableRows language="zh-CN" search="" /></tbody></table></LandingProvider>); });
+  await act(async () => { root?.render(<LandingProvider enabled><table><tbody><LandingTableRows language="zh-CN" search="" data={data} mutate={mutate} /></tbody></table></LandingProvider>); });
   expect(container.textContent).toContain("美国");
   expect(container.textContent).toContain("台湾");
   expect(container.textContent).not.toContain("管理落地机");
   await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="落地 B 落地设置"]')?.click(); });
-  expect(document.body.textContent).toContain("2 个入口 · 1 就绪 · 1 失败 · 2 暂缓");
+  expect(document.body.textContent).toContain("加入订阅");
+  expect(document.body.textContent).toContain("1 条线路");
+  expect(document.body.textContent).not.toContain("配置账号路由");
 });
 
 it("removes an in-use server through the global draining operation", async () => {
@@ -83,7 +89,7 @@ it("removes an in-use server through the global draining operation", async () =>
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => { root?.render(<LandingProvider enabled><table><tbody><LandingTableRows language="zh-CN" search="" /></tbody></table></LandingProvider>); });
+  await act(async () => { root?.render(<LandingProvider enabled><table><tbody><LandingTableRows language="zh-CN" search="" data={data} mutate={mutate} /></tbody></table></LandingProvider>); });
   await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="落地 B 落地设置"]')?.click(); });
   await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="移除 落地 B"]')?.click(); });
   expect(update).toHaveBeenCalledWith(["a"], 4, { a: "US" }, expect.any(AbortSignal));
@@ -99,7 +105,7 @@ it("repairs missing landing regions before republishing subscriptions", async ()
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => { root?.render(<LandingProvider enabled agents={agents}><table><tbody><LandingTableRows language="zh-CN" search="" /></tbody></table></LandingProvider>); });
+  await act(async () => { root?.render(<LandingProvider enabled agents={agents}><table><tbody><LandingTableRows language="zh-CN" search="" data={data} mutate={mutate} /></tbody></table></LandingProvider>); });
   await act(async () => {});
   const repair = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("同步地区并修复订阅"));
   expect(repair).toBeTruthy();

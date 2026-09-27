@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ArrowRightLeftIcon, CheckCircle2Icon, KeyRoundIcon, PencilIcon, PlusIcon, RadioTowerIcon, RouteIcon, ShieldAlertIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
+import { ArrowRightLeftIcon, CheckCircle2Icon, KeyRoundIcon, PencilIcon, PlusIcon, RadioTowerIcon, ShieldAlertIcon, ShieldCheckIcon } from "lucide-react";
 import { api } from "@/api";
 import type { AppData, Mutate } from "@/App";
 import type { MeridianAccount, MeridianAccountCreated } from "@/meridian-types";
@@ -19,10 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CopyButton, StateBadge, TechnicalError, copy, userError } from "@/views/shared";
 import { RegionCombobox, regionBaseName } from "@/views/RegionCombobox";
-import { IPQualityComparison } from "@/views/IPQualityComparison";
-import { assessmentLabel } from "@/views/IPAssessment";
-import { ipQualityCheckForAddress } from "@/views/ipQualityModel";
-import type { IPQualityCheck } from "@/ip-quality-types";
+import { MeridianRoutes } from "./Routes";
 
 const gibibyte = 1024 ** 3;
 
@@ -37,11 +34,11 @@ export function MeridianManagerSheet({ application, data, language, mutate, onCl
   const managementReady = inventory.cutover.subscriptionAuthority === "meridian" && (inventory.cutover.state === "not_required" || inventory.cutover.state === "complete");
 
   useEffect(() => {
-    setTab("overview");
+    setTab(inventory.cutover.subscriptionAuthority === "meridian" && ["not_required", "complete"].includes(inventory.cutover.state) ? "accounts" : "overview");
     setBusy("");
     setError("");
     setCreated(null);
-  }, [application?.id]);
+  }, [application?.id, inventory.cutover.subscriptionAuthority, inventory.cutover.state]);
 
   const run = async (key: string, operation: () => Promise<unknown>, success: string) => {
     setBusy(key);
@@ -58,20 +55,20 @@ export function MeridianManagerSheet({ application, data, language, mutate, onCl
   return <Sheet open={Boolean(application)} onOpenChange={(open) => { if (!open) onClose(); }}>
     <SheetContent className="w-full sm:max-w-3xl">
       <SheetHeader>
-        <SheetTitle>{copy(language, "Meridian 访问管理", "Meridian access management")}</SheetTitle>
-        <SheetDescription>{application?.name} · {copy(language, "账号、入口、共享流量与固定落地由 Center 统一管理。", "Center is the authority for accounts, entries, shared usage, and fixed egress routes.")}</SheetDescription>
+        <SheetTitle>{copy(language, "账号与订阅", "Accounts & subscriptions")}</SheetTitle>
+        <SheetDescription className="sr-only">Meridian</SheetDescription>
       </SheetHeader>
       <Tabs className="min-h-0 flex-1 px-4" value={tab} onValueChange={setTab}>
         <TabsList variant="line">
-          <TabsTrigger value="overview">{copy(language, "概览", "Overview")}</TabsTrigger>
           <TabsTrigger disabled={!managementReady} value="accounts">{copy(language, "账号", "Accounts")}<Badge variant="secondary">{inventory.accounts.length}</Badge></TabsTrigger>
-          <TabsTrigger disabled={!managementReady} value="routes">{copy(language, "落地", "Egress")}<Badge variant="secondary">{inventory.grants.length}</Badge></TabsTrigger>
+          <TabsTrigger disabled={!managementReady} value="routes">{copy(language, "订阅线路", "Routes")}<Badge variant="secondary">{inventory.grants.length}</Badge></TabsTrigger>
+          <TabsTrigger value="overview">{copy(language, "高级", "Advanced")}</TabsTrigger>
         </TabsList>
         <div className="mt-4 max-h-[calc(100vh-12rem)] overflow-y-auto pb-6">
           {inventory.cutover.lastError ? <Alert className="mb-4" variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "迁移需要处理", "Migration needs attention")}</AlertTitle><AlertDescription>{inventory.cutover.lastError}</AlertDescription></Alert> : null}
-          <TabsContent value="overview"><div className="flex flex-col gap-4"><CutoverPanel cutover={inventory.cutover} language={language} busy={busy} error={error} onRun={run} />{managementReady || endpoint?.status === "failed" ? <EndpointPanel application={application} endpoint={endpoint} publication={endpointPublication} language={language} busy={busy} error={error} onRun={run} /> : null}</div></TabsContent>
+          <TabsContent value="overview"><div className="flex flex-col gap-4">{inventory.cutover.state === "complete" ? <details><summary className="cursor-pointer text-sm text-muted-foreground">{copy(language, "迁移记录", "Migration history")}</summary><CutoverPanel cutover={inventory.cutover} language={language} busy={busy} error={error} onRun={run} /></details> : <CutoverPanel cutover={inventory.cutover} language={language} busy={busy} error={error} onRun={run} />}{managementReady || endpoint?.status === "failed" ? <EndpointPanel application={application} endpoint={endpoint} publication={endpointPublication} language={language} busy={busy} error={error} onRun={run} /> : null}</div></TabsContent>
           <TabsContent value="accounts"><AccountsPanel created={created} data={data} language={language} busy={busy} error={error} onCreated={setCreated} onRun={run} /></TabsContent>
-          <TabsContent value="routes"><RoutesPanel data={data} endpointId={endpoint?.id ?? ""} language={language} busy={busy} error={error} onRun={run} /></TabsContent>
+          <TabsContent value="routes"><MeridianRoutes key={endpoint?.id ?? "all"} data={data} endpointId={endpoint?.id} language={language} mutate={mutate} /></TabsContent>
         </div>
       </Tabs>
       <SheetFooter><Button onClick={onClose}>{copy(language, "关闭", "Close")}</Button></SheetFooter>
@@ -212,12 +209,12 @@ function AccountsPanel({ created, data, language, busy, error, onCreated, onRun 
   };
   return <div className="flex flex-col gap-5">
     {created ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, subscriptionPublication ? "仅显示一次的订阅地址" : "仅显示一次的订阅令牌路径", subscriptionPublication ? "One-time subscription URL" : "One-time subscription token path")}</AlertTitle><AlertDescription><div className="mt-2 flex items-center gap-2 rounded-lg bg-muted p-3 font-mono text-xs"><span className="min-w-0 flex-1 break-all">{subscriptionURL}</span><CopyButton language={language} value={subscriptionURL} /></div>{!subscriptionPublication ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, "请先保存此路径；开启公网订阅后，将它追加到订阅域名。Center 私网管理地址不能代替公网订阅域名。", "Save this path first. After enabling the public subscription, append it to the subscription hostname. The private Center management origin is not a public subscription origin.")}</p> : null}<Button className="mt-3" size="sm" variant="outline" onClick={() => onCreated(null)}>{copy(language, "已保存", "Saved")}</Button></AlertDescription></Alert> : null}
-    <form onSubmit={(event) => void create(event)}><FieldGroup>
+    <details open={data.meridian.accounts.length === 0 ? true : undefined}><summary className="w-fit cursor-pointer text-sm font-medium">{copy(language, "新增账号", "New account")}</summary><form className="mt-3" onSubmit={(event) => void create(event)}><FieldGroup>
       <Field><FieldLabel htmlFor="meridian-account-name">{copy(language, "账号名称", "Account name")}</FieldLabel><Input id="meridian-account-name" value={name} onChange={(event) => setName(event.target.value)} required /></Field>
-      <div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel htmlFor="meridian-account-quota">{copy(language, "共享流量（GiB）", "Shared quota (GiB)")}</FieldLabel><Input id="meridian-account-quota" min="0" step="0.1" type="number" value={quota} onChange={(event) => setQuota(event.target.value)} /><FieldDescription>{copy(language, "0 表示不限；本机与全部落地共用。", "0 is unlimited; native and all egress routes share it.")}</FieldDescription></Field><Field><FieldLabel htmlFor="meridian-account-reset">{copy(language, "重置周期（天）", "Reset interval (days)")}</FieldLabel><Input id="meridian-account-reset" max="3650" min="0" type="number" value={resetDays} onChange={(event) => setResetDays(event.target.value)} /></Field><Field><FieldLabel htmlFor="meridian-account-expiry">{copy(language, "到期时间（可选）", "Expiry time (optional)")}</FieldLabel><Input id="meridian-account-expiry" min={localDateTimeValue(Date.now())} type="datetime-local" value={expiry} onChange={(event) => setExpiry(event.target.value)} /><FieldDescription>{copy(language, "留空表示永不过期。", "Leave empty for no expiry.")}</FieldDescription></Field></div>
+      <details><summary className="w-fit cursor-pointer text-xs text-muted-foreground">{copy(language, "高级选项", "Advanced")}</summary><div className="mt-3 grid gap-4 sm:grid-cols-2"><Field><FieldLabel htmlFor="meridian-account-quota">{copy(language, "共享流量（GiB）", "Shared quota (GiB)")}</FieldLabel><Input id="meridian-account-quota" min="0" step="0.1" type="number" value={quota} onChange={(event) => setQuota(event.target.value)} /><FieldDescription>{copy(language, "0 表示不限；本机与全部落地共用。", "0 is unlimited; native and all egress routes share it.")}</FieldDescription></Field><Field><FieldLabel htmlFor="meridian-account-reset">{copy(language, "重置周期（天）", "Reset interval (days)")}</FieldLabel><Input id="meridian-account-reset" max="3650" min="0" type="number" value={resetDays} onChange={(event) => setResetDays(event.target.value)} /></Field><Field><FieldLabel htmlFor="meridian-account-expiry">{copy(language, "到期时间（可选）", "Expiry time (optional)")}</FieldLabel><Input id="meridian-account-expiry" min={localDateTimeValue(Date.now())} type="datetime-local" value={expiry} onChange={(event) => setExpiry(event.target.value)} /><FieldDescription>{copy(language, "留空表示永不过期。", "Leave empty for no expiry.")}</FieldDescription></Field></div>
       <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="meridian-account-enabled">{copy(language, "立即启用", "Enable now")}</FieldLabel><FieldDescription>{copy(language, "应用完成前订阅不会提前发布。", "The subscription is not published before all runtime receipts complete.")}</FieldDescription></div><Switch id="meridian-account-enabled" checked={enabled} onCheckedChange={setEnabled} /></Field>
-      {error ? <FieldError>{error}</FieldError> : null}<Button disabled={busy === "account" || !name.trim()} type="submit">{busy === "account" ? <Spinner data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{copy(language, "创建账号", "Create account")}</Button>
-    </FieldGroup></form>
+      </details>{error ? <FieldError>{error}</FieldError> : null}<Button disabled={busy === "account" || !name.trim()} type="submit">{busy === "account" ? <Spinner data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{copy(language, "创建账号", "Create account")}</Button>
+    </FieldGroup></form></details>
     <div className="flex flex-col gap-3">{data.meridian.accounts.map((account) => <AccountCard account={account} busy={busy} key={account.id} language={language} onRun={onRun} />)}</div>
   </div>;
 }
@@ -248,46 +245,6 @@ function AccountCard({ account, busy, language, onRun }: { account: MeridianAcco
       <div className="grid gap-4 sm:grid-cols-3"><Field><FieldLabel htmlFor={`meridian-account-quota-${account.id}`}>{copy(language, "共享流量（GiB）", "Shared quota (GiB)")}</FieldLabel><Input id={`meridian-account-quota-${account.id}`} min="0" onChange={(event) => setQuota(event.target.value)} step="0.1" type="number" value={quota} /></Field><Field><FieldLabel htmlFor={`meridian-account-reset-${account.id}`}>{copy(language, "重置周期（天）", "Reset interval (days)")}</FieldLabel><Input id={`meridian-account-reset-${account.id}`} max="3650" min="0" onChange={(event) => setResetDays(event.target.value)} type="number" value={resetDays} /></Field><Field><FieldLabel htmlFor={`meridian-account-expiry-${account.id}`}>{copy(language, "到期时间", "Expiry time")}</FieldLabel><Input id={`meridian-account-expiry-${account.id}`} min={localDateTimeValue(Date.now())} onChange={(event) => setExpiry(event.target.value)} type="datetime-local" value={expiry} /></Field></div>
       <div className="flex flex-wrap gap-2"><Button disabled={busy === operation || !name.trim()} size="sm" type="submit">{busy === operation ? <Spinner data-icon="inline-start" /> : null}{copy(language, "保存套餐", "Save plan")}</Button><Button disabled={busy === operation} onClick={() => setEditing(false)} size="sm" type="button" variant="ghost">{copy(language, "取消", "Cancel")}</Button></div>
     </FieldGroup></form> : <div className="mt-3 flex flex-wrap gap-2"><Button disabled={Boolean(busy)} onClick={() => setEditing(true)} size="sm" variant="outline"><PencilIcon data-icon="inline-start" />{copy(language, "编辑套餐", "Edit plan")}</Button><Button disabled={Boolean(busy)} size="sm" variant="outline" onClick={() => void onRun(`toggle-${account.id}`, () => api.updateMeridianAccount(account.id, { displayName: account.displayName, totalBytes: account.totalBytes, expiryTime: account.expiryTime, resetDays: account.resetDays, enabled: !account.enabled }), account.enabled ? copy(language, "账号已停用。", "Account disabled.") : copy(language, "账号已启用。", "Account enabled."))}>{busy === `toggle-${account.id}` ? <Spinner data-icon="inline-start" /> : null}{account.enabled ? copy(language, "停用", "Disable") : copy(language, "启用", "Enable")}</Button></div>}
-  </div>;
-}
-
-function RoutesPanel({ data, endpointId, language, busy, error, onRun }: { data: AppData; endpointId: string; language: Language; busy: string; error: string; onRun: (key: string, operation: () => Promise<unknown>, success: string) => Promise<void> }) {
-  const [accountId, setAccountId] = useState(data.meridian.accounts.find((account) => account.enabled)?.id ?? "");
-  const [egressNodeId, setEgressNodeId] = useState("");
-  const [hideNative, setHideNative] = useState(false);
-  const [readyEgress, setReadyEgress] = useState<Set<string> | null>(null);
-  const [qualityChecks, setQualityChecks] = useState<IPQualityCheck[]>([]);
-  useEffect(() => {
-    const request = new AbortController();
-    setQualityChecks([]);
-    void api.ipQuality(request.signal).then((value) => { if (!request.signal.aborted) setQualityChecks(value.checks); }).catch(() => {});
-    return () => request.abort();
-  }, [endpointId]);
-  useEffect(() => {
-    let cancelled = false;
-    setReadyEgress(null);
-    void api.landing().then((view) => {
-      if (!cancelled) setReadyEgress(new Set(view.servers.filter((server) => server.status === "ready").map((server) => server.nodeId)));
-    }).catch(() => { if (!cancelled) setReadyEgress(new Set()); });
-    return () => { cancelled = true; };
-  }, [endpointId]);
-  const existing = useMemo(() => new Set(data.meridian.grants.filter((grant) => grant.endpointId === endpointId && grant.accountId === accountId).map((grant) => grant.egressNodeId)), [accountId, data.meridian.grants, endpointId]);
-  const candidates = data.agents.filter((agent) => readyEgress?.has(agent.id) && agent.id !== data.meridian.endpoints.find((value) => value.id === endpointId)?.nodeId && !existing.has(agent.id));
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    await onRun("route", () => api.createMeridianRoute({ accountId, endpointId, egressNodeId, hideNative }), copy(language, "落地授权已创建，正在等待 Agent 应用。", "The egress grant was created and is waiting for the Agent."));
-    setEgressNodeId("");
-  };
-  return <div className="flex flex-col gap-5">
-    <IPQualityComparison language={language} nodeId={data.meridian.endpoints.find((value) => value.id === endpointId)?.nodeId} nodes={data.meridian.endpoints.map((value) => ({ id: value.nodeId, name: value.displayName || value.nodeId, address: data.agents.find((agent) => agent.id === value.nodeId)?.publicEgress?.address }))} allowedNodeIds={candidates.map((agent) => agent.id)} onSelect={setEgressNodeId} />
-    <form onSubmit={(event) => void submit(event)}><FieldGroup>
-      <Alert><RouteIcon /><AlertTitle>{copy(language, "VLESS 固定落地，不复制套餐", "Fixed VLESS egress without duplicating quota")}</AlertTitle><AlertDescription>{copy(language, "每条 VLESS 落地使用独立 UUID，但流量计入同一个账号；Hysteria2 保持本机出口。缺少私网 SOCKS 回执时配置会停止，不会回退本机出口。", "Each VLESS route has its own UUID but contributes to the same account usage; Hysteria2 remains native. A missing private SOCKS receipt blocks deployment and never falls back to the entry's native exit.")}</AlertDescription></Alert>
-      <Field><FieldLabel>{copy(language, "账号", "Account")}</FieldLabel><SelectControl value={accountId} onValueChange={setAccountId} options={[{ value: "", label: copy(language, "没有可用账号", "No available account"), disabled: true }, ...data.meridian.accounts.map((account) => ({ value: account.id, label: account.displayName, disabled: !account.enabled }))]} /></Field>
-      <Field><FieldLabel>{copy(language, "落地节点", "Egress node")}</FieldLabel><SelectControl value={egressNodeId} onValueChange={setEgressNodeId} options={[{ value: "", label: readyEgress === null ? copy(language, "正在读取可用落地…", "Loading ready egress nodes…") : copy(language, "选择已启用落地服务的节点", "Select a node with a ready egress service"), disabled: true }, ...candidates.map((agent) => ({ value: agent.id, label: `${agent.name} · ${assessmentLabel(language, ipQualityCheckForAddress(qualityChecks, agent.id)?.assessment)}`, disabled: !agent.connected }))]} /><FieldDescription>{copy(language, "仅列出已完成私网 SOCKS 回执的落地节点；普通计算节点不会出现在这里。", "Only nodes with a verified private SOCKS receipt are listed; general compute nodes are excluded.")}</FieldDescription></Field>
-      <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel>{copy(language, "隐藏本机 VLESS", "Hide native VLESS")}</FieldLabel><FieldDescription>{copy(language, "订阅中隐藏本机 VLESS；原生 Hysteria2 不受影响。", "Hide native VLESS from the subscription; native Hysteria2 is unaffected.")}</FieldDescription></div><Switch checked={hideNative} onCheckedChange={setHideNative} /></Field>
-      {error ? <FieldError>{error}</FieldError> : null}<Button disabled={busy === "route" || !endpointId || !accountId || !egressNodeId} type="submit">{busy === "route" ? <Spinner data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{copy(language, "添加落地", "Add egress")}</Button>
-    </FieldGroup></form>
-    <div className="flex flex-col gap-3">{data.meridian.grants.filter((grant) => !endpointId || grant.endpointId === endpointId).map((grant) => <div className="flex items-center gap-3 rounded-xl border p-4" key={grant.id}><div className="min-w-0 flex-1"><p className="truncate font-medium">{grant.egressNodeName}</p><p className="mt-1 text-xs text-muted-foreground">{data.meridian.accounts.find((account) => account.id === grant.accountId)?.displayName ?? grant.accountId}</p>{grant.lastError ? <div className="mt-2"><TechnicalError error={grant.lastError} language={language} /></div> : null}</div><StateBadge language={language} value={grant.status} /><Button aria-label={copy(language, "移除落地", "Remove egress")} disabled={busy === `revoke-${grant.id}`} size="icon-sm" variant="ghost" onClick={() => void onRun(`revoke-${grant.id}`, () => api.revokeMeridianRoute(grant.id), copy(language, "落地移除已进入安全收敛。", "Egress removal is converging safely."))}>{busy === `revoke-${grant.id}` ? <Spinner /> : <Trash2Icon />}</Button></div>)}</div>
   </div>;
 }
 

@@ -52,12 +52,12 @@ require_line "$codeql_workflow" "vars.VASTORA_CI_MODE != 'alpha'"
 require_line "$codeql_workflow" '  group: codeql-${{ github.workflow }}-${{ github.ref }}'
 require_line "$codeql_workflow" "  cancel-in-progress: \${{ github.event_name == 'pull_request' }}"
 
-# Alpha only validates source/configuration shape. Compilation and the minimal
-# executable check happen once, on the actual release artifact.
+# Alpha normally validates shape; forward-only migrations also need their
+# targeted regression before release. Full checks remain outside this job.
 alpha_job="$(sed -n '/^  alpha-minimal:/,/^  go-race:/p' "$ci_workflow")"
 if ! printf '%s\n' "$alpha_job" | grep -Fq 'cache: false' ||
    ! printf '%s\n' "$alpha_job" | grep -Fq 'run: make go-format-check' ||
-   printf '%s\n' "$alpha_job" | grep -Eq '(go test|go build|go-static-check|web-check|cache: true|docker build)'; then
+   printf '%s\n' "$alpha_job" | grep -Fv "run: go test ./internal/center -run '^TestVersion100' -count=1" | grep -Eq '(go test|go build|go-static-check|web-check|cache: true|docker build)'; then
   echo 'Alpha CI must not restore the Go build cache or duplicate release builds/full checks.' >&2
   exit 1
 fi
