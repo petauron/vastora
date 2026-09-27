@@ -39,10 +39,22 @@ fixes for stale Docker resume IDs and systemd startup confirmation ordering.
 Production signing remains disabled. The catalog-signing environment is restricted
 to protected branches with administrator bypass disabled; online signer keys and
 the operator-approved shared R2 secrets are configured. The production gate and
-historical maintenance acceptance remain outstanding. No production application
-or live catalog object was modified. Root v2 is public metadata signed by the
+historical maintenance acceptance remain outstanding. This catalog-runtime
+rehearsal did not modify any production application or live catalog object.
+Root v2 is public metadata signed by the
 original offline root key; v1 is retained unchanged. The long-lived expiry
-policy still needs review with the independent catalog PR before cutover.
+policy was reviewed and merged in independent catalog PR #4. An unchanged
+catalog needs no renewal workflow; publication is a manual dispatch after a
+successful application release.
+
+On 2026-09-27, `TestCatalogV4HistoricalCopyRehearsal` passed against a private,
+keyless copy of a historical production schema 100 backup. It checked copy
+integrity, the forward migration to 101, the pre-migration backup, preserved
+historical row digests and catalog evidence, and pending-only adoption records.
+The live Center database stayed on schema 100. This is database-migration
+evidence only: it did not adopt actual Agent resources or restore application
+data. A separate Center/Agent release occurred during the rehearsal, so no
+production no-restart assertion can be made from that observation window.
 
 ## Required before release/cutover
 
@@ -56,13 +68,15 @@ policy still needs review with the independent catalog PR before cutover.
   against data already migrated by the new version.
 - Finish cross-repository review and PR integration. Confirm the consumer is
   tested with its pinned published module, with no local workspace replacement.
-- Provision the catalog-only dispatch App and protected publication environment
-  through the operator's secure channel. Do not attempt to export GitHub secrets.
+- Keep the protected publication environment and operator-approved shared R2
+  credentials scoped to the catalog repository. There is no cross-repository
+  dispatch App or scheduled publisher. Do not attempt to export GitHub secrets.
 - Freeze old writes, preserve/import exact historical release records, resolve
   uncertain tasks and independently back up Center, Agents and application data.
 - After rehearsal and the agreed maintenance window, establish a single writer,
-  retain trust/high-water history, and verify Pulse release-to-catalog visibility
-  without a Vastora source change or an automatic application upgrade.
+  retain trust/high-water history, and verify manual publication of a released
+  Pulse version becomes visible without a Vastora source change or an automatic
+  application upgrade.
 
 The default Docker context on the development machine must not be used as an
 isolated test target. Select an explicitly disposable test environment instead.
