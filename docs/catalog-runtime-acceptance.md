@@ -87,15 +87,18 @@ source bytes. The root-only temporary artifact and restored directory were
 removed. This covers one Agent only, not the other nodes, off-host storage or
 application-owned data.
 
-The same day, the current schema 102 migration test passed on a keyless, private
-copy of the live A1 schema 100 database after removing 894,377 `task_events`
-rows **from the copy only** to make transfer practical. The reduced copy passed
-SQLite `quick_check` and foreign-key checks before transfer, matched its remote
-SHA-256 byte-for-byte, and the test preserved the checked historical row digests,
-37 applications and 16 manifest identities while creating a pre-migration backup.
-This is a useful two-step migration rehearsal, but not an unmodified full-data
-rehearsal: the omitted event history and actual Agent resources remain outside
-its evidence. No running database, application or Agent was migrated or restarted.
+Later on 2026-09-27, the current schema 102 migration test passed on an
+unmodified, keyless, private snapshot of the live A1 schema 100 database. A
+Linux arm64 test binary built from PR #716 with the pinned catalog module was
+transferred to A1 and verified by SHA-256 before running only
+`TestCatalogV4HistoricalCopyRehearsal` against the 493,264,896-byte snapshot.
+The test created a pre-migration backup, preserved the checked historical row
+digests, 37 applications and 16 manifest identities, and left the copied database
+at schema 102 with `quick_check=ok`. The live database remained at schema 100;
+Center/Pulse container IDs and start times and the Agent MainPID/InvocationID
+were unchanged before and after. This exercises the two-step migration against
+a full historical database copy, but does not prove actual Agent resource
+adoption, application-volume recovery, or a live no-restart cutover.
 
 On 2026-09-27, a read-only preflight resolved the already published Pulse
 `v0.1.0-alpha.5` against its protected source commit and successful release run.
