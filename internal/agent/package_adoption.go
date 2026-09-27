@@ -17,6 +17,41 @@ func historicalReceipt(task DeploymentTask, kind string) *InstanceResources {
 	return &InstanceResources{Version: 1, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Runtime: kind, PackageVersion: task.Manifest.Version, PackageRevision: 0, ManifestSHA256: task.ManifestSHA256, State: "ready", TaskID: task.ID}
 }
 
+// A Meridian installation without an endpoint may never have started Xray.
+// Record that state only after both the local database and all reserved
+// container names independently confirm that no runtime exists.
+func (e ApplicationExecutor) historicalDormantMeridianResources(ctx context.Context, task DeploymentTask, docker packageDockerEngine) (*InstanceResources, error) {
+	if task.AppKey != meridianKey || !task.DormantRuntime {
+		return nil, errors.New("agent: dormant adoption is reserved for Meridian")
+	}
+	var rows int
+	if err := e.Store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_runtime_state`).Scan(&rows); err != nil {
+		return nil, err
+	}
+	if rows != 0 {
+		return nil, errors.New("agent: Meridian runtime state exists; dormant adoption requires review")
+	}
+	if err := inspectDormantMeridianContainers(ctx, docker); err != nil {
+		return nil, err
+	}
+	receipt := historicalReceipt(task, "docker")
+	receipt.IntegrationState = "dormant"
+	return receipt, nil
+}
+
+func inspectDormantMeridianContainers(ctx context.Context, docker packageDockerEngine) error {
+	for _, name := range []string{meridianXrayContainer, meridianXrayCandidateContainer, meridianXrayBackupContainer, meridianXrayCleanupContainer} {
+		_, exists, err := inspectXrayWorkerContainer(ctx, docker, name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return errors.New("agent: Meridian container exists; dormant adoption requires review")
+		}
+	}
+	return nil
+}
+
 // These are one-shot historical bindings, not an executable app allowlist.
 // Installation of all ordinary v4 packages is selected by runtime kind alone.
 func historicalDockerResources(ctx context.Context, task DeploymentTask, history AppliedInstallation, docker packageDockerEngine, stateDirectory string) (*InstanceResources, error) {

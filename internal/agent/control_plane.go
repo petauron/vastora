@@ -138,6 +138,7 @@ type Enrollment struct {
 type DeploymentTask struct {
 	PackageMaintenance        *PackageMaintenanceTask              `json:"packageMaintenance,omitempty"`
 	HistoricalManifest        json.RawMessage                      `json:"historicalManifest,omitempty"`
+	DormantRuntime            bool                                 `json:"dormantRuntime,omitempty"`
 	PackageRevision           int                                  `json:"packageRevision,omitempty"`
 	ManifestSHA256            string                               `json:"manifestSha256,omitempty"`
 	AuthorizedCapabilities    []string                             `json:"authorizedCapabilities,omitempty"`

@@ -132,6 +132,9 @@ func (e ApplicationExecutor) Adopt(ctx context.Context, task DeploymentTask) (Ap
 	if task.ManifestSHA256 == "" || task.PackageRevision != 0 {
 		return ApplicationTaskResult{}, errors.New("agent: adoption requires the original historical manifest digest")
 	}
+	if task.DormantRuntime && task.AppKey != meridianKey {
+		return ApplicationTaskResult{}, errors.New("agent: dormant adoption is reserved for Meridian")
+	}
 	digest := sha256.Sum256(task.HistoricalManifest)
 	var supplied catalog.AppManifest
 	if hex.EncodeToString(digest[:]) != task.ManifestSHA256 || json.Unmarshal(task.HistoricalManifest, &supplied) != nil {
@@ -162,7 +165,11 @@ func (e ApplicationExecutor) Adopt(ctx context.Context, task DeploymentTask) (Ap
 		}
 		defer docker.Close()
 		backend = &DockerPackageBackend{Docker: docker, StateDirectory: e.packageDirectory()}
-		receipt, err = historicalDockerResources(ctx, task, history, docker, e.packageDirectory())
+		if task.DormantRuntime {
+			receipt, err = e.historicalDormantMeridianResources(ctx, task, docker)
+		} else {
+			receipt, err = historicalDockerResources(ctx, task, history, docker, e.packageDirectory())
+		}
 	}
 	if err != nil {
 		return ApplicationTaskResult{}, err

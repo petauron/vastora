@@ -44,6 +44,7 @@ type AgentTask struct {
 	AuthorizedCapabilities    []string                             `json:"authorizedCapabilities"`
 	Resources                 json.RawMessage                      `json:"resources,omitempty"`
 	HistoricalManifest        json.RawMessage                      `json:"historicalManifest,omitempty"`
+	DormantRuntime            bool                                 `json:"dormantRuntime,omitempty"`
 	PackageMaintenance        *PackageMaintenanceTask              `json:"packageMaintenance,omitempty"`
 	Config                    json.RawMessage                      `json:"config"`
 	Secrets                   json.RawMessage                      `json:"secrets"`

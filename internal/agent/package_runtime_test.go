@@ -168,6 +168,57 @@ func TestPackageAdoptionOnlyInspectsAndWritesReceipt(t *testing.T) {
 	}
 }
 
+func TestDormantMeridianAdoptionCannotStartPackageRuntime(t *testing.T) {
+	task := packageTestTask(t)
+	task.AppKey = meridianKey
+	task.ApplicationID = "unconfigured-meridian"
+	task.Manifest.ID = "meridian"
+	task.Manifest.Runtime = nil
+	task.Manifest.PackageRevision = 0
+	task.PackageRevision = 0
+	task.Operation = "adopt"
+	task.DormantRuntime = true
+	task.Resources = &InstanceResources{Version: 1, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Runtime: "docker", IntegrationState: "dormant"}
+	backend := &fakePackageBackend{}
+	executor := PackageExecutor{StateDirectory: packageTestDirectory(t), Backend: backend}
+	result, err := executor.Deploy(context.Background(), task)
+	if err != nil || result.Resources.IntegrationState != "dormant" || len(result.Resources.Resources) != 0 || !slices.Equal(backend.calls, []string{"inspect"}) {
+		t.Fatalf("dormant adoption touched runtime: result=%+v calls=%v err=%v", result, backend.calls, err)
+	}
+	task.Operation = "uninstall"
+	task.DormantRuntime = false
+	backend.calls = nil
+	if _, err := executor.Deploy(context.Background(), task); err == nil || len(backend.calls) != 0 {
+		t.Fatalf("dormant receipt allowed implicit package operation: %v %v", backend.calls, err)
+	}
+}
+
+func TestDormantMeridianAdoptionRequiresNoLocalRuntimeStateOrContainers(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task := DeploymentTask{ID: "adopt-meridian", ApplicationID: "unconfigured-meridian", AppKey: meridianKey, DormantRuntime: true, ManifestSHA256: strings.Repeat("a", 64), Manifest: catalog.AppManifest{Version: "0.1.0-alpha.2"}}
+	executor := ApplicationExecutor{Store: store}
+	docker := newPackageDocker()
+	receipt, err := executor.historicalDormantMeridianResources(context.Background(), task, docker)
+	if err != nil || receipt.IntegrationState != "dormant" || len(receipt.Resources) != 0 {
+		t.Fatalf("empty runtime was not recorded explicitly: %+v %v", receipt, err)
+	}
+	docker.containers[meridianXrayCandidateContainer] = client.ContainerInspectResult{Container: container.InspectResponse{ID: "unexpected-runtime", Config: &container.Config{}}}
+	if _, err := executor.historicalDormantMeridianResources(context.Background(), task, docker); err == nil {
+		t.Fatal("candidate container was ignored")
+	}
+	delete(docker.containers, meridianXrayCandidateContainer)
+	if _, err := store.db.Exec(`INSERT INTO meridian_runtime_state(id,sealed_state) VALUES(1,?)`, []byte("stale-state")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.historicalDormantMeridianResources(context.Background(), task, docker); err == nil {
+		t.Fatal("persisted Meridian runtime state was ignored")
+	}
+}
+
 type packagePull struct{ io.ReadCloser }
 
 func (packagePull) Wait(context.Context) error { return nil }

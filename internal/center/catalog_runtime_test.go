@@ -269,3 +269,58 @@ func TestCatalogRuntimeAdoptionOnlyChangesManagementRecords(t *testing.T) {
 		t.Fatalf("legacy uninstall did not preserve original evidence and data: %+v", removeTask)
 	}
 }
+
+func TestDormantMeridianAdoptionRequiresExplicitEmptyReceipt(t *testing.T) {
+	store, node, _ := independentRuntimeStore(t)
+	ctx := context.Background()
+	app := independentTestPackage(t)
+	app.ID = "meridian"
+	seedIndependentPackage(t, store, app)
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: meridianAppKey, Config: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	install := claimTask(t, store, node)
+	confirmIndependentTask(t, store, node, install)
+	raw, err := json.Marshal(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var historical map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &historical); err != nil {
+		t.Fatal(err)
+	}
+	delete(historical, "runtime")
+	delete(historical, "packageRevision")
+	raw, err = json.Marshal(historical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE deployments SET manifest_json=?,package_revision=0,manifest_sha256='' WHERE id=?`, raw, deployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE application_resources SET adoption_state='pending',package_revision=0,resources_json='{}' WHERE application_id=?`, deployment.ApplicationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.QueueApplicationAdoption(ctx, deployment.ApplicationID); err != nil {
+		t.Fatal(err)
+	}
+	adoption := claimTask(t, store, node)
+	if !adoption.DormantRuntime {
+		t.Fatal("Center did not recognize Meridian without endpoints")
+	}
+	result, err := json.Marshal(map[string]any{"resources": map[string]any{"version": 1, "applicationId": adoption.ApplicationID, "appKey": adoption.AppKey, "taskId": adoption.ID, "runtime": "docker", "integrationState": "dormant", "packageVersion": adoption.Manifest.Version, "packageRevision": 0, "manifestSha256": adoption.ManifestSHA256, "state": "ready", "resources": []any{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, adoption.ID, adoption.Attempt, true, "", result, adoption.RequiredRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	var state, receipt string
+	if err := store.db.QueryRow(`SELECT adoption_state,resources_json FROM application_resources WHERE application_id=?`, deployment.ApplicationID).Scan(&state, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if state != "ready" || !strings.Contains(receipt, `"integrationState":"dormant"`) {
+		t.Fatalf("dormant adoption not recorded: %s %s", state, receipt)
+	}
+}

@@ -79,6 +79,13 @@ func (s *Store) claimApplicationAdoption(ctx context.Context, tx *sql.Tx, agentI
 		return nil, err
 	}
 	task.HistoricalManifest, task.Config = historical, config
+	if task.AppKey == meridianAppKey {
+		var endpoints int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_endpoints WHERE application_id=?`, task.ApplicationID).Scan(&endpoints); err != nil {
+			return nil, err
+		}
+		task.DormantRuntime = endpoints == 0
+	}
 	if json.Unmarshal(task.HistoricalManifest, &task.Manifest) != nil || task.Manifest.Runtime != nil || task.Manifest.PackageRevision != 0 {
 		return nil, errors.New("center: adoption requires an unmodified historical manifest")
 	}
@@ -123,6 +130,7 @@ func (s *Store) projectApplicationAdoption(ctx context.Context, tx *sql.Tx, agen
 	if succeeded {
 		var result ApplicationTaskResult
 		var receipt struct {
+			IntegrationState       string            `json:"integrationState"`
 			Version                int               `json:"version"`
 			ApplicationID          string            `json:"applicationId"`
 			AppKey                 string            `json:"appKey"`
@@ -138,8 +146,22 @@ func (s *Store) projectApplicationAdoption(ctx context.Context, tx *sql.Tx, agen
 			return errors.New("center: invalid adoption resource receipt")
 		}
 		digest := sha256.Sum256(historical)
-		if receipt.Version != 1 || receipt.ApplicationID != appID || receipt.AppKey != appKey || receipt.TaskID != id || receipt.PackageVersion != version || receipt.PackageRevision != 0 || receipt.ManifestSHA256 != hex.EncodeToString(digest[:]) || receipt.State != "ready" || len(receipt.Resources) == 0 {
+		if receipt.Version != 1 || receipt.ApplicationID != appID || receipt.AppKey != appKey || receipt.TaskID != id || receipt.PackageVersion != version || receipt.PackageRevision != 0 || receipt.ManifestSHA256 != hex.EncodeToString(digest[:]) || receipt.State != "ready" {
 			return errors.New("center: adoption resource receipt does not match historical evidence")
+		}
+		if receipt.IntegrationState == "dormant" {
+			var endpoints int
+			if appKey != meridianAppKey || len(receipt.Resources) != 0 {
+				return errors.New("center: dormant adoption is reserved for Meridian without runtime resources")
+			}
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_endpoints WHERE application_id=?`, appID).Scan(&endpoints); err != nil {
+				return err
+			}
+			if endpoints != 0 {
+				return errors.New("center: Meridian endpoint appeared during dormant adoption")
+			}
+		} else if receipt.IntegrationState != "" || len(receipt.Resources) == 0 {
+			return errors.New("center: adoption resource receipt lacks verified resources")
 		}
 		grants, err := json.Marshal(receipt.AuthorizedCapabilities)
 		if err != nil {

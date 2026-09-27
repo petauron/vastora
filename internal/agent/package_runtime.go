@@ -242,13 +242,19 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	}
 	if task.Operation == "adopt" {
 		if receipt != nil {
+			if receipt.IntegrationState == "dormant" && (!task.DormantRuntime || task.AppKey != meridianKey) {
+				return result, errors.New("agent: dormant adoption is not authorized")
+			}
 			if err := e.Backend.Inspect(ctx, task, receipt); err != nil {
 				return result, err
 			}
 			return ApplicationTaskResult{Resources: receipt}, nil
 		}
-		if task.Resources == nil || task.Resources.ApplicationID != task.ApplicationID || task.Resources.AppKey != task.AppKey || task.Resources.Version != 1 || len(task.Resources.Resources) == 0 {
+		if task.Resources == nil || task.Resources.ApplicationID != task.ApplicationID || task.Resources.AppKey != task.AppKey || task.Resources.Version != 1 || len(task.Resources.Resources) == 0 && !(task.DormantRuntime && task.AppKey == meridianKey && task.Resources.IntegrationState == "dormant" && task.Resources.Runtime == "docker") {
 			return result, errors.New("agent: adoption requires historical resource evidence")
+		}
+		if task.Resources.IntegrationState == "dormant" && (len(task.Resources.Resources) != 0 || !task.DormantRuntime || task.AppKey != meridianKey) {
+			return result, errors.New("agent: invalid dormant adoption receipt")
 		}
 		copy := *task.Resources
 		copy.Resources = slices.Clone(task.Resources.Resources)
@@ -265,6 +271,9 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	}
 	if task.Operation != "install" && receipt == nil {
 		return result, errors.New("agent: existing instance has no verified resource receipt; adopt it before mutation")
+	}
+	if receipt != nil && receipt.IntegrationState == "dormant" {
+		return result, errors.New("agent: dormant Meridian requires an explicit runtime activation or retirement; package operations cannot create it implicitly")
 	}
 	if task.Operation == "install" && receipt != nil && receipt.State != "retained" {
 		return result, errors.New("agent: application is already installed")
