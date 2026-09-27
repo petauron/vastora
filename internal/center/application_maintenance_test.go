@@ -148,7 +148,7 @@ func TestApplicationMaintenanceFailureRetainsEvidenceAndBlocksMutation(t *testin
 			if err == nil {
 				t.Fatal("missing restore backup accepted")
 			}
-			id, err = store.QueueApplicationMaintenance(ctx, installed.ApplicationID, PackageMaintenanceTask{Action: "backup"})
+			id, err := store.QueueApplicationMaintenance(ctx, installed.ApplicationID, PackageMaintenanceTask{Action: "backup"})
 			if err != nil {
 				t.Fatal(err)
 			}
