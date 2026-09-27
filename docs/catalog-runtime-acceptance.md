@@ -62,8 +62,17 @@ backup and restore commands. The restored key matched byte-for-byte, and both
 source and restored databases passed SQLite `quick_check` with schema 100 and
 37 application rows. The root-only temporary copy, password and encrypted
 archive were removed after verification. This tests the Center backup format
-and restore path against historical data, not off-host storage, Agent recovery,
-application-volume recovery, or live control-plane cutover.
+and restore path against historical data; it does not establish off-host
+storage, application-volume recovery, or live control-plane cutover.
+
+The A1 Agent's current `0.1.0-alpha.249` recovery export and isolated restore
+also passed without restarting the Agent. The encrypted artifact contained
+`agent.db`, `agent.key`, `host-install.env` and the original `tailscaled.state`.
+The restored schema 21 database passed `quick_check` and foreign-key checks with
+five applied installations; the three identity/ownership files matched their
+source bytes. The root-only temporary artifact and restored directory were
+removed. This covers one Agent only, not the other nodes, off-host storage or
+application-owned data.
 
 On 2026-09-27, a read-only preflight resolved the already published Pulse
 `v0.1.0-alpha.5` against its protected source commit and successful release run.
