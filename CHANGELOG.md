@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.250](https://github.com/petauron/vastora/compare/v0.1.0-alpha.249...v0.1.0-alpha.250) (2026-09-27)
+
+
+### Features
+
+* **apps:** load Meridian's signed application UI and link Pulse's own dashboard; keep Center's generic management page for third-party apps ([#729](https://github.com/petauron/vastora/pull/729)) ([819b9be](https://github.com/petauron/vastora/commit/819b9bef1ec4ac00aadab10fa78fa812851732d0))
+
 ## [0.1.0-alpha.249](https://github.com/petauron/vastora/compare/v0.1.0-alpha.248...v0.1.0-alpha.249) (2026-09-27)
 
 
