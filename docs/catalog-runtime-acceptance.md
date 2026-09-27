@@ -56,6 +56,17 @@ evidence only: it did not adopt actual Agent resources or restore application
 data. A separate Center/Agent release occurred during the rehearsal, so no
 production no-restart assertion can be made from that observation window.
 
+On 2026-09-27, a read-only preflight resolved the already published Pulse
+`v0.1.0-alpha.5` against its protected source commit and successful release run.
+GitHub artifact attestations, `SHA256SUMS`, both native architectures and the
+multi-platform OCI index passed the catalog source verifier. Applying those
+verified coordinates to the reviewed recipes also passed `catalog-check
+--artifacts`, including native ELF/archive and pinned OCI platform checks for
+the complete candidate catalog. The check used an isolated local cache and did
+not sign, upload, dispatch a publication or change a running application.
+The old public timestamp is still revision 7 and expires 2026-10-02T18:12:57Z;
+the production migration and single-writer cutover must be completed separately.
+
 ## Required before release/cutover
 
 - Keep the real-host matrix green on the final release commit. Extend acceptance
