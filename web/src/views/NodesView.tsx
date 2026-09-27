@@ -19,7 +19,9 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { regionFlag } from "@/lib/regions";
 import { RuntimeRecoveryAlert, XrayConfigurationRecoverySheet } from "./RuntimeRecoveryAlert";
+import { RegionFlag } from "./RegionFlag";
 import { StopNodeAccessSheet } from "./StopNodeAccessSheet";
 import { RemoveNodeDialog } from "./RemoveNodeDialog";
 
@@ -114,7 +116,7 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
           <InputGroupInput aria-label={copy(language, "搜索节点", "Search nodes")} onChange={(event) => setQuery(event.target.value)} placeholder={copy(language, "搜索节点、位置或版本…", "Search node, location, or version…")} type="search" value={query} />
           <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
         </InputGroup>
-        <SelectControl aria-label={copy(language, "按位置筛选", "Filter by location")} className="w-40" onValueChange={setSiteFilter} options={[{ value: "all", label: copy(language, "所有位置", "All locations") }, ...data.sites.map((site) => ({ value: site.id, label: site.name }))]} size="sm" value={siteFilter} />
+        <SelectControl aria-label={copy(language, "按位置筛选", "Filter by location")} className="w-40" onValueChange={setSiteFilter} options={[{ value: "all", label: copy(language, "所有位置", "All locations") }, ...data.sites.map((site) => ({ value: site.id, label: siteLabel(site) }))]} size="sm" value={siteFilter} />
         <SelectControl aria-label={copy(language, "按状态筛选", "Filter by status")} className="w-36" onValueChange={setStatusFilter} options={[{ value: "all", label: copy(language, "所有状态", "All statuses") }, { value: "connected", label: copy(language, "已连接", "Connected") }, { value: "attention", label: copy(language, "需要处理", "Needs attention") }, { value: "offline", label: copy(language, "离线", "Offline") }, { value: "disabled", label: copy(language, "未启用", "Disabled") }]} size="sm" value={statusFilter} />
         <SelectControl aria-label={copy(language, "节点排序", "Sort nodes")} className="w-40" onValueChange={setSort} options={[{ value: "site", label: copy(language, "按位置排序", "Sort by location") }, { value: "status", label: copy(language, "异常优先", "Attention first") }, { value: "name", label: copy(language, "按名称排序", "Sort by name") }, { value: "last_seen", label: copy(language, "按最后在线排序", "Sort by last seen") }]} size="sm" value={sort} />
       </div>
@@ -159,11 +161,30 @@ function FleetSummary({ agents, connected, attention, language }: { agents: numb
   </div>;
 }
 
+const siteRegionCodes: Record<string, string> = {
+  "中国": "CN", "china": "CN",
+  "台湾": "TW", "taiwan": "TW",
+  "香港": "HK", "hong kong": "HK",
+  "美国": "US", "美西": "US", "美东": "US", "united states": "US", "usa": "US",
+  "德国": "DE", "germany": "DE",
+};
+
+function siteRegionCode(site: AppData["sites"][number]) {
+  const [first = "", second = ""] = site.name.trim().split(/[-–—·｜|]/, 2).map((part) => part.trim().toLowerCase());
+  return (first === "中国" || first === "china" ? siteRegionCodes[second] : undefined) ?? siteRegionCodes[first] ?? "";
+}
+
+function siteLabel(site: AppData["sites"][number]) {
+  const flag = regionFlag(siteRegionCode(site));
+  return flag ? `${flag} ${site.name}` : site.name;
+}
+
 function NodeSiteRows({ agents, data, language, onApplications, onConfigure, onNetwork, onReconnect, onRemove, site }: { agents: AgentView[]; data: AppData; language: Language; onApplications: () => void; onConfigure: (agent: AgentView) => void; onNetwork: () => void; onReconnect: (agent: AgentView) => void; onRemove: (id: string) => void; site: AppData["sites"][number] }) {
+  const regionCode = siteRegionCode(site);
   return <>
     <TableRow className="bg-muted/35 hover:bg-muted/35">
       <TableCell className="h-8 border-y border-border/60 px-4 py-1" colSpan={5}>
-        <div className="flex items-center gap-2 text-xs"><MapPinIcon aria-hidden="true" className="size-3.5 text-muted-foreground" /><span className="font-medium">{site.name}</span><span className="text-muted-foreground">· {copy(language, `${agents.length} 台节点`, `${agents.length} node${agents.length === 1 ? "" : "s"}`)}</span></div>
+        <div className="flex items-center gap-2 text-xs">{regionCode ? <RegionFlag code={regionCode} language={language} /> : <MapPinIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />}<span className="font-medium">{site.name}</span><span className="text-muted-foreground">· {copy(language, `${agents.length} 台节点`, `${agents.length} node${agents.length === 1 ? "" : "s"}`)}</span></div>
       </TableCell>
     </TableRow>
     {agents.map((agent) => <NodeTableRow agent={agent} data={data} key={agent.id} language={language} onApplications={onApplications} onConfigure={() => onConfigure(agent)} onNetwork={onNetwork} onReconnect={() => onReconnect(agent)} onRemove={() => onRemove(agent.id)} />)}
