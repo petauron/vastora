@@ -39,6 +39,8 @@ func TestVersion88PreservesSubscriptionGraphAndAddsSystemOwnership(t *testing.T)
 	schema = strings.Replace(schema, "'catalog', 'observed', 'system'", "'catalog', 'observed'", 1)
 	for _, statement := range []string{
 		`PRAGMA foreign_keys=OFF`, `PRAGMA legacy_alter_table=ON`, `BEGIN IMMEDIATE`,
+		`DROP TABLE official_app_ui_history`,
+		`DROP TABLE official_app_ui_assets`,
 		`DROP TRIGGER deployments_block_during_package_maintenance`,
 		`DROP TRIGGER deployment_updates_block_during_package_maintenance`,
 		`DROP TRIGGER commands_block_during_package_maintenance`,

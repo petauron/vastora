@@ -29,7 +29,7 @@ func openBeforeCatalogMaintenanceForTest(t *testing.T, directory string) *Store 
 		t.Fatal(err)
 	}
 	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || (version != 99 && version != 100) {
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || (version != 99 && version != 100 && version != 101) {
 		db.Close()
 		t.Fatalf("failed maintenance changed schema %d: %v", version, err)
 	}

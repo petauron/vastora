@@ -54,6 +54,14 @@ func (s *Store) migrateSchema(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		// Released schema 101 contains the official UI cache migration. A schema
+		// 100/101 Center must not cross that boundary before the package-runtime
+		// maintenance guard confirms that no application work is in flight.
+		if current >= 100 && current < 102 {
+			if err := requireCatalogV4Quiescence(ctx, s.db); err != nil {
+				return fmt.Errorf("center: catalog v4 maintenance preflight (backup: %s): %w", backup, err)
+			}
+		}
 		if current < 15 {
 			if _, err := provider.UpTo(ctx, 14); err != nil {
 				return fmt.Errorf("center: migrate database from %d to %d (backup: %s): %w", current, target, backup, err)
@@ -94,6 +102,20 @@ func (s *Store) migrateSchema(ctx context.Context) error {
 		return fmt.Errorf("center: activate migrated private HTTPS certificates: %w", err)
 	}
 	return verifyMigratedSchema(ctx, s.db, target)
+}
+
+func requireCatalogV4Quiescence(ctx context.Context, db *sql.DB) error {
+	for _, table := range []string{"deployments", "application_commands"} {
+		var unfinished bool
+		query := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE state IN ('pending','running') OR reconciliation_required=1)`, table)
+		if err := db.QueryRowContext(ctx, query).Scan(&unfinished); err != nil {
+			return fmt.Errorf("inspect unfinished %s: %w", table, err)
+		}
+		if unfinished {
+			return fmt.Errorf("unfinished %s must be resolved before catalog v4 migration", table)
+		}
+	}
+	return nil
 }
 
 // Version 80 was briefly released without advancing PRAGMA user_version after
