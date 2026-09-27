@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -62,7 +63,7 @@ func TestVersion100DestinationDomains(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v99-before-v100-*.db"))
+			backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v99-before-v%d-*.db", centerSchemaVersion)))
 			if err != nil || len(backups) != 1 {
 				t.Fatalf("missing migration backup: %v %v", backups, err)
 			}

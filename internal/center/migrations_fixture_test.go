@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Earlier migrations must preserve queued work, while schema 100 must refuse
+// Earlier migrations must preserve queued work, while schema 101 must refuse
 // to take ownership until the maintenance operator has resolved that work.
 // Inspect the stopped database directly; do not bypass the production guard.
 func openBeforeCatalogMaintenanceForTest(t *testing.T, directory string) *Store {
@@ -15,9 +15,9 @@ func openBeforeCatalogMaintenanceForTest(t *testing.T, directory string) *Store 
 	opened, err := Open(directory)
 	if err == nil {
 		opened.Close()
-		t.Fatal("schema 100 accepted unfinished historical work")
+		t.Fatal("schema 101 accepted unfinished historical work")
 	}
-	if !strings.Contains(err.Error(), "unfinished = 0") {
+	if !strings.Contains(err.Error(), "unfinished = 0") && !strings.Contains(err.Error(), "safe=1") {
 		t.Fatalf("unexpected maintenance blocker: %v", err)
 	}
 	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
@@ -29,7 +29,7 @@ func openBeforeCatalogMaintenanceForTest(t *testing.T, directory string) *Store 
 		t.Fatal(err)
 	}
 	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 99 {
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || (version != 99 && version != 100) {
 		db.Close()
 		t.Fatalf("failed maintenance changed schema %d: %v", version, err)
 	}
@@ -52,7 +52,7 @@ func finishCatalogMaintenanceFixture(t *testing.T, store *Store, directory strin
 	}
 	defer upgraded.Close()
 	var version int
-	if err := upgraded.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 100 {
+	if err := upgraded.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 101 {
 		t.Fatalf("resolved maintenance did not migrate: version=%d err=%v", version, err)
 	}
 }

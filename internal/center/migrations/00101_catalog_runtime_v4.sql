@@ -47,7 +47,7 @@ CREATE TABLE application_resources (
 INSERT INTO application_resources(application_id, adoption_state, updated_at)
 SELECT id, 'pending', updated_at FROM applications;
 
-PRAGMA user_version = 100;
+PRAGMA user_version = 101;
 
 CREATE TABLE application_adoptions (
     id TEXT PRIMARY KEY,
