@@ -56,15 +56,18 @@ policy. Do not add third-party script URLs to this path.
    commit SHA. Its CI must type-check against the pinned Center UI contract and
    build the matching JS/CSS pair.
 2. Review and merge the Center schema, trusted asset cache, API, and frontend
-   host. Back up the released Center database before schema 101 migration; a
-   migration failure stops startup and does not downgrade automatically.
+   host. Rehearse the schema 101 migration against a copy of the released
+   Center database; a migration failure stops startup and does not downgrade
+   automatically.
 3. Publish a new official catalog revision with the reviewed Meridian commit.
    The protected workflow rebuilds the UI and signs the exact bytes. A plain
    catalog refresh or Center release without these targets does not make the
    Meridian workspace available.
-4. Refresh the trusted official catalog in Center, then inspect Meridian and
-   Pulse through an authenticated session. Publish a Center release and update
-   A1 only after the catalog and migration are ready.
+4. Back up A1's released Center database, publish the Center release, and use
+   the managed update path. Center migrates to schema 101 on startup; stop the
+   rollout if migration or health checks fail.
+5. Refresh the trusted official catalog in the updated Center, then inspect
+   Meridian and Pulse through an authenticated session.
 
 Existing report, quality score, bandwidth, and Meridian command APIs are not
 converted by this interface migration.
