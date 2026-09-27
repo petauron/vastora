@@ -56,6 +56,15 @@ evidence only: it did not adopt actual Agent resources or restore application
 data. A separate Center/Agent release occurred during the rehearsal, so no
 production no-restart assertion can be made from that observation window.
 
+The same day, an isolated A1 copy of that historical schema 100 snapshot and
+its matching root key passed the current `0.1.0-alpha.249` Center's encrypted
+backup and restore commands. The restored key matched byte-for-byte, and both
+source and restored databases passed SQLite `quick_check` with schema 100 and
+37 application rows. The root-only temporary copy, password and encrypted
+archive were removed after verification. This tests the Center backup format
+and restore path against historical data, not off-host storage, Agent recovery,
+application-volume recovery, or live control-plane cutover.
+
 On 2026-09-27, a read-only preflight resolved the already published Pulse
 `v0.1.0-alpha.5` against its protected source commit and successful release run.
 GitHub artifact attestations, `SHA256SUMS`, both native architectures and the
