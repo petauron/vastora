@@ -201,22 +201,6 @@ func requireNoInterruptedXrayWorkerDeploy(ctx context.Context, docker threeXUICo
 	return nil
 }
 
-func prepareXrayWorkerKeepDataUninstall(ctx context.Context, docker threeXUIContainerEngine, appKey, applicationID string, names []string) error {
-	for _, name := range names {
-		worker, exists, err := inspectOwnedApplicationContainer(ctx, docker, name, appKey, "xray", applicationID, anyApplicationDeployment)
-		if err != nil {
-			return err
-		}
-		if !exists || worker.Container.State == nil || !worker.Container.State.Running {
-			continue
-		}
-		if _, err := docker.ContainerStop(ctx, worker.Container.ID, client.ContainerStopOptions{}); err != nil && !errdefs.IsNotModified(err) && !errdefs.IsNotFound(err) {
-			return uncertainTaskOutcome(fmt.Errorf("agent: stop Xray worker before preserving state: %w", err))
-		}
-	}
-	return nil
-}
-
 func replaceXrayWorkerContainer(ctx context.Context, docker threeXUIContainerEngine, options client.ContainerCreateOptions, beforeStop func() error, validate func(string) (string, error), verify func(string, string) error, restoreState func(context.Context) error) (string, error) {
 	if options.Config == nil || options.Config.Labels[xrayWorkerRuntimeLabel] != "xray" {
 		return "", errors.New("agent: Xray worker candidate identity is missing")

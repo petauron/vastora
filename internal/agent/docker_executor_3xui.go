@@ -14,10 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/errdefs"
 	dockernetwork "github.com/moby/moby/api/types/network"
-	"github.com/moby/moby/client"
-	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -68,78 +65,6 @@ func validateThreeXUIServiceAddress(bindAddress string, panelPort int, role stri
 	return nil
 }
 
-func threeXUIRecoveryErrorIsPostCommitCleanup(ctx context.Context, docker threeXUIContainerEngine, deploymentID string) (bool, error) {
-	current, currentExists, err := inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
-	if err != nil || !currentExists {
-		return false, err
-	}
-	if current.Container.Config == nil || current.Container.Config.Labels[threeXUIDeploymentIDLabel] != deploymentID {
-		return false, nil
-	}
-	_, candidateExists, err := inspectThreeXUIContainer(ctx, docker, threeXUICandidateContainer)
-	if err != nil {
-		return false, err
-	}
-	_, rollbackExists, err := inspectThreeXUIContainer(ctx, docker, threeXUIBackupContainer)
-	if err != nil {
-		return false, err
-	}
-	// A rollback or candidate marker proves promotion is not committed. A
-	// cleanup marker is the explicit commit record and may safely be left for
-	// maintenance if only its removal failed.
-	return !candidateExists && !rollbackExists, nil
-}
-
-func committedThreeXUIDeploymentToken(ctx context.Context, docker *client.Client, deploymentID, bindAddress string, panelPort int) (string, bool, error) {
-	if strings.TrimSpace(deploymentID) == "" {
-		return "", false, nil
-	}
-	current, exists, err := inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
-	if err != nil || !exists {
-		return "", false, err
-	}
-	if current.Container.Config == nil || current.Container.Config.Labels[threeXUIDeploymentIDLabel] != deploymentID {
-		return "", false, nil
-	}
-	if err := waitForBindAddress(ctx, bindAddress); err != nil {
-		return "", true, err
-	}
-	if current.Container.State == nil || !current.Container.State.Running {
-		if err := startCommittedThreeXUIDeployment(ctx, docker, current); err != nil {
-			return "", true, err
-		}
-	}
-	if err := dockerruntime.RecoverAttachment(ctx, docker, current.Container.ID, dockerruntime.NetworkName, "runtime-network", dockerruntime.ThreeXUIAlias); err != nil {
-		return "", true, err
-	}
-	if err := waitForEndpoint(ctx, bindAddress, panelPort); err != nil {
-		return "", true, fmt.Errorf("agent: committed 3x-ui deployment is not healthy: %w", err)
-	}
-	token, err := threeXUIAPIToken(ctx, docker, current.Container.ID)
-	if err != nil {
-		return "", true, err
-	}
-	return token, true, nil
-}
-
-func startCommittedThreeXUIDeployment(ctx context.Context, docker threeXUIContainerEngine, current client.ContainerInspectResult) error {
-	if current.Container.State != nil && current.Container.State.Running {
-		return nil
-	}
-	_, startErr := docker.ContainerStart(ctx, current.Container.ID, client.ContainerStartOptions{})
-	if startErr == nil || errdefs.IsNotModified(startErr) {
-		return nil
-	}
-	// A same-ID task replay is explicit evidence that this stopped container is
-	// the deployment being reconciled. If Docker lost the Start response, prove
-	// the committed result by immutable ID instead of quarantining forever.
-	inspected, inspectErr := docker.ContainerInspect(ctx, current.Container.ID, client.ContainerInspectOptions{})
-	if inspectErr == nil && inspected.Container.State != nil && inspected.Container.State.Running {
-		return nil
-	}
-	return errors.Join(fmt.Errorf("agent: restart committed 3x-ui deployment: %w", startErr), inspectErr)
-}
-
 func configureThreeXUISubscriptionRole(ctx context.Context, address string, panelPort int, apiToken, role string) error {
 	if role != "master" && role != "worker" {
 		return errors.New("agent: invalid 3x-ui topology role")
@@ -164,11 +89,6 @@ type threeXUIConfig struct {
 	VMessAEADForced bool   `json:"vmess_aead_forced"`
 }
 
-type threeXUISecrets struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
 func decodeThreeXUIConfig(raw json.RawMessage) (threeXUIConfig, error) {
 	var config threeXUIConfig
 	if err := json.Unmarshal(raw, &config); err != nil {
@@ -178,40 +98,6 @@ func decodeThreeXUIConfig(raw json.RawMessage) (threeXUIConfig, error) {
 		return config, errors.New("agent: invalid 3x-ui configuration")
 	}
 	return config, nil
-}
-
-func decodeThreeXUISecrets(raw json.RawMessage) (threeXUISecrets, error) {
-	var value threeXUISecrets
-	if json.Unmarshal(raw, &value) != nil || strings.TrimSpace(value.Username) == "" || len(value.Password) < 20 {
-		return value, errors.New("agent: incomplete 3x-ui credentials")
-	}
-	return value, nil
-}
-
-func configureThreeXUI(ctx context.Context, docker *client.Client, containerID, bindAddress string, panelPort int, credentials threeXUISecrets) error {
-	command := []string{"/app/x-ui", "setting", "-webBasePath", "/", "-listenIP", "0.0.0.0", "-port", strconv.Itoa(panelPort), "-username", credentials.Username, "-password", credentials.Password}
-	_, err := runContainerCommand(ctx, docker, containerID, command)
-	if err != nil {
-		return fmt.Errorf("agent: configure 3x-ui: %w", err)
-	}
-	timeout := 10
-	if _, err := docker.ContainerRestart(ctx, containerID, client.ContainerRestartOptions{Timeout: &timeout}); err != nil {
-		return fmt.Errorf("agent: restart 3x-ui after configuration: %w", err)
-	}
-	return waitForEndpoint(ctx, bindAddress, panelPort)
-}
-
-func threeXUIAPIToken(ctx context.Context, docker *client.Client, containerID string) (string, error) {
-	output, err := runContainerCommand(ctx, docker, containerID, []string{"/app/x-ui", "setting", "-getApiToken", "true"})
-	if err != nil {
-		return "", fmt.Errorf("agent: create 3x-ui API token: %w", err)
-	}
-	for _, line := range strings.Split(output, "\n") {
-		if value, found := strings.CutPrefix(strings.TrimSpace(line), "apiToken:"); found && strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value), nil
-		}
-	}
-	return "", errors.New("agent: 3x-ui did not return an API token")
 }
 
 func threeXUIRequest(ctx context.Context, method, endpoint, token string, body any) (map[string]any, error) {
@@ -242,28 +128,4 @@ func threeXUIRequest(ctx context.Context, method, endpoint, token string, body a
 		result.Object = map[string]any{}
 	}
 	return result.Object, nil
-}
-
-func runContainerCommand(ctx context.Context, docker *client.Client, containerID string, command []string) (string, error) {
-	created, err := docker.ExecCreate(ctx, containerID, client.ExecCreateOptions{Cmd: command, WorkingDir: "/app", TTY: true, AttachStdout: true, AttachStderr: true})
-	if err != nil {
-		return "", err
-	}
-	attached, err := docker.ExecAttach(ctx, created.ID, client.ExecAttachOptions{TTY: true})
-	if err != nil {
-		return "", err
-	}
-	defer attached.Close()
-	output, readErr := io.ReadAll(io.LimitReader(attached.Reader, 1<<20))
-	if readErr != nil {
-		return "", readErr
-	}
-	inspection, err := docker.ExecInspect(ctx, created.ID, client.ExecInspectOptions{})
-	if err != nil {
-		return "", err
-	}
-	if inspection.Running || inspection.ExitCode != 0 {
-		return string(output), fmt.Errorf("command exited with status %d", inspection.ExitCode)
-	}
-	return string(output), nil
 }

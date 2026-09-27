@@ -114,11 +114,6 @@ func xrayWorkerTestCreateOptions(deploymentID string) client.ContainerCreateOpti
 	return client.ContainerCreateOptions{Name: xrayWorkerCandidateContainer, Config: &container.Config{Image: xrayWorkerImageReference, Labels: labels}}
 }
 
-func (engine *fakeThreeXUIContainerEngine) setVolumeState(id, state string) {
-	engine.containers[id].labels = threeXUITestLabels("deployment-1")
-	engine.containers[id].labels[threeXUIVolumeStateLabel] = state
-}
-
 type fakeThreeXUIContainerEngine struct {
 	containers          map[string]*fakeThreeXUIContainer
 	names               map[string]string

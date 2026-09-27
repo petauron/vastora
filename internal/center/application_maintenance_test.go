@@ -144,7 +144,7 @@ func TestApplicationMaintenanceFailureRetainsEvidenceAndBlocksMutation(t *testin
 		t.Run(map[bool]string{false: "reported", true: "expired"}[expired], func(t *testing.T) {
 			store, node, installed := maintenanceTestInstance(t)
 			ctx := context.Background()
-			id, err := store.QueueApplicationMaintenance(ctx, installed.ApplicationID, PackageMaintenanceTask{Action: "restore", BackupID: "missing"})
+			_, err := store.QueueApplicationMaintenance(ctx, installed.ApplicationID, PackageMaintenanceTask{Action: "restore", BackupID: "missing"})
 			if err == nil {
 				t.Fatal("missing restore backup accepted")
 			}

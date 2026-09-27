@@ -248,7 +248,8 @@ func validateBackupTar(raw []byte) error {
 			return errors.New("agent: unsafe or duplicate backup member")
 		}
 		seen[name] = true
-		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA && header.Typeflag != tar.TypeDir {
+		// A zero typeflag is the legacy tar encoding for a regular file.
+		if header.Typeflag != tar.TypeReg && header.Typeflag != 0 && header.Typeflag != tar.TypeDir {
 			return errors.New("agent: backup links and special files are forbidden")
 		}
 		size += header.Size

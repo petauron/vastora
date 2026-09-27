@@ -612,23 +612,6 @@ func (s *Store) legacyMeridianRetired(ctx context.Context, applicationID string)
 	return false, nil
 }
 
-func (s *Store) removeMeridianRuntimeState(ctx context.Context) error {
-	state, err := s.loadMeridianRuntimeState(ctx)
-	if err != nil && !errors.Is(err, errApplicationNotInstalled) {
-		return err
-	}
-	if err := s.stopLandingMonitor(ctx); err != nil {
-		return err
-	}
-	if err := removeSupersededMeridianGates(ctx, state.knownLandingGates(), nil, newMeridianTrafficGate); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM meridian_runtime_state WHERE id=1`); err != nil {
-		return err
-	}
-	return os.RemoveAll(filepath.Join(s.dataDir, meridianRuntimeDirectory))
-}
-
 func (e ApplicationExecutor) observeAppliedMeridianRuntime(ctx context.Context, state meridianRuntimeState) (meridianruntime.Result, error) {
 	socket := e.DockerSocket
 	if socket == "" {
@@ -724,15 +707,6 @@ func (s *Store) stageMeridianConfig(encoded []byte) (string, string, error) {
 		return "", "", err
 	}
 	return name, filepath.Join(directory, "config.json"), nil
-}
-
-func (s *Store) writeExactMeridianConfig(encoded []byte) error {
-	staged, active, err := s.stageMeridianConfig(encoded)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(staged)
-	return commitXrayWorkerConfig(staged, active)
 }
 
 func sameMeridianArtifact(left, right meridian.DesiredArtifact) bool {
