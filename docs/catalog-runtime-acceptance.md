@@ -118,7 +118,10 @@ the production migration and single-writer cutover must be completed separately.
   behavior, beyond the generic process/data lifecycle already exercised.
 - Rehearse adoption with copied historical state and real runtime resources;
   compare container ID/StartedAt, MainPID/InvocationID, mounts, ports, config
-  digests and pairing before/after. Mock receipts do not prove no restart.
+  digests and pairing before/after. For an unconfigured Meridian instance,
+  verify no endpoint, Agent runtime row or reserved container before accepting
+  an explicit dormant receipt, and verify no resource appeared afterward. Mock
+  receipts do not prove no restart.
 - Verify recovery on data copies, including refusal to run the old application
   against data already migrated by the new version.
 - Finish cross-repository review and PR integration. Confirm the consumer is
