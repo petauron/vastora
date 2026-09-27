@@ -69,9 +69,10 @@ signed revision. This is the explicit availability versus freeze-detection trade
    Compare before/after runtime evidence. Unknown ownership is `blocked`, not
    permission for a repair reinstall.
    A Meridian installation with no Center endpoint may be adopted as explicitly
-   `dormant` only when the Agent also has no Meridian runtime state or reserved
-   Xray container. Its receipt has no host resources; ordinary package changes
-   cannot implicitly activate it. Record the absence before and after adoption.
+   `dormant` only when the Agent also has no Meridian runtime state, local
+   configuration artifacts or reserved Xray container. Its receipt has no host
+   resources; ordinary package changes cannot implicitly activate it. Record the
+   absence before and after adoption.
 8. After acceptance, retire the old publisher and transfer authority with exactly
    one writer. Keep download paths, roots, source identity, channel, TUF state
    and rollback high-water marks. Enable both production gates and publish

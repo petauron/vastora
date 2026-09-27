@@ -211,6 +211,15 @@ func TestDormantMeridianAdoptionRequiresNoLocalRuntimeStateOrContainers(t *testi
 		t.Fatal("candidate container was ignored")
 	}
 	delete(docker.containers, meridianXrayCandidateContainer)
+	if err := os.Mkdir(filepath.Join(store.dataDir, meridianRuntimeDirectory), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.historicalDormantMeridianResources(context.Background(), task, docker); err == nil {
+		t.Fatal("Meridian configuration artifacts were ignored")
+	}
+	if err := os.Remove(filepath.Join(store.dataDir, meridianRuntimeDirectory)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.db.Exec(`INSERT INTO meridian_runtime_state(id,sealed_state) VALUES(1,?)`, []byte("stale-state")); err != nil {
 		t.Fatal(err)
 	}

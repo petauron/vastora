@@ -31,6 +31,11 @@ func (e ApplicationExecutor) historicalDormantMeridianResources(ctx context.Cont
 	if rows != 0 {
 		return nil, errors.New("agent: Meridian runtime state exists; dormant adoption requires review")
 	}
+	if _, err := os.Lstat(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory)); err == nil {
+		return nil, errors.New("agent: Meridian configuration artifacts exist; dormant adoption requires review")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	if err := inspectDormantMeridianContainers(ctx, docker); err != nil {
 		return nil, err
 	}
