@@ -15,6 +15,7 @@ adoption or an application-data restore drill.
 | --- | --- | --- |
 | Ordinary Docker/systemd app or recipe revision | Catalog PR/CI | Unchanged until explicit install/upgrade |
 | Approved version of a registered app | Administrator manually dispatches catalog publication after the app release build succeeds | New available version only |
+| Meridian interface bundle | Catalog PR and signed catalog revision from a pinned Meridian source commit | Compatible Centers can load the versioned workspace; installed runtimes do not change |
 | Unsupported runtime or product integration | Vastora program change and compatible recipe | Coordinated Center/Agent upgrade |
 | Install/configure/upgrade/backup/restore/uninstall | Authenticated Center action | Selected authorized task only |
 

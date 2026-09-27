@@ -570,6 +570,8 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE agent_private_peer_capabilities`,
 		`DROP TABLE three_x_ui_client_accounts`,
 		`DROP TABLE three_x_ui_node_protocols`,
+		`DROP TABLE official_app_ui_history`,
+		`DROP TABLE official_app_ui_assets`,
 		`DROP TABLE official_catalog_trust`,
 		`DROP TABLE cloudflare_access_settings`,
 		`DROP TABLE reality_security_checks`,

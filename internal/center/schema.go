@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 101
+const centerSchemaVersion = 102
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -39,6 +39,23 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			expires_at TEXT NOT NULL,
 			metadata_json BLOB NOT NULL,
 			target BLOB NOT NULL
+		)`,
+		`CREATE TABLE official_app_ui_assets (
+			app_id TEXT NOT NULL CHECK(app_id = 'meridian'),
+			asset_kind TEXT NOT NULL CHECK(asset_kind IN ('script', 'style')),
+			app_version TEXT NOT NULL,
+			target_name TEXT NOT NULL UNIQUE,
+			catalog_revision INTEGER NOT NULL CHECK(catalog_revision > 0),
+			sha256 TEXT NOT NULL,
+			bundle BLOB NOT NULL CHECK(length(bundle) BETWEEN 1 AND 4194304),
+			PRIMARY KEY(app_id, asset_kind)
+		)`,
+		`CREATE TABLE official_app_ui_history (
+			app_id TEXT NOT NULL CHECK(app_id = 'meridian'),
+			app_version TEXT NOT NULL,
+			asset_kind TEXT NOT NULL CHECK(asset_kind IN ('script', 'style')),
+			sha256 TEXT NOT NULL,
+			PRIMARY KEY(app_id, app_version, asset_kind)
 		)`,
 		cloudflareAccessSettingsSchema,
 		`INSERT INTO cloudflare_access_settings(id) VALUES(1)`,

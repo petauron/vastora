@@ -19,11 +19,11 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
+import { regionFlag } from "@/lib/regions";
 import { RuntimeRecoveryAlert, XrayConfigurationRecoverySheet } from "./RuntimeRecoveryAlert";
+import { RegionFlag } from "./RegionFlag";
 import { StopNodeAccessSheet } from "./StopNodeAccessSheet";
 import { RemoveNodeDialog } from "./RemoveNodeDialog";
-import { NodeDiagnosticsButton, NodeDiagnosticsProvider, NodeHealthCells, NodeHealthInline } from "./IPQuality";
 
 export { validCenterURL } from "../lib/network";
 
@@ -44,11 +44,7 @@ export function agentInstallCommand({ centerURL, enrollment, installerAvailable 
 
 type NodesViewProps = { data: AppData; language: Language; mutate: Mutate; onAddFirstNodeHandled?: () => void; onNavigate: (screen: Screen) => void; startAdding?: boolean };
 
-export function NodesView(props: NodesViewProps) {
-  return <NodeDiagnosticsProvider agents={props.data.agents} enabled><NodesViewContent {...props} /></NodeDiagnosticsProvider>;
-}
-
-function NodesViewContent({ data, language, mutate, onAddFirstNodeHandled, onNavigate, startAdding = false }: NodesViewProps) {
+export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNavigate, startAdding = false }: NodesViewProps) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<AgentView | null>(null);
   const [stoppingAccessID, setStoppingAccessID] = useState<string | null>(null);
@@ -86,8 +82,6 @@ function NodesViewContent({ data, language, mutate, onAddFirstNodeHandled, onNav
   const summary = useMemo(() => ({
     connected: data.agents.filter((agent) => agent.status === "active" && agent.connected && !agent.credentialRevoked).length,
     attention: data.agents.filter(nodeNeedsAttention).length,
-    withApplications: data.agents.filter((agent) => agent.appliedInstallations > 0).length,
-    gateways: data.agents.filter((agent) => agent.capabilities.gateway).length,
   }), [data.agents]);
   const visibleAgents = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -113,37 +107,36 @@ function NodesViewContent({ data, language, mutate, onAddFirstNodeHandled, onNav
     }
     return [...groups.values()];
   }, [siteByID, visibleAgents]);
-  return <section className="flex flex-col gap-7">
-    <PageHeading title={copy(language, "节点", "Nodes")} description={copy(language, "节点是运行应用的设备。添加后，Center 会自动发现它的网络。", "Nodes are devices that run apps. Center discovers their networks after they join.")} action={<Button onClick={() => setAdding(true)}><PlusIcon data-icon="inline-start" />{copy(language, "添加节点", "Add node")}</Button>} />
+  return <section className="flex flex-col gap-5">
+    <PageHeading title={copy(language, "节点", "Nodes")} description={copy(language, "管理运行应用的设备", "Manage devices that run apps")} action={<Button onClick={() => setAdding(true)}><PlusIcon data-icon="inline-start" />{copy(language, "添加节点", "Add node")}</Button>} />
     {data.agents.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><ServerIcon /></EmptyMedia><EmptyTitle>{copy(language, "添加第一台节点", "Add your first node")}</EmptyTitle><EmptyDescription>{copy(language, "当前 Center 主机或另一台受支持的 Linux 设备都可以作为节点；复制一条命令即可按需安装 Docker 和 Agent。", "The current Center host or another supported Linux device can be a node. Copy one command to install Docker when needed and then install Agent.")}</EmptyDescription><Button className="mt-3" onClick={() => setAdding(true)}><PlusIcon data-icon="inline-start" />{copy(language, "开始添加", "Get started")}</Button></EmptyHeader></Empty> : <div className="flex min-w-0 flex-col gap-4">
-      <FleetSummary agents={data.agents.length} connected={summary.connected} attention={summary.attention} gateways={summary.gateways} sites={new Set(data.agents.map((agent) => agent.siteId)).size} withApplications={summary.withApplications} language={language} />
+      <FleetSummary agents={data.agents.length} connected={summary.connected} attention={summary.attention} language={language} />
       <div className="flex flex-wrap items-center gap-2">
-        <InputGroup className="w-full sm:w-64">
+        <InputGroup className="w-full sm:w-64 lg:w-80">
           <InputGroupInput aria-label={copy(language, "搜索节点", "Search nodes")} onChange={(event) => setQuery(event.target.value)} placeholder={copy(language, "搜索节点、位置或版本…", "Search node, location, or version…")} type="search" value={query} />
           <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
         </InputGroup>
-        <SelectControl aria-label={copy(language, "按位置筛选", "Filter by location")} className="w-40" onValueChange={setSiteFilter} options={[{ value: "all", label: copy(language, "所有位置", "All locations") }, ...data.sites.map((site) => ({ value: site.id, label: site.name }))]} size="sm" value={siteFilter} />
+        <SelectControl aria-label={copy(language, "按位置筛选", "Filter by location")} className="w-40" onValueChange={setSiteFilter} options={[{ value: "all", label: copy(language, "所有位置", "All locations") }, ...data.sites.map((site) => ({ value: site.id, label: siteLabel(site) }))]} size="sm" value={siteFilter} />
         <SelectControl aria-label={copy(language, "按状态筛选", "Filter by status")} className="w-36" onValueChange={setStatusFilter} options={[{ value: "all", label: copy(language, "所有状态", "All statuses") }, { value: "connected", label: copy(language, "已连接", "Connected") }, { value: "attention", label: copy(language, "需要处理", "Needs attention") }, { value: "offline", label: copy(language, "离线", "Offline") }, { value: "disabled", label: copy(language, "未启用", "Disabled") }]} size="sm" value={statusFilter} />
         <SelectControl aria-label={copy(language, "节点排序", "Sort nodes")} className="w-40" onValueChange={setSort} options={[{ value: "site", label: copy(language, "按位置排序", "Sort by location") }, { value: "status", label: copy(language, "异常优先", "Attention first") }, { value: "name", label: copy(language, "按名称排序", "Sort by name") }, { value: "last_seen", label: copy(language, "按最后在线排序", "Sort by last seen") }]} size="sm" value={sort} />
-        <span aria-live="polite" className="ml-auto text-xs text-muted-foreground">{copy(language, `显示 ${visibleAgents.length}/${data.agents.length} 台`, `Showing ${visibleAgents.length}/${data.agents.length}`)}</span>
       </div>
-      <Table aria-label={copy(language, "节点全局状态", "Fleet status")} className="nodes-health-table min-w-full table-fixed md:min-w-[960px]">
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-[24%]">{copy(language, "节点", "Node")}</TableHead>
-            <TableHead className="w-[10%] max-md:hidden">{copy(language, "状态", "Status")}</TableHead>
-            <TableHead className="w-[14%] max-md:hidden">{copy(language, "三网延迟", "Carrier latency")}</TableHead>
-            <TableHead className="w-[13%] max-md:hidden">{copy(language, "主机", "Host")}</TableHead>
-            <TableHead className="w-[18%] max-md:hidden">{copy(language, "TCP 参数", "TCP values")}</TableHead>
-            <TableHead className="w-[10%] max-md:hidden">{copy(language, "最近检测", "Last check")}</TableHead>
-            <TableHead className="w-24"><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {visibleGroups.map(({ site, agents }) => <NodeSiteRows agents={agents} data={data} key={site.id} language={language} onApplications={() => onNavigate("apps")} onConfigure={setEditing} onNetwork={() => onNavigate("network")} onReconnect={beginReconnect} onRemove={setRemovingID} site={site} />)}
-          {visibleAgents.length === 0 ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={7}>{copy(language, "没有符合当前筛选条件的节点", "No nodes match the current filters")}</TableCell></TableRow> : null}
-        </TableBody>
-      </Table>
+      <div className="overflow-hidden rounded-xl border bg-card/40">
+        <Table aria-label={copy(language, "节点列表", "Node list")} className="min-w-full table-fixed">
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[72%] pl-4 text-xs text-muted-foreground md:w-[27%]">{copy(language, "节点", "Node")}</TableHead>
+              <TableHead className="hidden w-[16%] text-xs text-muted-foreground md:table-cell">{copy(language, "状态", "Status")}</TableHead>
+              <TableHead className="hidden w-[18%] text-xs text-muted-foreground md:table-cell">{copy(language, "用途", "Purpose")}</TableHead>
+              <TableHead className="hidden w-[20%] text-xs text-muted-foreground md:table-cell">{copy(language, "Agent 版本", "Agent version")}</TableHead>
+              <TableHead className="w-[28%] pr-4 md:w-[19%]"><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {visibleGroups.map(({ site, agents }) => <NodeSiteRows agents={agents} data={data} key={site.id} language={language} onApplications={() => onNavigate("apps")} onConfigure={setEditing} onNetwork={() => onNavigate("network")} onReconnect={beginReconnect} onRemove={setRemovingID} site={site} />)}
+            {visibleAgents.length === 0 ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy(language, "没有符合当前筛选条件的节点", "No nodes match the current filters")}</TableCell></TableRow> : null}
+          </TableBody>
+        </Table>
+      </div>
     </div>}
     <AddNodeSheet data={data} language={language} onClose={() => { setAdding(false); onAddFirstNodeHandled?.(); }} onJoined={() => { setAdding(false); onAddFirstNodeHandled?.(); onNavigate("network"); }} open={adding} />
     <NodeSettingsSheet agent={currentEditing} data={data} language={language} mutate={mutate} onClose={() => setEditing(null)} onStopAccess={() => { if (currentEditing) { setStoppingAccessID(currentEditing.id); setEditing(null); } }} />
@@ -153,28 +146,45 @@ function NodesViewContent({ data, language, mutate, onAddFirstNodeHandled, onNav
   </section>;
 }
 
-function FleetSummary({ agents, connected, attention, gateways, sites, withApplications, language }: { agents: number; connected: number; attention: number; gateways: number; sites: number; withApplications: number; language: Language }) {
+function FleetSummary({ agents, connected, attention, language }: { agents: number; connected: number; attention: number; language: Language }) {
   const items = [
-    { label: copy(language, "节点", "Nodes"), value: agents },
-    { label: copy(language, "已连接", "Connected"), value: connected, tone: connected === agents ? "text-latency-fast" : undefined },
-    { label: copy(language, "需要处理", "Needs attention"), value: attention, tone: attention > 0 ? "text-destructive" : undefined },
-    { label: copy(language, "运行应用", "Running apps"), value: withApplications },
-    { label: copy(language, "可作为网关", "Gateway capable"), value: gateways },
-    { label: copy(language, "位置", "Locations"), value: sites },
+    { label: copy(language, "台节点", "nodes"), value: agents },
+    { label: copy(language, "台已连接", "connected"), value: connected },
+    { label: copy(language, "台需要处理", attention === 1 ? "needs attention" : "need attention"), value: attention, tone: attention > 0 ? "text-amber-600 dark:text-amber-400" : undefined },
   ];
-  return <dl className="grid grid-cols-2 divide-x divide-y overflow-hidden rounded-xl border bg-card sm:grid-cols-3 lg:grid-cols-6 lg:divide-y-0">
-    {items.map((item) => <div className="flex min-w-0 items-baseline gap-2 px-4 py-3" key={item.label}>
-      <dd className={cn("text-xl font-semibold tabular-nums", item.tone)}>{item.value}</dd>
-      <dt className="truncate text-xs text-muted-foreground">{item.label}</dt>
-    </div>)}
-  </dl>;
+  return <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+    {items.map((item, index) => <span className="inline-flex items-baseline gap-1.5" key={item.label}>
+      {index > 0 ? <span aria-hidden="true" className="mr-1 text-border">·</span> : null}
+      <strong className={`font-medium tabular-nums ${item.tone ?? "text-foreground"}`}>{item.value}</strong>
+      <span className={item.tone}>{item.label}</span>
+    </span>)}
+  </div>;
+}
+
+const siteRegionCodes: Record<string, string> = {
+  "中国": "CN", "china": "CN",
+  "台湾": "TW", "taiwan": "TW",
+  "香港": "HK", "hong kong": "HK",
+  "美国": "US", "美西": "US", "美东": "US", "united states": "US", "usa": "US",
+  "德国": "DE", "germany": "DE",
+};
+
+function siteRegionCode(site: AppData["sites"][number]) {
+  const [first = "", second = ""] = site.name.trim().split(/[-–—·｜|]/, 2).map((part) => part.trim().toLowerCase());
+  return (first === "中国" || first === "china" ? siteRegionCodes[second] : undefined) ?? siteRegionCodes[first] ?? "";
+}
+
+function siteLabel(site: AppData["sites"][number]) {
+  const flag = regionFlag(siteRegionCode(site));
+  return flag ? `${flag} ${site.name}` : site.name;
 }
 
 function NodeSiteRows({ agents, data, language, onApplications, onConfigure, onNetwork, onReconnect, onRemove, site }: { agents: AgentView[]; data: AppData; language: Language; onApplications: () => void; onConfigure: (agent: AgentView) => void; onNetwork: () => void; onReconnect: (agent: AgentView) => void; onRemove: (id: string) => void; site: AppData["sites"][number] }) {
+  const regionCode = siteRegionCode(site);
   return <>
-    <TableRow className="bg-muted/25 hover:bg-muted/25">
-      <TableCell className="h-8 py-1" colSpan={7}>
-        <div className="flex items-center gap-2 text-xs"><MapPinIcon aria-hidden="true" className="size-3.5 text-muted-foreground" /><span className="font-medium">{site.name}</span><Badge variant="secondary">{site.code}</Badge><span className="text-muted-foreground">{copy(language, `${agents.length} 台节点`, `${agents.length} node${agents.length === 1 ? "" : "s"}`)}</span></div>
+    <TableRow className="bg-muted/35 hover:bg-muted/35">
+      <TableCell className="h-8 border-y border-border/60 px-4 py-1" colSpan={5}>
+        <div className="flex items-center gap-2 text-xs">{regionCode ? <RegionFlag code={regionCode} language={language} /> : <MapPinIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />}<span className="font-medium">{site.name}</span><span className="text-muted-foreground">· {copy(language, `${agents.length} 台节点`, `${agents.length} node${agents.length === 1 ? "" : "s"}`)}</span></div>
       </TableCell>
     </TableRow>
     {agents.map((agent) => <NodeTableRow agent={agent} data={data} key={agent.id} language={language} onApplications={onApplications} onConfigure={() => onConfigure(agent)} onNetwork={onNetwork} onReconnect={() => onReconnect(agent)} onRemove={() => onRemove(agent.id)} />)}
@@ -186,18 +196,43 @@ function NodeTableRow({ agent, data, language, onApplications, onConfigure, onNe
   const site = data.sites.find((value) => value.id === agent.siteId);
   const selectedGateway = Boolean(site?.gatewayNodes.includes(agent.id));
   const architecture = agent.architecture === "arm64" ? "ARM64" : "x64";
-  const state = nodeState(agent);
+  const needsNetworkConfirmation = agent.status === "active" && !agent.removal && !agent.networkProfile;
   const cutoverActive = ["project", "verify", "retire"].includes(data.meridian.cutover.state);
   const needsLegacyConfigurationInspection = cutoverActive && agent.connected && !agent.runtimeRecovery && data.meridian.endpoints.some((endpoint) => endpoint.nodeId === agent.id && !endpoint.legacyRetired && (endpoint.status === "applying" || endpoint.status === "failed"));
   return <>
-    <TableRow className="h-16">
-      <TableCell><div className="flex min-w-0 items-start gap-2"><ServerIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><p className="truncate font-medium" title={agent.name}>{agent.name}</p><span className="shrink-0 md:hidden"><StateBadge language={language} value={state} /></span></div><p className="truncate text-xs text-muted-foreground" title={agent.version}>{architecture} · {agent.version || "—"}{selectedGateway ? ` · ${copy(language, "网关", "Gateway")}` : ""}</p><NodeHealthInline agent={agent} /></div></div></TableCell>
-      <TableCell className="max-md:hidden"><StateBadge language={language} value={state} />{!agent.networkProfile ? <span className="mt-1 block text-xs text-destructive">{copy(language, "网络未确认", "Network unconfirmed")}</span> : null}</TableCell>
-      <NodeHealthCells agent={agent} language={language} />
-      <TableCell><div className="flex items-center justify-end gap-1 max-md:flex-wrap"><NodeDiagnosticsButton nodeId={agent.id} name={agent.name} language={language} compact />{needsLegacyConfigurationInspection ? <Button aria-label={copy(language, `检查 ${agent.name} 的旧 Xray 配置差异`, `Inspect ${agent.name} legacy Xray configuration`)} onClick={() => setConfigurationRecoveryOpen(true)} size="icon-sm" title={copy(language, "检查旧 Xray 配置差异", "Inspect legacy Xray configuration")} variant="outline"><GitCompareArrowsIcon aria-hidden="true" /></Button> : null}{agent.status === "active" && !agent.networkProfile ? <Button aria-label={copy(language, `确认 ${agent.name} 的网络`, `Confirm network for ${agent.name}`)} onClick={onNetwork} size="icon-sm"><NetworkIcon aria-hidden="true" /></Button> : null}{!agent.removal && !agent.connected ? <Button aria-label={copy(language, `重新接入 ${agent.name}`, `Reconnect ${agent.name}`)} onClick={onReconnect} size="icon-sm" variant="outline"><RotateCcwIcon aria-hidden="true" /></Button> : null}{!agent.removal && agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除", "Delete")}</Button> : null}{!agent.removal && agent.status === "active" ? <Button onClick={onConfigure} size="icon-sm" variant="ghost" aria-label={copy(language, `管理 ${agent.name}`, `Manage ${agent.name}`)}><Settings2Icon aria-hidden="true" /></Button> : null}{!agent.connected ? <Button aria-label={agent.removal ? copy(language, `查看 ${agent.name} 的移除进度`, `View removal progress for ${agent.name}`) : copy(language, `永久移除 ${agent.name}`, `Permanently remove ${agent.name}`)} onClick={onRemove} size="icon-sm" variant="ghost"><Trash2Icon aria-hidden="true" /></Button> : null}</div>{needsLegacyConfigurationInspection ? <XrayConfigurationRecoverySheet agent={agent} language={language} onOpenChange={setConfigurationRecoveryOpen} open={configurationRecoveryOpen} /> : null}</TableCell>
+    <TableRow className="h-14 hover:bg-muted/20">
+      <TableCell className="min-w-0 py-2 pl-4"><div className="flex min-w-0 items-center gap-2.5"><ServerIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /><div className="min-w-0"><p className="truncate text-sm font-medium" title={agent.name}>{agent.name}</p><div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground md:hidden"><NodeStatus agent={agent} language={language} compact /><span aria-hidden="true">·</span><span className="truncate">{agent.version || "—"}</span></div></div></div></TableCell>
+      <TableCell className="hidden py-2 md:table-cell"><NodeStatus agent={agent} language={language} /></TableCell>
+      <TableCell className="hidden py-2 md:table-cell"><div className="flex flex-wrap items-center gap-1.5">{selectedGateway ? <Badge className="rounded-md" variant="secondary">{copy(language, "网关", "Gateway")}</Badge> : null}{agent.appliedInstallations > 0 ? <Badge className="rounded-md" variant="secondary">{copy(language, `${agent.appliedInstallations} 个应用`, `${agent.appliedInstallations} app${agent.appliedInstallations === 1 ? "" : "s"}`)}</Badge> : null}{!selectedGateway && agent.appliedInstallations === 0 ? <span className="text-muted-foreground">—</span> : null}</div></TableCell>
+      <TableCell className="hidden py-2 md:table-cell"><span className="block truncate text-xs tabular-nums" title={agent.version}>{agent.version || "—"}</span><span className="text-xs text-muted-foreground">{architecture}</span></TableCell>
+      <TableCell className="py-2 pr-4"><div className="flex flex-wrap items-center justify-end gap-1">
+        {needsLegacyConfigurationInspection ? <Button aria-label={copy(language, `检查 ${agent.name} 的旧 Xray 配置差异`, `Inspect ${agent.name} legacy Xray configuration`)} onClick={() => setConfigurationRecoveryOpen(true)} size="icon-sm" title={copy(language, "检查旧 Xray 配置差异", "Inspect legacy Xray configuration")} variant="ghost"><GitCompareArrowsIcon aria-hidden="true" /></Button> : null}
+        {needsNetworkConfirmation ? <Button aria-label={copy(language, `确认 ${agent.name} 的网络`, `Confirm network for ${agent.name}`)} onClick={onNetwork} size="icon-sm" title={copy(language, "确认网络", "Confirm network")} variant="ghost"><NetworkIcon aria-hidden="true" /></Button> : null}
+        {!agent.removal && !agent.connected ? <Button aria-label={copy(language, `重新接入 ${agent.name}`, `Reconnect ${agent.name}`)} onClick={onReconnect} size="icon-sm" title={copy(language, "重新接入", "Reconnect")} variant="ghost"><RotateCcwIcon aria-hidden="true" /></Button> : null}
+        {!agent.removal && agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除", "Delete")}</Button> : null}
+        {!agent.removal && agent.status === "active" ? <Button aria-label={copy(language, `管理 ${agent.name}`, `Manage ${agent.name}`)} onClick={onConfigure} size="icon-sm" variant="ghost"><Settings2Icon aria-hidden="true" /></Button> : null}
+        {!agent.connected ? <Button aria-label={agent.removal ? copy(language, `查看 ${agent.name} 的移除进度`, `View removal progress for ${agent.name}`) : copy(language, `永久移除 ${agent.name}`, `Permanently remove ${agent.name}`)} onClick={onRemove} size="icon-sm" title={agent.removal ? copy(language, "查看移除进度", "View removal progress") : copy(language, "永久移除", "Permanently remove")} variant="ghost"><Trash2Icon aria-hidden="true" /></Button> : null}
+      </div>{needsLegacyConfigurationInspection ? <XrayConfigurationRecoverySheet agent={agent} language={language} onOpenChange={setConfigurationRecoveryOpen} open={configurationRecoveryOpen} /> : null}</TableCell>
     </TableRow>
-    {agent.connected && agent.runtimeRecovery ? <TableRow><TableCell className="py-2" colSpan={7}><RuntimeRecoveryAlert agent={agent} language={language} onApplications={onApplications} /></TableCell></TableRow> : null}
+    {agent.connected && agent.runtimeRecovery ? <TableRow><TableCell className="py-2" colSpan={5}><RuntimeRecoveryAlert agent={agent} language={language} onApplications={onApplications} /></TableCell></TableRow> : null}
   </>;
+}
+
+function NodeStatus({ agent, language, compact = false }: { agent: AgentView; language: Language; compact?: boolean }) {
+  const state = nodeState(agent);
+  const connected = state === "connected";
+  const label = state === "connected" ? copy(language, "已连接", "Connected")
+    : state === "offline" ? copy(language, "离线", "Offline")
+      : state === "disabled" ? copy(language, "未启用", "Disabled")
+        : state === "access_stopped" ? copy(language, "已停止接入", "Access stopped")
+          : state === "removal_failed" ? copy(language, "移除未完成", "Removal incomplete") : copy(language, "正在移除", "Removing");
+  const issue = connected && !agent.networkProfile ? copy(language, "网络待确认", "Network unconfirmed")
+    : connected && agent.update?.state === "failed" ? copy(language, "更新需处理", "Update needs attention")
+      : connected && agent.runtimeRecovery ? copy(language, "恢复中", "Recovering") : "";
+  return <span className={`inline-flex min-w-0 ${compact ? "items-center gap-1" : "flex-col items-start gap-0.5"}`}>
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span aria-hidden="true" className={`size-1.5 rounded-full ${connected ? "bg-emerald-500" : state === "offline" || state === "removal_failed" ? "bg-destructive" : "bg-amber-500"}`} /><span className={connected ? "text-foreground" : "text-muted-foreground"}>{label}</span></span>
+    {issue ? <span className={`text-xs text-amber-600 dark:text-amber-400 ${compact ? "truncate" : ""}`}>{compact ? `· ${issue}` : issue}</span> : null}
+  </span>;
 }
 
 function nodeState(agent: AgentView) {

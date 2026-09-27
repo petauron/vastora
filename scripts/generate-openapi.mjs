@@ -398,6 +398,14 @@ for (const route of routes) {
       "500": { $ref: "#/components/responses/Error" },
     },
   };
+  if (route.handler === "handleOfficialUIBundle") {
+    const assetSchema = { type: "string", format: "binary" };
+    operation.description = "Returns the immutable signed official application UI asset. bundle.js uses text/javascript and bundle.css uses text/css. The response is authenticated and never cached.";
+    operation.responses[status].content = {
+      "text/javascript": { schema: assetSchema },
+      "text/css": { schema: assetSchema },
+    };
+  }
   if (parameters.length > 0) operation.parameters = parameters;
   if (/decodeJSON(?:Limit)?\(\s*(?:request|r)\s*,/.test(source)) {
     operation.requestBody = {

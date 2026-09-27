@@ -22,16 +22,14 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("添加节点");
   });
 
-  it("groups nodes by location and shows the location code on the page", () => {
+  it("groups nodes by location", () => {
     const data = dashboard();
     data.sites.push({ ...data.sites[0], id: "site-sg", name: "Singapore", code: "singapore", gatewayNodes: [] });
     data.agents.push({ ...data.agents[0], id: "agent-sg", name: "sg-edge", siteId: "site-sg" });
     const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
     expect(container.textContent).toContain("Home");
-    expect(container.textContent).toContain("home");
     expect(container.textContent).toContain("Singapore");
-    expect(container.textContent).toContain("singapore");
-    expect(container.querySelector('table[aria-label="节点全局状态"]')).not.toBeNull();
+    expect(container.querySelector('table[aria-label="节点列表"]')).not.toBeNull();
     expect(container.textContent).not.toContain("IP 质量");
     expect(container.textContent).not.toContain("Netflix");
     expect(container.textContent).not.toContain("ChatGPT");

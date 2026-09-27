@@ -128,9 +128,9 @@ func TestCatalogV4MigrationPreservesLegacyHashesTrustAndResources(t *testing.T) 
 	}
 	defer fresh.Close()
 	if !reflect.DeepEqual(databaseSchemaShape(t, fresh.db), databaseSchemaShape(t, migrated.db)) {
-		t.Fatal("schema100 migration differs from fresh schema101")
+		t.Fatal("schema100 migration differs from fresh schema102")
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v100-before-v101-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v100-before-v102-*.db"))
 	if err != nil || len(backups) != 1 {
 		t.Fatal("migration did not preserve pre-upgrade backup", err)
 	}
@@ -138,7 +138,7 @@ func TestCatalogV4MigrationPreservesLegacyHashesTrustAndResources(t *testing.T) 
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatal("migration backup permissions", err)
 	}
-	if version, err := sqliteSchemaVersion(ctx, migrated.db); err != nil || version != 101 {
+	if version, err := sqliteSchemaVersion(ctx, migrated.db); err != nil || version != 102 {
 		t.Fatal("schema version", version, err)
 	}
 }

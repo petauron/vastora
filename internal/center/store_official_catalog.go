@@ -139,7 +139,70 @@ func (s *Store) acceptOfficialCatalog(ctx context.Context, origin string, result
 	if err := commitOfficialCatalogTrust(ctx, tx, result, previous, now); err != nil {
 		return err
 	}
+	if err := replaceOfficialUIBundles(ctx, tx, result); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+func replaceOfficialUIBundles(ctx context.Context, tx *sql.Tx, result catalog.OfficialFetchResult) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM official_app_ui_assets`); err != nil {
+		return err
+	}
+	accepted := 0
+	for _, app := range result.Catalog.Apps {
+		script, err := catalog.OfficialUITargetName(app.ID, app.Version)
+		if err != nil {
+			continue
+		}
+		style, _ := catalog.OfficialUIStylesheetTargetName(app.ID, app.Version)
+		_, scriptPresent := result.UIBundles[script]
+		_, stylePresent := result.UIBundles[style]
+		if scriptPresent != stylePresent {
+			return errors.New("center: incomplete verified application UI")
+		}
+		if !scriptPresent {
+			var prior int
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM official_app_ui_history WHERE app_id=?)`, app.ID).Scan(&prior); err != nil {
+				return err
+			}
+			if prior != 0 {
+				return errors.New("center: official application UI omitted after first acceptance")
+			}
+		}
+		for kind, name := range map[string]string{"script": script, "style": style} {
+			bundle, present := result.UIBundles[name]
+			if !present {
+				continue
+			}
+			if len(bundle) == 0 || len(bundle) > catalog.MaxOfficialUIBytes {
+				return errors.New("center: invalid verified application UI bundle")
+			}
+			hash := sha256.Sum256(bundle)
+			sha := hex.EncodeToString(hash[:])
+			var previousSHA string
+			err := tx.QueryRowContext(ctx, `SELECT sha256 FROM official_app_ui_history WHERE app_id=? AND app_version=? AND asset_kind=?`, app.ID, app.Version, kind).Scan(&previousSHA)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if err == nil && previousSHA != sha {
+				return errors.New("center: official application UI changed without an application version change")
+			}
+			if errors.Is(err, sql.ErrNoRows) {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO official_app_ui_history(app_id,app_version,asset_kind,sha256) VALUES(?,?,?,?)`, app.ID, app.Version, kind, sha); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO official_app_ui_assets(app_id,asset_kind,app_version,target_name,catalog_revision,sha256,bundle) VALUES(?,?,?,?,?,?,?)`, app.ID, kind, app.Version, name, result.State.Acceptance.Revision, sha, bundle); err != nil {
+				return err
+			}
+			accepted++
+		}
+	}
+	if accepted != len(result.UIBundles) {
+		return errors.New("center: official UI bundle identity does not match the accepted catalog")
+	}
+	return nil
 }
 
 // A checkpoint comes only from go-tuf's authenticated local cache. Revision

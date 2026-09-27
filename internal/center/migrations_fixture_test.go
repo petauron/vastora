@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Earlier migrations must preserve queued work, while schema 101 must refuse
+// Earlier migrations must preserve queued work, while schema 102 must refuse
 // to take ownership until the maintenance operator has resolved that work.
 // Inspect the stopped database directly; do not bypass the production guard.
 func openBeforeCatalogMaintenanceForTest(t *testing.T, directory string) *Store {
@@ -15,7 +15,7 @@ func openBeforeCatalogMaintenanceForTest(t *testing.T, directory string) *Store 
 	opened, err := Open(directory)
 	if err == nil {
 		opened.Close()
-		t.Fatal("schema 101 accepted unfinished historical work")
+		t.Fatal("schema 102 accepted unfinished historical work")
 	}
 	if !strings.Contains(err.Error(), "unfinished = 0") && !strings.Contains(err.Error(), "safe=1") {
 		t.Fatalf("unexpected maintenance blocker: %v", err)
@@ -52,7 +52,7 @@ func finishCatalogMaintenanceFixture(t *testing.T, store *Store, directory strin
 	}
 	defer upgraded.Close()
 	var version int
-	if err := upgraded.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 101 {
+	if err := upgraded.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 102 {
 		t.Fatalf("resolved maintenance did not migrate: version=%d err=%v", version, err)
 	}
 }
@@ -63,6 +63,8 @@ func finishCatalogMaintenanceFixture(t *testing.T, store *Store, directory strin
 func removePostVersion85TablesForFixture(t *testing.T, store *Store) {
 	t.Helper()
 	for _, statement := range []string{
+		`DROP TABLE official_app_ui_history`,
+		`DROP TABLE official_app_ui_assets`,
 		`DROP TRIGGER deployments_block_during_package_maintenance`,
 		`DROP TRIGGER deployment_updates_block_during_package_maintenance`,
 		`DROP TRIGGER commands_block_during_package_maintenance`,

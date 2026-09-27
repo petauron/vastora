@@ -69,7 +69,7 @@ func TestCatalogV4HistoricalCopyRehearsal(t *testing.T) {
 		}
 	}
 	// Compare the original columns, including opaque encrypted blobs, without
-	// logging their contents. Version 101 appends deployment columns by design.
+	// logging their contents. Version 102 appends deployment columns by design.
 	tables := []string{"applications", "deployments", "application_commands", "agents", "services", "secrets", "official_catalog_trust", "catalog_sources", "task_executions"}
 	columns := make(map[string][]string, len(tables))
 	before := make(map[string]string, len(tables))
@@ -93,7 +93,7 @@ func TestCatalogV4HistoricalCopyRehearsal(t *testing.T) {
 	if err := store.migrateSchema(ctx); err != nil {
 		t.Fatalf("historical copy migration failed; preserve the copy for diagnosis: %v", err)
 	}
-	if version, err := sqliteSchemaVersion(ctx, db); err != nil || version != 101 {
+	if version, err := sqliteSchemaVersion(ctx, db); err != nil || version != 102 {
 		t.Fatalf("migrated version=%d err=%v", version, err)
 	}
 	for _, table := range tables {
@@ -124,11 +124,11 @@ func TestCatalogV4HistoricalCopyRehearsal(t *testing.T) {
 		}
 	}
 	rehearsalCheckIntegrity(t, db)
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v100-before-v101-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v100-before-v102-*.db"))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("expected one pre-migration backup, found %d: %v", len(backups), err)
 	}
-	t.Logf("historical copy migrated 100→101; applications=%d, legacy cache=%d, manifest identities=%d; historical rows unchanged", applicationCount, cacheCount, historyCount)
+	t.Logf("historical copy migrated 100→102; applications=%d, legacy cache=%d, manifest identities=%d; historical rows unchanged", applicationCount, cacheCount, historyCount)
 }
 
 func rehearsalCheckIntegrity(t *testing.T, db *sql.DB) {

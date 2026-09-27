@@ -47,8 +47,6 @@ CREATE TABLE application_resources (
 INSERT INTO application_resources(application_id, adoption_state, updated_at)
 SELECT id, 'pending', updated_at FROM applications;
 
-PRAGMA user_version = 101;
-
 CREATE TABLE application_adoptions (
     id TEXT PRIMARY KEY,
     application_id TEXT NOT NULL UNIQUE REFERENCES applications(id) ON DELETE CASCADE,
@@ -93,6 +91,8 @@ BEGIN SELECT RAISE(ABORT,'Application package maintenance requires completion or
 CREATE TRIGGER command_updates_block_during_package_maintenance BEFORE UPDATE ON application_commands
 WHEN NEW.state IN ('pending','running') AND EXISTS(SELECT 1 FROM application_maintenance WHERE agent_id=NEW.agent_id AND (state IN ('pending','running') OR reconciliation_required=1))
 BEGIN SELECT RAISE(ABORT,'Application package maintenance requires completion or reconciliation'); END;
+
+PRAGMA user_version = 102;
 
 -- +goose Down
 SELECT RAISE(ABORT, 'Vastora Center database downgrades are not supported');

@@ -3,8 +3,10 @@
 This is an implementation checkpoint, not production approval. Vastora changes
 are reviewed in PR #716. Catalog publication is triggered manually after a
 successful application release; the Pulse notification PR #25 was closed. The shared
-module is published as petauron/catalog v0.1.0 and pinned without a development
-workspace replacement. Do not enable the independent publisher or run the
+module is published as petauron/catalog v0.2.0 and pinned without a development
+workspace replacement. The verification bullets below predate this dependency
+update and the schema 102 merge; they must be rerun before acceptance. Do not
+enable the independent publisher or run the
 maintenance cutover based on unit tests alone.
 
 ## Verified locally
@@ -48,13 +50,16 @@ catalog needs no renewal workflow; publication is a manual dispatch after a
 successful application release.
 
 On 2026-09-27, `TestCatalogV4HistoricalCopyRehearsal` passed against a private,
-keyless copy of a historical production schema 100 backup. It checked copy
-integrity, the forward migration to 101, the pre-migration backup, preserved
-historical row digests and catalog evidence, and pending-only adoption records.
+keyless copy of a historical production schema 100 backup on the earlier branch
+revision targeting schema 101. It checked copy integrity, the pre-migration
+backup, preserved historical row digests and catalog evidence, and pending-only
+adoption records. After `main` independently introduced the Meridian UI schema
+101 migration, the combined target is schema 102. The earlier rehearsal does
+not validate this final two-step migration and must be repeated on a new copy.
 The live Center database stayed on schema 100. This is database-migration
 evidence only: it did not adopt actual Agent resources or restore application
-data. A separate Center/Agent release occurred during the rehearsal, so no
-production no-restart assertion can be made from that observation window.
+data. A separate Center/Agent release occurred during the earlier rehearsal,
+so no production no-restart assertion can be made from that observation window.
 
 The same day, an isolated A1 copy of that historical schema 100 snapshot and
 its matching root key passed the current `0.1.0-alpha.249` Center's encrypted

@@ -1,41 +1,73 @@
-# Application-owned workspaces
+# Application interface ownership
 
-Meridian owns its presentation in `web/src/app-modules/meridian`:
+Center provides the install, update, access publication, status, and removal
+controls for every application. It also renders management forms for third-party
+applications from their declarative catalog metadata. Catalog data does not
+provide arbitrary JavaScript, CSS, or URL-based management views.
 
-- `manifest.ts`: typed UI manifest, page identities, localized navigation labels,
-  surfaces, and shared data capabilities.
-- `Workspace.tsx`: node overview and page composition.
-- `NetworkMatrix.tsx`, `LinkBandwidth.tsx`: route comparisons and bandwidth UI.
-- `Manager.tsx`: accounts, subscriptions, and Meridian domain operations.
+Vastora's official applications own their product interfaces:
 
-Vastora owns `web/src/app-workspaces`: the module contract, reviewed registration,
-shared provider host and lazy-loading surfaces. `InstalledApps` selects the exact
-registered application identity; it does not define Meridian tabs or its account
-manager. Generic installation, update, publication, and status controls remain
-platform components. The existing legacy cutover action explicitly targets the
-Meridian manager while passing the legacy installation; it is not an app-key
-alias or alternate Meridian implementation.
+- Meridian owns its node, network, landing, account, and subscription pages in
+  `petauron/meridian/ui`. Center passes authenticated platform data and actions
+  through the versioned mount API. Center does not compile Meridian pages into
+  its frontend.
+- Pulse serves its authenticated dashboard from the Pulse application. Center
+  shows installation and access status, then opens the configured private HTTPS
+  entry. The Pulse dashboard is not mirrored in Center.
 
-## Trust and authorization
+The exact official identities are `vastora-official/meridian` and
+`vastora-official/pulse`. A third-party app with the same short name follows the
+declarative Center path. Center retains all authorization checks on API calls;
+loading an official interface does not grant any new permission.
 
-This release supports bundled first-party UI modules. Registration binds the
-full source/app key to a build-time import. Catalog text cannot supply JavaScript
-URLs, arbitrary import paths, or additional permissions. A third-party app with
-the same short name cannot select the official module.
+## Meridian release and trust boundary
 
-Declared capabilities select shared data providers. They are not authorization
-grants. Center's existing authenticated administrative endpoints continue to
-validate operations and application state. No endpoint permissions, session
-scope, credentials or production routing policy change in this refactor.
+The Meridian UI produces a JS module and stylesheet named
+`ui-meridian-<application-version>.js` and `.css`. Its reviewed source commit is
+an input to the protected official catalog publication workflow. That workflow
+builds it against the pinned Center platform UI source, checks the resulting
+bytes before loading publication credentials, and signs both files as TUF targets
+beside `stable.json`. An application version cannot be reused with different UI
+bytes. To change the UI, release a new Meridian application version.
 
-## Manifest and release boundary
+Center's official catalog refresh verifies the JS and CSS target bytes through
+the same TUF root used for official application manifests. Schema 101 stores the
+verified pair and their hashes in a transaction with the accepted catalog and
+records immutable hashes by application version. The authenticated
+`/api/v1/official-app-ui/meridian/<version>/bundle.js` and `bundle.css` routes
+serve only the verified pair. If either file or its accepted catalog is absent,
+the workspace displays an error instead of falling back to bundled pages.
+Center still exposes installation status, upgrade, and installation management
+for affected Meridian instances so an unavailable UI bundle cannot hide the
+platform recovery controls.
 
-The UI manifest is part of the reviewed application frontend source and ships
-with Center. The signed runtime package manifest is immutable and still owns
-installation images, services and configuration; this change does not rewrite
-an existing signed package version. UI modules are code-split but are not
-independently released plugins. Independent UI distribution requires an explicit
-signed asset and version contract; it is not implied by lazy loading.
+The module exports `apiVersion = 1`, `mount`, and `mountManager`; each mount
+returns `update` and `unmount`. Center controls the mount lifecycle and passes
+the current application data, language, and platform callbacks. The workspace
+uses the accepted catalog's current Meridian UI version for the whole installed
+group; individual nodes may still show older installed runtime versions until
+upgraded. The module runs
+as trusted first-party code under Center's existing session and content security
+policy. Do not add third-party script URLs to this path.
 
-No schema migration or data conversion is required. Scores, unlock evidence,
-per-pair bandwidth reports and existing commands retain their current APIs.
+## Rollout
+
+1. Review and merge the Meridian UI source, then record its immutable full
+   commit SHA. Its CI must type-check against the pinned Center UI contract and
+   build the matching JS/CSS pair.
+2. Review and merge the Center schema, trusted asset cache, API, and frontend
+   host. Rehearse the combined schema 100→102 migration against a copy of the
+   released Center database; a migration failure stops startup and does not downgrade
+   automatically.
+3. Publish a new official catalog revision with the reviewed Meridian commit.
+   The protected workflow rebuilds the UI and signs the exact bytes. A plain
+   catalog refresh or Center release without these targets does not make the
+   Meridian workspace available.
+4. Back up A1's released Center database, publish the Center release, and use
+   the managed update path. Center migrates to schema 102 on startup; stop the
+   rollout if migration or health checks fail.
+5. Refresh the trusted official catalog in the updated Center, then inspect
+   Meridian and Pulse through an authenticated session.
+
+Existing report, quality score, bandwidth, and Meridian command APIs are not
+converted by this interface migration.

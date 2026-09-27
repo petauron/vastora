@@ -4,7 +4,7 @@ import { api, APIError } from "../api";
 import type { AgentView } from "../types";
 import type { Language } from "../translations";
 import type { IPQualityCheck, IPQualityClassification, IPQualityRiskFactor, IPQualityService, IPQualityTarget } from "../ip-quality-types";
-import type { Carrier, NodeDiagnosticCheck, NetworkMeasurement } from "../node-diagnostics-types";
+import type { Carrier, NodeDiagnosticCheck } from "../node-diagnostics-types";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -18,7 +18,7 @@ import { routeLine, type RouteTier } from "./returnRouteModel";
 import { canonicalIPQualityAddress, checkPending, cleanIPQualityValue, ipClassification, ipQualityCheckForAddress, ipQualityError, ipQualityFamilyLabel, ipQualitySummary, landingQualityAddress, unlockLabel, unlockServiceLabel, unlockServices, unlockTypeLabel } from "./ipQualityModel";
 import { AssessmentBadge, AssessmentSummary, AssessmentTypeBadge } from "./IPAssessment";
 import { IPQualityComparison } from "./IPQualityComparison";
-import { MeridianLinkBandwidth } from "@/app-modules/meridian/LinkBandwidth";
+import { MeridianLinkBandwidth } from "./MeridianLinkBandwidth";
 
 type QualityState = {
   checks: IPQualityCheck[]; targets: IPQualityTarget[]; diagnostics: NodeDiagnosticCheck[]; agents: AgentView[]; loading: boolean; error: boolean;
@@ -104,14 +104,6 @@ function UnlockIndicators({ check, language, current }: { check?: IPQualityCheck
   })}</span>;
 }
 
-function latencyTone(value: number) {
-  return value < 80 ? "text-latency-fast" : value < 150 ? "text-latency-medium" : "text-destructive";
-}
-
-function networkSummary(network?: NetworkMeasurement[]) {
-  return ["telecom", "unicom", "mobile"].map((carrier) => network?.find((value) => value.carrier === carrier));
-}
-
 function humanBytes(bytes: number) {
   return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GiB` : `${Math.round(bytes / 1024 ** 2)} MiB`;
 }
@@ -122,26 +114,6 @@ function recommendationReason(language: Language, reason?: string) {
   if (reason === "avoid_idle_restart") return copy(language, "避免空闲后重新慢启动", "Avoid slow start after idle");
   if (reason === "requires_path_measurement") return copy(language, "需结合线路实测，暂不更改", "Keep until path is measured");
   return copy(language, "保持当前值", "Keep current value");
-}
-
-// The fleet table reads saved snapshots only. Page refreshes never start probes.
-export function NodeHealthCells({ agent, language }: { agent: AgentView; language: Language }) {
-  const state = useContext(QualityContext);
-  const network = state?.diagnostics.find((value) => value.agentId === agent.id && value.kind === "node.network-quality");
-  const host = state?.diagnostics.find((value) => value.agentId === agent.id && value.kind === "node.host-profile");
-  const latest = [network?.checkedAt, host?.checkedAt].filter((value): value is string => Boolean(value)).sort().at(-1);
-  return <>
-    <TableCell className="max-md:hidden"><div className="flex min-w-0 flex-col gap-0.5 text-xs tabular-nums">{networkSummary(network?.network).map((value, index) => <span className="flex gap-1.5" key={index}><span className="w-5 text-muted-foreground">{["电", "联", "移"][index]}</span><span className={value ? latencyTone(value.latencyMs) : "text-muted-foreground"}>{value ? `${Math.round(value.latencyMs)} ms` : "—"}</span></span>)}</div></TableCell>
-    <TableCell className="max-md:hidden"><span className="block text-xs tabular-nums">{host?.host ? `${host.host.cpuCount} vCPU` : "—"}</span><span className="block text-xs tabular-nums text-muted-foreground">{host?.host ? humanBytes(host.host.memoryBytes) : copy(language, "未采集", "Not collected")}</span></TableCell>
-    <TableCell className="max-md:hidden"><span className="block text-xs">{host?.host ? `${host.host.congestionControl || "—"} / ${host.host.defaultQdisc || "—"}` : "—"}</span><span className="block text-xs text-muted-foreground">{host?.host ? host.host.persistentConfig ? copy(language, "发现配置文件", "Config file found") : copy(language, "无 tcpfit 配置", "No tcpfit config") : copy(language, "未采集", "Not collected")}</span></TableCell>
-    <TableCell className="text-xs tabular-nums text-muted-foreground max-md:hidden">{latest ? new Date(latest).toLocaleString(language, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</TableCell>
-  </>;
-}
-
-export function NodeHealthInline({ agent }: { agent: AgentView }) {
-  const state = useContext(QualityContext);
-  const network = state?.diagnostics.find((value) => value.agentId === agent.id && value.kind === "node.network-quality");
-  return <span className="mt-1 flex gap-2 text-[11px] tabular-nums md:hidden">{networkSummary(network?.network).map((value, index) => <span className={value ? latencyTone(value.latencyMs) : "text-muted-foreground"} key={index}>{["电", "联", "移"][index]} {value ? `${Math.round(value.latencyMs)} ms` : "—"}</span>)}</span>;
 }
 
 // One read per page, then poll only while an explicitly requested check exists.
@@ -193,10 +165,6 @@ function DiagnosticsProvider({ agents, enabled, includeIPQuality, children }: { 
 
 export function IPQualityProvider({ agents, enabled, children }: { agents: AgentView[]; enabled: boolean; children: ReactNode }) {
   return <DiagnosticsProvider agents={agents} enabled={enabled} includeIPQuality>{children}</DiagnosticsProvider>;
-}
-
-export function NodeDiagnosticsProvider({ agents, enabled, children }: { agents: AgentView[]; enabled: boolean; children: ReactNode }) {
-  return <DiagnosticsProvider agents={agents} enabled={enabled} includeIPQuality={false}>{children}</DiagnosticsProvider>;
 }
 
 type DiagnosticsButtonProps = { nodeId: string; name: string; language: Language; compact?: boolean; linkBandwidth?: boolean; egressAddress?: string; landingEgress?: boolean };
