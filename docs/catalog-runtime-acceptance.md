@@ -1,7 +1,8 @@
 # Catalog runtime v4 acceptance checkpoint
 
 This is an implementation checkpoint, not production approval. Vastora changes
-are reviewed in PR #716; Pulse notification is in petauron/pulse#25. The shared
+are reviewed in PR #716. Catalog publication is triggered manually after a
+successful application release; the Pulse notification PR #25 was closed. The shared
 module is published as petauron/catalog v0.1.0 and pinned without a development
 workspace replacement. Do not enable the independent publisher or run the
 maintenance cutover based on unit tests alone.
@@ -36,9 +37,10 @@ prove adoption of a historical production installation. They exposed and led to
 fixes for stale Docker resume IDs and systemd startup confirmation ordering.
 
 Production signing remains disabled. The catalog-signing environment is restricted
-to protected branches with administrator bypass disabled; signing and upload
-credentials are still operator prerequisites. No production application or live
-catalog object was modified.
+to protected branches with administrator bypass disabled; online signer keys and
+the operator-approved shared R2 secrets are configured. The production gate and
+historical maintenance acceptance remain outstanding. No production application
+or live catalog object was modified.
 
 ## Required before release/cutover
 

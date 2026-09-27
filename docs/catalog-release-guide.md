@@ -14,13 +14,13 @@ adoption or an application-data restore drill.
 | Change | Owner | Running applications |
 | --- | --- | --- |
 | Ordinary Docker/systemd app or recipe revision | Catalog PR/CI | Unchanged until explicit install/upgrade |
-| Approved version of a registered app | App notification then independent catalog verification/signing | New available version only |
+| Approved version of a registered app | Administrator manually dispatches catalog publication after the app release build succeeds | New available version only |
 | Unsupported runtime or product integration | Vastora program change and compatible recipe | Coordinated Center/Agent upgrade |
 | Install/configure/upgrade/backup/restore/uninstall | Authenticated Center action | Selected authorized task only |
 
 See the independent [publishing guide](https://github.com/petauron/catalog/blob/main/docs/PUBLISHING.md)
-for GitHub App setup, provenance verification, immutable ledgers, exact-byte
-retries, seven-day signatures and daily renewal below 48 hours.
+for manual workflow inputs, provenance verification, immutable ledgers, exact-byte
+retries, seven-day signatures and manual metadata renewal before expiry.
 Ordinary updates do not modify protected `main` or open Vastora PRs. Routine
 signing uses protected catalog `main` and its protected environment without
 per-release approval; first registration, permissions and trust changes still
@@ -110,6 +110,6 @@ disposable.
 
 Before production signoff, retain evidence for an application never named in
 Vastora source with each runtime/architecture; privilege rejection, secret-safe
-output, ownership/path defenses, duplicate/old notifications, interrupted upload,
+output, ownership/path defenses, duplicate/old manual requests, interrupted upload,
 exact pending retries, expiry/rollback, no-restart adoption, and a complete
 release-to-visible-version flow without a Vastora code change.
