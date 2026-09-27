@@ -242,6 +242,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/agents/{id}/three-x-ui-backups/{applicationID}/{revision}", s.handleStoreThreeXUIBackup)
 	mux.HandleFunc("GET /api/v1/agents/{id}/three-x-ui-migrations/{migrationID}/backup", s.handleThreeXUIMigrationBackup)
 	mux.HandleFunc("GET /api/v1/catalog/official", s.handleOfficialCatalog)
+	mux.HandleFunc("GET /api/v1/official-app-ui/{appID}/{version}/{asset}", s.requireAuth(false, s.handleOfficialUIBundle))
 	mux.HandleFunc("GET /api/v1/catalog/sources", s.requireAuth(false, s.handleListSources))
 	mux.HandleFunc("POST /api/v1/catalog/sources", s.requireAuth(true, s.handleCreateSource))
 	mux.HandleFunc("PATCH /api/v1/catalog/sources/{id}", s.requireAuth(true, s.handleUpdateSource))

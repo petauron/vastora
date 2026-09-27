@@ -38,6 +38,8 @@ func run(args []string) error {
 	revision := f.Uint64("revision", 0, "strictly increasing publication revision")
 	lifetime := f.Duration("valid-for", 7*24*time.Hour, "signed target lifetime (default 7 days, maximum 30 days)")
 	output := f.String("output", "", "new output directory; must not exist")
+	uiBundlePath := f.String("ui-bundle", "", "reviewed official app UI bundle to publish as a signed target")
+	uiStylePath := f.String("ui-style", "", "reviewed official app UI stylesheet to publish as a signed target")
 	keyFiles := map[string]*string{}
 	for _, role := range []string{"targets", "snapshot", "timestamp"} {
 		keyFiles[role] = f.String(role+"-keys", "", "comma-separated protected PKCS8 Ed25519 key files")
@@ -109,7 +111,28 @@ func run(args []string) error {
 			signers[role] = append(signers[role], signer)
 		}
 	}
-	files, err := catalog.BuildOfficialRepository(root, target, *channel, previous, now, signers)
+	var uiBundles map[string][]byte
+	if (*uiBundlePath == "") != (*uiStylePath == "") {
+		return errors.New("catalog-publish: UI script and stylesheet must be supplied together")
+	}
+	for _, path := range []string{*uiBundlePath, *uiStylePath} {
+		if path == "" {
+			continue
+		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > catalog.MaxOfficialUIBytes {
+			return errors.New("catalog-publish: invalid reviewed UI asset")
+		}
+		bundle, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if uiBundles == nil {
+			uiBundles = make(map[string][]byte)
+		}
+		uiBundles[filepath.Base(path)] = bundle
+	}
+	files, err := catalog.BuildOfficialRepository(root, target, uiBundles, *channel, previous, now, signers)
 	if err != nil {
 		return err
 	}

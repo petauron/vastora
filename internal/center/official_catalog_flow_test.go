@@ -170,7 +170,7 @@ func TestOfficialCatalogIndependentUpdateThroughInstallWorkflow(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		next, err := catalog.BuildOfficialRepository(rootBytes, target, "stable", prior.Acceptance, time.Now().UTC(), signers)
+		next, err := catalog.BuildOfficialRepository(rootBytes, target, nil, "stable", prior.Acceptance, time.Now().UTC(), signers)
 		if err != nil {
 			t.Fatal(err)
 		}

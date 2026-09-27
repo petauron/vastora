@@ -20,7 +20,7 @@ func TestOfficialStagedRepositoryUsesIndependentVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err := BuildOfficialRepository(root, raw, "stable", OfficialAcceptance{}, now, signers)
+	files, err := BuildOfficialRepository(root, raw, nil, "stable", OfficialAcceptance{}, now, signers)
 	if err != nil {
 		t.Fatal(err)
 	}

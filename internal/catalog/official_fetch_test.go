@@ -29,7 +29,7 @@ func TestOfficialFetchHTTPSUpdateAndFailurePreserveAcceptance(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		files, err := BuildOfficialRepository(root, raw, "stable", previous, time.Now().UTC(), signers)
+		files, err := BuildOfficialRepository(root, raw, nil, "stable", previous, time.Now().UTC(), signers)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,7 +146,7 @@ func TestOfficialFetchRetainsRevocationWhenTargetDownloadFails(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		files, err := BuildOfficialRepository(root, raw, "stable", previous, time.Now().UTC(), signers)
+		files, err := BuildOfficialRepository(root, raw, nil, "stable", previous, time.Now().UTC(), signers)
 		if err != nil {
 			t.Fatal(err)
 		}

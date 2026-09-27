@@ -9,6 +9,7 @@ copied into the Center image or signed by Center on startup.
 | Change | Required release | Effect on installed applications |
 | --- | --- | --- |
 | Known app version, pinned digest/hash, or display text | Signed catalog revision | Shows availability; does not install or upgrade anything |
+| Meridian interface bundle | Signed catalog revision with the reviewed Meridian source commit | Makes the interface available to compatible Centers; does not upgrade installed runtimes |
 | New executor, installation semantics, or permission changes | Vastora program release, then compatible catalog | Administrator must upgrade the program before using the new contract |
 | Upgrade an installed application | Existing application upgrade action | Authorized deployment task, with existing backup and audit controls |
 
@@ -40,6 +41,9 @@ conditions in its [S3 API compatibility reference](https://developers.cloudflare
 1. Review the application change and retain immutable content for all previously
    published app versions. Assign a new app version for any manifest change,
    including display text. Pin OCI digests and native platform-specific SHA256.
+   For Meridian, record the full reviewed source commit that produces the JS/CSS
+   interface pair. Once the pair is signed for an app version, changing either
+   file requires a new app version.
 2. Run catalog validation and artifact verification before granting signing
    approval. A contract change is not approved merely because its JSON is valid.
 3. Use the protected signing environment and independently approved root. Never
@@ -62,8 +66,11 @@ implementation checklist and trust limitations.
 ## Independent workflow and durable retries
 
 `.github/workflows/catalog-publish.yml` is manually dispatched from `main` with
-a monotonically increasing `revision`. It has no Center/Agent build, image push,
-installer upload, or program-version bump. Its credential-free validation job
+a monotonically increasing `revision` and the full `meridian_ui_commit` SHA.
+The workflow builds the Meridian JS/CSS pair against its pinned Center UI
+contract before protected approval, then rebuilds and compares the exact bytes
+after approval. It has no Center/Agent build, image push, installer upload, or
+program-version bump. Its credential-free validation job
 checks typed contracts, actual OCI manifests/config platforms, and native
 artifact hashes and executable architectures before requesting signing approval.
 
