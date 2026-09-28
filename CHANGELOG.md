@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.252](https://github.com/petauron/vastora/compare/v0.1.0-alpha.251...v0.1.0-alpha.252) (2026-09-28)
+
+
+### Bug Fixes
+
+* **meridian:** reflect IP2Location risk and preserve Center navigation ([#736](https://github.com/petauron/vastora/issues/736)) ([b9be075](https://github.com/petauron/vastora/commit/b9be0751da059f865fc1f01ab85395cc8cf6dfe7))
+
 ## [0.1.0-alpha.251](https://github.com/petauron/vastora/compare/v0.1.0-alpha.250...v0.1.0-alpha.251) (2026-09-28)
 
 
