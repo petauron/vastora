@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.251](https://github.com/petauron/vastora/compare/v0.1.0-alpha.250...v0.1.0-alpha.251) (2026-09-28)
+
+
+### Features
+
+* **meridian:** label routed subscriptions with landing region ([#734](https://github.com/petauron/vastora/issues/734)) ([7587770](https://github.com/petauron/vastora/commit/75877706e249bdee77a43b056a3e0a8c6f60a7ee))
+
 ## [0.1.0-alpha.250](https://github.com/petauron/vastora/compare/v0.1.0-alpha.249...v0.1.0-alpha.250) (2026-09-27)
 
 
