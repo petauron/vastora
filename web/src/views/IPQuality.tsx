@@ -298,12 +298,15 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
               <h3 className="mb-1 text-xs font-semibold text-latency-fast">{copy(language, "一 · IP 类型", "1 · IP type")}</h3>
               <IPTypeMatrix language={language} usageTypes={report.usageTypes ?? []} companyTypes={report.companyTypes ?? []} />
             </section>
-            <section className="border-t pt-2" aria-label={copy(language, "来源评分", "Provider scores")}>
-              <h3 className="mb-1 text-xs font-semibold text-latency-fast">{copy(language, "二 · 来源评分", "2 · Provider scores")}</h3>
+            <section className="border-t pt-2" aria-label={copy(language, "来源风险", "Provider risk")}>
+              <h3 className="mb-1 text-xs font-semibold text-latency-fast">{copy(language, "二 · 来源风险（越高风险越高）", "2 · Provider risk (higher is riskier)")}</h3>
               <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">{report.scores.map((value) => {
-                const risk = ["SCAMALYTICS", "IPQS", "AbuseIPDB"].includes(value.source) && /^\d{1,3}(?:\.\d+)?$/.test(value.value) ? Number(value.value) : NaN;
-                const hasKnownScale = Number.isFinite(risk) && risk >= 0 && risk <= 100;
-                return <div key={value.source} className="grid grid-cols-[100px_minmax(0,1fr)_56px] items-center gap-2 text-xs"><span className="truncate text-muted-foreground" title={value.source}>{value.source}</span><span className="h-1.5 rounded-full bg-muted">{hasKnownScale ? <span className="block h-full rounded-full bg-primary" style={{ width: `${risk}%` }} /> : null}</span><span className="text-right font-medium tabular-nums">{value.value}</span></div>;
+                const maxRisk = value.source === "IP2LOCATION" ? 99 : ["SCAMALYTICS", "IPQS", "AbuseIPDB"].includes(value.source) ? 100 : NaN;
+                const risk = /^\d{1,3}(?:\.\d+)?$/.test(value.value) ? Number(value.value) : NaN;
+                const hasKnownScale = Number.isFinite(risk) && risk >= 0 && risk <= maxRisk;
+                const description = hasKnownScale ? copy(language, `${value.source} 风险分 ${value.value} / ${maxRisk}，越高风险越高`, `${value.source} risk ${value.value} / ${maxRisk}; higher is riskier`) : copy(language, `${value.source} 原始值，未核实量纲`, `${value.source} raw value; scale unverified`);
+                const barColor = value.source === "IP2LOCATION" ? risk >= 66 ? "bg-destructive" : risk >= 33 ? "bg-amber-500" : "bg-emerald-500" : "bg-primary";
+                return <div key={value.source} className="grid grid-cols-[100px_minmax(0,1fr)_56px] items-center gap-2 text-xs" title={description}><span className="truncate text-muted-foreground" title={value.source}>{value.source}</span><span className="h-1.5 rounded-full bg-muted">{hasKnownScale ? <span className={cn("block h-full rounded-full", barColor)} style={{ width: `${risk / maxRisk * 100}%` }} /> : null}</span><span className="text-right font-medium tabular-nums">{value.value}</span></div>;
               })}{!report.scores.length ? <p className="text-xs text-muted-foreground">{copy(language, "暂无评分数据", "No score data")}</p> : null}</div>
             </section>
             <section className="border-t pt-2" aria-label={copy(language, "风险因子", "Risk factors")}>

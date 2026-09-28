@@ -18,7 +18,7 @@ afterEach(() => {
 
 function assessment(): IPQualityAssessment {
   return {
-    version: "meridian-v4", status: "partial", min: 75, max: 100, grade: "unknown", ipType: "residential",
+    version: "meridian-v5", status: "partial", min: 75, max: 100, grade: "unknown", ipType: "residential",
     typeCandidates: ["residential"], typeEvidence: [{ source: "IPinfo", value: "ISP" }],
     contributions: [{ id: "ippure", min: 0, max: 25, weight: 25, missing: ["IPPure"] }], missing: ["IPPure"],
     advice: "recheck", reasons: ["incomplete"], requiredFailed: [], requiredUnknown: [],
@@ -33,12 +33,12 @@ it("keeps missing evidence as an interval and reveals policy only on expansion",
   root = createRoot(container);
   await act(async () => root?.render(<AssessmentSummary language="zh-CN" assessment={assessment()} />));
   expect(container.textContent).toContain("数据不足");
-  expect(container.textContent).not.toContain("Meridian IPv4 评分 v4");
+  expect(container.textContent).not.toContain("Meridian IPv4 评分 v5");
   const trigger = container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
   expect(trigger.getAttribute("aria-expanded")).toBe("false");
   await act(async () => trigger.click());
   expect(trigger.getAttribute("aria-expanded")).toBe("true");
-  expect(container.textContent).toContain("Meridian IPv4 评分 v4");
+  expect(container.textContent).toContain("Meridian IPv4 评分 v5");
   expect(container.textContent).toContain("IPPure");
   expect(container.textContent).toContain("0～25 / 25");
 });

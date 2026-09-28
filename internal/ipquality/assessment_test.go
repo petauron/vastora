@@ -51,7 +51,7 @@ func TestAssessmentMissingNeverBecomesClean(t *testing.T) {
 	}
 	r.Scores = r.Scores[1:]
 	a = assessFixture(r)
-	if a.Min != 65 || a.Max != 100 || !slices.Contains(a.Missing, "SCAMALYTICS") {
+	if a.Min != 65 || a.Max != 100 || !slices.Contains(a.Missing, "SCAMALYTICS/IP2LOCATION") {
 		t.Fatalf("missing source: %+v", a)
 	}
 	r = assessmentReport("Hosting")
@@ -76,7 +76,7 @@ func TestAssessmentIPQSOnlyConservativeScore(t *testing.T) {
 	r.IPPure.RiskScore = &risk
 	r.RecordObservations(assessmentTime)
 	a := assessFixture(r)
-	if a.Version != "meridian-v4" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
+	if a.Version != "meridian-v5" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
 		t.Fatalf("IPQS-only absence must produce a transparent lower bound: %+v", a)
 	}
 	r.Scores = append(r.Scores, Score{"IPQS", "100"})
@@ -95,6 +95,32 @@ func TestAssessmentIPQSOnlyConservativeScore(t *testing.T) {
 	r.RecordObservations(assessmentTime)
 	if expired := Assess(&r, assessmentTime.Format(time.RFC3339Nano), false, assessmentTime.Add(EvidenceMaxAge+time.Second), DefaultPreferences()); expired.Status != "expired" || expired.Score == nil {
 		t.Fatalf("historical conservative score disappeared: %+v", expired)
+	}
+}
+
+func TestAssessmentIP2LocationHighRiskCannotBeHiddenByScamalytics(t *testing.T) {
+	r := assessmentReport("Hosting")
+	r.Scores = []Score{{"IP2LOCATION", "99"}, {"SCAMALYTICS", "3"}, {"AbuseIPDB", "0"}}
+	risk := 46.0
+	r.IPPure.RiskScore = &risk
+	r.RecordObservations(assessmentTime)
+	a := assessFixture(r)
+	if a.Version != "meridian-v5" || a.Status != "conservative" || a.Score == nil || *a.Score != 54 || a.Min != 54 || a.Max != 64 || a.Contributions[1].Min != 5 || a.Advice != "compare" || !slices.Equal(a.Missing, []string{"IPQS"}) {
+		t.Fatalf("high IP2Location risk must affect exit suitability: %+v", a)
+	}
+	for i := range r.Observations {
+		if r.Observations[i].Source == "IP2LOCATION" {
+			r.Observations[i].Address = "203.0.113.9"
+		}
+	}
+	if stale := assessFixture(r); stale.Score == nil || *stale.Score != 63 {
+		t.Fatalf("another IP's risk must not affect this exit: %+v", stale)
+	}
+	r = assessmentReport("Hosting")
+	r.Scores = []Score{{"IP2LOCATION", "99"}, {"IPQS", "0"}, {"AbuseIPDB", "0"}}
+	r.RecordObservations(assessmentTime)
+	if fallback := assessFixture(r); fallback.Status != "complete" || fallback.Score == nil || *fallback.Score != 75 {
+		t.Fatalf("fresh IP2Location risk should cover a missing Scamalytics result: %+v", fallback)
 	}
 }
 
