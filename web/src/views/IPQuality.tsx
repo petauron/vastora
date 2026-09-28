@@ -18,7 +18,6 @@ import { routeLine, type RouteTier } from "./returnRouteModel";
 import { canonicalIPQualityAddress, checkPending, cleanIPQualityValue, ipClassification, ipQualityCheckForAddress, ipQualityError, ipQualityFamilyLabel, ipQualitySummary, landingQualityAddress, unlockLabel, unlockServiceLabel, unlockServices, unlockTypeLabel } from "./ipQualityModel";
 import { AssessmentBadge, AssessmentSummary, AssessmentTypeBadge } from "./IPAssessment";
 import { IPQualityComparison } from "./IPQualityComparison";
-import { MeridianLinkBandwidth } from "./MeridianLinkBandwidth";
 
 type QualityState = {
   checks: IPQualityCheck[]; targets: IPQualityTarget[]; diagnostics: NodeDiagnosticCheck[]; agents: AgentView[]; loading: boolean; error: boolean;
@@ -167,7 +166,7 @@ export function IPQualityProvider({ agents, enabled, children }: { agents: Agent
   return <DiagnosticsProvider agents={agents} enabled={enabled} includeIPQuality>{children}</DiagnosticsProvider>;
 }
 
-type DiagnosticsButtonProps = { nodeId: string; name: string; language: Language; compact?: boolean; linkBandwidth?: boolean; egressAddress?: string; landingEgress?: boolean };
+type DiagnosticsButtonProps = { nodeId: string; name: string; language: Language; compact?: boolean; egressAddress?: string; landingEgress?: boolean };
 
 export function IPQualityButton(props: DiagnosticsButtonProps) {
   return <DiagnosticsButton {...props} includeIPQuality />;
@@ -177,7 +176,7 @@ export function NodeDiagnosticsButton(props: DiagnosticsButtonProps) {
   return <DiagnosticsButton {...props} includeIPQuality={false} />;
 }
 
-function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwidth = false, egressAddress, landingEgress = false, includeIPQuality }: DiagnosticsButtonProps & { includeIPQuality: boolean }) {
+function DiagnosticsButton({ nodeId, name, language, compact = false, egressAddress, landingEgress = false, includeIPQuality }: DiagnosticsButtonProps & { includeIPQuality: boolean }) {
   const state = useContext(QualityContext);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState(includeIPQuality ? "quality" : "network");
@@ -362,7 +361,6 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
             {bandwidthCheck?.error ? <p role="alert" className="text-sm text-destructive">{bandwidthCheck.error === "tool_unavailable" ? copy(language, "此 Agent 未安装 iPerf3，安装后重启 Agent 才会开放测速。", "iPerf3 is not installed on this Agent. Install it and restart the Agent to enable testing.") : bandwidthCheck.error}</p> : null}
             {!agent?.capabilities.bandwidthDiagnostics ? <p className="text-xs text-muted-foreground">{copy(language, "需要在 Linux 节点安装 iPerf3 并重启 Agent；Vastora 不会自动修改系统软件包。", "Install iPerf3 on the Linux host and restart the Agent. Vastora does not modify system packages automatically.")}</p> : null}
             <Button variant="outline" disabled={diagnosticsUnavailable || !agent?.capabilities.bandwidthDiagnostics || submitting || bandwidthCheck?.state === "pending" || bandwidthCheck?.state === "running"} onClick={() => void startDiagnostic("node.international-bandwidth")}>{bandwidthCheck?.state === "pending" || bandwidthCheck?.state === "running" ? copy(language, "测速中…", "Testing…") : copy(language, "测试国际带宽", "Test international bandwidth")}</Button>
-            {linkBandwidth ? <MeridianLinkBandwidth nodeId={nodeId} language={language} checks={state.diagnostics} agents={state.agents} refresh={state.refresh} /> : null}
               </section>
               <section className="space-y-3 rounded-lg border p-3 sm:p-4" aria-label={copy(language, "主机与 TCP", "Host & TCP")}>
                 <div><h3 className="text-sm font-semibold">{copy(language, "主机与 TCP", "Host & TCP")}</h3><p className="text-xs text-muted-foreground">{copy(language, "只读采集实际生效值", "Read-only effective values")}</p></div>
