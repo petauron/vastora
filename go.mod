@@ -12,7 +12,7 @@ require (
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.1
 	github.com/opencontainers/go-digest v1.0.0
-	github.com/petauron/meridian v0.0.0-20260928064943-d9fcd2d8a990
+	github.com/petauron/meridian v0.0.0-20260928065439-2806d807639a
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/projectdiscovery/cdncheck v1.2.51
 	github.com/sethvargo/go-retry v0.4.0
