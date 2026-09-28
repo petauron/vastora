@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.253](https://github.com/petauron/vastora/compare/v0.1.0-alpha.252...v0.1.0-alpha.253) (2026-09-28)
+
+
+### Bug Fixes
+
+* **meridian:** open diagnostics for selected node ([#738](https://github.com/petauron/vastora/issues/738)) ([be520af](https://github.com/petauron/vastora/commit/be520af24c4f689ea5722713331d12a998ff4a9c))
+
 ## [0.1.0-alpha.252](https://github.com/petauron/vastora/compare/v0.1.0-alpha.251...v0.1.0-alpha.252) (2026-09-28)
 
 
