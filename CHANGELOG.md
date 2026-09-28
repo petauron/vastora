@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.254](https://github.com/petauron/vastora/compare/v0.1.0-alpha.253...v0.1.0-alpha.254) (2026-09-28)
+
+
+### Bug Fixes
+
+* **meridian:** remove duplicate link test panel ([#740](https://github.com/petauron/vastora/issues/740)) ([d194199](https://github.com/petauron/vastora/commit/d194199dbc0dfac0f84f8218e61526a865ba0753))
+
 ## [0.1.0-alpha.253](https://github.com/petauron/vastora/compare/v0.1.0-alpha.252...v0.1.0-alpha.253) (2026-09-28)
 
 
