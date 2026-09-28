@@ -6,7 +6,7 @@ import type { Language } from "../translations";
 import type { IPQualityCheck, IPQualityClassification, IPQualityRiskFactor, IPQualityService, IPQualityTarget } from "../ip-quality-types";
 import type { Carrier, NodeDiagnosticCheck } from "../node-diagnostics-types";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
@@ -252,10 +252,11 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
   const currentUnlocks = Boolean(!state.error && check?.state === "succeeded" && check.report && !check.stale && !check.error && check.assessment?.status !== "ip_changed");
   const broadcast = currentUnlocks && report?.ippure?.status === "ok" ? report.ippure.broadcast : undefined;
   const ipOrigin = broadcast === true ? copy(language, "广播 IP", "Broadcast IP") : broadcast === false ? copy(language, "原生 IP", "Native IP") : copy(language, "未知", "Unknown");
-  return <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) { setTab(includeIPQuality ? "quality" : "network"); setSelection(null); setError(""); void state.refresh(); } }}>
-    <SheetTrigger render={<Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "quality-list-trigger h-auto min-h-11 w-full max-w-full justify-start gap-2 px-0 py-1 text-left text-xs text-muted-foreground"} />} aria-label={compact ? copy(language, `查看 ${name} 的节点诊断`, `View node diagnostics for ${name}`) : copy(language, `查看 ${name} 的节点诊断：${summary}`, `View node diagnostics for ${name}: ${summary}`)} title={compact ? copy(language, "查看节点诊断", "View node diagnostics") : summary}>
+  const changeOpen = (value: boolean) => { setOpen(value); if (value) { setTab(includeIPQuality ? "quality" : "network"); setSelection(null); setError(""); void state.refresh(); } };
+  return <Sheet open={open} onOpenChange={changeOpen}>
+    <Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "quality-list-trigger h-auto min-h-11 w-full max-w-full justify-start gap-2 px-0 py-1 text-left text-xs text-muted-foreground"} aria-haspopup="dialog" aria-expanded={open} onClick={() => changeOpen(true)} aria-label={compact ? copy(language, `查看 ${name} 的节点诊断`, `View node diagnostics for ${name}`) : copy(language, `查看 ${name} 的节点诊断：${summary}`, `View node diagnostics for ${name}: ${summary}`)} title={compact ? copy(language, "查看节点诊断", "View node diagnostics") : summary}>
       {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="flex shrink-0 flex-col items-center gap-0.5"><span className="text-[10px]" title={currentAddress}>{currentAddress ? currentAddress.includes(":") ? "IPv6" : "IPv4" : "IP"}</span><span className="flex items-center gap-1.5"><AssessmentBadge language={language} assessment={!state.error && !listCheck?.stale ? listCheck?.assessment : undefined} /><AssessmentTypeBadge language={language} assessment={!state.error && !listCheck?.stale && listCheck?.report ? listCheck.assessment : undefined} checkedAt={listCheck?.checkedAt} /></span></span><UnlockIndicators check={listCheck} language={language} current={listUnlocks} /><ChevronRightIcon className="ml-auto shrink-0" aria-hidden="true" /></>}
-    </SheetTrigger>
+    </Button>
     {open ? <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-6xl">
       <SheetHeader className="pr-12">
         <SheetTitle>{name} · {copy(language, "节点诊断", "Node diagnostics")}</SheetTitle>
