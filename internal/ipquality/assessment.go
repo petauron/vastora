@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const AssessmentVersion = "meridian-v4"
+const AssessmentVersion = "meridian-v5"
 const IPv6AssessmentVersion = "meridian-ipv6-v2"
 const EvidenceMaxAge = 24 * time.Hour
 
@@ -99,6 +99,26 @@ func usageType(value string) string {
 }
 
 func roundedScore(value float64) int { return int(math.Round(math.Max(1, math.Min(100, value)))) }
+
+func (r Report) sourceRiskScore(source string, now time.Time) (float64, bool) {
+	for _, raw := range r.Scores {
+		if raw.Source != source {
+			continue
+		}
+		value, err := strconv.ParseFloat(raw.Value, 64)
+		limit := 100.0
+		if source == "IP2LOCATION" {
+			limit = 99
+		}
+		if err == nil && !math.IsNaN(value) && value >= 0 && value <= limit && r.sourceFresh(source, now) {
+			if source == "IP2LOCATION" {
+				return value * 100 / 99, true
+			}
+			return value, true
+		}
+	}
+	return 0, false
+}
 
 func freshAt(stamp string, now time.Time) bool {
 	t, err := time.Parse(time.RFC3339Nano, stamp)
@@ -213,22 +233,26 @@ func assessAt(report *Report, checkedAt string, changed bool, now time.Time, pre
 
 	risk := Contribution{ID: "sources", Weight: 25, Missing: []string{}}
 	for _, source := range sources {
-		value, valid := 0.0, false
-		for _, raw := range r.Scores {
-			if raw.Source != source.name {
-				continue
+		rawRisk, valid := r.sourceRiskScore(source.name, now)
+		missingName := source.name
+		if !ipv6 && source.name == "SCAMALYTICS" {
+			// These two fraud scores share one slot. A high score from either
+			// provider must not be hidden by a low score from the other.
+			if ip2Risk, ok := r.sourceRiskScore("IP2LOCATION", now); ok {
+				if !valid || ip2Risk > rawRisk {
+					rawRisk = ip2Risk
+				}
+				valid = true
 			}
-			parsed, err := strconv.ParseFloat(raw.Value, 64)
-			if err == nil && !math.IsNaN(parsed) && parsed >= 0 && parsed <= 100 && r.sourceFresh(source.name, now) {
-				value, valid = source.weight*(1-parsed/100), true
-			}
+			missingName = "SCAMALYTICS/IP2LOCATION"
 		}
 		if valid {
+			value := source.weight * (1 - rawRisk/100)
 			risk.Min += value
 			risk.Max += value
 		} else {
 			risk.Max += source.weight
-			risk.Missing = append(risk.Missing, source.name)
+			risk.Missing = append(risk.Missing, missingName)
 		}
 	}
 	a.Contributions = append(a.Contributions, risk)

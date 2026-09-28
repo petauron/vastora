@@ -52,7 +52,7 @@ export function AssessmentSummary({ language, assessment, report, checkedAt }: {
   const ipv6 = assessment.version === "meridian-ipv6-v2";
   const ruleName = ipv6 ? "Meridian IPv6" : "Meridian IPv4";
   const ruleVersion = assessment.version.replace(/^meridian-(?:ipv6-)?/, "");
-  const riskSources = ipv6 ? ["IPQS", "AbuseIPDB"] : ["SCAMALYTICS", "IPQS", "AbuseIPDB"];
+  const riskSources = ipv6 ? ["IPQS", "AbuseIPDB"] : ["IP2LOCATION", "SCAMALYTICS", "IPQS", "AbuseIPDB"];
   const number = (value: number) => Number(value.toFixed(2));
   return <section aria-label={copy(language, "出口适用评分", "Exit suitability assessment")} className="flex flex-col gap-2">
     <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -68,6 +68,7 @@ export function AssessmentSummary({ language, assessment, report, checkedAt }: {
       <Table className="text-xs"><TableHeader><TableRow><TableHead>{copy(language, "维度", "Dimension")}</TableHead><TableHead>{copy(language, "贡献 / 满分", "Contribution / Weight")}</TableHead><TableHead>{copy(language, "缺失项", "Missing")}</TableHead></TableRow></TableHeader><TableBody>{assessment.contributions.map((part) => <TableRow key={part.id}><TableCell>{labels[part.id] ? copy(language, ...labels[part.id]) : part.id}</TableCell><TableCell className="tabular-nums">{number(part.min)}{!ipv6 && part.min !== part.max ? `～${number(part.max)}` : ""} / {part.weight}</TableCell><TableCell>{part.missing.join("、") || "—"}</TableCell></TableRow>)}</TableBody></Table>
       <p>{copy(language, "类型证据", "Type evidence")}: {assessment.typeEvidence.map((item) => `${item.source}: ${item.value}`).join(" · ") || "—"}</p>
       <p>{copy(language, "来源原分（越低风险越低）", "Original provider scores (lower risk is better)")}: {report?.scores.filter((item) => riskSources.includes(item.source)).map((item) => `${item.source} ${item.value}`).join(" · ") || "—"}</p>
+      {!ipv6 ? <p className="text-muted-foreground">{copy(language, "IP2Location 与 Scamalytics 取较高风险，共占 10 分。", "IP2Location and Scamalytics use the higher risk in one 10-point slot.")}</p> : null}
       {!ipv6 ? <p>IPPure: {report?.ippure?.status === "ok" ? `${report.ippure.riskScore} / 100` : report?.ippure?.status === "unsupported" ? copy(language, "IPv6 不支持", "IPv6 unsupported") : report?.ippure?.status === "ip_mismatch" ? copy(language, "返回 IP 不匹配", "Returned IP mismatch") : copy(language, "未取得有效结果", "No valid result")}</p> : null}
       {!ipv6 && report?.ippure ? <p className="break-all text-muted-foreground">{report.ippure.provider} · {report.ippure.address || "—"} · {new Date(report.ippure.checkedAt).toLocaleString(language)}</p> : null}
       {assessment.requiredFailed.length ? <p className="text-destructive">{copy(language, "必需服务未满足", "Required services unavailable")}: {assessment.requiredFailed.join("、")}</p> : null}
