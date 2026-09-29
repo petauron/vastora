@@ -420,7 +420,12 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 			}
 			egressPrefix := ""
 			if code := selection.LandingRegionCodes[grant.EgressID]; code != "" {
-				egressPrefix = regionPrefix(code)
+				if code == "TW" {
+					// Some subscription clients omit the Taiwan flag emoji.
+					egressPrefix = "TW 台湾"
+				} else {
+					egressPrefix = regionPrefix(code)
+				}
 			}
 			routes = append(routes, meridian.PublishedRoute{Grant: grant, Protocol: meridian.VLESSReality, EntryName: base.EntryName, EgressRegionPrefix: egressPrefix, BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: base.Material.Credential.Identity, RouteProtocolIdentity: route.Material.Credential.Identity})
 		}

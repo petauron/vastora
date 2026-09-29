@@ -99,6 +99,8 @@ github.com/petauron/meridian v0.0.0-20260928065439-2806d807639a h1:qvmnjuQD2FAbw
 github.com/petauron/meridian v0.0.0-20260928065439-2806d807639a/go.mod h1:7cf2n+oz+K3chUpwcSK281S/e1PFvHJ4uryNWXnyKbk=
 github.com/petauron/meridian v0.0.0-20260929042231-a91217cc494d h1:DQn7bJ8P3bmdFC5jwt61DfFWoRPzFRwJVOHrlb3APmQ=
 github.com/petauron/meridian v0.0.0-20260929042231-a91217cc494d/go.mod h1:7cf2n+oz+K3chUpwcSK281S/e1PFvHJ4uryNWXnyKbk=
+github.com/petauron/meridian v0.0.0-20260929063935-5cec83fcb95f h1:BiRI4oIi/X9bynabPOCfaYEQZ5V6NZRC5GyO3hwu/rM=
+github.com/petauron/meridian v0.0.0-20260929063935-5cec83fcb95f/go.mod h1:7cf2n+oz+K3chUpwcSK281S/e1PFvHJ4uryNWXnyKbk=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
