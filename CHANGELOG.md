@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.256](https://github.com/petauron/vastora/compare/v0.1.0-alpha.255...v0.1.0-alpha.256) (2026-09-29)
+
+
+### Bug Fixes
+
+* keep Taiwan landing names readable across clients ([#745](https://github.com/petauron/vastora/issues/745)) ([3741cfd](https://github.com/petauron/vastora/commit/3741cfd5e0d2241713e2f7a3054a46d21fde2e25))
+
 ## [0.1.0-alpha.255](https://github.com/petauron/vastora/compare/v0.1.0-alpha.254...v0.1.0-alpha.255) (2026-09-29)
 
 
