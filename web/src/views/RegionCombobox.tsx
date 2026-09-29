@@ -5,7 +5,7 @@ import { api } from "../api";
 import type { Region } from "../types";
 import type { Language } from "../translations";
 import { copy } from "./shared";
-import { regionFlag, regionName } from "@/lib/regions";
+import { displayRegionFlag, regionFlag, regionName } from "@/lib/regions";
 
 type RegionOption = Region & {
   label: string;
@@ -85,7 +85,7 @@ export function RegionCombobox({ id, language, onValueChange, value }: { id: str
     return regions.map((region) => {
       const localName = language === "zh-CN" ? region.nameZh : localNames.of(region.code) ?? region.code;
       const searchText = normalizedSearch([region.code, localName, region.nameZh, region.prefix, englishNames.of(region.code), chineseNames.of(region.code)].filter(Boolean).join(" "));
-      return { ...region, label: `${regionFlag(region.code)} ${localName}`, searchText };
+      return { ...region, label: `${displayRegionFlag(region.code)} ${localName}`, searchText };
     }).sort((left, right) => left.label.localeCompare(right.label, language));
   }, [language, regions]);
   const selected = options.find((option) => option.code === value) ?? null;
