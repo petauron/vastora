@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.257](https://github.com/petauron/vastora/compare/v0.1.0-alpha.256...v0.1.0-alpha.257) (2026-09-29)
+
+
+### Bug Fixes
+
+* show China flag for Taiwan in Center and Meridian landing subscriptions ([#747](https://github.com/petauron/vastora/issues/747)) ([d3d4d36](https://github.com/petauron/vastora/commit/d3d4d36ac596128ffa6debcf0e186b9aa775a734))
+
 ## [0.1.0-alpha.256](https://github.com/petauron/vastora/compare/v0.1.0-alpha.255...v0.1.0-alpha.256) (2026-09-29)
 
 
