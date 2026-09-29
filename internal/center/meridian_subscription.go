@@ -421,8 +421,7 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 			egressPrefix := ""
 			if code := selection.LandingRegionCodes[grant.EgressID]; code != "" {
 				if code == "TW" {
-					// Some subscription clients omit the Taiwan flag emoji.
-					egressPrefix = "TW 台湾"
+					egressPrefix = "🇨🇳 台湾"
 				} else {
 					egressPrefix = regionPrefix(code)
 				}

@@ -19,7 +19,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { regionFlag } from "@/lib/regions";
+import { displayRegionFlag } from "@/lib/regions";
 import { RuntimeRecoveryAlert, XrayConfigurationRecoverySheet } from "./RuntimeRecoveryAlert";
 import { RegionFlag } from "./RegionFlag";
 import { StopNodeAccessSheet } from "./StopNodeAccessSheet";
@@ -175,7 +175,7 @@ function siteRegionCode(site: AppData["sites"][number]) {
 }
 
 function siteLabel(site: AppData["sites"][number]) {
-  const flag = regionFlag(siteRegionCode(site));
+  const flag = displayRegionFlag(siteRegionCode(site));
   return flag ? `${flag} ${site.name}` : site.name;
 }
 
