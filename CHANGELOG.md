@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.255](https://github.com/petauron/vastora/compare/v0.1.0-alpha.254...v0.1.0-alpha.255) (2026-09-29)
+
+
+### Bug Fixes
+
+* show relay icon in Meridian subscription names ([#742](https://github.com/petauron/vastora/issues/742)) ([712a25a](https://github.com/petauron/vastora/commit/712a25ace6d7e55ede35430981dbc476d1db51b3))
+
 ## [0.1.0-alpha.254](https://github.com/petauron/vastora/compare/v0.1.0-alpha.253...v0.1.0-alpha.254) (2026-09-28)
 
 
