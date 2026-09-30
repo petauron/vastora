@@ -174,6 +174,13 @@ func TestAgentReportedNATEnablesPublicWebProfileWithoutCenterCoLocation(t *testi
 	if err != nil || len(agents) != 1 || agents[0].PublicEgress != nil {
 		t.Fatalf("previous-process public egress was not cleared: agents=%#v err=%v", agents, err)
 	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", NetworkCandidates: candidates, PublicEgress: &networking.PublicEgress{Address: "198.51.100.27", BindAddress: "10.0.0.27", Mode: networking.PublicModeNAT, ObservedAt: now}, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
+		t.Fatalf("later successful observation was rejected: %v", err)
+	}
+	agents, err = store.ListAgents(ctx)
+	if err != nil || len(agents) != 1 || agents[0].PublicEgress == nil || agents[0].PublicEgress.Address != "198.51.100.27" {
+		t.Fatalf("later heartbeat did not restore egress: agents=%#v err=%v", agents, err)
+	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)

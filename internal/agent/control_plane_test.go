@@ -525,7 +525,7 @@ func TestHeartbeatReportsAgentObservedPublicEgress(t *testing.T) {
 	if observationErr, heartbeatErr := client.heartbeat(context.Background(), store); observationErr != nil || heartbeatErr != nil {
 		t.Fatalf("ordinary heartbeat errors = %v, %v", observationErr, heartbeatErr)
 	}
-	if observations != 1 || reported != nil {
+	if observations != 2 || reported == nil {
 		t.Fatalf("ordinary heartbeat observed=%d reported=%#v", observations, reported)
 	}
 }

@@ -713,7 +713,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if len(storedPublicKey) != 0 && len(heartbeat.PublicKey) != 0 && !bytes.Equal(storedPublicKey, heartbeat.PublicKey) {
 		return errors.New("center: Agent X25519 identity changed; revoke and enroll it again")
 	}
-	replacePublicEgress := heartbeat.Startup
+	replacePublicEgress := heartbeat.Startup || heartbeat.PublicEgress != nil
 	publicEgress := networking.PublicEgress{}
 	if heartbeat.PublicEgress != nil {
 		publicEgress = *heartbeat.PublicEgress
