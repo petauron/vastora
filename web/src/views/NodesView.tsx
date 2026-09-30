@@ -24,6 +24,7 @@ import { RuntimeRecoveryAlert, XrayConfigurationRecoverySheet } from "./RuntimeR
 import { RegionFlag } from "./RegionFlag";
 import { StopNodeAccessSheet } from "./StopNodeAccessSheet";
 import { RemoveNodeDialog } from "./RemoveNodeDialog";
+import { AgentUpdateRecoveryDialog } from "./AgentUpdateRecoveryDialog";
 
 export { validCenterURL } from "../lib/network";
 
@@ -382,6 +383,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
   const [commandKind, setCommandKind] = useState<"purpose" | null>(null);
   const [busy, setBusy] = useState(false);
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [recoveringUpdateID, setRecoveringUpdateID] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [danger, setDanger] = useState(false);
   const [confirmation, setConfirmation] = useState("");
@@ -397,6 +399,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
     setError("");
     setDanger(agent.status === "disabled");
     setConfirmation("");
+    setRecoveringUpdateID(null);
   }, [agent?.id]);
   const gatewayRequired = Boolean(agent && (data.sites.some((site) => site.gatewayNodes.includes(agent.id)) || data.publications.some((publication) => publication.ingress.owner === "site_gateway" && publication.ingress.entryNodeId === agent.id && publication.status !== "stopped")));
   const tunnelRequired = Boolean(agent && data.publications.some((publication) => publication.ingress.owner === "tunnel_connector" && publication.ingress.entryNodeId === agent.id && publication.status !== "stopped"));
@@ -433,14 +436,15 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
     }
   };
   const startUpdate = async () => {
-    if (!agent) return;
+    if (!agent || updateBusy || updateActive || !agent.connected) return;
     const failedUpdateId = agent.update?.state === "failed" ? agent.update.id : undefined;
-    if (failedUpdateId && !window.confirm(copy(language,
-      "请先确认旧升级进程已停止、升级故障已处理。继续将保留旧失败记录并创建新的升级任务；不会重放旧任务。确认已处理并继续？",
-      "Confirm the previous updater has stopped and its fault has been resolved. Continue to retain the failure and create a new update, without replaying the old task?"))) return;
+    if (failedUpdateId) {
+      setRecoveringUpdateID(failedUpdateId);
+      return;
+    }
     setUpdateBusy(true); setError("");
     try {
-      await mutate(() => failedUpdateId ? api.recoverAgentUpdate(agent.id, failedUpdateId) : api.startAgentUpdate(agent.id), copy(language, "已向 Agent 下发安全更新。", "Secure Agent update queued."));
+      await mutate(() => api.startAgentUpdate(agent.id), copy(language, "已向 Agent 下发安全更新。", "Secure Agent update queued."));
     } catch (updateError) {
       setError(userError(language, updateError));
     } finally {
@@ -448,7 +452,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
     }
   };
   return (
-    <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(agent)}>
+    <Sheet onOpenChange={(next) => { if (!next && !recoveringUpdateID) onClose(); }} open={Boolean(agent)}>
       <SheetContent className="sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>{copy(language, `管理 ${agent?.name ?? ""}`, `Manage ${agent?.name ?? ""}`)}</SheetTitle>
@@ -479,6 +483,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
         </form>}
         {danger ? <SheetFooter><Button disabled={busy} onClick={() => { if (deleting) onClose(); else { setDanger(false); setError(""); } }} variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !agent || confirmation.trim() !== agent.name.trim()} onClick={() => void disable()} variant="destructive">{busy ? <Spinner data-icon="inline-start" /> : null}{deleting ? copy(language, "删除节点", "Delete node") : copy(language, "停用节点", "Disable node")}</Button></SheetFooter> : null}
       </SheetContent>
+      {agent && recoveringUpdateID ? <AgentUpdateRecoveryDialog agent={agent} failedUpdateId={recoveringUpdateID} key={recoveringUpdateID} language={language} mutate={mutate} onClose={() => setRecoveringUpdateID(null)} targetVersion={data.status.version} /> : null}
     </Sheet>
   );
 }

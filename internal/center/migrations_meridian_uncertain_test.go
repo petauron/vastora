@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,13 +38,25 @@ func TestVersion94ProjectsUncertainMeridianFailureForExplicitRecovery(t *testing
 		t.Fatal(err)
 	}
 
-	migrated, err := Open(directory)
+	// Version 94 projects the uncertain failure, but version 100 must refuse
+	// to change runtime revisions until that execution is explicitly settled.
+	if migrated, err := Open(directory); err == nil {
+		_ = migrated.Close()
+		t.Fatal("migration accepted an unresolved runtime execution")
+	} else if !strings.Contains(err.Error(), "safe=1") {
+		t.Fatalf("expected version 100 execution guard, got %v", err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = migrated.Close() })
+	defer db.Close()
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 99 {
+		t.Fatalf("unsafe migration did not stop before version 100: version=%d err=%v", version, err)
+	}
 	var endpointStatus, deploymentStatus, lastError string
-	if err := migrated.db.QueryRowContext(ctx, `SELECT endpoint.status,deployment.status,endpoint.last_error FROM meridian_endpoints endpoint JOIN meridian_deployments deployment ON deployment.endpoint_id=endpoint.id WHERE endpoint.id='uncertain-endpoint'`).Scan(&endpointStatus, &deploymentStatus, &lastError); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT endpoint.status,deployment.status,endpoint.last_error FROM meridian_endpoints endpoint JOIN meridian_deployments deployment ON deployment.endpoint_id=endpoint.id WHERE endpoint.id='uncertain-endpoint'`).Scan(&endpointStatus, &deploymentStatus, &lastError); err != nil {
 		t.Fatal(err)
 	}
 	if endpointStatus != "failed" || deploymentStatus != "failed" || lastError != "legacy worker drift" {
