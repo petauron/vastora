@@ -317,6 +317,83 @@ func TestRemoveOfflineAgentWaitsForSubscriptionControllerReceipt(t *testing.T) {
 	}
 }
 
+func TestRemoveOfflineMeridianAgentAfterFailedLegacyCleanup(t *testing.T) {
+	s := openMeridianSharedEndpointSnapshotFixture(t)
+	defer s.Close()
+	ctx := context.Background()
+	controller := enrollAccessTestNode(t, s, "Meridian subscription host", "10.0.0.92")
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeSecretID, err := s.putSecret(ctx, tx, []byte("22222222-2222-4222-8222-222222222222"), meridianCredentialSecretContext("removal-route-credential"))
+	if err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var workerID string
+	if err := s.db.QueryRow(`SELECT node_id FROM applications WHERE id='snapshot-shared-app'`).Scan(&workerID); err != nil {
+		t.Fatal(err)
+	}
+	stamp := s.now().UTC().Format(time.RFC3339Nano)
+	for _, statement := range []struct {
+		q string
+		a []any
+	}{
+		{`UPDATE agents SET tailscale_ownership='' WHERE id=?`, []any{workerID}},
+		{`UPDATE meridian_endpoints SET legacy_retired=1 WHERE id=?`, []any{sharedSnapshotEndpointID}},
+		{`INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,egress_node_id,enabled,created_at,updated_at) VALUES('removal-route-credential',?,?,'route','removal-route-credential',? ,?,?,1,?,?)`, []any{sharedSnapshotAccountA, sharedSnapshotEndpointID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", routeSecretID, controller.ID, stamp, stamp}},
+		{`INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,enabled,status,created_at,updated_at) VALUES('removal-route',?,?,?,?,'removal-route-credential',1,'ready',?,?)`, []any{sharedSnapshotAccountA, sharedSnapshotEndpointID, controller.ID, sharedSnapshotAccountA + "-native", stamp, stamp}},
+		{`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at) VALUES('removal-meridian-controller','Meridian',?,? ,?,'running','docker','',?,?)`, []any{controller.ID, testSiteID(t, s), meridianAppKey, stamp, stamp}},
+		{`UPDATE meridian_cutover SET state='complete',subscription_authority='meridian',legacy_controller_application_id='removal-meridian-controller' WHERE id=1`, nil},
+		{`INSERT INTO three_x_ui_nodes(worker_application_id,master_application_id,remote_node_id,status,created_at,updated_at) VALUES('snapshot-shared-app','removal-meridian-controller',8,'failed',?,?)`, []any{stamp, stamp}},
+		{`INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,attempt,error,created_at,updated_at) VALUES('removal-obsolete-command','snapshot-shared-app',?,?,?,'{"action":"remove","workerApplicationId":"snapshot-shared-app","remoteNodeId":8}','failed',1,'agent: official 3x-ui is not installed',?,?)`, []any{controller.ID, controller.ID, nodeCommandKind, stamp, stamp}},
+	} {
+		if _, err := s.db.Exec(statement.q, statement.a...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expireRemovalNode(t, s, workerID)
+	var name string
+	if err := s.db.QueryRow(`SELECT name FROM agents WHERE id=?`, workerID).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StartAgentRemoval(ctx, workerID, name); err != nil {
+		t.Fatal(err)
+	}
+	// Incomplete retirement must retain the failed topology and its evidence.
+	if _, err := s.db.Exec(`UPDATE meridian_endpoints SET legacy_retired=0 WHERE id=?`, sharedSnapshotEndpointID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.removeAgentSubscriptionNodes(ctx, workerID); err == nil {
+		t.Fatal("unproven legacy retirement was accepted")
+	}
+	if _, err := s.db.Exec(`UPDATE meridian_endpoints SET legacy_retired=1 WHERE id=?`, sharedSnapshotEndpointID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StartAgentRemoval(ctx, workerID, name); err != nil {
+		t.Fatal(err)
+	}
+	if removalCount(t, s, `SELECT COUNT(*) FROM application_commands WHERE id='removal-obsolete-command' AND state='failed' AND attempt=1`) != 1 {
+		t.Fatal("obsolete 3x-ui command was retried or reported as successful")
+	}
+	if err := s.resumeAgentRemovals(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if removalCount(t, s, `SELECT COUNT(*) FROM agents WHERE id=?`, workerID) != 0 || removalCount(t, s, `SELECT COUNT(*) FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID) != 0 {
+		t.Fatal("retired Meridian node records remained")
+	}
+	if removalCount(t, s, `SELECT COUNT(*) FROM meridian_credentials WHERE endpoint_id=?`, sharedSnapshotEndpointID) != 0 || removalCount(t, s, `SELECT COUNT(*) FROM meridian_route_grants WHERE endpoint_id=?`, sharedSnapshotEndpointID) != 0 {
+		t.Fatal("retired Meridian subscription identities remained")
+	}
+	if removalCount(t, s, `SELECT COUNT(*) FROM meridian_accounts`) != 2 || removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id='removal-meridian-controller' AND status='running'`) != 1 {
+		t.Fatal("shared accounts or subscription host were changed")
+	}
+}
+
 func TestRemoveOfflineAgentProtectedGatewayReturnsUsefulError(t *testing.T) {
 	if got := errorCode(http.StatusBadRequest, "center: uninstall active applications before disabling this node"); got != "node_disable_in_use" {
 		t.Fatal(got)

@@ -43,6 +43,9 @@ func (s *Store) finishAgentRemoval(ctx context.Context, id string) error {
 		`DELETE FROM three_x_ui_client_accounts WHERE controller_id IN(SELECT id FROM applications WHERE node_id=?)`,
 		`DELETE FROM application_commands WHERE gateway_node_id=? AND state NOT IN('pending','running') AND reconciliation_required=0`,
 		`DELETE FROM publications WHERE entry_node_id=? AND status='stopped' AND cleanup_pending=0`,
+		`DELETE FROM meridian_route_grants WHERE status='revoked' AND (egress_node_id=? OR endpoint_id IN(SELECT e.id FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=?))`,
+		`DELETE FROM meridian_credentials WHERE enabled=0 AND (egress_node_id=? OR endpoint_id IN(SELECT e.id FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=?))`,
+		`DELETE FROM meridian_endpoints WHERE status='retired' AND application_id IN(SELECT id FROM applications WHERE node_id=?)`,
 		`DELETE FROM applications WHERE node_id=?`,
 		`DELETE FROM cloudflare_tunnel_operations WHERE agent_id=?`,
 		`DELETE FROM settings WHERE key='agent_runtime_recovery:'||?`,
@@ -84,6 +87,11 @@ func agentRemovalSecretIDs(ctx context.Context, tx *sql.Tx, id string) ([]string
 		`SELECT tunnel_secret_id FROM cloudflare_tunnel_operations WHERE agent_id=?`,
 		`SELECT credential_secret_id FROM landing_client_grants WHERE landing_node_id=? AND status='revoked'`,
 		`SELECT material_secret_id FROM landing_client_grants WHERE landing_node_id=? AND status='revoked' AND material_secret_id IS NOT NULL`,
+		`SELECT e.private_key_secret_id FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=?`,
+		`SELECT e.hy2_certificate_secret_id FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=? AND e.hy2_certificate_secret_id IS NOT NULL`,
+		`SELECT e.hy2_private_key_secret_id FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=? AND e.hy2_private_key_secret_id IS NOT NULL`,
+		`SELECT c.protocol_secret_id FROM meridian_credentials c JOIN meridian_endpoints e ON e.id=c.endpoint_id JOIN applications a ON a.id=e.application_id WHERE c.enabled=0 AND (a.node_id=? OR c.egress_node_id=?)`,
+		`SELECT c.hy2_auth_secret_id FROM meridian_credentials c JOIN meridian_endpoints e ON e.id=c.endpoint_id JOIN applications a ON a.id=e.application_id WHERE c.enabled=0 AND c.hy2_auth_secret_id IS NOT NULL AND (a.node_id=? OR c.egress_node_id=?)`,
 	}
 	values := []string{}
 	for _, query := range queries {
