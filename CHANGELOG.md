@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.261](https://github.com/petauron/vastora/compare/v0.1.0-alpha.260...v0.1.0-alpha.261) (2026-09-30)
+
+
+### Bug Fixes
+
+* **agent:** retry failed public egress discovery ([#757](https://github.com/petauron/vastora/issues/757)) ([967195e](https://github.com/petauron/vastora/commit/967195e04ae268b56bfa916afc26cfae9245287a))
+
 ## [0.1.0-alpha.260](https://github.com/petauron/vastora/compare/v0.1.0-alpha.259...v0.1.0-alpha.260) (2026-09-30)
 
 
