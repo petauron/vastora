@@ -176,7 +176,7 @@ func makeLegacyUnboundAgent(t *testing.T, directory string) {
 		t.Fatal(err)
 	}
 	dropTaskReceiptIndexesForFixture(t, db)
-	if _, err := db.Exec(`DROP TABLE meridian_runtime_state; DROP TABLE landing_controller_state;
+	if _, err := db.Exec(`DROP TABLE meridian_usage_state; DROP TABLE meridian_runtime_state; DROP TABLE landing_controller_state;
 		DROP TABLE landing_runtime_state;
 		DROP TABLE node_listener_applied_state;
 		DROP TABLE storage_key_binding;

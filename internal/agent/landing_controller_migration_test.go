@@ -15,7 +15,7 @@ func TestLandingControllerMigrationBacksUpBeforeJournalCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	dropTaskReceiptIndexesForFixture(t, old.db)
-	if _, err := old.db.Exec(`DROP TABLE meridian_runtime_state; DROP TABLE landing_controller_state; PRAGMA user_version=17`); err != nil {
+	if _, err := old.db.Exec(`DROP TABLE meridian_usage_state; DROP TABLE meridian_runtime_state; DROP TABLE landing_controller_state; PRAGMA user_version=17`); err != nil {
 		t.Fatal(err)
 	}
 	if err := old.Close(); err != nil {

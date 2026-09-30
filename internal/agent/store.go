@@ -25,6 +25,7 @@ var errNoAppliedNodeListenerState = errors.New("agent: no applied node listener 
 
 type Store struct {
 	executionMu                sync.Mutex
+	meridianUsageMu            sync.Mutex
 	activeExecution            *activeExecution
 	linkChecker                *landing.LinkChecker
 	db                         *sql.DB
@@ -103,7 +104,7 @@ type Connection struct {
 	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = 21
+const agentSchemaVersion = 22
 
 // CurrentSchemaVersion is the highest Agent database schema this executable
 // can open. The persistent host updater records it before a candidate can
