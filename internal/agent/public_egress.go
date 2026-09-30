@@ -11,8 +11,8 @@ import (
 type PublicEgressObserver func(context.Context, string, bool, []networking.Candidate, time.Time) (*networking.PublicEgress, error)
 type publicEgressDetector func(context.Context, string, bool, []networking.Candidate, time.Time) (*networking.PublicEgress, error)
 
-// NewPublicEgressObserver observes the public address once for this Agent
-// process. Restarting the Agent starts a new observation.
+// NewPublicEgressObserver caches a successful observation for this process.
+// Failed observations are retried at most once per minute on later heartbeats.
 func NewPublicEgressObserver() PublicEgressObserver {
 	return newStartupPublicEgressObserver(func(ctx context.Context, endpoint string, allowPrivate bool, candidates []networking.Candidate, now time.Time) (*networking.PublicEgress, error) {
 		client, normalizedEndpoint, err := networking.PublicAddressHTTPClient(endpoint, allowPrivate)
@@ -26,19 +26,19 @@ func NewPublicEgressObserver() PublicEgressObserver {
 
 func newStartupPublicEgressObserver(detect publicEgressDetector) PublicEgressObserver {
 	var mu sync.Mutex
-	var attempted bool
+	var retryAt time.Time
 	var cached *networking.PublicEgress
 	return func(ctx context.Context, endpoint string, allowPrivate bool, candidates []networking.Candidate, now time.Time) (*networking.PublicEgress, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		if attempted {
-			if cached == nil {
-				return nil, nil
-			}
+		if cached != nil {
 			value := *cached
 			return &value, nil
 		}
-		attempted = true
+		if now.Before(retryAt) {
+			return nil, nil
+		}
+		retryAt = now.Add(time.Minute)
 		value, err := detect(ctx, endpoint, allowPrivate, candidates, now)
 		if err != nil {
 			return nil, err

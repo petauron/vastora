@@ -147,7 +147,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		}
 	}
 	var publicEgressErr error
-	if startup && c.PublicEgress != nil && strings.TrimSpace(response.PublicAddressLookupURL) != "" {
+	if c.PublicEgress != nil && strings.TrimSpace(response.PublicAddressLookupURL) != "" {
 		publicEgress, err := c.PublicEgress(ctx, response.PublicAddressLookupURL, response.PublicHelperAllowPrivate, candidates, now)
 		if err != nil {
 			publicEgressErr = fmt.Errorf("agent: observe public egress: %w", err)
