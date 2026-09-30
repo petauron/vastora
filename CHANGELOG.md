@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.260](https://github.com/petauron/vastora/compare/v0.1.0-alpha.259...v0.1.0-alpha.260) (2026-09-30)
+
+
+### Bug Fixes
+
+* **center:** unblock enrollment after orphaned application commands ([#755](https://github.com/petauron/vastora/issues/755)) ([902925c](https://github.com/petauron/vastora/commit/902925cc1334551c02b0162224c9fb84618dd8c6))
+
 ## [0.1.0-alpha.259](https://github.com/petauron/vastora/compare/v0.1.0-alpha.258...v0.1.0-alpha.259) (2026-09-30)
 
 
