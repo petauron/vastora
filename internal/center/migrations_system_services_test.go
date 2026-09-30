@@ -39,6 +39,7 @@ func TestVersion88PreservesSubscriptionGraphAndAddsSystemOwnership(t *testing.T)
 	schema = strings.Replace(schema, "'catalog', 'observed', 'system'", "'catalog', 'observed'", 1)
 	for _, statement := range []string{
 		`PRAGMA foreign_keys=OFF`, `PRAGMA legacy_alter_table=ON`, `BEGIN IMMEDIATE`,
+		`DROP TABLE official_app_ui_assets`, `DROP TABLE official_app_ui_history`,
 		`UPDATE services SET source='catalog' WHERE source='system'`, schema,
 		`INSERT INTO services_v87_fixture SELECT * FROM services`, `DROP TABLE services`,
 		`ALTER TABLE services_v87_fixture RENAME TO services`, `DROP TABLE goose_db_version`,

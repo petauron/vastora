@@ -24,7 +24,7 @@ func TestVersion91PreservesMeridianStateAndBacksUpBeforeAddingEntryQuota(t *test
 	}
 	t.Cleanup(func() { _ = migrated.Close() })
 	if after := meridianVersion88PreservedState(t, migrated.db); !reflect.DeepEqual(before, after) {
-		t.Fatal("entry quota migration changed existing Meridian identity, usage, or runtime state")
+		t.Fatal("entry quota migration changed existing Meridian identity, usage, or applied state")
 	}
 	var total, used int64
 	var applied, resetDay int
