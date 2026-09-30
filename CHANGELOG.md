@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.258](https://github.com/petauron/vastora/compare/v0.1.0-alpha.257...v0.1.0-alpha.258) (2026-09-30)
+
+
+### Bug Fixes
+
+* **center:** remove offline nodes after Meridian cutover ([#749](https://github.com/petauron/vastora/issues/749)) ([22e9c08](https://github.com/petauron/vastora/commit/22e9c088d3893f2e16d10bd5f97f75ee76a597c9))
+
 ## [0.1.0-alpha.257](https://github.com/petauron/vastora/compare/v0.1.0-alpha.256...v0.1.0-alpha.257) (2026-09-29)
 
 
