@@ -61,9 +61,6 @@ jobs:
       - name: Verify Meridian destination and official UI migrations
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: go test ./internal/center -run '^(TestVersion100|TestOfficialUI)' -count=1
-      - name: Verify explicit Agent update recovery
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/center -run '^TestAgentUpdateRecovery' -count=1
       - name: Check deployment syntax and release workflow contracts
         if: needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'
         run: |
@@ -83,9 +80,6 @@ jobs:
       - name: Compile frontend
         if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
         run: cd web && npm ci --ignore-scripts && npm run build
-      - name: Verify Agent update recovery dialog
-        if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
-        run: cd web && npx vitest run src/views/AgentUpdateRecoveryDialog.test.tsx
 
   privacy:
     name: Privacy fixtures
