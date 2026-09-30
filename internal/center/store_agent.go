@@ -1168,7 +1168,8 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		return nil, removalErr
 	}
 	updateRows, err := s.db.QueryContext(ctx, `SELECT u.id, u.agent_id, u.target_version, u.state, u.last_error, u.updated_at
-		FROM agent_updates u WHERE u.rowid = (SELECT latest.rowid FROM agent_updates latest WHERE latest.agent_id = u.agent_id ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1)`)
+		FROM agent_updates u WHERE u.rowid = (SELECT latest.rowid FROM agent_updates latest WHERE latest.agent_id = u.agent_id ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1)
+		AND NOT (u.state='failed' AND EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=u.id AND e.agent_id=u.agent_id AND e.kind='agent.update' AND e.attempt=u.attempt AND e.disposition='abandon'))`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list Agent updates: %w", err)
 	}

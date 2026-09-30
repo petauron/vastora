@@ -11,7 +11,7 @@ import (
 )
 
 func TestAgentUpdateRecoveryDisposesOnlyConfirmedFailureAtomically(t *testing.T) {
-	for _, scenario := range []string{"recover", "stale task", "still running", "unrelated execution", "invalid evidence", "missing confirmation"} {
+	for _, scenario := range []string{"recover", "stale task", "still running", "unrelated execution", "invalid evidence", "missing confirmation", "abandoned view"} {
 		t.Run(scenario, func(t *testing.T) {
 			store := openOrchestrationStore(t)
 			defer store.Close()
@@ -47,6 +47,20 @@ func TestAgentUpdateRecoveryDisposesOnlyConfirmedFailureAtomically(t *testing.T)
 				if _, err := store.db.Exec(`INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at) VALUES('other-execution',?,'other-task','application.apply',1,'other-session','other-digest',X'00','running','execute',?,?,?)`, node.ID, now, now, now); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if scenario == "abandoned view" {
+				before, err := store.ListAgents(ctx)
+				if err != nil || len(before) != 1 || before[0].Update == nil || before[0].Update.State != "failed" {
+					t.Fatalf("unresolved failure must remain visible: %+v %v", before, err)
+				}
+				if _, err := store.db.Exec(`UPDATE task_executions SET disposition='abandon' WHERE id='failed-execution'`); err != nil {
+					t.Fatal(err)
+				}
+				after, err := store.ListAgents(ctx)
+				if err != nil || len(after) != 1 || after[0].Update != nil {
+					t.Fatalf("disposed failure still requires attention: %+v %v", after, err)
+				}
+				return
 			}
 			input := AgentUpdateRecoveryInput{FailedUpdateID: "failed-preview", ExecutionStopped: true, Note: "Verified download failed before installation and old execution stopped", adminID: "recovery-admin"}
 			if scenario == "stale task" {
