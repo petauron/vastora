@@ -75,8 +75,23 @@ func (s *Store) disposeTaskExecution(ctx context.Context, executionID, adminID s
 	if err != nil {
 		return err
 	}
-	if changed, _ := updated.RowsAffected(); changed != 1 {
-		return errors.New("center: task changed; verify its current state")
+	changed, err := updated.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		// An application may have been removed while its execution evidence was
+		// retained. Explicit abandonment can retire that orphaned execution,
+		// but must never re-create the command or affect a changed attempt.
+		missingCommand := false
+		if changed == 0 && input.Action == "abandon" && kind == "application.command" {
+			if err := tx.QueryRowContext(ctx, `SELECT NOT EXISTS(SELECT 1 FROM application_commands WHERE id=?)`, taskID).Scan(&missingCommand); err != nil {
+				return err
+			}
+		}
+		if !missingCommand {
+			return errors.New("center: task changed; verify its current state")
+		}
 	}
 	if kind == "application.apply" {
 		applicationStatus := "pending"
