@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.259](https://github.com/petauron/vastora/compare/v0.1.0-alpha.258...v0.1.0-alpha.259) (2026-09-30)
+
+
+### Bug Fixes
+
+* **center:** recover failed Agent updates with an in-page dialog ([#751](https://github.com/petauron/vastora/issues/751)) ([9482e8c](https://github.com/petauron/vastora/commit/9482e8c305aaf37032022a695e019f7facabcfeb))
+
 ## [0.1.0-alpha.258](https://github.com/petauron/vastora/compare/v0.1.0-alpha.257...v0.1.0-alpha.258) (2026-09-30)
 
 
