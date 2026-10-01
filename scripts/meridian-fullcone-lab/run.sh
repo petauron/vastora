@@ -31,7 +31,7 @@ capture_pid=$!
 docker exec -d ${prefix}-peer sh -c 'python /lab/stun.py >/tmp/stun.log 2>&1'
 docker run --rm --network none --user 0 --cap-drop ALL --security-opt no-new-privileges:true --read-only --mount "type=bind,src=$lab/rendered.json,dst=/etc/xray/config.json,readonly" "$xr" run -test -c /etc/xray/config.json >"$lab/config-check.log" 2>&1
 docker run -d --name ${prefix}-xray --network container:${prefix}-net --user 0:65531 --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges:true --read-only --pids-limit 128 --mount "type=bind,src=$lab/server.json,dst=/etc/xray/config.json,readonly" "$xr" run -c /etc/xray/config.json >/dev/null
-docker run -d --name ${prefix}-haproxy --network container:${prefix}-net --user 0:65530 --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges:true --read-only --mount "type=bind,src=$lab/haproxy.cfg,dst=/usr/local/etc/haproxy/haproxy.cfg,readonly" docker.io/library/haproxy:3.2.7-alpine@sha256:3b80483d47e1c7d1fc7eb4b9104f33d9a51259769be299eb675524dca2bc8157 >/dev/null
+docker run -d --name ${prefix}-haproxy --network "$network" --ip 192.168.240.6 --user 0:65530 --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges:true --read-only --mount "type=bind,src=$lab/haproxy.cfg,dst=/usr/local/etc/haproxy/haproxy.cfg,readonly" docker.io/library/haproxy:3.2.7-alpine@sha256:3b80483d47e1c7d1fc7eb4b9104f33d9a51259769be299eb675524dca2bc8157 >/dev/null
 sleep 1
 docker exec ${prefix}-peer python /lab/boundaries.py
 for phase in initial restarted;do

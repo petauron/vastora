@@ -73,7 +73,8 @@ subscription identities, applied-receipt backend changes and stale observations.
 
 The [reproducible proxy lab](../scripts/meridian-fullcone-lab/README.md) uses
 the pinned Xray `26.7.28` and HAProxy `3.2.7` images. Both VLESS/REALITY through
-HAProxy + Proxy Protocol v2 and native HY2 passed, before and after container
+HAProxy in a separate bridge namespace + Proxy Protocol v2 and native HY2
+passed, before and after container
 restart:
 
 | Check | VLESS/XUDP | HY2 |

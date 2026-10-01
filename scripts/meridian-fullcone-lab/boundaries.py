@@ -14,7 +14,7 @@ else:
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 context.check_hostname = False
 context.verify_mode = ssl.CERT_NONE
-with socket.create_connection(('192.168.240.2', 443), 2) as connection:
+with socket.create_connection(('192.168.240.6', 443), 2) as connection:
     connection.settimeout(20)
     try:
         with context.wrap_socket(connection, server_hostname='unapproved.example.test'):

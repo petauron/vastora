@@ -28,6 +28,9 @@ Xray binary. `server.json` adds only the fixture's exact private STUN addresses
 and UDP ports to Xray's private-destination policy. Client configurations use
 XUDP for VLESS and certificate verification for HY2.
 
+HAProxy has its own bridge namespace and reaches Xray through the private
+backend address. Xray shares only the namespace holder; HY2 reaches it directly.
+
 The probe uses SOCKS5 UDP ASSOCIATE, STUN binding/CHANGE-REQUEST and
 XOR-MAPPED-ADDRESS. It asserts ordinary, changed-IP/port and changed-port
 responses, then checks destination-independent mapping within one association.
