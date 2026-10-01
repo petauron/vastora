@@ -1,9 +1,10 @@
 package agent
 
 import (
+	"testing"
+
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
-	"testing"
 )
 
 func TestMeridianHostRuntimeSecurityAndDrift(t *testing.T) {
@@ -24,6 +25,9 @@ func TestMeridianHostRuntimeSecurityAndDrift(t *testing.T) {
 		func(v *client.ContainerInspectResult) { v.Container.HostConfig.NetworkMode = "bridge" },
 		func(v *client.ContainerInspectResult) { v.Container.HostConfig.PidMode = "host" },
 		func(v *client.ContainerInspectResult) { v.Container.HostConfig.CapAdd = []string{"SETGID"} },
+		func(v *client.ContainerInspectResult) {
+			v.Container.HostConfig.CapAdd = []string{"CAP_NET_BIND_SERVICE"}
+		},
 		func(v *client.ContainerInspectResult) { v.Container.HostConfig.GroupAdd = []string{"0"} },
 		func(v *client.ContainerInspectResult) { v.Container.HostConfig.ReadonlyRootfs = false },
 		func(v *client.ContainerInspectResult) { v.Container.HostConfig.RestartPolicy.Name = "unless-stopped" },
@@ -34,9 +38,34 @@ func TestMeridianHostRuntimeSecurityAndDrift(t *testing.T) {
 			t.Fatal("accepted runtime drift")
 		}
 	}
-	hy2 := meridianHostContainerOptions(task, xrayWorkerImageReference, "/tmp/meridian-host/config.json", true, 1001)
-	if hy2.Config.User != "0:1001" || len(hy2.HostConfig.CapAdd) != 1 || hy2.HostConfig.CapAdd[0] != "NET_BIND_SERVICE" {
-		t.Fatal("HY2 cannot bind 443 with only bind capability")
+}
+
+func TestMeridianHostHY2CanonicalCapabilities(t *testing.T) {
+	artifact := meridianRecoveryArtifact(1, `{"inbounds":[{"protocol":"hysteria","port":443}]}`)
+	task := DeploymentTask{ID: "host-hy2-test", AppKey: meridianKey, ApplicationID: "host-hy2-app"}
+	options := meridianHostContainerOptions(task, xrayWorkerImageReference, "/tmp/meridian-host/config.json", true, 1001)
+	if options.Config.User != "0:1001" || len(options.HostConfig.CapAdd) != 1 || options.HostConfig.CapAdd[0] != "CAP_NET_BIND_SERVICE" {
+		t.Fatal("HY2 must request Docker's canonical bind capability")
+	}
+	for _, tc := range []struct {
+		name      string
+		caps      []string
+		wantValid bool
+	}{
+		{"docker inspect", []string{"CAP_NET_BIND_SERVICE"}, true},
+		{"missing", nil, false},
+		{"noncanonical", []string{"NET_BIND_SERVICE"}, false},
+		{"unrelated", []string{"CAP_SETGID"}, false},
+		{"additional", []string{"CAP_NET_BIND_SERVICE", "CAP_SETGID"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inspected := client.ContainerInspectResult{Container: container.InspectResponse{Config: options.Config, HostConfig: options.HostConfig}}
+			inspected.Container.HostConfig.CapAdd = tc.caps
+			err := verifyMeridianHostContainer(inspected, 1001, &artifact)
+			if (err == nil) != tc.wantValid {
+				t.Fatalf("valid=%v err=%v", tc.wantValid, err)
+			}
+		})
 	}
 }
 
