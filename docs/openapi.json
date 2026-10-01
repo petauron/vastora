@@ -6549,6 +6549,15 @@
               "application/json": {
                 "schema": {}
               }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
             }
           },
           "400": {
@@ -6577,7 +6586,31 @@
               "minLength": 1
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "confirmReplacement": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Administrator confirmation bound to a reviewed recovery revision and an operation ID. Retires the previous execution identity and persistently pauses task claims before preparing a one-time command. Retrying the same operation returns the same valid command; interrupted external preparation is never automatically replayed. Enrollment is not business recovery."
       }
     },
     "/api/v1/agents/{id}/reinstall-plan": {
@@ -6602,6 +6635,49 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
+                    "revision": {
+                      "type": "string"
+                    },
+                    "recovery": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "planRevision": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string"
+                            },
+                            "authorizedBy": {
+                              "type": "string"
+                            },
+                            "previousFingerprint": {
+                              "type": "string"
+                            },
+                            "replacementFingerprint": {
+                              "type": "string"
+                            },
+                            "lastError": {
+                              "type": "string"
+                            },
+                            "createdAt": {
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "agentId": {
                       "type": "string"
                     },

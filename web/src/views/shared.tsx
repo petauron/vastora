@@ -20,6 +20,18 @@ export function userError(language: Language, error: unknown) {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const normalized = detail.toLowerCase();
+  if (normalized === "center: recovery plan changed; review it again before confirming") {
+    return copy(language, "恢复清单已变化，请刷新状态后重新确认。", detail);
+  }
+  if (normalized === "center: recovery already started; inspect its saved progress before continuing") {
+    return copy(language, "恢复操作已开始，请刷新并核对已保存的进度，避免重复操作。", detail);
+  }
+  if (normalized === "center: recovery command is no longer valid; review the node again") {
+    return copy(language, "接入命令已失效，请重新核对节点的恢复状态。", detail);
+  }
+  if (normalized === "center: disconnect the agent before generating a reconnect command") {
+    return copy(language, "节点仍在线，请先确认原机器已停止接入。", detail);
+  }
   if (normalized === "center: restore the native meridian runtime and wait for a fresh authenticated private identity report before recovering landing access") {
     return copy(language, "请先恢复本机 Meridian，并等待节点上报最新私网身份，再恢复落地线路。", detail);
   }

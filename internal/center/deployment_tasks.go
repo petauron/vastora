@@ -92,6 +92,11 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return nil, err
 	}
+	if blocked, err := agentReinstallBlocked(ctx, s.db, agentID); err != nil {
+		return nil, err
+	} else if blocked {
+		return nil, errExecutionBlocked
+	}
 	if paused, err := executionClaimsPaused(ctx, s.db); err != nil {
 		return nil, err
 	} else if paused {
@@ -117,6 +122,11 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, fmt.Errorf("center: begin task claim: %w", err)
 	}
 	defer tx.Rollback()
+	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
+		return nil, err
+	} else if blocked {
+		return nil, errExecutionBlocked
+	}
 	var authorized int
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
 		return nil, err

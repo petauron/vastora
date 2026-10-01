@@ -25,7 +25,7 @@ rows default to no retirement marker: the migration does not invent which old
 results predate a past reinstall. Existing uncertain historical work still needs
 inspection. Schema downgrade is not supported.
 
-## Remaining recovery work (#759)
+## Reviewed replacement and persistent pause (#759)
 
 `GET /api/v1/agents/{id}/reinstall-plan` provides an administrator-only,
 non-cacheable review of one node from a consistent database snapshot. It does
@@ -50,11 +50,36 @@ authorization for a new identity. Managed private address preservation cannot be
 promised with the current Headscale API, so explicit address migration remains
 a requirement. No plan item implies completed restoration or working traffic.
 
-This is an execution-isolation repair, not the complete reinstall workflow.
-Private identity withdrawal, approved address migration, a new plan from saved
-application intent, data restore requirements and end-to-end business evidence
-still need the unified recovery flow. In particular, retained successful business
-records do not prove the replacement machine is serving those applications.
+The node action opens this review without changing credentials. Confirmation
+posts `operationId`, `planRevision` and `confirmReplacement` to the reconnect
+endpoint. The current administrator and the exact reviewed snapshot are recorded
+before external bootstrap preparation; an outdated review is rejected without
+revoking the node. Schema 105 stores this operation and invalidates unused legacy
+replacement grants that have no review binding. Forward migration uses the normal
+backup and fail-closed path.
+
+The persistent operation fences all task claim and authorization paths, including
+Agent updates and Xray repair exceptions. Heartbeats may report observations, but
+cannot use a runtime-generation increase to reconstruct old applications or replay
+unclaimed work. Enrollment preserves the old network profile under its **old**
+Agent public key; matching addresses on the new machine cannot automatically
+activate that old binding. The new machine must use a fresh key.
+
+An unused, unexpired command can be retrieved with the same operation ID and
+review revision after a lost response or Center restart. Its response is encrypted
+at rest and never included in the read-only plan or node list. Repeated requests
+cannot create another operation or repeat an interrupted external bootstrap call.
+Preparing/failed operations remain paused for inspection. A separately confirmed
+review can replace an unused grant; explicitly stopping node access also revokes
+in-flight preparation, so a late response cannot restore the grant.
+
+The page shows saved progress on both online and offline nodes. A replacement
+reaches `review_required`, not completion. This draft deliberately has no action
+that clears the pause merely because the Agent is online. Keep the PR unmerged
+until private identity withdrawal, explicit address migration, reviewed historical
+effect disposal, new application restoration tasks and real business verification
+are integrated into a resumable flow. Stateful apps still need a verified backup;
+retained successful business records do not prove they exist on the replacement.
 
 The pinned Headscale 0.29.3 [control API](https://github.com/juanfont/headscale/blob/v0.29.3/proto/headscale/v1/headscale.proto)
 does not provide an atomic node-identity replacement or explicit per-node IP

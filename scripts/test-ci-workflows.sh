@@ -59,11 +59,11 @@ if ! printf '%s\n' "$alpha_job" | grep -Fq 'cache: false' ||
    ! printf '%s\n' "$alpha_job" | grep -Fq 'run: make go-format-check' ||
    printf '%s\n' "$alpha_job" | grep -Fv \
      -e "run: go test ./internal/center -run '^(TestVersion(100|102)|TestOfficialUI|TestMeridianHost)' -count=1" \
-     -e "run: go test ./internal/center -run '^(TestAgentReinstallPlan|TestAgentReconnect|TestDisabledAgentReconnect|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1" | grep -Eq '(go test|go build|go-static-check|web-check|cache: true|docker build)'; then
+     -e "run: go test ./internal/center -run '^(TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1" | grep -Eq '(go test|go build|go-static-check|web-check|cache: true|docker build)'; then
   echo 'Alpha CI must not restore the Go build cache or duplicate release builds/full checks.' >&2
   exit 1
 fi
-require_line "$ci_workflow" "run: go test ./internal/center -run '^(TestAgentReinstallPlan|TestAgentReconnect|TestDisabledAgentReconnect|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1"
+require_line "$ci_workflow" "run: go test ./internal/center -run '^(TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1"
 for job in go-race go-quality go-build web deployment security container-image-security; do
   condition="$(sed -n "/^  $job:/,/^    needs:/p" "$ci_workflow" | grep '^    if:')"
   if ! printf '%s\n' "$condition" | grep -Fq "vars.VASTORA_CI_MODE != 'alpha'" ||

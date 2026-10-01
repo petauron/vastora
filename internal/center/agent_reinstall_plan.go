@@ -18,6 +18,8 @@ import (
 // it. In particular, a successful historical deployment is not evidence that a
 // replacement machine has its data, private identity, or working applications.
 type AgentReinstallPlan struct {
+	Revision            string                      `json:"revision"`
+	Recovery            *AgentReinstallOperation    `json:"recovery,omitempty"`
 	AgentID             string                      `json:"agentId"`
 	CheckedAt           time.Time                   `json:"checkedAt"`
 	IdentityFingerprint string                      `json:"identityFingerprint"`
@@ -65,18 +67,24 @@ type AgentReinstallExecution struct {
 }
 
 func (s *Store) AgentReinstallPlan(ctx context.Context, agentID string) (AgentReinstallPlan, error) {
-	plan := AgentReinstallPlan{AgentID: strings.TrimSpace(agentID), CheckedAt: s.now().UTC(),
-		Applications: []AgentReinstallApplication{}, PendingWork: []AgentReinstallPendingWork{}, Executions: []AgentReinstallExecution{},
-		Requirements: []string{"authorize_new_machine_identity", "verify_business_before_completion"}}
-	// All rows come from one snapshot; concurrent configuration edits cannot
-	// combine an old application's intent with a new node identity in one review.
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return AgentReinstallPlan{}, err
+	}
+	defer tx.Rollback()
+	plan, err := s.agentReinstallPlan(ctx, tx, agentID)
 	if err != nil {
 		return plan, err
 	}
-	defer tx.Rollback()
+	return plan, tx.Commit()
+}
+
+func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID string) (AgentReinstallPlan, error) {
+	plan := AgentReinstallPlan{AgentID: strings.TrimSpace(agentID), CheckedAt: s.now().UTC(),
+		Applications: []AgentReinstallApplication{}, PendingWork: []AgentReinstallPendingWork{}, Executions: []AgentReinstallExecution{},
+		Requirements: []string{"authorize_new_machine_identity", "verify_business_before_completion"}}
 	var publicKey []byte
-	err = tx.QueryRowContext(ctx, `SELECT a.x25519_public_key,a.credential_revoked_at<>'',a.tailscale_ownership,
+	err := tx.QueryRowContext(ctx, `SELECT a.x25519_public_key,a.credential_revoked_at<>'',COALESCE((SELECT json_extract(op.plan_json,'$.privateNetwork.ownership') FROM agent_reinstall_operations op WHERE op.agent_id=a.id AND op.state NOT IN ('superseded','completed')),a.tailscale_ownership),
 		COALESCE(p.service_address,json_extract(r.profile_json,'$.serviceAddress'),''),COALESCE(p.headscale_address,json_extract(r.profile_json,'$.headscaleAddress'),''),
 		p.agent_id IS NULL AND r.agent_id IS NOT NULL
 		FROM agents a LEFT JOIN agent_network_profiles p ON p.agent_id=a.id
@@ -123,7 +131,17 @@ func (s *Store) AgentReinstallPlan(ctx context.Context, agentID string) (AgentRe
 	if err := readReinstallWork(ctx, tx, &plan); err != nil {
 		return plan, err
 	}
-	return plan, tx.Commit()
+	// Exclude the read time and operation status from the review binding.
+	review := plan
+	review.CheckedAt = time.Time{}
+	encoded, err := json.Marshal(review)
+	if err != nil {
+		return plan, err
+	}
+	digest := sha256.Sum256(encoded)
+	plan.Revision = hex.EncodeToString(digest[:])
+	plan.Recovery, err = readAgentReinstallOperation(ctx, tx, plan.AgentID)
+	return plan, err
 }
 
 func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReinstallPlan) error {

@@ -399,6 +399,11 @@ for (const route of routes) {
       schema: { type: "string", const: "no-store" },
     },
   };
+  if (route.handler === "handleCreateAgentReconnectEnrollment") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallInput");
+    operation.description = "Administrator confirmation bound to a reviewed recovery revision and an operation ID. Retires the previous execution identity and persistently pauses task claims before preparing a one-time command. Retrying the same operation returns the same valid command; interrupted external preparation is never automatically replayed. Enrollment is not business recovery.";
+  }
   if (route.handler === "handleAgentReinstallPlan") {
     operation.responses[status].headers = noStoreHeaders;
     operation.description = "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization.";

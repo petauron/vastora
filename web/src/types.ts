@@ -286,6 +286,7 @@ export type Diagnostics = {
 };
 
 export type AgentView = {
+  reinstall?: AgentReinstallOperation;
   id: string;
   name: string;
   version: string;
@@ -345,6 +346,22 @@ export type XrayConfigurationRecovery = {
     differences: Array<{ kind: string; inbound?: string; field?: string; runtime?: string; agent?: string }>;
     appliedSource?: "runtime" | "agent_state";
   };
+};
+
+export type AgentReinstallOperation = {
+  id: string; planRevision: string; state: "preparing" | "awaiting_enrollment" | "review_required" | "failed";
+  authorizedBy: string; previousFingerprint: string; replacementFingerprint: string;
+  lastError: string; createdAt: string; updatedAt: string;
+};
+export type AgentReinstallInput = { operationId: string; planRevision: string; confirmReplacement: boolean };
+export type AgentReinstallPlan = {
+  agentId: string; revision: string; checkedAt: string; identityFingerprint: string; credentialRevoked: boolean;
+  recovery?: AgentReinstallOperation;
+  privateNetwork: { ownership: string; serviceAddress: string; privateAddress: string; profileRetained: boolean; addressRecovery: string; landingRoutes: number; publications: number };
+  applications: Array<{ applicationId: string; name: string; appKey: string; deploymentId: string; version: string; operation: string; state: string; recovery: string; requirements: string[] }>;
+  pendingWork: Array<{ kind: string; count: number }>;
+  executions: Array<{ id: string; kind: string; state: string; phase: string; identityRetired: boolean }>;
+  requirements: string[];
 };
 
 export type AgentEnrollment = { token: string; siteId: string; centerUrl?: string; installerUrl: string; caCertificatePem?: string; expiresAt: string };

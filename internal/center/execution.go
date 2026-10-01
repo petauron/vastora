@@ -241,6 +241,11 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 		return err
 	}
 	defer tx.Rollback()
+	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
+		return err
+	} else if blocked {
+		return errExecutionBlocked
+	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
 		return err
 	} else if paused {
@@ -313,6 +318,11 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 		return controlplane.ExecutionAuthorization{}, err
 	}
 	now := s.now().UTC()
+	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
+		return controlplane.ExecutionAuthorization{}, err
+	} else if blocked {
+		return controlplane.ExecutionAuthorization{}, errExecutionBlocked
+	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
 		return controlplane.ExecutionAuthorization{}, err
 	} else if paused {

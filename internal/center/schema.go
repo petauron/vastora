@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 104
+const centerSchemaVersion = 105
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -64,6 +64,22 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 		landingRetirementSchema,
 		landingClientSchema,
 		agentRemovalSchema,
+		`CREATE TABLE agent_reinstall_operations (
+ id TEXT PRIMARY KEY,
+ agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+ authorized_by TEXT NOT NULL,
+ plan_revision TEXT NOT NULL,
+ plan_json BLOB NOT NULL CHECK(json_valid(plan_json)),
+ previous_fingerprint TEXT NOT NULL,
+ replacement_fingerprint TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL CHECK(state IN ('preparing','awaiting_enrollment','review_required','failed','superseded','completed')),
+ enrollment_token_hash BLOB,
+ sealed_enrollment BLOB,
+ last_error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+)`,
+		`CREATE UNIQUE INDEX agent_reinstall_active_idx ON agent_reinstall_operations(agent_id) WHERE state NOT IN ('superseded','completed')`,
 		`CREATE TABLE recovery_evidence (
 			component_key TEXT PRIMARY KEY,
 			artifact_json BLOB NOT NULL CHECK(json_valid(artifact_json)),
