@@ -153,6 +153,9 @@ func TestAgentReinstallFencesPendingWorkAndRuntimeRebuild(t *testing.T) {
 	if deployments != 2 || profiles != 0 || retained != 1 {
 		t.Fatalf("heartbeat rebuilt old intent or accepted old network: deployments=%d profiles=%d retained=%d", deployments, profiles, retained)
 	}
+	if _, err = store.ConfirmNetworkProfile(ctx, node.ID, networking.Profile{ServiceAddress: "10.0.0.7", LANAddress: "10.0.0.7", EnabledKinds: []string{"lan"}}); err == nil || err.Error() != "center: review address migration through the active reinstall recovery before confirming network settings" {
+		t.Fatalf("ordinary network confirmation bypassed recovery: %v", err)
+	}
 	plan, err := store.AgentReinstallPlan(ctx, node.ID)
 	if err != nil || plan.Recovery == nil || plan.Recovery.State != "review_required" || plan.Recovery.ReplacementFingerprint == "" {
 		t.Fatalf("online was mistaken for complete: %+v %v", plan.Recovery, err)

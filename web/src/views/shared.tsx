@@ -35,6 +35,7 @@ export function userError(language: Language, error: unknown) {
     "center: command preparation stopped; inspect recovery before continuing": "接入命令准备已停止，请先核对恢复进度。",
     "center: recovery progress changed or command preparation already started; refresh before continuing": "恢复进度已变化，或已进入接入命令准备阶段。请刷新状态，勿重复操作。",
     "center: explicitly confirm private identity inspection before continuing": "请明确确认核对旧私网身份，再继续隔离。",
+    "center: review address migration through the active reinstall recovery before confirming network settings": "节点正在重装恢复，请先在恢复流程中核对地址迁移。",
   };
   if (reinstallErrors[normalized]) return copy(language, reinstallErrors[normalized], detail);
   if (normalized === "center: recovery plan changed; review it again before confirming") {
