@@ -121,7 +121,13 @@ func (s *Store) ListNodeDiagnostics(ctx context.Context) ([]NodeDiagnosticView, 
 			}
 		}
 		if peer == nil || peer.State == "failed" || peer.Error != "" {
-			value.State, value.Error, value.Link = "failed", "peer_unavailable", nil
+			value.State, value.Link = "failed", nil
+			if value.Error == "" || value.Error == "probe_failed" {
+				value.Error = "peer_unavailable"
+				if peer != nil && peer.Error != "" {
+					value.Error = peer.Error
+				}
+			}
 		} else if value.State == "succeeded" && peer.State != "succeeded" {
 			value.State, value.Link = "running", nil
 		}
