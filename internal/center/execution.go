@@ -311,6 +311,26 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 		}
 	}
+	var pulseInspection bool
+	if task.Kind == "application.command" {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.enrollment.inspect')`, task.ID, agentID).Scan(&pulseInspection); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+	}
+	if pulseInspection || task.PulseInspection != nil {
+		if !pulseInspection || task.PulseInspection == nil {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+		command, err := s.validateReinstallInspection(ctx, tx, agentID, task.ID)
+		if err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		expected, _ := json.Marshal(command.Task)
+		actual, _ := json.Marshal(task.PulseInspection)
+		if string(expected) != string(actual) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
 	id, err := randomToken(24)
 	if err != nil {
 		return controlplane.ExecutionAuthorization{}, err
@@ -562,6 +582,9 @@ func (s *Store) finalizeExecution(ctx context.Context, tx *sql.Tx, agentID, sess
 }
 
 func executionFailureCanReleaseFence(task AgentTask) bool {
+	if task.Kind == "application.command" && task.PulseInspection != nil && task.PulseInspection.Validate() == nil {
+		return true
+	}
 	if task.Kind != "application.command" || task.ClientCommand == nil {
 		return false
 	}

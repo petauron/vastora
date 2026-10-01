@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ReinstallNetworkReview } from "./ReinstallNetworkReview";
+import { ReinstallMonitorReview } from "./ReinstallMonitorReview";
 import { Spinner } from "@/components/ui/spinner";
 
 export function ReinstallNodeSheet({ agent, installerAvailable, language, onClose }: { agent: AgentView; installerAvailable: boolean; language: Language; onClose: () => void }) {
@@ -75,6 +76,21 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
       if (generation.current === current) setBusy(false);
     }
   };
+  const inspectMonitor = async (applicationId: string) => {
+    if (!plan || !recovery || busy) return;
+    const current = generation.current;
+    setBusy(true); setError("");
+    try {
+      await api.inspectAgentReinstallMonitor(agent.id, { operationId: recovery.id, planRevision: plan.revision, applicationId });
+      if (generation.current !== current) return;
+      const latest = await api.agentReinstallPlan(agent.id);
+      if (generation.current === current) setPlan(latest);
+    } catch (cause) {
+      if (generation.current === current) setError(userError(language, cause));
+    } finally {
+      if (generation.current === current) setBusy(false);
+    }
+  };
   const refresh = () => { request.current = null; setRevision((value) => value + 1); };
   const settleLocalWork = async () => {
     if (!plan || !recovery || busy) return;
@@ -98,7 +114,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
         <SheetDescription>{copy(language, "保留节点和业务归属，核对恢复要求后接替机器身份。", "Keep the node and business ownership. Review recovery requirements before replacing the machine identity.")}</SheetDescription>
       </SheetHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4">
-        {busy ? <p role="status" className="flex items-center gap-2 text-sm"><Spinner />{copy(language, "正在读取恢复状态…", "Reading recovery progress…")}</p> : null}
+        {busy ? <p role="status" className="flex items-center gap-2 text-sm"><Spinner />{copy(language, "正在处理…", "Working…")}</p> : null}
         {error ? <Alert variant="destructive"><AlertTitle>{copy(language, "操作未完成", "Action incomplete")}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
         {plan ? <>
           {recovery ? <Alert><ShieldCheckIcon /><AlertTitle>{joined ? copy(language, "新身份已接入，业务待恢复", "New identity connected; business recovery pending") : copy(language, "恢复已暂停任务执行", "Recovery has paused task execution")}</AlertTitle><AlertDescription>
@@ -118,6 +134,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
             {plan.localWorkDisposition ? <p className="text-sm">{copy(language, `本次已终止 ${settledTasks} 条旧本机任务，历史记录已保留。`, `${settledTasks} previous machine tasks abandoned; history retained.`)}</p> : null}
             {localTasks > 0 ? <><p className="text-xs text-muted-foreground">{copy(language, "终止已隔离的旧本机执行及从未下发的排队任务，保留配置和记录。应用恢复将创建新任务。", "Abandon isolated local executions and cancel unissued queued tasks, retaining configuration and records. Application restoration will create new tasks.")}</p><Button className="self-start" variant="outline" disabled={busy || recovery.privateIsolation === "pending"} onClick={() => void settleLocalWork()}>{copy(language, `终止 ${localTasks} 条旧本机任务`, `Abandon ${localTasks} previous machine tasks`)}</Button></> : null}
           </section> : null}
+          {joined && plan.monitoring.length > 0 ? <ReinstallMonitorReview plan={plan} busy={busy} language={language} onInspect={inspectMonitor} /> : null}
           {joined && plan.networkReview ? <ReinstallNetworkReview key={plan.revision} review={plan.networkReview} busy={busy} language={language} onApprove={approveNetwork} /> : null}
           {command ? <><p className="text-sm">{copy(language, "在重装后的原服务器执行一次", "Run once on the reinstalled original server")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div><p className="text-xs text-muted-foreground">{copy(language, `命令有效期至 ${formatDate(language, enrollment!.expiresAt)}`, `Command valid until ${formatDate(language, enrollment!.expiresAt)}`)}</p></> : null}
           {joined ? <p className="flex items-center gap-2 text-sm"><CheckCircle2Icon aria-hidden="true" className="size-4" />{copy(language, "身份接替已记录；网络、应用和业务验证尚未完成。", "Identity replacement recorded. Network, application and business verification are not complete.")}</p> : null}

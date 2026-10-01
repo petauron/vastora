@@ -288,6 +288,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			defer store.landingMutationMu.Unlock()
 		}
 		commands := 0
+		if task.PulseInspection != nil {
+			commands++
+		}
 		if task.PulseEnrollment != nil {
 			commands++
 		}
@@ -350,6 +353,19 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				retireResult, err = executor.RetireLegacyMeridianInstallation(ctx, *task.MeridianLegacyRetire)
 				if err == nil {
 					result.MeridianLegacyRetire = &retireResult
+				}
+			}
+		} else if task.PulseInspection != nil {
+			executor, ok := c.Executor.(interface {
+				InspectPulse(context.Context, pulse.InspectionTask) (pulse.InspectionResult, error)
+			})
+			if !ok {
+				err = errors.New("agent: Pulse inspection capability is not configured")
+			} else {
+				var inspection pulse.InspectionResult
+				inspection, err = executor.InspectPulse(ctx, *task.PulseInspection)
+				if err == nil {
+					result.PulseInspection = &inspection
 				}
 			}
 		} else if task.PulseEnrollment != nil {

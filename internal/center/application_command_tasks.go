@@ -38,11 +38,11 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var inputJSON []byte
 	var attempt int64
 	var reconciliationRequested int
-	err := tx.QueryRowContext(ctx, `SELECT id, kind, input_json, attempt, reconciliation_requested FROM application_commands
-		WHERE agent_id = ? AND state = 'pending'
-		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=application_commands.gateway_node_id AND r.state NOT IN ('superseded','completed'))
+	err := tx.QueryRowContext(ctx, `SELECT c.id, c.kind, c.input_json, c.attempt, c.reconciliation_requested FROM application_commands c
+		WHERE c.agent_id = ? AND state = 'pending'
+		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=c.gateway_node_id AND r.state NOT IN ('superseded','completed') AND NOT `+reinstallInspectionAuthoritySQL+`)
 		ORDER BY CASE WHEN kind = ? AND COALESCE(json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END, '$.migrationId'), '') = '' THEN 1 ELSE 0 END,
-		created_at, rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt, &reconciliationRequested)
+		created_at, c.rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt, &reconciliationRequested)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -55,6 +55,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var node *ThreeXUINodeCommandTask
 	var controller *ThreeXUIControllerCommandTask
 	var protocols *nodeprotocol.Task
+	var pulseInspection *pulse.InspectionTask
 	var pulseEnrollment *pulse.EnrollmentTask
 	var meridianTask *meridianruntime.Task
 	var meridianLegacyExport *meridianruntime.LegacyExportCommand
@@ -102,6 +103,12 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: Meridian legacy retirement is outside the authorized controller-only phase"))
 		}
 		meridianLegacyRetire = &command
+	case pulse.InspectionKind:
+		command, err := s.validateReinstallInspection(ctx, tx, agentID, id)
+		if err != nil {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
+		}
+		pulseInspection = &command.Task
 	case pulse.EnrollmentKind:
 		var command pulse.EnrollmentTask
 		if json.Unmarshal(inputJSON, &command) != nil || command.ApplicationID == "" || command.DeploymentID == "" {
@@ -278,7 +285,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, err
 		}
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, PulseEnrollment: pulseEnrollment, MeridianRuntime: meridianTask, MeridianLegacyExport: meridianLegacyExport, MeridianLegacyRetire: meridianLegacyRetire, Reconcile: reconciliationRequested == 1}, nil
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, PulseEnrollment: pulseEnrollment, PulseInspection: pulseInspection, MeridianRuntime: meridianTask, MeridianLegacyExport: meridianLegacyExport, MeridianLegacyRetire: meridianLegacyRetire, Reconcile: reconciliationRequested == 1}, nil
 }
 
 func (s *Store) failUnclaimableThreeXUIInboundPlanCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command ThreeXUIClientCommandTask, cause error) error {
@@ -445,6 +452,9 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 	}
 	if kind == subscriptionCommandKind {
 		return s.completeSubscriptionCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind == pulse.InspectionKind {
+		return s.completeReinstallInspection(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
 	}
 	if kind == pulse.EnrollmentKind {
 		return s.completePulseEnrollment(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, rawResult)

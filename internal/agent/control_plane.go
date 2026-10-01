@@ -111,6 +111,7 @@ func taskOutcomeIsUncertain(err error) bool {
 }
 
 type Capabilities struct {
+	PulseInspection       bool `json:"pulseInspection"`
 	IPQuality             bool `json:"ipQuality"`
 	NetworkDiagnostics    bool `json:"networkDiagnostics"`
 	ReturnRoute           bool `json:"returnRoute"`
@@ -138,6 +139,7 @@ type DeploymentTask struct {
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
+	PulseInspection           *pulse.InspectionTask                `json:"pulseInspection,omitempty"`
 	PulseEnrollment           *pulse.EnrollmentTask                `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                   `json:"protocolCommand,omitempty"`
 	XrayRecovery              *xrayrecovery.Task                   `json:"xrayRecovery,omitempty"`
@@ -197,6 +199,7 @@ type ApplicationServiceResult struct {
 type ApplicationTaskResult struct {
 	IPQuality            *ipquality.Result                   `json:"ipQuality,omitempty"`
 	NodeDiagnostics      *nodediagnostics.Result             `json:"nodeDiagnostics,omitempty"`
+	PulseInspection      *pulse.InspectionResult             `json:"pulseInspection,omitempty"`
 	PulseEnrollment      *pulse.EnrollmentResult             `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand      *nodeprotocol.Result                `json:"protocolCommand,omitempty"`
 	XrayRecovery         *xrayrecovery.Result                `json:"xrayRecovery,omitempty"`

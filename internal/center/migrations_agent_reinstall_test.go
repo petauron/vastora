@@ -1,6 +1,7 @@
 package center
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -13,6 +14,16 @@ func TestVersion105PreservesIntentAndFailsClosed(t *testing.T) {
 		previous := legacyMigrationStore(t, directory, 104)
 		if _, err := previous.db.Exec(`INSERT INTO agent_enrollment_tokens(token_hash,site_id,name,center_url,roles_json,capabilities_json,target_agent_id,expires_at)
    VALUES(X'1234','site-v3','Old reconnect','https://center.example.test','["worker"]','{}','agent-v3','2099-01-01T00:00:00Z')`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := previous.db.Exec(`INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,result_json,state,created_at,updated_at) VALUES('retained-command','application-v3','agent-v3','agent-v3','pulse.enrollment.create','{}','{"retained":true}','succeeded','','')`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := previous.db.Exec(`INSERT INTO secret_deliveries(kind,owner_id,operation_key_hash,request_hash,resource_id,state,created_at,updated_at) VALUES('application_command_result','owner',X'01',X'02','retained-command','acknowledged','','')`); err != nil {
+			t.Fatal(err)
+		}
+		var commandBefore []byte
+		if err := previous.db.QueryRow(`SELECT json_array(rowid,id,application_id,agent_id,gateway_node_id,kind,input_json,result_json,state,created_at,updated_at) FROM application_commands WHERE id='retained-command'`).Scan(&commandBefore); err != nil {
 			t.Fatal(err)
 		}
 		if conflict {
@@ -63,6 +74,14 @@ func TestVersion105PreservesIntentAndFailsClosed(t *testing.T) {
 		}
 		if err = db.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&violations); err != nil || violations != 0 {
 			t.Fatalf("FK failure: %d %v", violations, err)
+		}
+		var commandAfter []byte
+		if err := db.QueryRow(`SELECT json_array(rowid,id,application_id,agent_id,gateway_node_id,kind,input_json,result_json,state,created_at,updated_at) FROM application_commands WHERE id='retained-command'`).Scan(&commandAfter); err != nil || !bytes.Equal(commandBefore, commandAfter) {
+			t.Fatalf("historical command changed: %v", err)
+		}
+		var deliveries int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM secret_deliveries WHERE resource_id='retained-command'`).Scan(&deliveries); err != nil || deliveries != 1 {
+			t.Fatalf("command delivery evidence lost: %v", err)
 		}
 		db.Close()
 	}

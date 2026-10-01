@@ -53,9 +53,32 @@ evidence must not select a remaining candidate automatically.
 `inspection_required` means these registration IDs still need inspection through
 Pulse's supported `enrollment inspect ID` command. Registration creation does not
 prove that the collector consumed that token; an install may have retained an
-older local credential. This inventory does not contact Pulse, rotate a token,
-create a monitor node or establish that monitoring is restored. The managed
-inspection and credential replacement steps remain unfinished in this draft.
+older local credential. The inventory itself does not contact Pulse.
+
+After replacement enrollment and old identity isolation, an administrator can
+explicitly post `operationId`, `planRevision` and `applicationId` to
+`POST /api/v1/agents/{id}/reinstall-monitor/inspect`. This queues a bounded read on
+the original managed Pulse service, pinned to its reviewed deployment. Selection,
+execution authorization and result projection recheck the operation, administrator,
+replacement key and original registration evidence. The replacement's general
+execution fence remains in place. Self-hosted monitoring first requires restoration
+of the service and its data.
+
+The Agent only runs fixed `pulse-service --help` and `enrollment inspect ID`
+commands inside the owned service container. It requires the supported CLI and
+never silently upgrades an older Pulse installation. Each requested record must
+be returned exactly, without tokens or partial results. Consumed records must
+identify the same active monitor node; missing, inactive or ambiguous associations
+require review. Expired enrollment tokens may still identify historical nodes.
+The supported CLI prerequisite is merged in [Pulse PR26](https://github.com/petauron/pulse/pull/26);
+that merge alone does not make the installed service support the command.
+
+The saved receipt survives Center restart. Identical requests return that receipt
+while its binding remains current, and changed evidence invalidates it. The page
+shows pending, failed, review-required and verified identity states. Verification
+does not rotate credentials, create a monitor node, resume tasks or establish
+metric collection. Credential replacement/import and business recovery remain
+unfinished in this draft.
 
 Unclaimed work is listed separately from executions: retiring an execution
 session does not dispose an unclaimed install, uninstall or network change.
@@ -71,7 +94,9 @@ endpoint. The current administrator and the exact reviewed snapshot are recorded
 before external bootstrap preparation; an outdated review is rejected without
 revoking the node. Schema 105 stores this operation and invalidates unused legacy
 replacement grants that have no review binding. Forward migration uses the normal
-backup and fail-closed path.
+backup and fail-closed path. The unreleased schema also rebuilds the application
+command constraint for the inspection task, preserving historical rows, indexes,
+triggers and delivery evidence; fresh and migrated schemas are equivalent.
 
 The persistent operation fences all task claim and authorization paths, including
 Agent updates and Xray repair exceptions. Heartbeats may report observations, but

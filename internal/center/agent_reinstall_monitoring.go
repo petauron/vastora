@@ -21,6 +21,7 @@ type AgentReinstallMonitoring struct {
 	ServiceAgentID       string                            `json:"serviceAgentId"`
 	State                string                            `json:"state"`
 	Enrollments          []AgentReinstallMonitorEnrollment `json:"enrollments"`
+	Inspection           *AgentReinstallMonitorInspection  `json:"inspection,omitempty"`
 }
 
 type AgentReinstallMonitorEnrollment struct {
@@ -34,6 +35,10 @@ func (s *Store) readReinstallMonitoring(ctx context.Context, tx *sql.Tx, plan *A
 	digest := sha256.New()
 	encoder := json.NewEncoder(digest)
 	plan.Monitoring = []AgentReinstallMonitoring{}
+	op, err := readAgentReinstallOperation(ctx, tx, plan.AgentID)
+	if err != nil {
+		return "", err
+	}
 	for _, app := range plan.Applications {
 		if app.AppKey != pulseAgentAppKey || app.Recovery == "keep_stopped" || app.DeploymentID == "" {
 			continue
@@ -41,6 +46,19 @@ func (s *Store) readReinstallMonitoring(ctx context.Context, tx *sql.Tx, plan *A
 		review, evidence, err := s.reinstallMonitorEvidence(ctx, tx, plan.AgentID, app)
 		if err != nil {
 			return "", err
+		}
+		if op != nil {
+			review.Inspection, err = readReinstallInspection(ctx, tx, op.ID, app.ApplicationID)
+			if err != nil {
+				return "", err
+			}
+			if review.Inspection != nil {
+				if _, err := s.validateReinstallInspection(ctx, tx, review.ServiceAgentID, review.Inspection.CommandID); err != nil {
+					review.Inspection.State = "stale"
+					review.Inspection.NodeID = ""
+					review.Inspection.Error = "Reviewed monitoring evidence changed; inspect it again"
+				}
+			}
 		}
 		plan.Monitoring = append(plan.Monitoring, review)
 		if err = encoder.Encode(evidence); err != nil {

@@ -197,3 +197,55 @@ describe("replacement network review", () => {
     expect(button("确认恢复地址")).not.toBeUndefined();
   });
 });
+
+const monitorPlan = (): AgentReinstallPlan => ({ ...review(), recovery: { ...recovery, state: "review_required" }, monitoring: [{ applicationId: "collector", serviceApplicationId: "monitor-service", serviceAgentId: "service-agent", state: "inspection_required", enrollments: [{ enrollmentId: "original", executionId: "historical" }] }] });
+
+describe("original monitoring identity inspection", () => {
+  it("requires a click bound to the review and displays pending progress without repeating it", async () => {
+    const plan = monitorPlan();
+    const inspection = { commandId: "inspection", state: "pending" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, monitoring: [{ ...plan.monitoring[0], inspection }] });
+    const post = vi.spyOn(api, "inspectAgentReinstallMonitor").mockResolvedValue(inspection);
+    await show();
+    expect(post).not.toHaveBeenCalled();
+    await act(async () => button("核验原监控身份")!.click());
+    expect(post).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "collector" });
+    expect(document.body.textContent).toContain("等待原监控服务");
+    expect(button("等待核验结果")!.disabled).toBe(true);
+    await act(async () => button("刷新状态")!.click());
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+  it("shows verified identity without presenting business recovery as complete", async () => {
+    const plan = monitorPlan();
+    plan.monitoring[0].inspection = { commandId: "inspection", state: "verified", nodeId: "original-monitor-node" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const post = vi.spyOn(api, "inspectAgentReinstallMonitor");
+    await show();
+    expect(document.body.textContent).toContain("原监控身份已确认");
+    expect(document.body.textContent).toContain("凭据恢复和数据上报仍待完成");
+    expect(button("核验原监控身份")).toBeUndefined();
+    expect(post).not.toHaveBeenCalled();
+  });
+  it("retains failed operations for explicit inspection without automatic retries", async () => {
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(monitorPlan());
+    const post = vi.spyOn(api, "inspectAgentReinstallMonitor").mockRejectedValue(new Error("monitoring review changed"));
+    await show();
+    await act(async () => button("核验原监控身份")!.click());
+    expect(document.body.textContent).toContain("操作未完成");
+    await act(async () => button("刷新状态")!.click());
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+  it.each(["evidence_missing", "evidence_invalid", "service_missing"])("does not inspect incomplete evidence: %s", async (state) => {
+    const plan = monitorPlan(); plan.monitoring[0].state = state;
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    await show();
+    expect(button("核验原监控身份")).toBeUndefined();
+  });
+  it("requires the local monitoring service to be restored first", async () => {
+    const plan = monitorPlan(); plan.monitoring[0].serviceAgentId = "agent";
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    await show();
+    expect(document.body.textContent).toContain("先恢复本机的 Pulse 服务和数据");
+    expect(button("核验原监控身份")).toBeUndefined();
+  });
+});

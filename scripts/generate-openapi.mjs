@@ -420,6 +420,12 @@ for (const route of routes) {
     operation.description = "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization.";
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallPlan");
   }
+  if (route.handler === "handleAgentReinstallMonitorInspection") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallMonitorInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallMonitorInspection");
+    operation.description = "Explicit read-only inspection of reviewed original Pulse enrollment records on their exact managed service deployment. Bound to the administrator, recovery operation, replacement identity and retained source evidence; validated at selection, authorization and projection. Returns a durable receipt without rotating credentials or completing recovery. Requires an inspection-capable service Agent and Pulse CLI.";
+  }
   if (route.handler === "handleSettleAgentReinstallLocalWork") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallLocalWorkInput");

@@ -359,6 +359,8 @@ export type AgentReinstallInput = { operationId: string; planRevision: string; c
 export type AgentReinstallLocalWorkInput = { operationId: string; planRevision: string; confirmLocal: boolean };
 export type AgentReinstallUnclaimedWork = { taskId: string; kind: string; revision: number };
 export type AgentReinstallLocalDisposition = { planRevision: string; executionIds: string[]; unclaimedWork: AgentReinstallUnclaimedWork[]; authorizedBy: string; disposedAt: string };
+export type AgentReinstallMonitorInput = { operationId: string; planRevision: string; applicationId: string };
+export type AgentReinstallMonitorInspection = { commandId: string; state: string; nodeId?: string; error?: string; inspectedAt?: string };
 export type AgentReinstallPlan = {
   agentId: string; revision: string; checkedAt: string; identityFingerprint: string; credentialRevoked: boolean;
   recovery?: AgentReinstallOperation;
@@ -369,7 +371,7 @@ export type AgentReinstallPlan = {
   executions: Array<{ id: string; agentId: string; taskId: string; attempt: number; kind: string; state: string; phase: string; identityRetired: boolean; resolution: "local_after_isolation" | "manual_review" }>;
   unclaimedLocalWork: AgentReinstallUnclaimedWork[];
   localWorkDisposition?: AgentReinstallLocalDisposition;
-  monitoring: Array<{ applicationId: string; serviceApplicationId: string; serviceAgentId: string; state: string; enrollments: Array<{ enrollmentId: string; executionId: string }> }>;
+  monitoring: Array<{ applicationId: string; serviceApplicationId: string; serviceAgentId: string; state: string; enrollments: Array<{ enrollmentId: string; executionId: string }>; inspection?: AgentReinstallMonitorInspection }>;
   requirements: string[];
 };
 

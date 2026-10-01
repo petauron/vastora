@@ -8,11 +8,21 @@ import (
 	"encoding/json"
 )
 
+// This exception authorizes only the immutable, operation-bound read command.
+// Fresh source evidence is checked again by Store before issuance/projection.
+const reinstallInspectionAuthoritySQL = `EXISTS(SELECT 1 FROM agent_reinstall_monitor_inspections i
+ JOIN agent_reinstall_operations op ON op.id=i.operation_id JOIN agents target ON target.id=op.agent_id
+ WHERE i.command_id=c.id AND c.kind='pulse.enrollment.inspect' AND c.input_json=i.input_json
+ AND c.application_id=json_extract(i.input_json,'$.task.applicationId')
+ AND c.gateway_node_id=op.agent_id AND op.state='review_required' AND op.private_isolation IN ('withdrawn','not_required')
+ AND target.status='active' AND target.credential_revoked_at='' AND target.x25519_public_key=i.replacement_key
+ AND EXISTS(SELECT 1 FROM admins WHERE id=op.authorized_by))`
+
 func reinstallCommandTargetBlocked(ctx context.Context, q networkQueryer, agentID, taskID string) (bool, error) {
 	var blocked bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands c
 	 JOIN agent_reinstall_operations r ON r.agent_id=c.gateway_node_id
-	 WHERE c.id=? AND c.agent_id=? AND r.state NOT IN ('superseded','completed'))`, taskID, agentID).Scan(&blocked)
+	 WHERE c.id=? AND c.agent_id=? AND r.state NOT IN ('superseded','completed') AND NOT `+reinstallInspectionAuthoritySQL+`)`, taskID, agentID).Scan(&blocked)
 	return blocked, err
 }
 

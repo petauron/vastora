@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -105,7 +106,7 @@ func copyPulseSetupToken(ctx context.Context, docker *client.Client, containerID
 	return nil
 }
 
-// pulseServiceCLI is only used by the two fixed operations below. Neither an
+// pulseServiceCLI is only used by fixed Pulse administration operations. Neither an
 // HTTP caller nor a catalog may supply an executable or arbitrary arguments.
 func pulseServiceCLI(ctx context.Context, docker *client.Client, args []string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -130,6 +131,59 @@ func pulseServiceCLI(ctx context.Context, docker *client.Client, args []string) 
 		return nil, errors.New("agent: Pulse administration failed")
 	}
 	return stdout.Bytes(), nil
+}
+
+func (e ApplicationExecutor) InspectPulse(ctx context.Context, task pulse.InspectionTask) (pulse.InspectionResult, error) {
+	result := pulse.InspectionResult{}
+	if err := task.Validate(); err != nil {
+		return result, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	socket := e.DockerSocket
+	if socket == "" {
+		socket = "unix:///var/run/docker.sock"
+	}
+	docker, err := client.New(client.WithHost(socket))
+	if err != nil {
+		return result, err
+	}
+	defer docker.Close()
+	_, exists, err := inspectOwnedApplicationContainer(ctx, docker, pulseContainer, pulse.ServiceKey, "pulse", task.ApplicationID, task.DeploymentID)
+	if err != nil {
+		return result, err
+	}
+	if !exists {
+		return result, errors.New("agent: reviewed Pulse service is unavailable")
+	}
+	help, err := pulseServiceCLI(ctx, docker, []string{"--help"})
+	if err != nil {
+		return result, err
+	}
+	if !strings.Contains(string(help), "enrollment inspect ID") {
+		return result, errors.New("agent: installed Pulse does not support enrollment inspection; upgrade the managed service explicitly")
+	}
+	for _, id := range task.EnrollmentIDs {
+		output, err := pulseServiceCLI(ctx, docker, []string{"enrollment", "inspect", id})
+		if err != nil {
+			return pulse.InspectionResult{}, err
+		}
+		var record pulse.EnrollmentRecord
+		decoder := json.NewDecoder(bytes.NewReader(output))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&record) != nil || record.ID != id {
+			return pulse.InspectionResult{}, errors.New("agent: invalid Pulse inspection response")
+		}
+		var trailing any
+		if decoder.Decode(&trailing) != io.EOF {
+			return pulse.InspectionResult{}, errors.New("agent: invalid Pulse inspection response")
+		}
+		result.Records = append(result.Records, record)
+	}
+	if err := result.Validate(task); err != nil {
+		return pulse.InspectionResult{}, err
+	}
+	return result, nil
 }
 
 func (e ApplicationExecutor) EnrollPulse(ctx context.Context, task pulse.EnrollmentTask) (pulse.EnrollmentResult, error) {
