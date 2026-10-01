@@ -27,6 +27,29 @@ inspection. Schema downgrade is not supported.
 
 ## Remaining recovery work (#759)
 
+`GET /api/v1/agents/{id}/reinstall-plan` provides an administrator-only,
+non-cacheable review of one node from a consistent database snapshot. It does
+not create a reconnect grant, retire identity, contact a host or run a command.
+The response contains no saved configuration, keys, command payloads or results.
+
+The inventory selects the latest deployment **intent**, including a pending or
+failed uninstall, rather than resurrecting the last successful installation.
+It keeps the exact saved version and validates its artifact description without
+fetching or selecting the latest catalog version. Artifact and credential
+verification is still required before any execution. Missing or inconsistent
+saved artifacts require review. Meridian requires validation of its Center-owned
+configuration and credentials; a Pulse collector requires a replacement managed
+enrollment. Stateful and unknown applications require data restoration on the
+replacement, even if a previous backup drill was recorded.
+
+Unclaimed work is listed separately from executions: retiring an execution
+session does not dispose an unclaimed install, uninstall or network change.
+Retired and unretired uncertain results keep their actual phase and state.
+Retained inactive network profiles remain visible as dependencies, never as
+authorization for a new identity. Managed private address preservation cannot be
+promised with the current Headscale API, so explicit address migration remains
+a requirement. No plan item implies completed restoration or working traffic.
+
 This is an execution-isolation repair, not the complete reinstall workflow.
 Private identity withdrawal, approved address migration, a new plan from saved
 application intent, data restore requirements and end-to-end business evidence

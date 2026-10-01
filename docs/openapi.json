@@ -6580,6 +6580,196 @@
         ]
       }
     },
+    "/api/v1/agents/{id}/reinstall-plan": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Plan",
+        "operationId": "agentReinstallPlan_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "checkedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "identityFingerprint": {
+                      "type": "string"
+                    },
+                    "credentialRevoked": {
+                      "type": "boolean"
+                    },
+                    "privateNetwork": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "ownership": {
+                          "type": "string"
+                        },
+                        "serviceAddress": {
+                          "type": "string"
+                        },
+                        "privateAddress": {
+                          "type": "string"
+                        },
+                        "profileRetained": {
+                          "type": "boolean"
+                        },
+                        "addressRecovery": {
+                          "type": "string"
+                        },
+                        "landingRoutes": {
+                          "type": "integer"
+                        },
+                        "publications": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "applications": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "applicationId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "appKey": {
+                            "type": "string"
+                          },
+                          "deploymentId": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "string"
+                          },
+                          "operation": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "recovery": {
+                            "type": "string"
+                          },
+                          "requirements": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "pendingWork": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "executions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "phase": {
+                            "type": "string"
+                          },
+                          "identityRetired": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "requirements": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization."
+      }
+    },
     "/api/v1/agents/{id}": {
       "patch": {
         "tags": [

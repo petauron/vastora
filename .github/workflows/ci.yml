@@ -63,7 +63,7 @@ jobs:
         run: go test ./internal/center -run '^(TestVersion(100|102)|TestOfficialUI|TestMeridianHost)' -count=1
       - name: Verify Agent reconnect execution boundary
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/center -run '^(TestAgentReconnect|TestDisabledAgentReconnect|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1
+        run: go test ./internal/center -run '^(TestAgentReinstallPlan|TestAgentReconnect|TestDisabledAgentReconnect|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1
       - name: Check deployment syntax and release workflow contracts
         if: needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'
         run: |

@@ -399,6 +399,11 @@ for (const route of routes) {
       schema: { type: "string", const: "no-store" },
     },
   };
+  if (route.handler === "handleAgentReinstallPlan") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.description = "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization.";
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallPlan");
+  }
   if (["handleGetExecutionClaimControl", "handleSetExecutionClaimControl"].includes(route.handler)) {
     operation.responses[status].headers = noStoreHeaders;
     operation.description = "Administrator-only persisted control of new task claims and authorization issuance. Pausing does not cancel previously authorized executions or stop heartbeats, session registration or read-only observation. Resuming does not dispose unresolved executions or replay failed tasks.";
