@@ -20,6 +20,23 @@ export function userError(language: Language, error: unknown) {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const normalized = detail.toLowerCase();
+  const reinstallErrors: Record<string, string> = {
+    "center: authenticated previous private identity evidence is missing": "缺少旧机器已认证的私网身份记录，无法安全撤销旧身份。恢复已暂停。",
+    "center: previous private network is externally managed; verify its isolation before recovery": "旧私网由外部管理，请先核对旧机器的访问权限是否已撤销。",
+    "center: previous private address is assigned to another node": "原私网地址已属于另一节点，恢复已暂停。",
+    "center: private controller is unavailable; recovery remains paused": "私网控制面不可用，恢复已暂停。",
+    "center: private controller changed after recovery authorization": "确认后私网控制面发生变化，请核对后再继续。",
+    "center: private identity inspection failed; recovery remains paused": "无法核对旧私网身份，恢复已暂停。",
+    "center: previous private identity or address ownership changed; recovery remains paused": "旧私网身份或地址归属发生变化，恢复已暂停。",
+    "center: private identity withdrawal was not confirmed; inspect the saved identity before continuing": "未收到旧私网身份撤销的确认，请核对已保存的身份记录后再继续。",
+    "center: private identity withdrawal could not be verified; recovery remains paused": "无法验证旧私网身份是否已撤销，恢复已暂停。",
+    "center: previous private identity or address is still present; recovery remains paused": "旧私网身份或地址仍在使用，恢复已暂停。",
+    "center: previous private identity must be isolated before command preparation": "先完成旧私网身份隔离，再生成接入命令。",
+    "center: command preparation stopped; inspect recovery before continuing": "接入命令准备已停止，请先核对恢复进度。",
+    "center: recovery progress changed or command preparation already started; refresh before continuing": "恢复进度已变化，或已进入接入命令准备阶段。请刷新状态，勿重复操作。",
+    "center: explicitly confirm private identity inspection before continuing": "请明确确认核对旧私网身份，再继续隔离。",
+  };
+  if (reinstallErrors[normalized]) return copy(language, reinstallErrors[normalized], detail);
   if (normalized === "center: recovery plan changed; review it again before confirming") {
     return copy(language, "恢复清单已变化，请刷新状态后重新确认。", detail);
   }

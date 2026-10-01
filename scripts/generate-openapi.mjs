@@ -402,7 +402,12 @@ for (const route of routes) {
   if (route.handler === "handleCreateAgentReconnectEnrollment") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallInput");
-    operation.description = "Administrator confirmation bound to a reviewed recovery revision and an operation ID. Retires the previous execution identity and persistently pauses task claims before preparing a one-time command. Retrying the same operation returns the same valid command; interrupted external preparation is never automatically replayed. Enrollment is not business recovery.";
+    operation.description = "Administrator confirmation bound to a reviewed recovery revision and an operation ID. Retires the previous execution identity and persistently pauses task claims. Withdraws and verifies the authenticated old private identity before preparing a one-time command. Retrying the same operation returns the same valid command; interrupted external preparation is never automatically replayed. Enrollment is not business recovery.";
+  }
+  if (route.handler === "handleContinueAgentReinstallIsolation") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallContinueInput");
+    operation.description = "Explicit continuation by the authorizing administrator, bound to the inspected recovery attempt. Rechecks the exact saved private identity and controller; never rediscovers another owner by address. Stale or duplicate continuations cannot repeat an attempt. This action cannot repeat bootstrap preparation with an uncertain result.";
   }
   if (route.handler === "handleAgentReinstallPlan") {
     operation.responses[status].headers = noStoreHeaders;

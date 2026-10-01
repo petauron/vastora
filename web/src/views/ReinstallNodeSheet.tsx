@@ -34,7 +34,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
   const recovery = plan?.recovery;
   const joined = recovery?.state === "review_required";
   const command = enrollment && !joined ? agentInstallCommand({ centerURL: enrollment.centerUrl ?? "", enrollment, installerAvailable }) : "";
-  const confirm = async () => {
+  const confirm = async (resumeIsolation = false) => {
     if (!plan || busy) return;
     const current = generation.current;
     request.current ??= {
@@ -44,7 +44,9 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
     };
     setBusy(true); setError("");
     try {
-      const result = await api.createAgentReconnectEnrollment(agent.id, request.current);
+      const result = resumeIsolation && recovery
+        ? await api.continueAgentReinstallIsolation(agent.id, { operationId: recovery.id, expectedAttempt: recovery.attempt, confirmIsolation: true })
+        : await api.createAgentReconnectEnrollment(agent.id, request.current);
       if (generation.current !== current) return;
       setEnrollment(result);
       const latest = await api.agentReinstallPlan(agent.id);
@@ -67,10 +69,12 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
         {error ? <Alert variant="destructive"><AlertTitle>{copy(language, "操作未完成", "Action incomplete")}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
         {plan ? <>
           {recovery ? <Alert><ShieldCheckIcon /><AlertTitle>{joined ? copy(language, "新身份已接入，业务待恢复", "New identity connected; business recovery pending") : copy(language, "恢复已暂停任务执行", "Recovery has paused task execution")}</AlertTitle><AlertDescription>
-            {recovery.state === "failed" || recovery.state === "preparing" ? copy(language, "命令准备尚未完成。核对现场后再继续，系统不会自动重复操作。", "Command preparation is incomplete. Inspect the operation before continuing; it will not run again automatically.") : copy(language, "需要核对旧私网身份隔离、网络地址和应用恢复；节点在线不代表业务已恢复。", "Private identity isolation, network addresses and application recovery still need verification. Being online does not mean business is restored.")}
-          </AlertDescription></Alert> : <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "确认后替换管理身份", "Confirm management identity replacement")}</AlertTitle><AlertDescription>{copy(language, "旧 Agent 凭据和接入命令将失效，任务领取暂停。应用、订阅和历史执行记录保留。", "The previous Agent credential and enrollment command will be revoked, and task claims paused. Apps, subscriptions and execution history are retained.")}</AlertDescription></Alert>}
+            {recovery.state === "failed" || recovery.state === "preparing" ? copy(language, "命令准备尚未完成。核对现场后再继续，系统不会自动重复操作。", "Command preparation is incomplete. Inspect the operation before continuing; it will not run again automatically.") : copy(language, "需要继续核对网络地址和应用恢复；节点在线不代表业务已恢复。", "Network addresses and application recovery still need verification. Being online does not mean business is restored.")}
+          </AlertDescription></Alert> : <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "确认后替换管理身份", "Confirm management identity replacement")}</AlertTitle><AlertDescription>{copy(language, "旧 Agent 凭据、接入命令和受管私网身份将撤销，任务领取暂停。应用、订阅和历史执行记录保留。", "The previous Agent credential, enrollment command and managed private identity will be revoked, and task claims paused. Apps, subscriptions and execution history are retained.")}</AlertDescription></Alert>}
+          {recovery?.lastError ? <Alert variant="destructive"><AlertTitle>{copy(language, "恢复已暂停", "Recovery paused")}</AlertTitle><AlertDescription>{userError(language, recovery.lastError)}</AlertDescription></Alert> : null}
           <section aria-label={copy(language, "恢复清单", "Recovery checklist")} className="flex flex-col gap-3 rounded-xl border p-4">
             <div className="flex items-start justify-between gap-3 text-sm"><span>{copy(language, "私网与入口", "Network and access")}</span><span className="text-right text-muted-foreground">{plan.privateNetwork.privateAddress || plan.privateNetwork.serviceAddress || copy(language, "待确认", "Needs review")}</span></div>
+            {recovery?.privateIsolation === "withdrawn" ? <p className="text-xs text-muted-foreground">{copy(language, "已确认旧私网身份撤销。", "Previous private identity withdrawal verified.")}</p> : null}
             <p className="text-xs text-muted-foreground">{plan.privateNetwork.addressRecovery === "explicit_migration_required" ? copy(language, "当前私网控制面不支持指定原 IP，需明确确认地址迁移。", "The current private controller cannot pin the old IP; address migration requires explicit review.") : copy(language, "原地址作为恢复依据保留，需核对新机器的实际网络。", "The previous address is retained as recovery evidence; verify the new machine's actual network.")} {copy(language, `${plan.privateNetwork.landingRoutes} 条落地授权 · ${plan.privateNetwork.publications} 个入口`, `${plan.privateNetwork.landingRoutes} landing grants · ${plan.privateNetwork.publications} access entries`)}</p>
             <div className="flex items-center justify-between gap-3 text-sm"><span>{copy(language, "应用", "Applications")}</span><Badge variant="secondary">{plan.applications.length}</Badge></div>
             {plan.applications.length ? <ul className="flex flex-col gap-2">{plan.applications.map((app) => <li className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm" key={app.applicationId}><span className="min-w-0 break-words">{app.name} <span className="text-xs text-muted-foreground">{app.version}</span></span><span className="text-xs text-muted-foreground">{recoveryLabel(app.recovery, language)}</span></li>)}</ul> : <p className="text-xs text-muted-foreground">{copy(language, "无应用需要恢复", "No applications to restore")}</p>}
@@ -84,6 +88,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
         <Button disabled={busy} onClick={refresh} variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "刷新状态", "Refresh status")}</Button>
         <Button onClick={onClose} variant="outline">{copy(language, "关闭", "Close")}</Button>
         {plan && !command && (!recovery || recovery.state === "awaiting_enrollment") ? <Button disabled={busy || (agent.connected && !recovery)} onClick={() => void confirm()}>{recovery ? copy(language, "取回接入命令", "Retrieve command") : copy(language, "确认接替并生成命令", "Confirm and create command")}</Button> : null}
+        {recovery?.privateIsolation === "pending" && (recovery.state === "failed" || recovery.state === "preparing") ? <Button disabled={busy} onClick={() => void confirm(true)}>{copy(language, "核对并继续隔离", "Inspect and continue isolation")}</Button> : null}
       </SheetFooter>
     </SheetContent>
   </Sheet>;

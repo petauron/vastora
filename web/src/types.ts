@@ -350,6 +350,8 @@ export type XrayConfigurationRecovery = {
 
 export type AgentReinstallOperation = {
   id: string; planRevision: string; state: "preparing" | "awaiting_enrollment" | "review_required" | "failed";
+  privateIsolation: "pending" | "not_required" | "withdrawn";
+  attempt: number;
   authorizedBy: string; previousFingerprint: string; replacementFingerprint: string;
   lastError: string; createdAt: string; updatedAt: string;
 };

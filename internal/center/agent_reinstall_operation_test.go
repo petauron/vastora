@@ -96,9 +96,13 @@ func TestAgentReinstallFencesPendingWorkAndRuntimeRebuild(t *testing.T) {
 	if _, err := store.db.Exec(`INSERT INTO agent_network_profiles(agent_id,service_address,lan_address,enabled_kinds_json,direct_public,confirmed_at,candidate_observed_at) VALUES(?,'10.0.0.7','10.0.0.7','["lan"]',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`UPDATE agents SET tailscale_ownership='managed' WHERE id=?`, node.ID); err != nil {
-		t.Fatal(err)
-	}
+	setReinstallPrivateObservation(t, store, node.ID)
+	serveRemovalHeadscale(t, store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/node" {
+			t.Errorf("unexpected private mutation: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"nodes":[]}`))
+	}))
 	if _, err := store.db.Exec(`UPDATE agent_network_profiles SET headscale_address='100.64.0.2' WHERE agent_id=?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -292,5 +296,52 @@ func TestAgentReinstallAPIRequiresReviewedAdminConfirmation(t *testing.T) {
 	plan, err = store.AgentReinstallPlan(ctx, node.ID)
 	if err != nil || plan.Recovery == nil || plan.Recovery.AuthorizedBy != adminID {
 		t.Fatalf("request administrator not recorded: %+v %v", plan.Recovery, err)
+	}
+}
+
+func TestAgentReinstallIsolationContinuationAPIRequiresCurrentAuthorization(t *testing.T) {
+	store, node := prepareReinstallNode(t)
+	ctx := context.Background()
+	session, csrf, err := store.CreateFirstAdmin(ctx, "admin", "correct-horse-battery-staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminID, err := store.SessionAdminID(ctx, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := reviewedReconnectInput(t, store, node.ID)
+	if _, err = store.beginAgentReinstall(ctx, node.ID, adminID, input); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(AgentReinstallContinueInput{OperationID: input.OperationID, ExpectedAttempt: 1, ConfirmIsolation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServer(store, "", false).Handler()
+	for _, scenario := range []struct {
+		auth, csrf bool
+		body       []byte
+		status     int
+	}{
+		{false, false, encoded, 401}, {true, false, encoded, 401}, {true, true, []byte(`{}`), 400}, {true, true, encoded, 201}, {true, true, encoded, 400},
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/reinstall-isolation/continue", bytes.NewReader(scenario.body))
+		r.Header.Set("Content-Type", "application/json")
+		if scenario.auth {
+			r.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
+		}
+		if scenario.csrf {
+			r.AddCookie(&http.Cookie{Name: "vastora_csrf", Value: csrf})
+			r.Header.Set("X-CSRF-Token", csrf)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != scenario.status {
+			t.Fatalf("status %d want %d: %s", w.Code, scenario.status, w.Body.String())
+		}
+		if w.Code == 201 && w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("continued command can be cached")
+		}
 	}
 }

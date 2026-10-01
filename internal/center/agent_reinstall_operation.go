@@ -19,10 +19,18 @@ type AgentReinstallInput struct {
 	ConfirmReplacement bool   `json:"confirmReplacement"`
 }
 
+type AgentReinstallContinueInput struct {
+	OperationID      string `json:"operationId"`
+	ExpectedAttempt  int    `json:"expectedAttempt"`
+	ConfirmIsolation bool   `json:"confirmIsolation"`
+}
+
 type AgentReinstallOperation struct {
 	ID                     string `json:"id"`
 	PlanRevision           string `json:"planRevision"`
 	State                  string `json:"state"`
+	PrivateIsolation       string `json:"privateIsolation"`
+	Attempt                int    `json:"attempt"`
 	AuthorizedBy           string `json:"authorizedBy"`
 	PreviousFingerprint    string `json:"previousFingerprint"`
 	ReplacementFingerprint string `json:"replacementFingerprint"`
@@ -33,9 +41,9 @@ type AgentReinstallOperation struct {
 
 func readAgentReinstallOperation(ctx context.Context, q networkQueryer, agentID string) (*AgentReinstallOperation, error) {
 	var op AgentReinstallOperation
-	err := q.QueryRowContext(ctx, `SELECT id,plan_revision,state,authorized_by,previous_fingerprint,replacement_fingerprint,last_error,created_at,updated_at
+	err := q.QueryRowContext(ctx, `SELECT id,plan_revision,state,private_isolation,attempt,authorized_by,previous_fingerprint,replacement_fingerprint,last_error,created_at,updated_at
  FROM agent_reinstall_operations WHERE agent_id=? AND state NOT IN ('superseded','completed')`, agentID).
-		Scan(&op.ID, &op.PlanRevision, &op.State, &op.AuthorizedBy, &op.PreviousFingerprint, &op.ReplacementFingerprint, &op.LastError, &op.CreatedAt, &op.UpdatedAt)
+		Scan(&op.ID, &op.PlanRevision, &op.State, &op.PrivateIsolation, &op.Attempt, &op.AuthorizedBy, &op.PreviousFingerprint, &op.ReplacementFingerprint, &op.LastError, &op.CreatedAt, &op.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -49,6 +57,8 @@ func agentReinstallBlocked(ctx context.Context, q networkQueryer, agentID string
 }
 
 func (s *Store) CreateAgentReconnectEnrollment(ctx context.Context, agentID, adminID string, input AgentReinstallInput) (AgentEnrollment, error) {
+	s.agentReinstallMu.Lock()
+	defer s.agentReinstallMu.Unlock()
 	cached, err := s.beginAgentReinstall(ctx, strings.TrimSpace(agentID), adminID, input)
 	if err != nil {
 		return AgentEnrollment{}, err
@@ -56,13 +66,45 @@ func (s *Store) CreateAgentReconnectEnrollment(ctx context.Context, agentID, adm
 	if cached != nil {
 		return *cached, nil
 	}
-	enrollment, err := s.createAgentReconnectEnrollment(ctx, agentID, input.OperationID)
+	return s.prepareAgentReinstallEnrollment(ctx, agentID, input.OperationID)
+}
+
+// Only an explicit action using the inspected attempt can continue interrupted
+// identity isolation. Never resume bootstrap creation with an uncertain result.
+func (s *Store) ContinueAgentReinstallIsolation(ctx context.Context, agentID, adminID string, input AgentReinstallContinueInput) (AgentEnrollment, error) {
+	s.agentReinstallMu.Lock()
+	defer s.agentReinstallMu.Unlock()
+	if !input.ConfirmIsolation || input.ExpectedAttempt < 1 {
+		return AgentEnrollment{}, errors.New("center: explicitly confirm private identity inspection before continuing")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE agent_reinstall_operations SET state='preparing',attempt=attempt+1,last_error='',updated_at=?
+ WHERE id=? AND agent_id=? AND authorized_by=? AND attempt=? AND state IN ('preparing','failed') AND private_isolation='pending'
+ AND EXISTS(SELECT 1 FROM admins WHERE id=?) AND EXISTS(SELECT 1 FROM agents WHERE id=? AND credential_revoked_at<>'')`, s.now().UTC().Format(time.RFC3339Nano), input.OperationID, agentID, adminID, input.ExpectedAttempt, adminID, agentID)
+	if err != nil {
+		return AgentEnrollment{}, err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		return AgentEnrollment{}, errors.New("center: recovery progress changed or command preparation already started; refresh before continuing")
+	}
+	return s.prepareAgentReinstallEnrollment(ctx, agentID, input.OperationID)
+}
+
+func (s *Store) prepareAgentReinstallEnrollment(ctx context.Context, agentID, operationID string) (AgentEnrollment, error) {
+	err := s.isolateReinstallPrivateIdentity(ctx, agentID, operationID)
+	message := ""
+	var enrollment AgentEnrollment
+	if err != nil {
+		message = err.Error()
+	} else {
+		enrollment, err = s.createAgentReconnectEnrollment(ctx, agentID, operationID)
+		message = "center: command preparation stopped; inspect recovery before continuing"
+	}
 	if err != nil {
 		// A lost external response is not permission to replay bootstrap creation.
 		// Keep the persistent fence, including when the request context was cancelled.
 		failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_, saveErr := s.db.ExecContext(failureCtx, `UPDATE agent_reinstall_operations SET state='failed',last_error='Command preparation stopped; inspect recovery before continuing',updated_at=? WHERE id=? AND state='preparing'`, s.now().UTC().Format(time.RFC3339Nano), input.OperationID)
+		_, saveErr := s.db.ExecContext(failureCtx, `UPDATE agent_reinstall_operations SET state='failed',last_error=?,updated_at=? WHERE id=? AND state='preparing'`, message, s.now().UTC().Format(time.RFC3339Nano), operationID)
 		if saveErr != nil {
 			return AgentEnrollment{}, errors.Join(err, saveErr)
 		}
@@ -147,6 +189,10 @@ func (s *Store) beginAgentReinstall(ctx context.Context, agentID, adminID string
 	if plan.Recovery != nil && plan.Recovery.State != "awaiting_enrollment" {
 		return nil, errors.New("center: recovery already started; inspect its saved progress before continuing")
 	}
+	privateIdentity, err := captureReinstallPrivateIdentity(ctx, tx, agentID, plan.PrivateNetwork)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	// Only an explicit, fresh review may replace an unused grant. The operation
 	// history remains; retrying the same request ID above returns the same command.
@@ -158,7 +204,7 @@ func (s *Store) beginAgentReinstall(ctx context.Context, agentID, adminID string
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_reinstall_operations(id,agent_id,authorized_by,plan_revision,plan_json,previous_fingerprint,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'preparing',?,?)`, input.OperationID, agentID, adminID, input.PlanRevision, encoded, plan.IdentityFingerprint, now, now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_reinstall_operations(id,agent_id,authorized_by,plan_revision,plan_json,previous_fingerprint,private_identity_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'preparing',?,?)`, input.OperationID, agentID, adminID, input.PlanRevision, encoded, plan.IdentityFingerprint, privateIdentity, now, now); err != nil {
 		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM secrets WHERE id IN (SELECT bootstrap_secret_id FROM agent_enrollment_tokens WHERE target_agent_id=? AND bootstrap_secret_id IS NOT NULL)`, agentID); err != nil {
@@ -189,7 +235,7 @@ func (s *Store) saveAgentReinstallEnrollment(ctx context.Context, tx *sql.Tx, ag
 	if err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_operations SET state='awaiting_enrollment',enrollment_token_hash=?,sealed_enrollment=?,updated_at=? WHERE id=? AND agent_id=? AND state='preparing'`, tokenHash(enrollment.Token), sealed, now, operationID, agentID)
+	result, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_operations SET state='awaiting_enrollment',enrollment_token_hash=?,sealed_enrollment=?,updated_at=? WHERE id=? AND agent_id=? AND state='preparing' AND private_isolation IN ('not_required','withdrawn')`, tokenHash(enrollment.Token), sealed, now, operationID, agentID)
 	if err != nil {
 		return err
 	}

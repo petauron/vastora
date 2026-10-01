@@ -139,6 +139,7 @@ export const api = {
 	createAgentEnrollment: (siteId: string, name: string, centerUrl: string, useHeadscale: boolean, gateway: boolean, tunnel: boolean, caCertificatePem = "") => request<AgentEnrollment>("/api/v1/agent-enrollments", { method: "POST", body: JSON.stringify({ siteId, name, centerUrl, useHeadscale, gateway, tunnel, caCertificatePem }) }),
 	agentReinstallPlan: (agentId: string) => request<AgentReinstallPlan>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-plan`),
   createAgentReconnectEnrollment: (agentId: string, input: AgentReinstallInput) => request<AgentEnrollment>(`/api/v1/agents/${encodeURIComponent(agentId)}/reconnect`, { method: "POST", body: JSON.stringify(input) }),
+  continueAgentReinstallIsolation: (agentId: string, input: { operationId: string; expectedAttempt: number; confirmIsolation: boolean }) => request<AgentEnrollment>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-isolation/continue`, { method: "POST", body: JSON.stringify(input) }),
   deployments: (signal?: AbortSignal) => request<{ deployments: Deployment[] }>("/api/v1/deployments", { signal }),
 	sites: (signal?: AbortSignal) => request<{ sites: Site[] }>("/api/v1/sites", { signal }),
 	organizations: () => request<{ organizations: Organization[] }>("/api/v1/organizations"),

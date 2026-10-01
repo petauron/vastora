@@ -116,6 +116,13 @@ func (s *Store) createAgentReconnectEnrollment(ctx context.Context, agentID, ope
 	if agentID == "" {
 		return AgentEnrollment{}, errors.New("center: Agent not found")
 	}
+	var isolated bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agent_reinstall_operations WHERE id=? AND agent_id=? AND state='preparing' AND private_isolation IN ('not_required','withdrawn'))`, operationID, agentID).Scan(&isolated); err != nil {
+		return AgentEnrollment{}, err
+	}
+	if !isolated {
+		return AgentEnrollment{}, errors.New("center: previous private identity must be isolated before command preparation")
+	}
 	network, err := s.CenterNetworkConfig(ctx)
 	if err != nil {
 		return AgentEnrollment{}, err
@@ -1149,14 +1156,14 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		byID[agents[index].ID] = index
 		agents[index].NetworkCandidates = []networking.Candidate{}
 	}
-	recoveryRows, err := s.db.QueryContext(ctx, `SELECT agent_id,id,plan_revision,state,authorized_by,previous_fingerprint,replacement_fingerprint,last_error,created_at,updated_at FROM agent_reinstall_operations WHERE state NOT IN ('superseded','completed')`)
+	recoveryRows, err := s.db.QueryContext(ctx, `SELECT agent_id,id,plan_revision,state,private_isolation,attempt,authorized_by,previous_fingerprint,replacement_fingerprint,last_error,created_at,updated_at FROM agent_reinstall_operations WHERE state NOT IN ('superseded','completed')`)
 	if err != nil {
 		return nil, err
 	}
 	for recoveryRows.Next() {
 		var id string
 		var op AgentReinstallOperation
-		if err := recoveryRows.Scan(&id, &op.ID, &op.PlanRevision, &op.State, &op.AuthorizedBy, &op.PreviousFingerprint, &op.ReplacementFingerprint, &op.LastError, &op.CreatedAt, &op.UpdatedAt); err != nil {
+		if err := recoveryRows.Scan(&id, &op.ID, &op.PlanRevision, &op.State, &op.PrivateIsolation, &op.Attempt, &op.AuthorizedBy, &op.PreviousFingerprint, &op.ReplacementFingerprint, &op.LastError, &op.CreatedAt, &op.UpdatedAt); err != nil {
 			recoveryRows.Close()
 			return nil, err
 		}

@@ -13,7 +13,7 @@ const review = (): AgentReinstallPlan => ({
   pendingWork: [{ kind: "application.apply", count: 1 }], executions: [], requirements: [],
 });
 const command = { token: "replacement-token", siteId: "site", centerUrl: "https://center.example.com", installerUrl: "https://center.example.com", expiresAt: "2099-01-01T00:00:00Z" };
-const recovery = { id: "replacement-operation", planRevision: "a".repeat(64), state: "awaiting_enrollment" as const, authorizedBy: "admin", previousFingerprint: "b".repeat(64), replacementFingerprint: "", lastError: "", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z" };
+const recovery = { id: "replacement-operation", planRevision: "a".repeat(64), state: "awaiting_enrollment" as const, privateIsolation: "withdrawn" as const, attempt: 1, authorizedBy: "admin", previousFingerprint: "b".repeat(64), replacementFingerprint: "", lastError: "", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z" };
 const button = (label: string) => [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === label);
 const show = async () => {
   const data = dashboard(); data.agents[0].connected = false;
@@ -73,5 +73,26 @@ describe("node reinstall review", () => {
     await show();
     await act(async () => button("取回接入命令")!.click());
     expect(post).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: recovery.planRevision, confirmReplacement: true });
+  });
+  it("shows the saved isolation failure after reopening without offering another command", async () => {
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue({ ...review(), recovery: { ...recovery, state: "failed", privateIsolation: "pending", lastError: "center: authenticated previous private identity evidence is missing" } });
+    const post = vi.spyOn(api, "createAgentReconnectEnrollment").mockResolvedValue(command);
+    await show();
+    expect(document.body.textContent).toContain("缺少旧机器已认证的私网身份记录");
+    expect(button("确认接替并生成命令")).toBeUndefined();
+    expect(button("取回接入命令")).toBeUndefined();
+    expect(post).not.toHaveBeenCalled();
+  });
+  it("continues isolation only on explicit action bound to the inspected attempt", async () => {
+    const paused = { ...review(), recovery: { ...recovery, state: "failed" as const, privateIsolation: "pending" as const, attempt: 2, lastError: "center: private identity withdrawal was not confirmed; inspect the saved identity before continuing" } };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(paused).mockResolvedValue({ ...review(), recovery: { ...recovery, attempt: 3 } });
+    const proceed = vi.spyOn(api, "continueAgentReinstallIsolation").mockResolvedValue(command);
+    await show();
+    expect(proceed).not.toHaveBeenCalled();
+    await act(async () => button("核对并继续隔离")!.click());
+    expect(proceed).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, expectedAttempt: 2, confirmIsolation: true });
+    expect(document.body.textContent).toContain("旧私网身份撤销");
+    expect(document.body.textContent).toContain("replacement-token");
+    expect(button("核对并继续隔离")).toBeUndefined();
   });
 });

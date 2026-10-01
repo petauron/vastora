@@ -54,6 +54,7 @@ type Store struct {
 	siteCertificateMu              sync.Mutex
 	publicationCleanupMu           sync.Mutex
 	agentRemovalMu                 sync.Mutex
+	agentReinstallMu               sync.Mutex
 	publicationVerificationMu      sync.Mutex
 	publicationVerificationJobs    map[string]*publicationVerificationJob
 	publicationVerificationBackoff func(int) time.Duration
