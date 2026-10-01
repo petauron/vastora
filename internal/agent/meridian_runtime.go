@@ -173,8 +173,8 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 
 // replaceMeridianPendingState is deliberately reachable only through an
 // operator-authorized Center task. It replaces an uncertain journal entry
-// with the complete current Center projection; the active file is still kept
-// as the transactional rollback input until the new container is healthy.
+// with the complete current Center projection. Both artifact versions remain
+// in the encrypted journal until the new container is healthy.
 func (e ApplicationExecutor) replaceMeridianPendingState(ctx context.Context, state meridianRuntimeState, task meridianruntime.Task, gid uint32) (meridianRuntimeState, error) {
 	if !task.ReplacePendingState || state.Pending == nil {
 		return state, errors.New("agent: Meridian pending-state replacement was not authorized")
@@ -370,12 +370,6 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	}
 	deployment := DeploymentTask{ID: "meridian-runtime-r" + fmt.Sprint(task.Desired.Revision), AppKey: meridianKey, ApplicationID: task.ApplicationID}
 	options := meridianHostContainerOptions(deployment, task.ImageReference, active, hy2Enabled, gid)
-	restore := func(recoveryContext context.Context) error {
-		if len(previousActive) == 0 {
-			return nil
-		}
-		return e.Store.writeExactMeridianConfig(previousActive, meridianAppliedRuntimeUID(state))
-	}
 	sha, err := replaceXrayWorkerContainer(ctx, docker, options, func() error {
 		if err := e.beginMeridianLandingHandover(ctx, docker, &state, task, gid); err != nil {
 			return err
@@ -402,7 +396,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 			return errors.New("agent: promoted Meridian configuration digest changed")
 		}
 		return nil
-	}, restore)
+	})
 	if err != nil {
 		return result, err
 	}
@@ -708,15 +702,6 @@ func (s *Store) stageMeridianConfig(encoded []byte, uid int) (string, string, er
 		return "", "", err
 	}
 	return name, filepath.Join(directory, "config.json"), nil
-}
-
-func (s *Store) writeExactMeridianConfig(encoded []byte, uid int) error {
-	staged, active, err := s.stageMeridianConfig(encoded, uid)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(staged)
-	return commitXrayWorkerConfig(staged, active)
 }
 
 func sameMeridianArtifact(left, right meridian.DesiredArtifact) bool {

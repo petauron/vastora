@@ -141,9 +141,7 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 			if deployErr == nil {
 				apiToken, deployErr = deployThreeXUI(ctx, docker, task, bindAddress)
 			}
-			if hadWorkerState && deployErr != nil {
-				deployErr = errors.Join(deployErr, e.Store.ResumeXrayWorker(ctx, socket))
-			} else if hadWorkerState && deployErr == nil {
+			if hadWorkerState && deployErr == nil {
 				deployErr = e.Store.retireXrayWorkerState(ctx)
 			}
 		}

@@ -1,6 +1,6 @@
 # #412 / #428 交付盘点
 
-状态更新（2026-10-01）：MVP 实现已由 [PR #429](https://github.com/petauron/vastora/pull/429) 合并，已包含在 `v0.1.0-alpha.265`。#428 的调用点与连接生命周期定向回归已完成复核，见 [验收记录](agent-local-http-lifecycle.md)。#412 的 issue 收尾单独跟踪，不由本次 #428 复核代替。
+状态更新（2026-10-01）：MVP 实现已由 [PR #429](https://github.com/petauron/vastora/pull/429) 合并，已包含在 `v0.1.0-alpha.265`。#428 的调用点与连接生命周期定向回归已完成复核，见 [验收记录](agent-local-http-lifecycle.md)。#412 本轮补齐 Xray/Meridian 替换失败与进程重启的停止边界，当前契约和回归入口见 [执行策略](agent-execution-stop-on-error.md)；这部分新增修复须由后续版本发布，不能视为 alpha.265 已包含。
 
 下文“固定范围”及五组盘点保留为当时的开发记录，其中“本轮”“仍需”“未提交”等描述对应当时状态，不代表当前发布状态。后续验收以以下 MVP 范围为准，不重新引入已经延后的发布门槛。
 

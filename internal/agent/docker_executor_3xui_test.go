@@ -41,55 +41,6 @@ func TestThreeXUIPortsRejectPublicOnlyServiceAddress(t *testing.T) {
 	}
 }
 
-func TestReplaceXrayWorkerRestoresLegacyRuntimeAfterCandidateFailure(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, true)
-	options := xrayWorkerTestCreateOptions("deployment-2")
-	options.Config.Image = xrayWorkerImageReference
-	options.Config.Labels[xrayWorkerRuntimeLabel] = "xray"
-	restored := false
-	_, err := replaceXrayWorkerContainer(context.Background(), engine, options, nil, func(string) (string, error) {
-		return "worker-token", errors.New("Xray health check failed")
-	}, func(string, string) error {
-		t.Fatal("failed Xray candidate reached post-promotion verification")
-		return nil
-	}, func(context.Context) error {
-		restored = true
-		return nil
-	})
-	if err == nil || !taskOutcomeIsUncertain(err) || !strings.Contains(err.Error(), "Xray health check failed") {
-		t.Fatalf("replacement error = %v", err)
-	}
-	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || current.id != "old" || !current.running || current.labels[xrayWorkerRuntimeLabel] == "xray" {
-		t.Fatalf("legacy worker was not restored: %#v err=%v", current, resolveErr)
-	}
-	if _, resolveErr := engine.resolve("candidate-id"); !errdefs.IsNotFound(resolveErr) {
-		t.Fatalf("failed Xray candidate was retained: %v", resolveErr)
-	}
-	if !restored {
-		t.Fatal("worker state rollback was not invoked")
-	}
-}
-
-func TestReplaceXrayWorkerRestoresLegacyRuntimeAfterPostPromotionFailure(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, true)
-	options := xrayWorkerTestCreateOptions("deployment-2")
-	options.Config.Image = xrayWorkerImageReference
-	options.Config.Labels[xrayWorkerRuntimeLabel] = "xray"
-	_, err := replaceXrayWorkerContainer(context.Background(), engine, options, nil, func(string) (string, error) {
-		return "worker-token", nil
-	}, func(string, string) error {
-		return errors.New("worker receiver unavailable")
-	}, func(context.Context) error { return nil })
-	if err == nil || !strings.Contains(err.Error(), "worker receiver unavailable") {
-		t.Fatalf("post-promotion error = %v", err)
-	}
-	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || current.id != "old" || !current.running {
-		t.Fatalf("legacy worker was not restored after post-promotion failure: %#v err=%v", current, resolveErr)
-	}
-}
-
 type fakeThreeXUIContainer struct {
 	id      string
 	name    string
@@ -132,6 +83,7 @@ type fakeThreeXUIContainerEngine struct {
 	failRemoveName      string
 	failVolumeRemove    bool
 	startCalls          int
+	mutations           []string
 	volumeExists        bool
 	volumeLabels        map[string]string
 	removedVolumes      []string
@@ -170,6 +122,7 @@ func (engine *fakeThreeXUIContainerEngine) resolve(value string) (*fakeThreeXUIC
 }
 
 func (engine *fakeThreeXUIContainerEngine) ContainerCreate(_ context.Context, options client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+	engine.mutations = append(engine.mutations, "create:"+options.Name)
 	if engine.failCreate {
 		return client.ContainerCreateResult{}, errors.New("create failed")
 	}
@@ -185,6 +138,7 @@ func (engine *fakeThreeXUIContainerEngine) ContainerCreate(_ context.Context, op
 }
 
 func (engine *fakeThreeXUIContainerEngine) ContainerStart(_ context.Context, value string, _ client.ContainerStartOptions) (client.ContainerStartResult, error) {
+	engine.mutations = append(engine.mutations, "start:"+value)
 	engine.startCalls++
 	entry, err := engine.resolve(value)
 	if err != nil {
@@ -201,6 +155,7 @@ func (engine *fakeThreeXUIContainerEngine) ContainerStart(_ context.Context, val
 }
 
 func (engine *fakeThreeXUIContainerEngine) ContainerStop(_ context.Context, value string, _ client.ContainerStopOptions) (client.ContainerStopResult, error) {
+	engine.mutations = append(engine.mutations, "stop:"+value)
 	entry, err := engine.resolve(value)
 	if err != nil {
 		return client.ContainerStopResult{}, err
@@ -220,6 +175,7 @@ func (engine *fakeThreeXUIContainerEngine) ContainerStop(_ context.Context, valu
 }
 
 func (engine *fakeThreeXUIContainerEngine) ContainerRemove(_ context.Context, value string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
+	engine.mutations = append(engine.mutations, "remove:"+value)
 	entry, err := engine.resolve(value)
 	if err != nil {
 		return client.ContainerRemoveResult{}, err
@@ -233,6 +189,7 @@ func (engine *fakeThreeXUIContainerEngine) ContainerRemove(_ context.Context, va
 }
 
 func (engine *fakeThreeXUIContainerEngine) ContainerRename(_ context.Context, value string, options client.ContainerRenameOptions) (client.ContainerRenameResult, error) {
+	engine.mutations = append(engine.mutations, "rename:"+value+":"+options.NewName)
 	entry, err := engine.resolve(value)
 	if err != nil {
 		return client.ContainerRenameResult{}, err
