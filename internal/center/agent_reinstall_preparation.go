@@ -24,17 +24,22 @@ type AgentReinstallApplicationInput struct {
 }
 
 type AgentReinstallPreparation struct {
-	DeploymentID string `json:"deploymentId"`
-	State        string `json:"state"`
+	DeploymentID string                 `json:"deploymentId"`
+	State        string                 `json:"state"`
+	Runtime      *AgentReinstallRuntime `json:"runtime,omitempty"`
 }
 
 func (s *Store) readReinstallPreparation(ctx context.Context, tx *sql.Tx, agentID, applicationID string) (*AgentReinstallPreparation, error) {
 	var value AgentReinstallPreparation
-	err := tx.QueryRowContext(ctx, `SELECT d.id,CASE WHEN d.state='running' AND (d.lease_expires_at<=? OR EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=d.id AND e.state IN ('unknown','failed'))) THEN 'needs_review' ELSE d.state END FROM agent_reinstall_app_preparations p JOIN deployments d ON d.id=p.deployment_id
+	err := tx.QueryRowContext(ctx, `SELECT d.id,CASE WHEN d.state='running' AND (d.lease_expires_at<=? OR EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=d.id AND (e.state IN ('unknown','failed') OR e.phase='result_received'))) THEN 'needs_review' ELSE d.state END FROM agent_reinstall_app_preparations p JOIN deployments d ON d.id=p.deployment_id
  JOIN agent_reinstall_operations op ON op.id=p.operation_id WHERE op.agent_id=? AND p.application_id=? AND op.state NOT IN ('completed','superseded')`, s.now().UTC().Format(time.RFC3339Nano), agentID, applicationID).Scan(&value.DeploymentID, &value.State)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	value.Runtime, err = s.readReinstallRuntime(ctx, tx, value.DeploymentID)
 	return &value, err
 }
 
@@ -245,7 +250,7 @@ func (s *Store) validateReinstallPreparation(ctx context.Context, tx *sql.Tx, ag
 	return true, nil
 }
 
-func (s *Store) claimReinstallPreparation(ctx context.Context, agentID, credential, requiredTaskID string, commitTask func(*sql.Tx, *AgentTask) error) (*AgentTask, error) {
+func (s *Store) claimAgentReinstallTask(ctx context.Context, agentID, credential, requiredTaskID string, commitTask func(*sql.Tx, *AgentTask) error) (*AgentTask, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -270,15 +275,12 @@ func (s *Store) claimReinstallPreparation(ctx context.Context, agentID, credenti
 	} else if blocked {
 		return nil, errExecutionBlocked
 	}
-	var id string
-	err = tx.QueryRowContext(ctx, `SELECT p.deployment_id FROM agent_reinstall_app_preparations p JOIN deployments d ON d.id=p.deployment_id
- JOIN agent_reinstall_operations op ON op.id=p.operation_id WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required'
- AND d.state='pending' AND d.attempt=0 AND (?='' OR d.id=?) ORDER BY d.created_at,d.rowid LIMIT 1`, agentID, requiredTaskID, requiredTaskID).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errExecutionBlocked
-	}
+	id, err := pendingAgentReinstallTask(ctx, tx, agentID, requiredTaskID)
 	if err != nil {
 		return nil, err
+	}
+	if strings.HasPrefix(id, "reinstall-runtime-") {
+		return s.claimReinstallRuntime(ctx, tx, agentID, id, commitTask)
 	}
 	pending, err := readPendingApplicationDeployment(ctx, tx, agentID, id)
 	if err != nil {
@@ -305,4 +307,18 @@ func (s *Server) handleAgentReinstallPreparation(writer http.ResponseWriter, req
 	}
 	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusOK, result)
+}
+
+func pendingAgentReinstallTask(ctx context.Context, tx *sql.Tx, agentID, requiredTaskID string) (string, error) {
+	var id string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM (
+ SELECT d.id,d.created_at FROM agent_reinstall_app_preparations p JOIN deployments d ON d.id=p.deployment_id JOIN agent_reinstall_operations op ON op.id=p.operation_id
+ WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND d.attempt=0
+ UNION ALL SELECT c.id,c.created_at FROM agent_reinstall_app_preparations p JOIN application_commands c ON c.id=p.runtime_command_id JOIN agent_reinstall_operations op ON op.id=p.operation_id
+ WHERE c.agent_id=? AND op.agent_id=c.agent_id AND op.state='review_required' AND c.state='pending' AND c.attempt=0
+ ) WHERE (?='' OR id=?) ORDER BY created_at,id LIMIT 1`, agentID, agentID, requiredTaskID, requiredTaskID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errExecutionBlocked
+	}
+	return id, err
 }

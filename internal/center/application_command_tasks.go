@@ -412,6 +412,12 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 	if currentState != "running" || expectedAttempt <= 0 || expectedAttempt != attempt {
 		return errors.New("center: stale application operation result")
 	}
+	if strings.HasPrefix(taskID, "reinstall-runtime-") {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeReinstallRuntime(ctx, tx, commit, agentID, taskID, succeeded, taskError, rawResult)
+	}
 	if reconciliationRequired {
 		if succeeded || taskError == "" || appKey != threeXUIAppKey && appKey != meridianAppKey {
 			return errInvalidReconciliationDisposition

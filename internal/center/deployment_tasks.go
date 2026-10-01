@@ -96,7 +96,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if blocked, err := agentReinstallBlocked(ctx, s.db, agentID); err != nil {
 		return nil, err
 	} else if blocked {
-		return s.claimReinstallPreparation(ctx, agentID, credential, requiredTaskID, commitTask)
+		return s.claimAgentReinstallTask(ctx, agentID, credential, requiredTaskID, commitTask)
 	}
 	if paused, err := executionClaimsPaused(ctx, s.db); err != nil {
 		return nil, err

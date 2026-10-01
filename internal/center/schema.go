@@ -107,6 +107,11 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
  replacement_key BLOB NOT NULL,
  approval_json BLOB NOT NULL CHECK(json_valid(approval_json)),
  task_json BLOB NOT NULL CHECK(json_valid(task_json)),
+ runtime_command_id TEXT UNIQUE REFERENCES application_commands(id) ON DELETE CASCADE,
+ runtime_endpoint_id TEXT REFERENCES meridian_endpoints(id) ON DELETE CASCADE,
+ runtime_plan_revision TEXT NOT NULL DEFAULT '',
+ runtime_revision INTEGER NOT NULL DEFAULT 0,
+ runtime_task_sha256 TEXT NOT NULL DEFAULT '',
  UNIQUE(operation_id,application_id)
 )`,
 		`CREATE TABLE agent_reinstall_monitor_inspections (

@@ -140,6 +140,10 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 	if err != nil {
 		return plan, err
 	}
+	meridianRevision, err := reinstallMeridianEvidence(ctx, tx, agentID)
+	if err != nil {
+		return plan, err
+	}
 	monitoringRevision, err := s.readReinstallMonitoring(ctx, tx, &plan)
 	if err != nil {
 		return plan, err
@@ -180,7 +184,8 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 		WorkRevision        string
 		ApplicationRevision string
 		MonitoringRevision  string
-	}{review, workRevision, applicationRevision, monitoringRevision})
+		MeridianRevision    string
+	}{review, workRevision, applicationRevision, monitoringRevision, meridianRevision})
 	if err != nil {
 		return plan, err
 	}

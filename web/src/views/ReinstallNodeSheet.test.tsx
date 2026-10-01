@@ -252,6 +252,52 @@ describe("original monitoring identity inspection", () => {
 
 describe("replacement application preparation", () => {
   const preparedPlan = (): AgentReinstallPlan => ({ ...review(), recovery: { ...recovery, state: "review_required", replacementFingerprint: "c".repeat(64) }, networkReview: { ...networkReview(), approvalCurrent: true } });
+  const runtimePlan = () => {
+    const plan = preparedPlan();
+    plan.applications[0].preparation = { deploymentId: "fresh-preparation", state: "succeeded" };
+    return plan;
+  };
+  it("restores runtime only on explicit approval and retains pending business verification", async () => {
+    const plan = runtimePlan();
+    const runtime = { commandId: "approved-runtime", state: "succeeded" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, applications: plan.applications.map((app) => ({ ...app, preparation: { ...app.preparation!, runtime } })) });
+    const restore = vi.spyOn(api, "restoreAgentReinstallRuntime").mockResolvedValue(runtime);
+    await show();
+    expect(restore).not.toHaveBeenCalled();
+    await act(async () => button("恢复运行配置")!.click());
+    expect(restore).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "app" });
+    expect(document.body.textContent).toContain("本机配置已恢复 · 入口与落地待验证");
+    expect(document.body.textContent).toContain("业务验证尚未完成");
+    expect(button("恢复运行配置")).toBeUndefined();
+  });
+  it.each(["network", "old-work"])("keeps runtime disabled for %s prerequisites", async (mode) => {
+    const plan = runtimePlan();
+    if (mode === "network") plan.networkReview!.approvalCurrent = false;
+    else plan.unclaimedLocalWork = [{ taskId: "previous-task", kind: "application.apply", revision: 0 }];
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    await show();
+    expect(button("恢复运行配置")!.disabled).toBe(true);
+  });
+  it.each(["pending", "running", "failed", "needs_review"])("does not replay a %s runtime receipt", async (state) => {
+    const plan = runtimePlan();
+    plan.applications[0].preparation!.runtime = { commandId: "approved-runtime", state };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const restore = vi.spyOn(api, "restoreAgentReinstallRuntime");
+    await show();
+    await act(async () => button("刷新状态")!.click());
+    expect(restore).not.toHaveBeenCalled();
+    expect(button("恢复运行配置")).toBeUndefined();
+    expect(document.body.textContent).toContain(state === "pending" || state === "running" ? "正在恢复运行配置" : "运行配置结果需核对");
+  });
+  it("does not retry runtime restoration after a lost response", async () => {
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(runtimePlan());
+    const restore = vi.spyOn(api, "restoreAgentReinstallRuntime").mockRejectedValue(new Error("connection lost"));
+    await show();
+    await act(async () => button("恢复运行配置")!.click());
+    await act(async () => button("刷新状态")!.click());
+    expect(restore).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).not.toContain("本机配置已恢复");
+  });
   it("requires an explicit click and distinguishes a prepared image from restored runtime", async () => {
     const plan = preparedPlan();
     const receipt = { deploymentId: "fresh-preparation", state: "succeeded" };

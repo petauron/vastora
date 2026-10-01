@@ -7060,6 +7060,25 @@
                                   },
                                   "state": {
                                     "type": "string"
+                                  },
+                                  "runtime": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "commandId": {
+                                            "type": "string"
+                                          },
+                                          "state": {
+                                            "type": "string"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
                                   }
                                 }
                               },
@@ -7783,6 +7802,102 @@
         "description": "Explicit administrator settlement of reviewed, retired host-local executions after old identity isolation and replacement enrollment. Preserves historical outcomes and encrypted evidence, atomically abandons exact attempts, cancels reviewed pending attempt-zero local tasks with no historical authorization, and records a durable receipt. Saved application intent and credentials are retained. Remote or unclassified effects require separate review. Does not dispatch restoration or release the recovery fence."
       }
     },
+    "/api/v1/agents/{id}/reinstall-applications/restore-runtime": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Runtime",
+        "operationId": "agentReinstallRuntime_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "commandId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Restore one reviewed native Meridian runtime using the saved package and credentials on the approved replacement address. Fixed egress remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery."
+      }
+    },
     "/api/v1/agents/{id}/reinstall-applications/prepare": {
       "post": {
         "tags": [
@@ -7811,6 +7926,25 @@
                     },
                     "state": {
                       "type": "string"
+                    },
+                    "runtime": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "commandId": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
                   }
                 }

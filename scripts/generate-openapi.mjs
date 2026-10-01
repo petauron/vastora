@@ -420,6 +420,12 @@ for (const route of routes) {
     operation.description = "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization.";
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallPlan");
   }
+  if (route.handler === "handleAgentReinstallRuntime") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallRuntime");
+    operation.description = "Restore one reviewed native Meridian runtime using the saved package and credentials on the approved replacement address. Fixed egress remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery.";
+  }
   if (route.handler === "handleAgentReinstallPreparation") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");

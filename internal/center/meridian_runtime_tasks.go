@@ -289,7 +289,19 @@ func (s *Store) discardSupersededMeridianRuntimeCommand(ctx context.Context, tx 
 	return true, errApplicationCommandDiscarded
 }
 
+// A replacement first restores only native credentials on its approved address.
+// Fixed egress requires separate withdrawal and authorization of its new peer.
+type meridianRuntimeRestoreTarget struct {
+	Address  string
+	Image    string
+	Revision uint64
+}
+
 func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpointID, expectedAgentID string) (meridianRuntimeProjection, error) {
+	return s.buildMeridianRuntimeProjection(ctx, tx, endpointID, expectedAgentID, nil)
+}
+
+func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, endpointID, expectedAgentID string, restore *meridianRuntimeRestoreTarget) (meridianRuntimeProjection, error) {
 	var projection meridianRuntimeProjection
 	var endpoint meridian.RealityEndpoint
 	var hysteriaEndpoint meridian.HysteriaEndpoint
@@ -304,9 +316,9 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 		endpoint.vless_enabled,endpoint.hy2_enabled,endpoint.hy2_inbound_tag,endpoint.hy2_server_name,endpoint.hy2_certificate_secret_id,endpoint.hy2_private_key_secret_id,endpoint.hy2_certificate_not_after,
 		endpoint.desired_revision,endpoint.applied_revision,endpoint.runtime_healthy,endpoint.legacy_retired,endpoint.status,COALESCE(deployment.desired_sha256,''),endpoint.source_peer_json
 		FROM meridian_endpoints endpoint
-		JOIN applications application ON application.id=endpoint.application_id AND application.app_key=? AND application.status='running'
+		JOIN applications application ON application.id=endpoint.application_id AND application.app_key=? AND (application.status='running' OR ?)
 		LEFT JOIN meridian_deployments deployment ON deployment.endpoint_id=endpoint.id AND deployment.desired_revision=endpoint.desired_revision
-		WHERE endpoint.id=? AND endpoint.status<>'retired'`, meridianAppKey, endpointID).Scan(
+		WHERE endpoint.id=? AND endpoint.status<>'retired'`, meridianAppKey, restore != nil, endpointID).Scan(
 		&projection.task.ApplicationID, &projection.agentID, &projection.task.ImageReference, &projection.serviceID,
 		&endpoint.InboundTag, &endpoint.ListenAddress, &endpoint.ListenPort, &endpoint.AdvertiseHost, &endpoint.AdvertisePort, &endpoint.Target,
 		&serverNamesJSON, &privateKeySecretID, &endpoint.PublicKey, &shortIDsJSON, &endpoint.Fingerprint,
@@ -322,8 +334,16 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 	if expectedAgentID != "" && projection.agentID != expectedAgentID {
 		return projection, errors.New("center: Meridian endpoint moved to another Agent")
 	}
-	if expectedAgentID != "" && expectedSHA == "" {
+	if restore == nil && expectedAgentID != "" && expectedSHA == "" {
 		return projection, errors.New("center: Meridian deployment digest is unavailable")
+	}
+	if restore != nil {
+		if restore.Revision != uint64(revision) {
+			return projection, errors.New("center: reviewed Meridian runtime revision changed")
+		}
+		endpoint.ListenAddress = restore.Address
+		projection.task.ImageReference = restore.Image
+		expectedSHA = ""
 	}
 	endpoint.ID, endpoint.EntryID = endpointID, projection.task.ApplicationID
 	if revision < 1 || json.Unmarshal(serverNamesJSON, &endpoint.ServerNames) != nil || json.Unmarshal(shortIDsJSON, &endpoint.ShortIDs) != nil {
@@ -373,12 +393,15 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 	if vlessEnabled == 1 {
 		routeInboundTag = endpoint.InboundTag
 	}
-	routes, err := s.meridianRuntimeGrants(ctx, tx, endpointID, routeInboundTag, credentialByID)
-	if err != nil {
-		return projection, err
+	routes := meridianRuntimeRoutes{}
+	if restore == nil {
+		routes, err = s.meridianRuntimeGrants(ctx, tx, endpointID, routeInboundTag, credentialByID)
+		if err != nil {
+			return projection, err
+		}
 	}
 	for index := range materials {
-		if routes.disabledCredentialIDs[materials[index].Credential.ID] {
+		if routes.disabledCredentialIDs[materials[index].Credential.ID] || restore != nil && materials[index].Credential.EgressID != "" {
 			materials[index].Credential.Enabled = false
 		}
 	}
@@ -419,7 +442,7 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 			return projection, err
 		}
 	}
-	projection.task.RetireLegacy = retirePhase && legacyRetired == 0 && endpointStatus == "ready" && runtimeHealthy == 1 && appliedRevision == revision && unreadyRoutes == 0
+	projection.task.RetireLegacy = restore == nil && retirePhase && legacyRetired == 0 && endpointStatus == "ready" && runtimeHealthy == 1 && appliedRevision == revision && unreadyRoutes == 0
 	if projection.task.Validate() != nil {
 		return projection, errors.New("center: Meridian runtime task is invalid")
 	}
