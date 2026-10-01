@@ -72,7 +72,7 @@ func meridianIperfOptions(task nodediagnostics.Task, server bool) client.Contain
 	pids := int64(32)
 	return client.ContainerCreateOptions{
 		Config: &container.Config{Image: meridianIperfImage, User: "1000:1000", WorkingDir: "/tmp", Env: env,
-			Entrypoint: []string{"/bin/sh", "-c", script, "meridian-iperf"}, Cmd: cmd,
+			Entrypoint: []string{"timeout", "-s", "KILL", "235", "/bin/sh", "-c", script, "meridian-iperf"}, Cmd: cmd,
 			Labels: map[string]string{"io.vastora.application": "meridian", "io.vastora.diagnostic": "link-bandwidth"}},
 		HostConfig: &container.HostConfig{NetworkMode: "host", AutoRemove: false, ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"},
 			Tmpfs: map[string]string{"/tmp": "rw,nosuid,size=2m,mode=1777"}, LogConfig: container.LogConfig{Type: "none"},
