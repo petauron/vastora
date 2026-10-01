@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.267](https://github.com/petauron/vastora/compare/v0.1.0-alpha.266...v0.1.0-alpha.267) (2026-10-01)
+
+
+### Bug Fixes
+
+* **meridian:** authenticate and verify link bandwidth probes ([#775](https://github.com/petauron/vastora/issues/775)) ([2ab1042](https://github.com/petauron/vastora/commit/2ab10420b552f40e5a67f405db6e57b627428145))
+
 ## [0.1.0-alpha.266](https://github.com/petauron/vastora/compare/v0.1.0-alpha.265...v0.1.0-alpha.266) (2026-10-01)
 
 
