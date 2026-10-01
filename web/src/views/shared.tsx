@@ -20,6 +20,24 @@ export function userError(language: Language, error: unknown) {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const normalized = detail.toLowerCase();
+  if (normalized === "center: restore the native meridian runtime and wait for a fresh authenticated private identity report before recovering landing access") {
+    return copy(language, "请先恢复本机 Meridian，并等待节点上报最新私网身份，再恢复落地线路。", detail);
+  }
+  if (normalized === "center: this meridian entry has no replacement private identity to recover") {
+    return copy(language, "当前私网身份与原授权一致，无需进行重装恢复。", detail);
+  }
+  if (normalized === "center: meridian replacement identity or configuration changed; inspect it again before confirming") {
+    return copy(language, "节点身份或配置已变化，请重新检查并确认。", detail);
+  }
+  if (normalized === "center: settle active or uncertain executions on the entry and affected landings before identity recovery") {
+    return copy(language, "线路机或相关落地机仍有未完成任务，请先在活动页面处理。", detail);
+  }
+  if (normalized === "center: wait for the affected landing services to finish their current authorization update") {
+    return copy(language, "相关落地机仍在更新授权，请等待完成后重试。", detail);
+  }
+  if (normalized === "center: wait for the landing services to confirm withdrawal of the previous entry identity") {
+    return copy(language, "正在撤回原节点的落地权限，请等待落地机确认后重试。", detail);
+  }
   if (code === "execution_blocked") return copy(language, "相关节点有待处理任务，请处理后重试。", "A related node has unresolved tasks. Resolve them before retrying.");
   if (code === "landing_pool_revision_changed") return copy(language, "全局落地池已变化，请刷新后重试。", "The global landing pool changed. Refresh before retrying.");
   if (normalized === "center: resolve outstanding execution and runtime recovery before updating") {
