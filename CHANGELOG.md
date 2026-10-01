@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.263](https://github.com/petauron/vastora/compare/v0.1.0-alpha.262...v0.1.0-alpha.263) (2026-10-01)
+
+
+### Bug Fixes
+
+* **agent:** use canonical Docker capability for Meridian HY2 ([#765](https://github.com/petauron/vastora/issues/765)) ([6e8ca58](https://github.com/petauron/vastora/commit/6e8ca58a2d4d186c082f516129966e90bc651b32))
+
 ## [0.1.0-alpha.262](https://github.com/petauron/vastora/compare/v0.1.0-alpha.261...v0.1.0-alpha.262) (2026-10-01)
 
 
