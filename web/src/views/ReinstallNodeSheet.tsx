@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2Icon, RotateCcwIcon, ShieldCheckIcon } from "lucide-react";
 import { api } from "../api";
-import type { AgentEnrollment, AgentReinstallInput, AgentReinstallPlan, AgentView } from "../types";
+import type { AgentEnrollment, AgentReinstallInput, AgentReinstallPlan, AgentView, NetworkProfile } from "../types";
 import type { Language } from "../translations";
 import { agentInstallCommand } from "../lib/agent-install";
 import { CopyButton, copy, formatDate, userError } from "./shared";
@@ -9,6 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { ReinstallNetworkReview } from "./ReinstallNetworkReview";
 import { Spinner } from "@/components/ui/spinner";
 
 export function ReinstallNodeSheet({ agent, installerAvailable, language, onClose }: { agent: AgentView; installerAvailable: boolean; language: Language; onClose: () => void }) {
@@ -57,6 +58,21 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
       if (generation.current === current) setBusy(false);
     }
   };
+  const approveNetwork = async (profile: NetworkProfile) => {
+    if (!plan || !recovery || busy) return;
+    const current = generation.current;
+    setBusy(true); setError("");
+    try {
+      await api.approveAgentReinstallNetwork(agent.id, { operationId: recovery.id, planRevision: plan.revision, confirmMigration: true, profile });
+      if (generation.current !== current) return;
+      const latest = await api.agentReinstallPlan(agent.id);
+      if (generation.current === current) setPlan(latest);
+    } catch (cause) {
+      if (generation.current === current) setError(userError(language, cause));
+    } finally {
+      if (generation.current === current) setBusy(false);
+    }
+  };
   const refresh = () => { request.current = null; setRevision((value) => value + 1); };
   return <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
     <SheetContent className="sm:max-w-xl">
@@ -80,6 +96,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
             {plan.applications.length ? <ul className="flex flex-col gap-2">{plan.applications.map((app) => <li className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm" key={app.applicationId}><span className="min-w-0 break-words">{app.name} <span className="text-xs text-muted-foreground">{app.version}</span></span><span className="text-xs text-muted-foreground">{recoveryLabel(app.recovery, language)}</span></li>)}</ul> : <p className="text-xs text-muted-foreground">{copy(language, "无应用需要恢复", "No applications to restore")}</p>}
             <p className="text-xs text-muted-foreground">{copy(language, `${plan.executions.length} 条执行待核对 · ${plan.pendingWork.reduce((total, item) => total + item.count, 0)} 项历史工作保留`, `${plan.executions.length} executions to inspect · ${plan.pendingWork.reduce((total, item) => total + item.count, 0)} historical work items retained`)}</p>
           </section>
+          {joined && plan.networkReview ? <ReinstallNetworkReview key={plan.revision} review={plan.networkReview} busy={busy} language={language} onApprove={approveNetwork} /> : null}
           {command ? <><p className="text-sm">{copy(language, "在重装后的原服务器执行一次", "Run once on the reinstalled original server")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div><p className="text-xs text-muted-foreground">{copy(language, `命令有效期至 ${formatDate(language, enrollment!.expiresAt)}`, `Command valid until ${formatDate(language, enrollment!.expiresAt)}`)}</p></> : null}
           {joined ? <p className="flex items-center gap-2 text-sm"><CheckCircle2Icon aria-hidden="true" className="size-4" />{copy(language, "身份接替已记录；网络、应用和业务验证尚未完成。", "Identity replacement recorded. Network, application and business verification are not complete.")}</p> : null}
         </> : null}

@@ -12,23 +12,25 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/vastora/internal/networking"
 )
 
 // This inventory is a read-only review of saved intent, not permission to replay
 // it. In particular, a successful historical deployment is not evidence that a
 // replacement machine has its data, private identity, or working applications.
 type AgentReinstallPlan struct {
-	Revision            string                      `json:"revision"`
-	Recovery            *AgentReinstallOperation    `json:"recovery,omitempty"`
-	AgentID             string                      `json:"agentId"`
-	CheckedAt           time.Time                   `json:"checkedAt"`
-	IdentityFingerprint string                      `json:"identityFingerprint"`
-	CredentialRevoked   bool                        `json:"credentialRevoked"`
-	PrivateNetwork      AgentReinstallNetwork       `json:"privateNetwork"`
-	Applications        []AgentReinstallApplication `json:"applications"`
-	PendingWork         []AgentReinstallPendingWork `json:"pendingWork"`
-	Executions          []AgentReinstallExecution   `json:"executions"`
-	Requirements        []string                    `json:"requirements"`
+	Revision            string                       `json:"revision"`
+	Recovery            *AgentReinstallOperation     `json:"recovery,omitempty"`
+	AgentID             string                       `json:"agentId"`
+	CheckedAt           time.Time                    `json:"checkedAt"`
+	IdentityFingerprint string                       `json:"identityFingerprint"`
+	CredentialRevoked   bool                         `json:"credentialRevoked"`
+	NetworkReview       *AgentReinstallNetworkReview `json:"networkReview,omitempty"`
+	PrivateNetwork      AgentReinstallNetwork        `json:"privateNetwork"`
+	Applications        []AgentReinstallApplication  `json:"applications"`
+	PendingWork         []AgentReinstallPendingWork  `json:"pendingWork"`
+	Executions          []AgentReinstallExecution    `json:"executions"`
+	Requirements        []string                     `json:"requirements"`
 }
 
 type AgentReinstallNetwork struct {
@@ -131,9 +133,29 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 	if err := readReinstallWork(ctx, tx, &plan); err != nil {
 		return plan, err
 	}
+	plan.NetworkReview, err = s.agentReinstallNetworkReview(ctx, tx, plan.AgentID)
+	if err != nil {
+		return plan, err
+	}
 	// Exclude the read time and operation status from the review binding.
 	review := plan
 	review.CheckedAt = time.Time{}
+	// Heartbeats refresh evidence time without changing the reviewed choices.
+	// Freshness is represented by Ready; address, mapping and identity changes
+	// still invalidate this revision.
+	if plan.NetworkReview != nil {
+		network := *plan.NetworkReview
+		network.Candidates = append([]networking.Candidate{}, network.Candidates...)
+		for i := range network.Candidates {
+			network.Candidates[i].ObservedAt = time.Time{}
+		}
+		if network.PublicEgress != nil {
+			egress := *network.PublicEgress
+			egress.ObservedAt = time.Time{}
+			network.PublicEgress = &egress
+		}
+		review.NetworkReview = &network
+	}
 	encoded, err := json.Marshal(review)
 	if err != nil {
 		return plan, err

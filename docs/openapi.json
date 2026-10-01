@@ -6697,6 +6697,295 @@
                     "credentialRevoked": {
                       "type": "boolean"
                     },
+                    "networkReview": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "previous": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "serviceAddress": {
+                                      "type": "string"
+                                    },
+                                    "lanAddress": {
+                                      "type": "string"
+                                    },
+                                    "headscaleAddress": {
+                                      "type": "string"
+                                    },
+                                    "publicAddress": {
+                                      "type": "string"
+                                    },
+                                    "publicBindAddress": {
+                                      "type": "string"
+                                    },
+                                    "publicMode": {
+                                      "type": "string"
+                                    },
+                                    "enabledKinds": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "directPublic": {
+                                      "type": "boolean"
+                                    },
+                                    "publicVerifiedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "confirmedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "candidateObservedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "candidates": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "address": {
+                                    "type": "string"
+                                  },
+                                  "interface": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string"
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "publicEgress": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "address": {
+                                      "type": "string"
+                                    },
+                                    "bindAddress": {
+                                      "type": "string"
+                                    },
+                                    "mode": {
+                                      "type": "string"
+                                    },
+                                    "observedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "privatePeer": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "publicKey": {
+                                      "type": "string"
+                                    },
+                                    "address": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "ready": {
+                              "type": "boolean"
+                            },
+                            "approval": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "planRevision": {
+                                      "type": "string"
+                                    },
+                                    "previous": {
+                                      "anyOf": [
+                                        {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "serviceAddress": {
+                                              "type": "string"
+                                            },
+                                            "lanAddress": {
+                                              "type": "string"
+                                            },
+                                            "headscaleAddress": {
+                                              "type": "string"
+                                            },
+                                            "publicAddress": {
+                                              "type": "string"
+                                            },
+                                            "publicBindAddress": {
+                                              "type": "string"
+                                            },
+                                            "publicMode": {
+                                              "type": "string"
+                                            },
+                                            "enabledKinds": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "directPublic": {
+                                              "type": "boolean"
+                                            },
+                                            "publicVerifiedAt": {
+                                              "type": "string",
+                                              "format": "date-time"
+                                            },
+                                            "confirmedAt": {
+                                              "type": "string",
+                                              "format": "date-time"
+                                            },
+                                            "candidateObservedAt": {
+                                              "type": "string",
+                                              "format": "date-time"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "profile": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "serviceAddress": {
+                                          "type": "string"
+                                        },
+                                        "lanAddress": {
+                                          "type": "string"
+                                        },
+                                        "headscaleAddress": {
+                                          "type": "string"
+                                        },
+                                        "publicAddress": {
+                                          "type": "string"
+                                        },
+                                        "publicBindAddress": {
+                                          "type": "string"
+                                        },
+                                        "publicMode": {
+                                          "type": "string"
+                                        },
+                                        "enabledKinds": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "directPublic": {
+                                          "type": "boolean"
+                                        },
+                                        "publicVerifiedAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "confirmedAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "candidateObservedAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      }
+                                    },
+                                    "privatePeer": {
+                                      "anyOf": [
+                                        {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "id": {
+                                              "type": "string"
+                                            },
+                                            "publicKey": {
+                                              "type": "string"
+                                            },
+                                            "address": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "controllerId": {
+                                      "type": "string"
+                                    },
+                                    "controllerEndpoint": {
+                                      "type": "string"
+                                    },
+                                    "authorizedBy": {
+                                      "type": "string"
+                                    },
+                                    "approvedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "approvalCurrent": {
+                              "type": "boolean"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "privateNetwork": {
                       "type": "object",
                       "additionalProperties": false,
@@ -6935,6 +7224,276 @@
           }
         },
         "description": "Explicit continuation by the authorizing administrator, bound to the inspected recovery attempt. Rechecks the exact saved private identity and controller; never rediscovers another owner by address. Stale or duplicate continuations cannot repeat an attempt. This action cannot repeat bootstrap preparation with an uncertain result."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-network/approve": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Approve Agent Reinstall Network",
+        "operationId": "approveAgentReinstallNetwork_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "planRevision": {
+                      "type": "string"
+                    },
+                    "previous": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "serviceAddress": {
+                              "type": "string"
+                            },
+                            "lanAddress": {
+                              "type": "string"
+                            },
+                            "headscaleAddress": {
+                              "type": "string"
+                            },
+                            "publicAddress": {
+                              "type": "string"
+                            },
+                            "publicBindAddress": {
+                              "type": "string"
+                            },
+                            "publicMode": {
+                              "type": "string"
+                            },
+                            "enabledKinds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "directPublic": {
+                              "type": "boolean"
+                            },
+                            "publicVerifiedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "confirmedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "candidateObservedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "profile": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "serviceAddress": {
+                          "type": "string"
+                        },
+                        "lanAddress": {
+                          "type": "string"
+                        },
+                        "headscaleAddress": {
+                          "type": "string"
+                        },
+                        "publicAddress": {
+                          "type": "string"
+                        },
+                        "publicBindAddress": {
+                          "type": "string"
+                        },
+                        "publicMode": {
+                          "type": "string"
+                        },
+                        "enabledKinds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "directPublic": {
+                          "type": "boolean"
+                        },
+                        "publicVerifiedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "confirmedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "candidateObservedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "privatePeer": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "publicKey": {
+                              "type": "string"
+                            },
+                            "address": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "controllerId": {
+                      "type": "string"
+                    },
+                    "controllerEndpoint": {
+                      "type": "string"
+                    },
+                    "authorizedBy": {
+                      "type": "string"
+                    },
+                    "approvedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "confirmMigration": {
+                    "type": "boolean"
+                  },
+                  "profile": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "serviceAddress": {
+                        "type": "string"
+                      },
+                      "lanAddress": {
+                        "type": "string"
+                      },
+                      "headscaleAddress": {
+                        "type": "string"
+                      },
+                      "publicAddress": {
+                        "type": "string"
+                      },
+                      "publicBindAddress": {
+                        "type": "string"
+                      },
+                      "publicMode": {
+                        "type": "string"
+                      },
+                      "enabledKinds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "directPublic": {
+                        "type": "boolean"
+                      },
+                      "publicVerifiedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "confirmedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "candidateObservedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicit address migration approval bound to the replacement identity and reviewed network evidence. Verifies managed private identity through the controller and retains previous/new profiles plus administrator audit. Saves restoration intent only; does not activate addresses, change publications or release task execution."
       }
     },
     "/api/v1/agents/{id}": {

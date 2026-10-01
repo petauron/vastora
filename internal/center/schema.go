@@ -74,6 +74,8 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
  replacement_fingerprint TEXT NOT NULL DEFAULT '',
  private_identity_json BLOB NOT NULL DEFAULT '{}' CHECK(json_valid(private_identity_json)),
  private_isolation TEXT NOT NULL DEFAULT 'pending' CHECK(private_isolation IN ('pending','not_required','withdrawn')),
+ replacement_peer_json BLOB NOT NULL DEFAULT '{}' CHECK(json_valid(replacement_peer_json)),
+ replacement_network_observed_at TEXT NOT NULL DEFAULT '',
  attempt INTEGER NOT NULL DEFAULT 1 CHECK(attempt>0),
  state TEXT NOT NULL CHECK(state IN ('preparing','awaiting_enrollment','review_required','failed','superseded','completed')),
  enrollment_token_hash BLOB,
@@ -83,6 +85,12 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
  updated_at TEXT NOT NULL
 )`,
 		`CREATE UNIQUE INDEX agent_reinstall_active_idx ON agent_reinstall_operations(agent_id) WHERE state NOT IN ('superseded','completed')`,
+		`CREATE TABLE agent_reinstall_network_approvals (
+ operation_id TEXT NOT NULL REFERENCES agent_reinstall_operations(id) ON DELETE CASCADE,
+ plan_revision TEXT NOT NULL,
+ approval_json BLOB NOT NULL CHECK(json_valid(approval_json)),
+ PRIMARY KEY(operation_id,plan_revision)
+)`,
 		`CREATE TABLE recovery_evidence (
 			component_key TEXT PRIMARY KEY,
 			artifact_json BLOB NOT NULL CHECK(json_valid(artifact_json)),

@@ -409,6 +409,12 @@ for (const route of routes) {
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallContinueInput");
     operation.description = "Explicit continuation by the authorizing administrator, bound to the inspected recovery attempt. Rechecks the exact saved private identity and controller; never rediscovers another owner by address. Stale or duplicate continuations cannot repeat an attempt. This action cannot repeat bootstrap preparation with an uncertain result.";
   }
+  if (route.handler === "handleApproveAgentReinstallNetwork") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallNetworkInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallNetworkApproval");
+    operation.description = "Explicit address migration approval bound to the replacement identity and reviewed network evidence. Verifies managed private identity through the controller and retains previous/new profiles plus administrator audit. Saves restoration intent only; does not activate addresses, change publications or release task execution.";
+  }
   if (route.handler === "handleAgentReinstallPlan") {
     operation.responses[status].headers = noStoreHeaders;
     operation.description = "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization.";

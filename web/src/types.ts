@@ -359,12 +359,24 @@ export type AgentReinstallInput = { operationId: string; planRevision: string; c
 export type AgentReinstallPlan = {
   agentId: string; revision: string; checkedAt: string; identityFingerprint: string; credentialRevoked: boolean;
   recovery?: AgentReinstallOperation;
+  networkReview?: AgentReinstallNetworkReview;
   privateNetwork: { ownership: string; serviceAddress: string; privateAddress: string; profileRetained: boolean; addressRecovery: string; landingRoutes: number; publications: number };
   applications: Array<{ applicationId: string; name: string; appKey: string; deploymentId: string; version: string; operation: string; state: string; recovery: string; requirements: string[] }>;
   pendingWork: Array<{ kind: string; count: number }>;
   executions: Array<{ id: string; kind: string; state: string; phase: string; identityRetired: boolean }>;
   requirements: string[];
 };
+
+export type ReinstallPrivatePeer = { id: string; publicKey: string; address: string };
+export type AgentReinstallNetworkApproval = {
+  planRevision: string; previous?: NetworkProfile; profile: NetworkProfile; privatePeer?: ReinstallPrivatePeer;
+  controllerId?: string; controllerEndpoint?: string; authorizedBy: string; approvedAt: string;
+};
+export type AgentReinstallNetworkReview = {
+  previous?: NetworkProfile; candidates: NetworkCandidate[]; publicEgress?: PublicEgress;
+  privatePeer?: ReinstallPrivatePeer; ready: boolean; approvalCurrent: boolean; approval?: AgentReinstallNetworkApproval;
+};
+export type AgentReinstallNetworkInput = { operationId: string; planRevision: string; confirmMigration: boolean; profile: NetworkProfile };
 
 export type AgentEnrollment = { token: string; siteId: string; centerUrl?: string; installerUrl: string; caCertificatePem?: string; expiresAt: string };
 

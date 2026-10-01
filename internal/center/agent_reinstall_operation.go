@@ -264,6 +264,17 @@ func acceptAgentReinstallIdentity(ctx context.Context, tx *sql.Tx, agentID strin
 	if changed != 1 {
 		return errors.New("center: replacement requires an authorized recovery command and a new machine key")
 	}
+	// Old-machine address observations cannot become fresh merely because the
+	// replacement enrollment updated last_seen_at.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM agent_network_candidates WHERE agent_id=?`, agentID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM agent_private_peer_capabilities WHERE node_id=?`, agentID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE agents SET public_egress_address='',public_egress_bind_address='',public_egress_mode='',public_egress_observed_at='' WHERE id=?`, agentID); err != nil {
+		return err
+	}
 	// Save the old binding while its old public key still exists. Otherwise a
 	// heartbeat could accidentally attribute the old profile to the new machine.
 	profile, err := networkProfile(ctx, tx, agentID)

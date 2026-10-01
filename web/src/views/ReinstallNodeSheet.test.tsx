@@ -96,3 +96,50 @@ describe("node reinstall review", () => {
     expect(button("核对并继续隔离")).toBeUndefined();
   });
 });
+
+const networkReview = (): NonNullable<AgentReinstallPlan["networkReview"]> => ({
+  previous: { serviceAddress: "100.64.0.2", headscaleAddress: "100.64.0.2", enabledKinds: ["headscale"], directPublic: false },
+  candidates: [{ address: "100.64.0.8", interface: "tailscale0", kind: "headscale", observedAt: "2026-10-01T00:00:00Z" }],
+  privatePeer: { id: "replacement-peer", publicKey: "nodekey:replacement", address: "100.64.0.8" }, ready: true, approvalCurrent: false,
+});
+
+describe("replacement network review", () => {
+  it("binds address approval to the reviewed revision and keeps restoration pending", async () => {
+    const plan = { ...review(), recovery: { ...recovery, state: "review_required" as const }, networkReview: networkReview() };
+    const approval = { planRevision: plan.revision, previous: plan.networkReview.previous, profile: { serviceAddress: "100.64.0.8", headscaleAddress: "100.64.0.8", enabledKinds: ["headscale" as const], directPublic: false }, authorizedBy: "admin", approvedAt: "2026-10-01T00:00:01Z" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, revision: "c".repeat(64), networkReview: { ...plan.networkReview, approval, approvalCurrent: true } });
+    const post = vi.spyOn(api, "approveAgentReinstallNetwork").mockResolvedValue(approval);
+    await show();
+    expect(post).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("原地址: 100.64.0.2");
+    await act(async () => button("确认恢复地址")!.click());
+    expect(post).toHaveBeenCalledExactlyOnceWith("agent", {
+      operationId: recovery.id, planRevision: plan.revision, confirmMigration: true,
+      profile: expect.objectContaining({ serviceAddress: "100.64.0.8", headscaleAddress: "100.64.0.8", directPublic: false }),
+    });
+    expect(document.body.textContent).toContain("100.64.0.2 → 100.64.0.8");
+    expect(document.body.textContent).toContain("待应用恢复时启用");
+    expect(document.body.textContent).toContain("业务验证尚未完成");
+    expect(button("确认恢复地址")).toBeUndefined();
+  });
+  it("does not approve a private address without a replacement identity", async () => {
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue({ ...review(), recovery: { ...recovery, state: "review_required" }, networkReview: { ...networkReview(), privatePeer: undefined } });
+    const post = vi.spyOn(api, "approveAgentReinstallNetwork");
+    await show();
+    expect(button("确认恢复地址")!.disabled).toBe(true);
+    expect(document.body.textContent).toContain("等待新机器上报所选私网地址的身份");
+    expect(post).not.toHaveBeenCalled();
+  });
+  it("keeps changed network evidence for explicit review without automatic retry", async () => {
+    const network = networkReview();
+    network.approval = { planRevision: "f".repeat(64), profile: network.previous!, authorizedBy: "admin", approvedAt: "2026-10-01T00:00:00Z" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue({ ...review(), recovery: { ...recovery, state: "review_required" }, networkReview: network });
+    const post = vi.spyOn(api, "approveAgentReinstallNetwork").mockRejectedValue(new Error("network recovery evidence changed"));
+    await show();
+    expect(document.body.textContent).toContain("当前网络与已确认记录不符");
+    await act(async () => button("确认恢复地址")!.click());
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).toContain("操作未完成");
+    expect(button("确认恢复地址")).not.toBeUndefined();
+  });
+});

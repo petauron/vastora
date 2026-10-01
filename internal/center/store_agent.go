@@ -766,6 +766,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if err != nil {
 		return err
 	}
+	if reinstalling {
+		if err := recordReinstallNetworkObservation(ctx, tx, id, heartbeat.LandingClientRuntime, heartbeat.TailscaleOwnership, now); err != nil {
+			return err
+		}
+	}
 	executionBlocked = executionBlocked || reinstalling
 	if !executionBlocked && heartbeat.ApplicationEndpointsObserved {
 		if err := s.reconcileApplicationEndpoints(ctx, tx, id, heartbeat.ApplicationEndpoints, now, &publicationCleanups); err != nil {
