@@ -163,6 +163,18 @@ CREATE TABLE agent_reinstall_local_dispositions (
  disposition_json BLOB NOT NULL CHECK(json_valid(disposition_json)),
  PRIMARY KEY(operation_id,plan_revision)
 );
+CREATE TABLE agent_reinstall_app_preparations (
+ deployment_id TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+ source_deployment_id TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+ operation_id TEXT NOT NULL REFERENCES agent_reinstall_operations(id) ON DELETE CASCADE,
+ application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+ plan_revision TEXT NOT NULL,
+ source_revision TEXT NOT NULL,
+ replacement_key BLOB NOT NULL,
+ approval_json BLOB NOT NULL CHECK(json_valid(approval_json)),
+ task_json BLOB NOT NULL CHECK(json_valid(task_json)),
+ UNIQUE(operation_id,application_id)
+);
 CREATE TABLE agent_reinstall_monitor_inspections (
  command_id TEXT PRIMARY KEY REFERENCES application_commands(id) ON DELETE CASCADE,
  operation_id TEXT NOT NULL REFERENCES agent_reinstall_operations(id) ON DELETE CASCADE,

@@ -249,3 +249,40 @@ describe("original monitoring identity inspection", () => {
     expect(button("核验原监控身份")).toBeUndefined();
   });
 });
+
+describe("replacement application preparation", () => {
+  const preparedPlan = (): AgentReinstallPlan => ({ ...review(), recovery: { ...recovery, state: "review_required", replacementFingerprint: "c".repeat(64) }, networkReview: { ...networkReview(), approvalCurrent: true } });
+  it("requires an explicit click and distinguishes a prepared image from restored runtime", async () => {
+    const plan = preparedPlan();
+    const receipt = { deploymentId: "fresh-preparation", state: "succeeded" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, applications: plan.applications.map((app) => ({ ...app, preparation: receipt })) });
+    const prepare = vi.spyOn(api, "prepareAgentReinstallApplication").mockResolvedValue(receipt);
+    await show();
+    expect(prepare).not.toHaveBeenCalled();
+    await act(async () => button("准备原版本")!.click());
+    expect(prepare).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "app" });
+    expect(document.body.textContent).toContain("镜像已准备 · 运行配置待恢复");
+    expect(document.body.textContent).toContain("业务验证尚未完成");
+    expect(button("准备原版本")).toBeUndefined();
+  });
+  it.each(["network", "old-work"])("keeps preparation disabled for %s prerequisites", async (mode) => {
+    const plan = preparedPlan();
+    if (mode === "network") plan.networkReview!.approvalCurrent = false;
+    else plan.unclaimedLocalWork = [{ taskId: "previous-task", kind: "application.apply", revision: 0 }];
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const prepare = vi.spyOn(api, "prepareAgentReinstallApplication");
+    await show();
+    expect(button("准备原版本")!.disabled).toBe(true);
+    expect(prepare).not.toHaveBeenCalled();
+  });
+  it.each(["pending", "failed", "needs_review"])("displays the durable %s receipt without replaying", async (state) => {
+    const plan = preparedPlan(); plan.applications[0].preparation = { deploymentId: "fresh-preparation", state };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const prepare = vi.spyOn(api, "prepareAgentReinstallApplication");
+    await show();
+    await act(async () => button("刷新状态")!.click());
+    expect(prepare).not.toHaveBeenCalled();
+    expect(button("准备原版本")).toBeUndefined();
+    expect(document.body.textContent).toContain(state === "pending" ? "正在准备" : state === "needs_review" ? "结果未确认" : "准备失败");
+  });
+});

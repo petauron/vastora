@@ -241,11 +241,6 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 		return err
 	}
 	defer tx.Rollback()
-	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
-		return err
-	} else if blocked {
-		return errExecutionBlocked
-	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
 		return err
 	} else if paused {
@@ -254,6 +249,24 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 	var current string
 	if err := tx.QueryRowContext(ctx, `SELECT session_id FROM agent_execution_sessions WHERE agent_id=?`, agentID).Scan(&current); err != nil || current != sessionID {
 		return errExecutionAuthorization
+	}
+	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
+		return err
+	} else if blocked {
+		var id, version string
+		err := tx.QueryRowContext(ctx, `SELECT p.deployment_id,n.version FROM agent_reinstall_app_preparations p JOIN deployments d ON d.id=p.deployment_id JOIN agents n ON n.id=d.agent_id JOIN agent_reinstall_operations op ON op.id=p.operation_id WHERE d.agent_id=? AND op.state='review_required' AND d.state='pending' AND d.attempt=0 ORDER BY d.created_at,d.rowid LIMIT 1`, agentID).Scan(&id, &version)
+		if err != nil {
+			return errExecutionBlocked
+		}
+		if _, err = s.validateReinstallPreparation(ctx, tx, agentID, id); err != nil {
+			return err
+		}
+		if unresolved, err := unresolvedExecutionBlocksAgentWork(ctx, tx, agentID, version); err != nil {
+			return err
+		} else if unresolved {
+			return errExecutionBlocked
+		}
+		return nil
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `UPDATE task_executions SET state='unknown',last_error='Execution authorization expired; manual verification required',updated_at=?
@@ -331,6 +344,20 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
 	}
+	preparation, err := s.validateReinstallPreparation(ctx, tx, agentID, task.ID)
+	if err != nil {
+		return controlplane.ExecutionAuthorization{}, err
+	}
+	if preparation {
+		var expected []byte
+		if err := tx.QueryRowContext(ctx, `SELECT task_json FROM agent_reinstall_app_preparations WHERE deployment_id=?`, task.ID).Scan(&expected); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		actual, err := json.Marshal(task)
+		if err != nil || string(actual) != string(expected) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
 	id, err := randomToken(24)
 	if err != nil {
 		return controlplane.ExecutionAuthorization{}, err
@@ -347,7 +374,7 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	now := s.now().UTC()
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return controlplane.ExecutionAuthorization{}, err
-	} else if blocked {
+	} else if blocked && !preparation {
 		return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {

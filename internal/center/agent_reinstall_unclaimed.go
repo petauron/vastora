@@ -49,7 +49,7 @@ func (s *Store) cancelReinstallUnclaimedWork(ctx context.Context, tx *sql.Tx, ag
 	// The enclosing transaction recomputed the full review and selected only
 	// pending attempt-zero tasks. Recheck historical authority before mutation.
 	var authorized bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND task_id=?)`, agentID, work.TaskID).Scan(&authorized); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND task_id=?) OR EXISTS(SELECT 1 FROM agent_reinstall_app_preparations WHERE deployment_id=?)`, agentID, work.TaskID, work.TaskID).Scan(&authorized); err != nil {
 		return err
 	}
 	if authorized {

@@ -47,15 +47,16 @@ type AgentReinstallNetwork struct {
 }
 
 type AgentReinstallApplication struct {
-	ApplicationID string   `json:"applicationId"`
-	Name          string   `json:"name"`
-	AppKey        string   `json:"appKey"`
-	DeploymentID  string   `json:"deploymentId"`
-	Version       string   `json:"version"`
-	Operation     string   `json:"operation"`
-	State         string   `json:"state"`
-	Recovery      string   `json:"recovery"`
-	Requirements  []string `json:"requirements"`
+	ApplicationID string                     `json:"applicationId"`
+	Name          string                     `json:"name"`
+	AppKey        string                     `json:"appKey"`
+	DeploymentID  string                     `json:"deploymentId"`
+	Version       string                     `json:"version"`
+	Operation     string                     `json:"operation"`
+	State         string                     `json:"state"`
+	Recovery      string                     `json:"recovery"`
+	Requirements  []string                   `json:"requirements"`
+	Preparation   *AgentReinstallPreparation `json:"preparation,omitempty"`
 }
 
 type AgentReinstallPendingWork struct {
@@ -185,6 +186,12 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 	}
 	digest := sha256.Sum256(encoded)
 	plan.Revision = hex.EncodeToString(digest[:])
+	for i := range plan.Applications {
+		plan.Applications[i].Preparation, err = s.readReinstallPreparation(ctx, tx, plan.AgentID, plan.Applications[i].ApplicationID)
+		if err != nil {
+			return plan, err
+		}
+	}
 	plan.Recovery, err = readAgentReinstallOperation(ctx, tx, plan.AgentID)
 	return plan, err
 }
@@ -200,7 +207,8 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 		 d.operation,d.delete_data,d.service_address,d.secret_id,hex(saved.sealed),d.registry_credential_id,d.runtime_generation,
 		 registry.host,registry.username,registry.secret_id,hex(registry_secret.sealed))
 		FROM applications a LEFT JOIN deployments d ON d.rowid=(SELECT previous.rowid FROM deployments previous
-		WHERE previous.application_id=a.id AND previous.agent_id=a.node_id ORDER BY previous.created_at DESC,previous.rowid DESC LIMIT 1)
+		WHERE previous.application_id=a.id AND previous.agent_id=a.node_id
+ AND NOT EXISTS(SELECT 1 FROM agent_reinstall_app_preparations rp WHERE rp.deployment_id=previous.id) ORDER BY previous.created_at DESC,previous.rowid DESC LIMIT 1)
 		LEFT JOIN secrets saved ON saved.id=d.secret_id
 		LEFT JOIN registry_credentials registry ON registry.id=d.registry_credential_id
 		LEFT JOIN secrets registry_secret ON registry_secret.id=registry.secret_id
