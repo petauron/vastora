@@ -213,6 +213,10 @@ func readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentReinstallPlan
 		UNION ALL SELECT 'tunnel.state.apply',agent_id FROM cloudflare_tunnels WHERE status IN ('pending','applying','failed')
 		UNION ALL SELECT 'agent.update',agent_id FROM agent_updates WHERE state IN ('pending','running','installing')
 		UNION ALL SELECT 'agent.decommission',agent_id FROM agent_decommissions WHERE state IN ('pending','running','cleaning')
+		UNION ALL SELECT CASE WHEN action='inspect' THEN 'xray.configuration.inspect' ELSE 'xray.configuration.apply' END,agent_id
+			FROM xray_configuration_recoveries WHERE state<>'succeeded'
+		UNION ALL SELECT 'node.ip-quality',agent_id FROM ip_quality_checks WHERE state IN ('pending','running')
+		UNION ALL SELECT kind,agent_id FROM node_diagnostic_checks WHERE state IN ('pending','running')
 	) WHERE agent_id=? GROUP BY kind ORDER BY kind`, plan.AgentID)
 	if err != nil {
 		return err

@@ -237,3 +237,20 @@ func TestAgentReinstallPlanScopesWorkAndIngressDependencies(t *testing.T) {
 		t.Fatalf("review crossed node scope or missed shared ingress: %+v", plan)
 	}
 }
+
+func TestAgentReinstallPlanIncludesUnclaimedConfigurationRecovery(t *testing.T) {
+	store, node := reinstallPlanFixture(t)
+	addReinstallApplication(t, store, node, "app", meridianAppKey, "0.1.0-alpha.12", "install", "succeeded")
+	stamp := store.now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.Exec(`INSERT INTO xray_configuration_recoveries(agent_id,application_id,id,action,state,created_at,updated_at)
+		VALUES(?,'app','previous-recovery','agent_state','pending',?,?)`, node.ID, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := store.AgentReinstallPlan(context.Background(), node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.PendingWork) != 1 || plan.PendingWork[0].Kind != "xray.configuration.apply" || plan.PendingWork[0].Count != 1 || len(plan.Executions) != 0 {
+		t.Fatalf("unclaimed recovery command omitted: %+v", plan)
+	}
+}
