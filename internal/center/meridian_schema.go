@@ -26,6 +26,7 @@ CREATE TABLE meridian_endpoints (
  application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE RESTRICT,
  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE RESTRICT,
  inbound_tag TEXT NOT NULL UNIQUE,
+ listen_address TEXT NOT NULL DEFAULT '',
  listen_port INTEGER NOT NULL CHECK(listen_port BETWEEN 1 AND 65535),
  advertise_host TEXT NOT NULL,
  advertise_port INTEGER NOT NULL CHECK(advertise_port BETWEEN 1 AND 65535),

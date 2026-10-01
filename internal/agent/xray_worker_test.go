@@ -395,7 +395,7 @@ func TestXrayWorkerLocalReconcilerAppliesExpiryOnce(t *testing.T) {
 }
 
 func TestXrayWorkerUsesHardenedBridgeRuntime(t *testing.T) {
-	options := xrayWorkerContainerOptions(DeploymentTask{AppKey: meridianKey, ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", false, false)
+	options := xrayWorkerContainerOptions(DeploymentTask{AppKey: meridianKey, ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", false)
 	host := options.HostConfig
 	if host == nil || host.NetworkMode != container.NetworkMode(dockerruntime.NetworkName) || !host.ReadonlyRootfs || len(host.PortBindings) != 0 || options.NetworkingConfig == nil {
 		t.Fatalf("unexpected Xray network/runtime options: %#v", host)
@@ -413,7 +413,7 @@ func TestXrayWorkerUsesHardenedBridgeRuntime(t *testing.T) {
 	if host.PidsLimit == nil || *host.PidsLimit != 512 || host.LogConfig.Type != "json-file" || host.LogConfig.Config["max-size"] != "10m" || host.LogConfig.Config["max-file"] != "3" {
 		t.Fatalf("unexpected Xray resource/log boundary: %#v", host)
 	}
-	hy2 := xrayWorkerContainerOptions(DeploymentTask{AppKey: meridianKey, ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", true, false)
+	hy2 := xrayWorkerContainerOptions(DeploymentTask{AppKey: meridianKey, ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", true)
 	bindings := hy2.HostConfig.PortBindings[hy2DockerPort]
 	_, udpExposed := hy2.Config.ExposedPorts[hy2DockerPort]
 	if len(bindings) != 1 || bindings[0].HostIP != netip.IPv4Unspecified() || bindings[0].HostPort != "443" || !udpExposed {

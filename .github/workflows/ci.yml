@@ -161,10 +161,12 @@ jobs:
           chmod 0755 "$RUNNER_TEMP/dante/danted"
           go test -c -tags=integration -o "$RUNNER_TEMP/landing.test" ./internal/landing
           sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestBridgeGateKernelPolicyAndExpiry$' -test.v
+          sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestHostGateKernel(PolicyAndExpiry|Traffic)$' -test.v
           sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestNativeServerKernelPolicy$' -test.v
           VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteConfiguration$' -test.v
           VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteTransfersTCPAndUDP$' -test.v
           go test -c -tags=integration -o "$RUNNER_TEMP/landing-host.test" ./internal/agent
+          sudo -- "$RUNNER_TEMP/landing-host.test" -test.run '^TestMeridianHostKernelPreflight$' -test.v
           sudo env VASTORA_NATIVE_LANDING_INTEGRATION=1 "$RUNNER_TEMP/landing-host.test" -test.run '^TestLandingNativeHostLifecycle$' -test.v
       - name: Validate native landing routes with catalog Xray
         if: ${{ !cancelled() }}
