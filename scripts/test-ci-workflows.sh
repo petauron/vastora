@@ -57,7 +57,7 @@ require_line "$codeql_workflow" "  cancel-in-progress: \${{ github.event_name ==
 alpha_job="$(sed -n '/^  alpha-minimal:/,/^  go-race:/p' "$ci_workflow")"
 if ! printf '%s\n' "$alpha_job" | grep -Fq 'cache: false' ||
    ! printf '%s\n' "$alpha_job" | grep -Fq 'run: make go-format-check' ||
-   printf '%s\n' "$alpha_job" | grep -Fv "run: go test ./internal/center -run '^(TestVersion100|TestOfficialUI)' -count=1" | grep -Eq '(go test|go build|go-static-check|web-check|cache: true|docker build)'; then
+   printf '%s\n' "$alpha_job" | grep -Fv "run: go test ./internal/center -run '^(TestVersion(100|102)|TestOfficialUI|TestMeridianHost)' -count=1" | grep -Eq '(go test|go build|go-static-check|web-check|cache: true|docker build)'; then
   echo 'Alpha CI must not restore the Go build cache or duplicate release builds/full checks.' >&2
   exit 1
 fi
