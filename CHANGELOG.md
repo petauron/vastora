@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.266](https://github.com/petauron/vastora/compare/v0.1.0-alpha.265...v0.1.0-alpha.266) (2026-10-01)
+
+
+### Bug Fixes
+
+* stop proxy replacement after execution failure ([#773](https://github.com/petauron/vastora/issues/773)) ([e6b55a3](https://github.com/petauron/vastora/commit/e6b55a353ea404619e43ac12f3aa4dc063b2b3b1))
+
 ## [0.1.0-alpha.265](https://github.com/petauron/vastora/compare/v0.1.0-alpha.264...v0.1.0-alpha.265) (2026-10-01)
 
 
