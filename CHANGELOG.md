@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.264](https://github.com/petauron/vastora/compare/v0.1.0-alpha.263...v0.1.0-alpha.264) (2026-10-01)
+
+
+### Bug Fixes
+
+* explicitly recover reinstalled Meridian entry identities ([#768](https://github.com/petauron/vastora/issues/768)) ([583e2f2](https://github.com/petauron/vastora/commit/583e2f23ae3fbc91671ed6633b8776dbce4f9b95))
+
 ## [0.1.0-alpha.263](https://github.com/petauron/vastora/compare/v0.1.0-alpha.262...v0.1.0-alpha.263) (2026-10-01)
 
 
