@@ -45,10 +45,14 @@ migration aborts if a runtime command is pending, running or unreconciled. It
 does not regenerate identities or overwrite applied service/HAProxy endpoints.
 
 Ready entries are marked pending with a new revision, so **starting this Center
-version queues a fleet topology change**. Upgrade compatible Agents first,
-resolve outstanding commands, verify each private service address and port,
-and retain the Center backup and encrypted Agent journals before deploying
-Center. This PR is not an instruction to deploy it on a production fleet.
+version queues a fleet topology change**. Resolve outstanding commands, verify
+each private service address and port, and retain the Center backup and
+encrypted Agent journals before deployment. The managed release serves its
+packaged Agent binaries and prioritizes `agent.update`; its existing version
+fence prevents older Agents from claiming migrated work until they reconnect
+on the new version. Thus each Agent upgrades before its runtime handover.
+Verify those update receipts during rollout. This PR is not an instruction to
+deploy it on a production fleet.
 
 The successful runtime receipt updates the canonical service backend. Old
 heartbeats cannot publish a new backend early or restore container DNS/443.
