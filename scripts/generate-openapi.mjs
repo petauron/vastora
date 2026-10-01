@@ -420,6 +420,12 @@ for (const route of routes) {
     operation.description = "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization.";
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallPlan");
   }
+  if (route.handler === "handleAgentReinstallEntryCheck") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallEntryCheck");
+    operation.description = "One explicit read-only DNS and exact-SNI TLS check on the approved replacement public address after native runtime and listener receipts. Revalidates recovery authority before storing evidence, preserves prior checks and never activates profiles or completes authenticated client recovery. A changed review or evidence older than 30 minutes makes the result historical.";
+  }
   if (route.handler === "handleAgentReinstallListener") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");

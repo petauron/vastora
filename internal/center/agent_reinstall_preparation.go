@@ -24,10 +24,11 @@ type AgentReinstallApplicationInput struct {
 }
 
 type AgentReinstallPreparation struct {
-	DeploymentID string                  `json:"deploymentId"`
-	State        string                  `json:"state"`
-	Runtime      *AgentReinstallRuntime  `json:"runtime,omitempty"`
-	Listener     *AgentReinstallListener `json:"listener,omitempty"`
+	DeploymentID string                    `json:"deploymentId"`
+	State        string                    `json:"state"`
+	Runtime      *AgentReinstallRuntime    `json:"runtime,omitempty"`
+	Listener     *AgentReinstallListener   `json:"listener,omitempty"`
+	EntryCheck   *AgentReinstallEntryCheck `json:"entryCheck,omitempty"`
 }
 
 func (s *Store) readReinstallPreparation(ctx context.Context, tx *sql.Tx, agentID, applicationID string) (*AgentReinstallPreparation, error) {

@@ -7101,6 +7101,56 @@
                                         "type": "null"
                                       }
                                     ]
+                                  },
+                                  "entryCheck": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "state": {
+                                            "type": "string"
+                                          },
+                                          "current": {
+                                            "type": "boolean"
+                                          },
+                                          "checkedAt": {
+                                            "type": "string",
+                                            "format": "date-time"
+                                          },
+                                          "entries": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "object",
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "publicationId": {
+                                                  "type": "string"
+                                                },
+                                                "hostname": {
+                                                  "type": "string"
+                                                },
+                                                "publicAddress": {
+                                                  "type": "string"
+                                                },
+                                                "sniHostname": {
+                                                  "type": "string"
+                                                },
+                                                "state": {
+                                                  "type": "string"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
                                   }
                                 }
                               },
@@ -7920,6 +7970,133 @@
         "description": "Restore one reviewed native Meridian runtime using the saved package and credentials on the approved replacement address. Fixed egress remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery."
       }
     },
+    "/api/v1/agents/{id}/reinstall-applications/verify-entry": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Entry Check",
+        "operationId": "agentReinstallEntryCheck_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "current": {
+                      "type": "boolean"
+                    },
+                    "checkedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "publicationId": {
+                            "type": "string"
+                          },
+                          "hostname": {
+                            "type": "string"
+                          },
+                          "publicAddress": {
+                            "type": "string"
+                          },
+                          "sniHostname": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "One explicit read-only DNS and exact-SNI TLS check on the approved replacement public address after native runtime and listener receipts. Revalidates recovery authority before storing evidence, preserves prior checks and never activates profiles or completes authenticated client recovery. A changed review or evidence older than 30 minutes makes the result historical."
+      }
+    },
     "/api/v1/agents/{id}/reinstall-applications/restore-entry": {
       "post": {
         "tags": [
@@ -8075,6 +8252,56 @@
                             },
                             "state": {
                               "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "entryCheck": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string"
+                            },
+                            "current": {
+                              "type": "boolean"
+                            },
+                            "checkedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "entries": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "publicationId": {
+                                    "type": "string"
+                                  },
+                                  "hostname": {
+                                    "type": "string"
+                                  },
+                                  "publicAddress": {
+                                    "type": "string"
+                                  },
+                                  "sniHostname": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
                             }
                           }
                         },

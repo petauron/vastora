@@ -120,6 +120,13 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
  listener_state TEXT NOT NULL DEFAULT '' CHECK(listener_state IN ('','pending','running','succeeded','failed')),
  UNIQUE(operation_id,application_id)
 )`,
+		`CREATE TABLE agent_reinstall_entry_checks (
+ id TEXT PRIMARY KEY,
+ preparation_id TEXT NOT NULL REFERENCES agent_reinstall_app_preparations(deployment_id) ON DELETE CASCADE,
+ plan_revision TEXT NOT NULL,
+ started_at TEXT NOT NULL,
+ result_json BLOB NOT NULL CHECK(json_valid(result_json))
+)`,
 		`CREATE TABLE agent_reinstall_monitor_inspections (
  command_id TEXT PRIMARY KEY REFERENCES application_commands(id) ON DELETE CASCADE,
  operation_id TEXT NOT NULL REFERENCES agent_reinstall_operations(id) ON DELETE CASCADE,

@@ -2,7 +2,7 @@
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../api";
-import type { AgentReinstallPlan } from "../types";
+import type { AgentReinstallEntryCheck, AgentReinstallPlan } from "../types";
 import { NodesView } from "./NodesView";
 import { dashboard, render, rerender } from "./views.test-support";
 
@@ -264,6 +264,63 @@ describe("replacement application preparation", () => {
     plan.networkReview!.approval = { planRevision: plan.revision, profile: { serviceAddress: "100.64.0.8", headscaleAddress: "100.64.0.8", publicAddress: "198.51.100.8", publicBindAddress: "100.64.0.8", publicMode: "nat", directPublic: true, enabledKinds: ["headscale", "public"] }, authorizedBy: "admin", approvedAt: "2026-10-01T00:00:00Z" };
     return plan;
   };
+  const entryCheckPlan = () => {
+    const plan = listenerPlan();
+    plan.applications[0].preparation!.listener = { taskId: "approved-listener", state: "succeeded" };
+    return plan;
+  };
+  const entryCheck = (): AgentReinstallEntryCheck => ({ id: "entry-check", state: "passed", current: true, checkedAt: "2026-10-01T00:00:00Z", entries: [{ publicationId: "entry", hostname: "entry.example.test", publicAddress: "198.51.100.8", sniHostname: "www.example.com", state: "passed" }] });
+  it("checks public entry explicitly and separates TLS from real client verification", async () => {
+    const plan = entryCheckPlan();
+    const result = entryCheck();
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, applications: plan.applications.map((app) => ({ ...app, preparation: { ...app.preparation!, entryCheck: result } })) });
+    let finish!: (value: AgentReinstallEntryCheck) => void;
+    const verify = vi.spyOn(api, "verifyAgentReinstallEntry").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    await show();
+    expect(verify).not.toHaveBeenCalled();
+    await act(async () => button("验证公网入口")!.click());
+    expect(verify).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "app" });
+    expect(button("验证公网入口")!.disabled).toBe(true);
+    expect(document.body.textContent).toContain("正在验证 DNS 与 TLS 入口");
+    await act(async () => finish(result));
+    expect(document.body.textContent).toContain("DNS 与 TLS 已通过 · 真实客户端访问待验证");
+    expect(document.body.textContent).toContain("业务验证尚未完成");
+    expect(button("重新验证入口")!.disabled).toBe(false);
+    expect(document.body.textContent).toContain("entry.example.test → 198.51.100.8");
+  });
+  it.each(["dns_pending", "tls_pending", "not_checked"] as const)("shows persisted %s evidence without rechecking on refresh", async (state) => {
+    const plan = entryCheckPlan();
+    const result = entryCheck(); result.state = "pending"; result.entries[0].state = state;
+    plan.applications[0].preparation!.entryCheck = result;
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const verify = vi.spyOn(api, "verifyAgentReinstallEntry");
+    await show();
+    await act(async () => button("刷新状态")!.click());
+    expect(verify).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("公网入口未通过");
+    expect(document.body.textContent).toContain(state === "dns_pending" ? "DNS 尚未全部指向新公网地址" : state === "tls_pending" ? "TLS 1.3 校验未通过" : "前项未通过，尚未检查");
+  });
+  it("labels historical success as stale and disables checks without current network approval", async () => {
+    const plan = entryCheckPlan();
+    plan.applications[0].preparation!.entryCheck = { ...entryCheck(), current: false };
+    plan.networkReview!.approvalCurrent = false;
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    await show();
+    expect(document.body.textContent).toContain("检查结果已失效 · 请重新验证");
+    expect(document.body.textContent).not.toContain("DNS 与 TLS 已通过 · 真实客户端访问待验证");
+    expect(button("重新验证入口")!.disabled).toBe(true);
+  });
+  it("does not retry a lost entry check response", async () => {
+    const plan = entryCheckPlan();
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const verify = vi.spyOn(api, "verifyAgentReinstallEntry").mockRejectedValue(new Error("request interrupted"));
+    await show();
+    await act(async () => button("验证公网入口")!.click());
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).toContain("操作未完成");
+    await act(async () => button("刷新状态")!.click());
+    expect(verify).toHaveBeenCalledTimes(1);
+  });
   it("restores a saved shared entry explicitly without claiming public reachability", async () => {
     const plan = listenerPlan();
     const listener = { taskId: "approved-listener", state: "succeeded" };

@@ -18,6 +18,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
   const [plan, setPlan] = useState<AgentReinstallPlan | null>(null);
   const [enrollment, setEnrollment] = useState<AgentEnrollment | null>(null);
   const [busy, setBusy] = useState(false);
+  const [checkingEntry, setCheckingEntry] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   const request = useRef<AgentReinstallInput | null>(null);
@@ -26,6 +27,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
   // that business recovery completed. Closing invalidates every pending response.
   useEffect(() => {
     const current = ++generation.current;
+    setCheckingEntry(null);
     setBusy(true);
     api.agentReinstallPlan(agent.id).then((value) => {
       if (generation.current === current) { setPlan(value); setError(""); }
@@ -122,6 +124,21 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
       if (generation.current === current) setBusy(false);
     }
   };
+  const verifyEntry = async (applicationId: string) => {
+    if (!plan || !recovery || busy) return;
+    const current = generation.current;
+    setBusy(true); setCheckingEntry(applicationId); setError("");
+    try {
+      await api.verifyAgentReinstallEntry(agent.id, { operationId: recovery.id, planRevision: plan.revision, applicationId });
+      if (generation.current !== current) return;
+      const latest = await api.agentReinstallPlan(agent.id);
+      if (generation.current === current) setPlan(latest);
+    } catch (cause) {
+      if (generation.current === current) setError(userError(language, cause));
+    } finally {
+      if (generation.current === current) { setBusy(false); setCheckingEntry(null); }
+    }
+  };
   const inspectMonitor = async (applicationId: string) => {
     if (!plan || !recovery || busy) return;
     const current = generation.current;
@@ -182,7 +199,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
           </section> : null}
           {joined && plan.monitoring.length > 0 ? <ReinstallMonitorReview plan={plan} busy={busy} language={language} onInspect={inspectMonitor} /> : null}
           {joined && plan.networkReview ? <ReinstallNetworkReview key={plan.revision} review={plan.networkReview} busy={busy} language={language} onApprove={approveNetwork} /> : null}
-          {joined ? <ReinstallApplicationReview plan={plan} busy={busy} language={language} onPrepare={prepareApplication} onRestoreRuntime={restoreRuntime} onRestoreListener={restoreListener} /> : null}
+          {joined ? <ReinstallApplicationReview plan={plan} busy={busy} language={language} onPrepare={prepareApplication} onRestoreRuntime={restoreRuntime} onRestoreListener={restoreListener} onVerifyEntry={verifyEntry} checkingEntry={checkingEntry} /> : null}
           {command ? <><p className="text-sm">{copy(language, "在重装后的原服务器执行一次", "Run once on the reinstalled original server")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div><p className="text-xs text-muted-foreground">{copy(language, `命令有效期至 ${formatDate(language, enrollment!.expiresAt)}`, `Command valid until ${formatDate(language, enrollment!.expiresAt)}`)}</p></> : null}
           {joined ? <p className="flex items-center gap-2 text-sm"><CheckCircle2Icon aria-hidden="true" className="size-4" />{copy(language, "身份接替已记录；网络、应用和业务验证尚未完成。", "Identity replacement recorded. Network, application and business verification are not complete.")}</p> : null}
         </> : null}

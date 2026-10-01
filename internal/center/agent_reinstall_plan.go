@@ -197,6 +197,12 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 		if err != nil {
 			return plan, err
 		}
+		if preparation := plan.Applications[i].Preparation; preparation != nil {
+			preparation.EntryCheck, err = s.readReinstallEntryCheck(ctx, tx, preparation.DeploymentID, plan.Revision)
+			if err != nil {
+				return plan, err
+			}
+		}
 	}
 	plan.Recovery, err = readAgentReinstallOperation(ctx, tx, plan.AgentID)
 	return plan, err
