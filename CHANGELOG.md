@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.262](https://github.com/petauron/vastora/compare/v0.1.0-alpha.261...v0.1.0-alpha.262) (2026-10-01)
+
+
+### Features
+
+* **meridian:** move managed Xray runtime to host networking ([#761](https://github.com/petauron/vastora/issues/761)) ([671579e](https://github.com/petauron/vastora/commit/671579ebb38884af739036532d55d476741f17f5))
+
 ## [0.1.0-alpha.261](https://github.com/petauron/vastora/compare/v0.1.0-alpha.260...v0.1.0-alpha.261) (2026-09-30)
 
 
