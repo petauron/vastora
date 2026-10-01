@@ -1,58 +1,52 @@
-# Agent task receipts on small nodes
+# Agent legacy task evidence
 
-Task receipts are a durable execution journal and completion outbox, not access
-logs. The Agent records intent before applying an external effect, persists its
-result locally, and acknowledges it only after Center accepts the result. Keep
-this state: deleting the database to reduce I/O loses duplicate-delivery and
-interrupted-operation safeguards.
+## Current execution model
 
-## Bounded steady-state work
+Center owns durable task authorizations, results and operator disposition.
+Agent keeps only the current execution in memory. It does not write new task
+receipts, poll a completion outbox, periodically clean receipt history or replay
+management commands after a restart. See [the execution contract](agent-execution-stop-on-error.md).
 
-- Pending completions use an ordered partial index containing only `completed`
-  and `reconciliation_required` receipts.
-- The startup fence uses a separate ordered partial index for unresolved
-  `application.apply` and `legacy` receipts. Acknowledged history is excluded
-  from both hot indexes; completion payloads are not copied into indexes.
-- Task acquisition no longer sweeps historical receipts. After completion
-  delivery and startup recovery, the task loop attempts maintenance at most
-  once every five minutes per Store, including after a failed cleanup attempt.
-- Maintenance uses an indexed, atomic DELETE of at most 128 oldest eligible
-  receipts, with a two-second context timeout. It does not read payloads into Go
-  memory, repeatedly drain a backlog, or run periodic VACUUM. Failures are
-  reported but do not fail the next task solely because cleanup failed.
-- The retention window remains 30 days. Only acknowledged receipts and the
-  existing abandoned `agent.update` processing case are eligible. Pending
-  completions, unresolved application/legacy work, and acknowledged
-  reconciliation fences are never removed by maintenance.
+## One-time cutover evidence
 
-Cleanup is best-effort, so retained history can exceed 30 days during an outage
-or while a backlog drains. Restarting the Agent allows one new bounded batch.
-SQLite can reuse freed pages; the database file does not immediately shrink.
-There is no enlarged page cache, full-history memory cache, added polling
-goroutine, or new dependency.
+The old `task_receipts` schema remains readable only to transfer unresolved
+pre-cutover evidence. The Agent decrypts and validates one record at a time,
+submits it through the authenticated Center API, and verifies the returned
+archive identity and digest before retiring that exact local record. A changed
+record, damaged ciphertext or mismatched acknowledgement stops the transfer.
+Temporary transport failure may retry this idempotent archival operation; it
+never reexecutes the associated business command.
 
-## Upgrade and verification
+Center stores the original evidence encrypted. Unknown or failed work remains
+blocked until an administrator confirms the old execution has stopped and
+records an explicit disposition. Missing or superseded business records can be
+archived without recreating tasks. Secrets must not appear in ordinary lists,
+logs or errors.
 
-Agent schema 19 adds the three indexes with a forward-only transaction. Existing
-schema-18 databases are snapshotted first, including committed WAL data, under
-`<data-dir>/schema-18-backup-*/agent.db` in a private directory. Backup or migration
-failure aborts opening the Store. New databases receive the same indexes.
-Existing encrypted results and task identities are not rewritten or discarded.
+## Migration and preservation
 
-The snapshot and index creation incur one-time upgrade I/O and require spare
-disk space. Retain the original `agent.key` with the backup. Do not automatically
-start an older Agent against a schema-19 database or roll back only the database
-while external task effects remain applied.
+The historical schema 18 to 19 migration is forward-only and still runs for
+existing databases. It first snapshots the database including committed WAL
+under `<data-dir>/schema-18-backup-*/agent.db`, then adds the historical indexes
+in a transaction. Backup or migration failure aborts opening the Store. These
+indexes do not imply that the old polling or cleanup implementation still runs.
 
-Regression tests in `internal/agent/task_receipts_test.go` cover query plans with
-historical payloads, ordering, batch/interval bounds, concurrent maintenance,
-retention fences, failure throttling, WAL-aware migration, rollback on migration
-failure, and completion replay after reopening. These tests must pass before
-release. After deployment, compare physical device I/O and Agent cgroup I/O over
-equivalent intervals; query-plan improvements alone do not establish an actual
-memory or throughput reduction on a production node.
+Keep `agent.key` with the backup and preserve identity, installed application
+state, configuration journals and protected update recovery points. Do not
+delete `agent.db`, discard unresolved evidence or start an older binary against
+a newer schema to reduce I/O.
 
-The index approach follows SQLite's [partial-index support](https://www.sqlite.org/partialindex.html).
-Query-plan tests check the pinned SQLite dependency for an index access path and
-absence of a temporary sorting tree, as described in [EXPLAIN QUERY PLAN](https://www.sqlite.org/eqp.html);
-production code does not parse diagnostic plan text.
+## Regression coverage
+
+- `task_receipt_schema_test.go`: WAL-aware backup, archive preservation and
+  migration failure without partial state.
+- `legacy_receipt_export_test.go`: evidence export without replay and rejection
+  of damaged ciphertext.
+- `legacy_receipt_transfer_test.go`: acknowledgement identity/digest validation,
+  changed evidence and retained state on failure.
+- Center `execution_legacy_*_test.go`: encrypted archival, lost acknowledgement,
+  administrator disposition, exact-attempt fencing and audit atomicity.
+
+These checks establish evidence handling, not a measured production memory or
+physical I/O improvement. Full-daemon low-memory qualification is deferred by
+the agreed MVP scope.
