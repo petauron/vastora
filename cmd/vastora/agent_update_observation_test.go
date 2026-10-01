@@ -15,15 +15,20 @@ import (
 )
 
 func TestHostUpdateObservationIsBoundedAndReadOnly(t *testing.T) {
-	for _, mode := range []string{"ready", "pending", "unavailable", "unauthorized", "cancelled"} {
+	for _, mode := range []string{"ready", "pending", "unavailable", "unauthorized", "cancelled", "result-unavailable", "result-unauthorized", "result-conflict"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			observations, reports, waits := 0, 0, 0
+			targetReady := mode == "ready" || strings.HasPrefix(mode, "result-")
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasSuffix(r.URL.Path, "/result") {
 					reports++
-					if mode != "ready" || observations != 3 {
+					if !targetReady || observations != 3 {
 						t.Error("result reported before target was observed")
+					}
+					if status := map[string]int{"result-unavailable": http.StatusServiceUnavailable, "result-unauthorized": http.StatusUnauthorized, "result-conflict": http.StatusConflict}[mode]; status != 0 {
+						w.WriteHeader(status)
+						return
 					}
 					w.Write([]byte(`{}`))
 					return
@@ -39,7 +44,7 @@ func TestHostUpdateObservationIsBoundedAndReadOnly(t *testing.T) {
 				case "unauthorized":
 					w.WriteHeader(http.StatusUnauthorized)
 				default:
-					json.NewEncoder(w).Encode(map[string]bool{"ready": mode == "ready" && observations == 3})
+					json.NewEncoder(w).Encode(map[string]bool{"ready": targetReady && observations == 3})
 				}
 			}))
 			defer server.Close()
@@ -71,7 +76,7 @@ func TestHostUpdateObservationIsBoundedAndReadOnly(t *testing.T) {
 			err = runPersistentHostUpdateWithEnvironment(context.Background(), operationPath, environment, agent.Client{HTTPClient: server.Client()})
 			wantObservations, wantReports, wantWaits := 1, 0, 0
 			switch mode {
-			case "ready":
+			case "ready", "result-unavailable", "result-unauthorized", "result-conflict":
 				wantObservations, wantReports, wantWaits = 3, 1, 2
 			case "pending":
 				wantObservations, wantWaits = 30, 30
@@ -84,6 +89,10 @@ func TestHostUpdateObservationIsBoundedAndReadOnly(t *testing.T) {
 			_, markerErr := os.Stat(filepath.Join(root, filepath.Base(hostUpdateCompleted)))
 			if (markerErr == nil) != (mode == "ready") {
 				t.Fatalf("completion marker: %v", markerErr)
+			}
+			result, exists, err := readHostUpdateResult(filepath.Join(root, filepath.Base(hostUpdateResultPath)))
+			if err != nil || !exists || !result.Succeeded {
+				t.Fatalf("local activation evidence lost: %+v %v", result, err)
 			}
 		})
 	}

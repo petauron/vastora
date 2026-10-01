@@ -76,7 +76,7 @@ func TestExecutionRuntimeConfirmationPreservesEvidenceAndRevisionFence(t *testin
 				} else if err := store.StartExecution(ctx, node.ID, session, auth.ID, auth.Digest); err != nil {
 					t.Fatal(err)
 				}
-				if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), true, false, "", nil); err != nil {
+				if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), true, false, "", nil, false); err != nil {
 					t.Fatal(err)
 				}
 				// Persisted evidence becomes manually confirmable only after the

@@ -512,7 +512,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		return nil
 	}
 	if updateHandedOff {
-		// The persistent updater owns binary replacement, rollback, restart, and
+		// The persistent updater owns binary replacement, protected recovery, restart, and
 		// terminal reporting. A successful schedule is not an update result.
 		return nil
 	}
