@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.268](https://github.com/petauron/vastora/compare/v0.1.0-alpha.267...v0.1.0-alpha.268) (2026-10-01)
+
+
+### Bug Fixes
+
+* **meridian:** retain link failure evidence and bound probe lifetime ([#777](https://github.com/petauron/vastora/issues/777)) ([d37e3c3](https://github.com/petauron/vastora/commit/d37e3c346db895577315648ba7031c3b43ca0de6))
+
 ## [0.1.0-alpha.267](https://github.com/petauron/vastora/compare/v0.1.0-alpha.266...v0.1.0-alpha.267) (2026-10-01)
 
 
