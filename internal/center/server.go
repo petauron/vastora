@@ -147,6 +147,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/meridian/endpoints", s.requireAuth(true, s.handleCreateMeridianEndpoint))
 	mux.HandleFunc("PUT /api/v1/meridian/endpoints/{id}", s.requireAuth(true, s.handleUpdateMeridianEndpointName))
 	mux.HandleFunc("POST /api/v1/meridian/endpoints/{id}/recover", s.requireAuth(true, s.handleRecoverMeridianEndpoint))
+	mux.HandleFunc("GET /api/v1/meridian/endpoints/{id}/source-recovery", s.requireAuth(false, s.handleMeridianSourceRecovery))
+	mux.HandleFunc("POST /api/v1/meridian/endpoints/{id}/source-recovery", s.requireAuth(true, s.handleRecoverMeridianSource))
 	mux.HandleFunc("POST /api/v1/meridian/accounts", s.requireAuth(true, s.handleCreateMeridianAccount))
 	mux.HandleFunc("PUT /api/v1/meridian/accounts/{id}", s.requireAuth(true, s.handleUpdateMeridianAccount))
 	mux.HandleFunc("POST /api/v1/meridian/routes", s.requireAuth(true, s.handleCreateMeridianRouteGrant))
