@@ -107,7 +107,7 @@ func verifyMeridianHostContainer(inspected client.ContainerInspectResult, gid ui
 			return err
 		}
 	}
-	if hy2 && !slices.Equal(h.CapAdd, []string{"NET_BIND_SERVICE"}) || !hy2 && len(h.CapAdd) != 0 {
+	if hy2 && !slices.Equal(h.CapAdd, []string{"CAP_NET_BIND_SERVICE"}) || !hy2 && len(h.CapAdd) != 0 {
 		return errors.New("agent: Meridian host capabilities changed")
 	}
 	if inspected.Container.NetworkSettings != nil {
@@ -143,7 +143,7 @@ func meridianHostContainerOptions(task DeploymentTask, imageRef, configPath stri
 	// HY2 alone needs a privileged listening port. Keep all other capabilities
 	// dropped; do not change host sysctls to let every process bind low ports.
 	if hy2 {
-		options.HostConfig.CapAdd = []string{"NET_BIND_SERVICE"}
+		options.HostConfig.CapAdd = []string{"CAP_NET_BIND_SERVICE"}
 	}
 	options.HostConfig.RestartPolicy = container.RestartPolicy{Name: "no"}
 	return options
