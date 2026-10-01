@@ -23,6 +23,15 @@ export type MeridianCutover = {
   complete: boolean;
 };
 
+export type MeridianSourceRecovery = {
+  previousFingerprint: string;
+  currentFingerprint: string;
+  previousAddress: string;
+  currentAddress: string;
+  endpointRevision: number;
+  observedAt: string;
+};
+
 export type MeridianEndpoint = {
   id: string;
   applicationId: string;

@@ -4,7 +4,7 @@ import type { LandingView } from "./landing-types";
 import type { IPQualityPreferences, IPQualityResponse } from "./ip-quality-types";
 import type { NodeDiagnosticCheck } from "./node-diagnostics-types";
 import type { NodeProtocols } from "./types";
-import type { MeridianAccountCreated, MeridianAccountInput, MeridianAccount, MeridianEndpoint, MeridianInventory, MeridianRouteGrant } from "./meridian-types";
+import type { MeridianAccountCreated, MeridianAccountInput, MeridianAccount, MeridianEndpoint, MeridianInventory, MeridianRouteGrant, MeridianSourceRecovery } from "./meridian-types";
 import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type LegacyReceiptView } from "./execution-types";
 
 export class APIError extends Error {
@@ -156,6 +156,8 @@ export const api = {
 	createMeridianEndpoint: (input: { applicationId: string; verificationId: string; targetIp: string; advertiseHost?: string; targetHost: string; serverName: string; fingerprint?: string; regionCode: string; name: string }) => request<MeridianEndpoint>("/api/v1/meridian/endpoints", { method: "POST", body: JSON.stringify(input) }),
 	updateMeridianEndpointName: (id: string, input: { regionCode: string; name: string }) => request<MeridianEndpoint>(`/api/v1/meridian/endpoints/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }),
 	recoverMeridianEndpoint: (id: string) => request<{ queued: boolean }>(`/api/v1/meridian/endpoints/${encodeURIComponent(id)}/recover`, { method: "POST", body: JSON.stringify({ confirmCenterAuthority: true, executionStopped: true }) }),
+	meridianSourceRecovery: (id: string) => request<MeridianSourceRecovery>(`/api/v1/meridian/endpoints/${encodeURIComponent(id)}/source-recovery`),
+	recoverMeridianSource: (id: string, evidence: MeridianSourceRecovery) => request<{ queued: boolean }>(`/api/v1/meridian/endpoints/${encodeURIComponent(id)}/source-recovery`, { method: "POST", body: JSON.stringify({ previousFingerprint: evidence.previousFingerprint, currentFingerprint: evidence.currentFingerprint, endpointRevision: evidence.endpointRevision, confirmReplacement: true, executionStopped: true }) }),
 	createMeridianAccount: (input: MeridianAccountInput) => request<MeridianAccountCreated>("/api/v1/meridian/accounts", { method: "POST", body: JSON.stringify(input) }),
 	updateMeridianAccount: (id: string, input: Required<MeridianAccountInput>) => request<MeridianAccount>(`/api/v1/meridian/accounts/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }),
 	createMeridianRoute: (input: { accountId: string; endpointId: string; egressNodeId: string; hideNative: boolean }) => request<MeridianRouteGrant>("/api/v1/meridian/routes", { method: "POST", body: JSON.stringify(input) }),
