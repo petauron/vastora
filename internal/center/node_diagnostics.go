@@ -87,6 +87,12 @@ func (s *Store) ListNodeDiagnostics(ctx context.Context) ([]NodeDiagnosticView, 
 			}
 			value.Network, value.Routes, value.Bandwidth, value.Host, value.Link = result.Network, result.Routes, result.Bandwidth, result.Host, result.Link
 		}
+		if value.State == "pending" && (value.Kind == nodediagnostics.LinkBandwidthKind || value.Kind == nodediagnostics.LinkServerKind) {
+			queuedAt, err := time.Parse(time.RFC3339Nano, value.UpdatedAt)
+			if err != nil || !queuedAt.After(s.now().Add(-4*time.Minute)) {
+				value.State, value.Error = "failed", "expired"
+			}
+		}
 		if value.State == "running" {
 			expires, err := time.Parse(time.RFC3339Nano, lease)
 			if err != nil || !expires.After(s.now()) {
@@ -102,6 +108,9 @@ func (s *Store) ListNodeDiagnostics(ctx context.Context) ([]NodeDiagnosticView, 
 		value := &values[index]
 		if value.Kind != nodediagnostics.LinkBandwidthKind {
 			continue
+		}
+		if value.Link != nil && value.Link.TransportState != "direct" {
+			value.State, value.Error, value.Link = "failed", "transport_unverified", nil
 		}
 		target := linkTargets[value.ID]
 		var peer *NodeDiagnosticView
@@ -195,11 +204,14 @@ func (s *Store) StartNodeDiagnostic(ctx context.Context, agentID, kind string) e
 }
 
 func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
+	if _, err := tx.ExecContext(ctx, `UPDATE node_diagnostic_checks SET state='failed',error='expired' WHERE agent_id=? AND kind IN ('meridian.link-bandwidth','meridian.link-bandwidth-server') AND state='pending' AND attempt=0 AND created_at<?`, agentID, s.now().Add(-4*time.Minute).UTC().Format(time.RFC3339Nano)); err != nil {
+		return nil, err
+	}
 	var id, kind, bindAddress, targetsJSON string
-	var attempt int64
-	err := tx.QueryRowContext(ctx, `SELECT q.id,q.kind,q.bind_address,q.targets_json,q.attempt FROM node_diagnostic_checks q JOIN agents a ON a.id=q.agent_id
- WHERE q.agent_id=? AND q.state='pending' AND ((q.kind='node.network-quality' AND json_extract(a.capabilities_json,'$.networkDiagnostics')=1) OR (q.kind='node.return-route' AND json_extract(a.capabilities_json,'$.returnRoute')=1) OR (q.kind='node.international-bandwidth' AND json_extract(a.capabilities_json,'$.bandwidthDiagnostics')=1) OR (q.kind='node.host-profile' AND json_extract(a.capabilities_json,'$.hostProfile')=1) OR (q.kind IN ('meridian.link-bandwidth','meridian.link-bandwidth-server') AND json_extract(a.capabilities_json,'$.meridianLinkBandwidth')=1))
- ORDER BY q.created_at,q.kind LIMIT 1`, agentID).Scan(&id, &kind, &bindAddress, &targetsJSON, &attempt)
+	var attempt, revision int64
+	err := tx.QueryRowContext(ctx, `SELECT q.id,q.kind,q.bind_address,q.targets_json,q.attempt,q.target_revision FROM node_diagnostic_checks q JOIN agents a ON a.id=q.agent_id
+ WHERE q.agent_id=? AND q.state='pending' AND ((q.kind='node.network-quality' AND json_extract(a.capabilities_json,'$.networkDiagnostics')=1) OR (q.kind='node.return-route' AND json_extract(a.capabilities_json,'$.returnRoute')=1) OR (q.kind='node.international-bandwidth' AND json_extract(a.capabilities_json,'$.bandwidthDiagnostics')=1) OR (q.kind='node.host-profile' AND json_extract(a.capabilities_json,'$.hostProfile')=1) OR (q.kind IN ('meridian.link-bandwidth','meridian.link-bandwidth-server') AND json_extract(a.capabilities_json,'$.meridianLinkBandwidth')=1 AND json_extract(a.capabilities_json,'$.meridianLinkRevision')=2))
+ ORDER BY q.created_at,q.kind LIMIT 1`, agentID).Scan(&id, &kind, &bindAddress, &targetsJSON, &attempt, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -210,6 +222,9 @@ func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID str
 	if kind == nodediagnostics.LinkBandwidthKind || kind == nodediagnostics.LinkServerKind {
 		input.Link = &nodediagnostics.LinkBandwidthTask{}
 		err = json.Unmarshal([]byte(targetsJSON), input.Link)
+		if err == nil {
+			input.LinkAuth, err = s.openMeridianLinkAuth(id, targetsJSON)
+		}
 	} else if kind == nodediagnostics.HostProfileKind {
 		if targetsJSON != "[]" {
 			return nil, errors.New("center: invalid host profile targets")
@@ -242,8 +257,8 @@ func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID str
 	if changed, _ := updated.RowsAffected(); changed != 1 {
 		return nil, errStaleTaskLease
 	}
-	task := &AgentTask{ID: id, Kind: kind, Attempt: attempt + 1, Revision: carrierTargetRevision, NodeDiagnostics: &input}
-	if err := s.recordTaskEvent(ctx, tx, id, agentID, kind, carrierTargetRevision, "claimed", ""); err != nil {
+	task := &AgentTask{ID: id, Kind: kind, Attempt: attempt + 1, Revision: revision, NodeDiagnostics: &input}
+	if err := s.recordTaskEvent(ctx, tx, id, agentID, kind, revision, "claimed", ""); err != nil {
 		return nil, err
 	}
 	return task, nil
@@ -256,7 +271,8 @@ func (s *Store) completeNodeDiagnostic(ctx context.Context, commit projectionCom
 	}
 	defer tx.Rollback()
 	var kind, state, lease, targetsJSON string
-	if attempt <= 0 || tx.QueryRowContext(ctx, `SELECT kind,state,lease_expires_at,targets_json FROM node_diagnostic_checks WHERE id=? AND agent_id=? AND attempt=?`, id, agentID, attempt).Scan(&kind, &state, &lease, &targetsJSON) != nil {
+	var revision int64
+	if attempt <= 0 || tx.QueryRowContext(ctx, `SELECT kind,state,lease_expires_at,targets_json,target_revision FROM node_diagnostic_checks WHERE id=? AND agent_id=? AND attempt=?`, id, agentID, attempt).Scan(&kind, &state, &lease, &targetsJSON, &revision) != nil {
 		return errStaleTaskLease
 	}
 	target, diagnosticError := "succeeded", ""
@@ -269,11 +285,18 @@ func (s *Store) completeNodeDiagnostic(ctx context.Context, commit projectionCom
 		}
 		if kind == nodediagnostics.LinkBandwidthKind && envelope.NodeDiagnostics.Link != nil {
 			var target nodediagnostics.LinkBandwidthTask
-			if json.Unmarshal([]byte(targetsJSON), &target) != nil || envelope.NodeDiagnostics.Link.SourceNodeID != agentID || envelope.NodeDiagnostics.Link.LandingNodeID != target.LandingNodeID {
+			if json.Unmarshal([]byte(targetsJSON), &target) != nil || envelope.NodeDiagnostics.Link.TransportState != "direct" || envelope.NodeDiagnostics.Link.SourceNodeID != agentID || envelope.NodeDiagnostics.Link.LandingNodeID != target.LandingNodeID {
 				return errors.New("center: Meridian link result does not match its task")
 			}
 		}
 		diagnosticError = envelope.NodeDiagnostics.Error
+		if diagnosticError == "" && (kind == nodediagnostics.LinkBandwidthKind || kind == nodediagnostics.LinkServerKind) {
+			var link nodediagnostics.LinkBandwidthTask
+			if json.Unmarshal([]byte(targetsJSON), &link) != nil || !currentMeridianLinkPeers(ctx, tx, link) {
+				diagnosticError = "peer_identity_changed"
+				envelope.NodeDiagnostics = &nodediagnostics.Result{Error: diagnosticError}
+			}
+		}
 	} else {
 		target, diagnosticError = "failed", "interrupted"
 	}
@@ -297,7 +320,7 @@ func (s *Store) completeNodeDiagnostic(ctx context.Context, commit projectionCom
 	if _, err := tx.ExecContext(ctx, `UPDATE node_diagnostic_checks SET state=?,error=?,result_json=CASE WHEN ?='null' THEN result_json ELSE ? END,checked_at=CASE WHEN ?='' THEN checked_at ELSE ? END,lease_expires_at='',updated_at=? WHERE id=?`, target, diagnosticError, resultJSON, resultJSON, checkedAt, checkedAt, now, id); err != nil {
 		return err
 	}
-	if err := s.recordTaskEvent(ctx, tx, id, agentID, kind, carrierTargetRevision, target, diagnosticError); err != nil {
+	if err := s.recordTaskEvent(ctx, tx, id, agentID, kind, revision, target, diagnosticError); err != nil {
 		return err
 	}
 	return commit(tx)

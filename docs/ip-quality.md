@@ -258,6 +258,29 @@ task also succeeds. A new check replaces the previous pair result for that
 entry and landing listener. The latest result is displayed in the Network tab,
 with the source-to-landing and landing-to-source directions labelled.
 
+Link execution revision 2 pins both private peer identities and uses iperf3's
+built-in RSA/OAEP authentication with fresh credentials for each probe. Center
+seals credentials with task-bound authenticated encryption. Only the source
+receives the password and public key; only the landing receives the private key
+and password hash. Files exist only in each container's private tmpfs. The
+server limits each authenticated direction to 12 seconds. The pinned image's
+authentication support was verified independently with an isolated bidirectional
+probe; no public listener or persistent host firewall change is needed.
+
+Both Agents check their own identity and fresh peer transport before, every five
+seconds during, and after sampling. DERP, peer relay, unavailable transport, or
+identity changes cancel the probe and trigger container cleanup. These are
+sampled observations, not a guarantee about every packet between samples. Center
+checks current identities again when accepting receipts. Capability revision 2
+is required on both nodes. Forward-only migration 103 retains old diagnostic
+records but marks unauthenticated tasks/results as requiring a new manual test;
+it uses the standard pre-migration backup and fail-closed migration flow.
+Unclaimed probes expire after four minutes. Results older than 24 hours are
+labelled expired, and old samples without transport evidence are not displayed
+as verified bandwidth. Failed or interrupted tests do not expose a partial
+sample as a successful two-direction result. Explicit recovery follows the
+Center execution workflow; tests are never automatically replayed.
+
 No scan runs on page load or on a schedule. Opening the page reads saved
 results; polling observes saved checks and refreshes score expiry/connection evidence.
 

@@ -7287,6 +7287,9 @@
                       "meridianLinkBandwidth": {
                         "type": "boolean"
                       },
+                      "meridianLinkRevision": {
+                        "type": "integer"
+                      },
                       "hostProfile": {
                         "type": "boolean"
                       },

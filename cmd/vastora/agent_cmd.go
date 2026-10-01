@@ -21,6 +21,7 @@ import (
 
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/tailscalehost"
 	"github.com/sethvargo/go-retry"
@@ -569,6 +570,7 @@ func runAgent(arguments []string) error {
 		client.Capabilities.BandwidthDiagnostics = runtime.GOOS == "linux" && iperfErr == nil
 		client.Capabilities.LandingEgressIP = runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.MeridianLinkBandwidth = capabilities.Docker && runtime.GOOS == "linux"
+		client.Capabilities.MeridianLinkRevision = nodediagnostics.LinkBandwidthRevision
 		client.Capabilities.HostProfile = runtime.GOOS == "linux"
 		if capabilities.Docker {
 			client.NodeListener = agent.DockerLayer4Provisioner{Image: *haproxyImage}
