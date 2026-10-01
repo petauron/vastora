@@ -23,7 +23,7 @@ it("passes page cursor and cancellation without requesting private evidence cont
   vi.stubGlobal("fetch", fetchMock);
   const controller = new AbortController();
   await api.executions(101, controller.signal);
-  expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/executions?before=101");
+  expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/executions?filter=all&before=101");
   expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
 });
 
