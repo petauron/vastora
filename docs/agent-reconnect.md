@@ -30,7 +30,7 @@ inspection. Schema downgrade is not supported.
 `GET /api/v1/agents/{id}/reinstall-plan` provides an administrator-only,
 non-cacheable review of one node from a consistent database snapshot. It does
 not create a reconnect grant, retire identity, contact a host or run a command.
-The response contains no saved configuration, keys, command payloads or results.
+The response contains no saved configuration, keys, command payloads or raw results.
 
 The inventory selects the latest deployment **intent**, including a pending or
 failed uninstall, rather than resurrecting the last successful installation.
@@ -38,9 +38,24 @@ It keeps the exact saved version and validates its artifact description without
 fetching or selecting the latest catalog version. Artifact and credential
 verification is still required before any execution. Missing or inconsistent
 saved artifacts require review. Meridian requires validation of its Center-owned
-configuration and credentials; a Pulse collector requires a replacement managed
-enrollment. Stateful and unknown applications require data restoration on the
-replacement, even if a previous backup drill was recorded.
+configuration and credentials; a Pulse collector requires verified original
+monitoring identity and replacement credentials. Stateful and unknown applications
+require data restoration on the replacement, even if a previous backup drill was recorded.
+
+The `monitoring` inventory reads original registration IDs from authenticated,
+encrypted task/result evidence for the same collector application and monitoring
+service. It includes earlier installs after a configure/upgrade and preserves
+expired registration evidence. Names and addresses are never identity matches.
+Its review revision binds the retained evidence, without returning tokens or
+task payloads. Missing, inconsistent or excessive evidence is explicit; partial
+evidence must not select a remaining candidate automatically.
+
+`inspection_required` means these registration IDs still need inspection through
+Pulse's supported `enrollment inspect ID` command. Registration creation does not
+prove that the collector consumed that token; an install may have retained an
+older local credential. This inventory does not contact Pulse, rotate a token,
+create a monitor node or establish that monitoring is restored. The managed
+inspection and credential replacement steps remain unfinished in this draft.
 
 Unclaimed work is listed separately from executions: retiring an execution
 session does not dispose an unclaimed install, uninstall or network change.

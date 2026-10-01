@@ -7171,6 +7171,42 @@
                         }
                       ]
                     },
+                    "monitoring": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "applicationId": {
+                            "type": "string"
+                          },
+                          "serviceApplicationId": {
+                            "type": "string"
+                          },
+                          "serviceAgentId": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "enrollments": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "enrollmentId": {
+                                  "type": "string"
+                                },
+                                "executionId": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
                     "requirements": {
                       "type": "array",
                       "items": {

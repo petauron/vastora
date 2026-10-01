@@ -32,6 +32,7 @@ type AgentReinstallPlan struct {
 	UnclaimedLocalWork   []AgentReinstallUnclaimedWork   `json:"unclaimedLocalWork"`
 	Executions           []AgentReinstallExecution       `json:"executions"`
 	LocalWorkDisposition *AgentReinstallLocalDisposition `json:"localWorkDisposition,omitempty"`
+	Monitoring           []AgentReinstallMonitoring      `json:"monitoring"`
 	Requirements         []string                        `json:"requirements"`
 }
 
@@ -138,6 +139,10 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 	if err != nil {
 		return plan, err
 	}
+	monitoringRevision, err := s.readReinstallMonitoring(ctx, tx, &plan)
+	if err != nil {
+		return plan, err
+	}
 	workRevision, err := s.readReinstallWork(ctx, tx, &plan)
 	if err != nil {
 		return plan, err
@@ -173,7 +178,8 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 		Plan                AgentReinstallPlan
 		WorkRevision        string
 		ApplicationRevision string
-	}{review, workRevision, applicationRevision})
+		MonitoringRevision  string
+	}{review, workRevision, applicationRevision, monitoringRevision})
 	if err != nil {
 		return plan, err
 	}

@@ -369,6 +369,7 @@ export type AgentReinstallPlan = {
   executions: Array<{ id: string; agentId: string; taskId: string; attempt: number; kind: string; state: string; phase: string; identityRetired: boolean; resolution: "local_after_isolation" | "manual_review" }>;
   unclaimedLocalWork: AgentReinstallUnclaimedWork[];
   localWorkDisposition?: AgentReinstallLocalDisposition;
+  monitoring: Array<{ applicationId: string; serviceApplicationId: string; serviceAgentId: string; state: string; enrollments: Array<{ enrollmentId: string; executionId: string }> }>;
   requirements: string[];
 };
 
