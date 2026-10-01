@@ -117,6 +117,7 @@ type Capabilities struct {
 	BandwidthDiagnostics  bool `json:"bandwidthDiagnostics"`
 	LandingEgressIP       bool `json:"landingEgressIP"`
 	MeridianLinkBandwidth bool `json:"meridianLinkBandwidth"`
+	MeridianLinkRevision  int  `json:"meridianLinkRevision"`
 	HostProfile           bool `json:"hostProfile"`
 	Docker                bool `json:"docker"`
 	Gateway               bool `json:"gateway"`

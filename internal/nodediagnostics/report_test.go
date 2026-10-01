@@ -1,6 +1,9 @@
 package nodediagnostics
 
-import "testing"
+import (
+	"github.com/petauron/vastora/internal/landing"
+	"testing"
+)
 
 func TestHostProfileRecommendationReasonsAreBounded(t *testing.T) {
 	result := Result{Host: &HostProfile{
@@ -19,6 +22,14 @@ func TestHostProfileRecommendationReasonsAreBounded(t *testing.T) {
 func TestMeridianLinkRequiresPrivatePeersAndTimedSamples(t *testing.T) {
 	task := Task{Link: &LinkBandwidthTask{SourceNodeID: "entry", LandingNodeID: "landing", SourceIP: "100.64.0.8", LandingIP: "100.64.0.9", Port: 30000}}
 	if err := task.ValidateLinkBandwidth(LinkBandwidthKind); err != nil {
+		t.Fatal(err)
+	}
+	if err := task.ValidateLinkIdentity(LinkBandwidthKind); err == nil {
+		t.Fatal("missing peer evidence accepted for execution")
+	}
+	task.Link.SourcePeer = landing.PeerIdentity{ID: "source", PublicKey: "nodekey:source", Address: task.Link.SourceIP}
+	task.Link.LandingPeer = landing.PeerIdentity{ID: "landing", PublicKey: "nodekey:landing", Address: task.Link.LandingIP}
+	if err := task.ValidateLinkIdentity(LinkBandwidthKind); err != nil {
 		t.Fatal(err)
 	}
 	task.Link.LandingIP = "203.0.113.9"

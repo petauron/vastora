@@ -19,6 +19,7 @@ import (
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 )
@@ -1124,6 +1125,8 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		if json.Unmarshal(rolesJSON, &agent.Roles) != nil || json.Unmarshal(capabilitiesJSON, &agent.Capabilities) != nil {
 			return nil, errors.New("center: invalid stored Agent capabilities")
 		}
+		// Advertise availability only for the current execution contract.
+		agent.Capabilities.MeridianLinkBandwidth = agent.Capabilities.MeridianLinkBandwidth && agent.Capabilities.MeridianLinkRevision == nodediagnostics.LinkBandwidthRevision
 		if agent.Roles == nil {
 			agent.Roles = []string{}
 		}
