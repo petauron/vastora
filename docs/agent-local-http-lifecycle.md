@@ -1,5 +1,11 @@
 # Agent 本地 HTTP 连接生命周期（#428）
 
+## 交付状态
+
+2026-10-01 按已确定的 MVP 范围完成复核。运行时修复已由 [PR #429](https://github.com/petauron/vastora/pull/429) 合并，当前已发布的 `v0.1.0-alpha.265` 包含该修复。本次只整理验收记录，不修改运行时代码，不需要新的二进制发布。
+
+原 issue 的“尚未修复”是 `alpha.125` 核查时的状态。完整 Agent 长期低内存验收已在 [MVP 交付范围](agent-execution-delivery-audit.md#mvp-发布范围以用户最新决定为准) 中明确延后；以下记录区分已完成的连接生命周期验证和未执行的整机验证。
+
 ## 实现
 
 - LinkChecker 的 Unix HTTP Transport 限制为每主机最多 8 条连接、最多 8 条空闲连接，空闲超时 30 秒；拨号和响应头等待都有超时。
@@ -11,7 +17,32 @@
 
 不改变身份验证、CA pin、落地判定和业务重试规则；不借助重启、增加内存或调 GC 掩盖问题。
 
-## 验证记录与剩余项
+## 当前调用点与回归
+
+在 `alpha.265` 源码上核对了全部生产 `NewLinkChecker` 调用点：
+
+| 调用点 | 所有者与释放时机 |
+| --- | --- |
+| `Store` 心跳、周期性计划身份校验 | Store 复用同一个 checker，Store.Close 取消在途请求、等待请求结束并关闭连接池 |
+| `WaitReady` / `WaitTCPReady` | 函数拥有，创建后立即 defer Close |
+| `RunLandingLatencyChecks` | 检测循环拥有，退出时先取消并等待所有探测 worker，再关闭 checker |
+| `startLandingMonitor` | 每个 peer 独占 checker，由 Monitor.Run 的 defer 释放；整组停止等待所有 Monitor 退出 |
+| `beginMeridianLandingHandover` | 一次性身份核查完成后立即 Close，错误返回前同样释放 |
+| `startMeridianLandingMonitor` | 替换前停止并等待旧组；每个 peer 独占 checker，Monitor.Run 退出时释放 |
+
+相邻路径复核：Center 请求和备份传输先释放响应体，再释放自建的 pinned Transport；两处 `CenterHTTPClient` 命令调用均 defer CloseIdleConnections。Docker 部署拥有的客户端 defer Close，镜像拉取流 defer Close；Pulse ExecAttach 在返回和 context 取消时关闭。以上是源码所有权核对，不代表真实 Docker 故障注入已完成。
+
+本次在当前源码上复用已有测试，以下定向回归通过：
+
+```sh
+go test ./internal/landing ./internal/agent \
+  -run 'Test(LinkChecker|ConcurrentPeerMonitorsReleaseConnectionsAcrossGroupReplacement|MonitorOwnsUnixConnectionsAcrossReplacementAndSetupFailure|LandingClientHeartbeatIdentityHasBoundedUnixConnections|LandingLatency)' \
+  -count=1 -timeout=90s
+```
+
+覆盖实际心跳的 500 次身份读取、连接上限、错误/超大/截断/超时响应、在途和排队取消、checker 替换、多 peer Monitor 替换及初始化失败、延迟目标替换。服务端统计连接并检查关闭后归零，不依赖强制 GC。本轮未重跑 race、隔离低内存试验或完整 Agent 长期测试；已有证据保留如下。
+
+## 已有验证记录
 
 已通过隔离 Unix socket 测试：200 次身份读取复用单条连接，Close 后无遗留连接；非 200、无效 JSON、身份无效以及在途取消释放连接；关闭后不能重新执行请求。延迟检测相关定向测试也已通过。
 
@@ -29,11 +60,13 @@
 
 另外删除了 Agent 中只写不读的 landingClientStatuses 缓存：旧实现按 peer ID 追加状态，切换 peer 后不清理；当前代码无读取方，删除不会影响已有对外状态字段。这是独立的潜在历史状态累积，不能据此断言它曾造成生产卡死。
 
-以下仍需完成，不能以以上单元测试代替：
+## 延后验证与证据边界
+
+按 MVP 范围，以下属于后续完整运行验证，不再作为 #428 连接生命周期修复的关闭门槛，不能以以上单元测试声称已经通过：
 
 - Store 级多 peer Monitor 并发替换及真实 Docker 错误路径的完整交互。
 - 正常频率下心跳/计划校验和完整 Agent 的长期 Linux FD、内存平台期；已有短期实际身份观察函数的 Unix socket/FD/goroutine 证据，尚不是整机内存归因。
 - 完整负载的 RSS/PSS、PSI、socket 内存、文件页 refault 和物理 I/O 曲线；短期隔离测试的零 PSI 不代表原生产故障已复现。
-- 最终代码审查、与 #412 新执行循环的整体验证。
+- 与 #412 执行循环组合后的完整守护进程故障验证；本轮只完成上述调用点审查与定向回归。
 
-本轮未修改生产、未重启服务，也未执行生产压力测试。现场卡死的全部进程归因仍未证明；本修复不宣称该泄漏是唯一原因。
+本次收尾未修改生产、未重启服务，也未执行生产压力测试。已发布版本包含修复，不能据此推导完整线上资源平台期已验证。现场卡死的全部进程归因仍未证明；本修复不宣称该泄漏是唯一原因。
