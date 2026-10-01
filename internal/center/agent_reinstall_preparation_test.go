@@ -12,14 +12,22 @@ import (
 	"testing"
 
 	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 )
 
 func reinstallPreparationFixture(t *testing.T) (*Store, AgentCredential, AgentReinstallApplicationInput) {
+	return reinstallPreparationNetworkFixture(t, false)
+}
+
+func reinstallPreparationNetworkFixture(t *testing.T, public bool) (*Store, AgentCredential, AgentReinstallApplicationInput) {
 	t.Helper()
 	s, node, heartbeat := replacementNetworkFixture(t)
 	ctx := context.Background()
 	heartbeat.ApplicationRuntimeGeneration = platform.ApplicationRuntimeGeneration
+	if public {
+		heartbeat.PublicEgress = &networking.PublicEgress{Address: "198.51.100.8", BindAddress: "10.0.0.8", Mode: networking.PublicModeNAT, ObservedAt: s.now().UTC()}
+	}
 	if err := s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +35,15 @@ func reinstallPreparationFixture(t *testing.T) (*Store, AgentCredential, AgentRe
 	if _, err := s.db.Exec(`UPDATE deployments SET config_json='{}',manifest_json=json_set(manifest_json,'$.images[0].name','xray-core') WHERE application_id='retained-meridian'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ApproveAgentReinstallNetwork(ctx, node.ID, "reinstall-review-admin", networkApprovalInput(t, s, node.ID)); err != nil {
+	networkInput := networkApprovalInput(t, s, node.ID)
+	if public {
+		networkInput.Profile.DirectPublic = true
+		networkInput.Profile.PublicAddress = "198.51.100.8"
+		networkInput.Profile.PublicBindAddress = "10.0.0.8"
+		networkInput.Profile.PublicMode = networking.PublicModeNAT
+		networkInput.Profile.EnabledKinds = append(networkInput.Profile.EnabledKinds, networking.KindPublic)
+	}
+	if _, err := s.ApproveAgentReinstallNetwork(ctx, node.ID, "reinstall-review-admin", networkInput); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RegisterExecutionSession(ctx, node.ID, node.Credential, "package-preparation-session", controlplane.ExecutionProtocol); err != nil {

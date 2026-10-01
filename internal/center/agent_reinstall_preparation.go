@@ -24,9 +24,10 @@ type AgentReinstallApplicationInput struct {
 }
 
 type AgentReinstallPreparation struct {
-	DeploymentID string                 `json:"deploymentId"`
-	State        string                 `json:"state"`
-	Runtime      *AgentReinstallRuntime `json:"runtime,omitempty"`
+	DeploymentID string                  `json:"deploymentId"`
+	State        string                  `json:"state"`
+	Runtime      *AgentReinstallRuntime  `json:"runtime,omitempty"`
+	Listener     *AgentReinstallListener `json:"listener,omitempty"`
 }
 
 func (s *Store) readReinstallPreparation(ctx context.Context, tx *sql.Tx, agentID, applicationID string) (*AgentReinstallPreparation, error) {
@@ -40,6 +41,10 @@ func (s *Store) readReinstallPreparation(ctx context.Context, tx *sql.Tx, agentI
 		return nil, err
 	}
 	value.Runtime, err = s.readReinstallRuntime(ctx, tx, value.DeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	value.Listener, err = s.readReinstallListener(ctx, tx, value.DeploymentID)
 	return &value, err
 }
 
@@ -279,6 +284,9 @@ func (s *Store) claimAgentReinstallTask(ctx context.Context, agentID, credential
 	if err != nil {
 		return nil, err
 	}
+	if strings.HasPrefix(id, "node-listener-") {
+		return s.claimReinstallListener(ctx, tx, agentID, id, commitTask)
+	}
 	if strings.HasPrefix(id, "reinstall-runtime-") {
 		return s.claimReinstallRuntime(ctx, tx, agentID, id, commitTask)
 	}
@@ -316,7 +324,9 @@ func pendingAgentReinstallTask(ctx context.Context, tx *sql.Tx, agentID, require
  WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND d.attempt=0
  UNION ALL SELECT c.id,c.created_at FROM agent_reinstall_app_preparations p JOIN application_commands c ON c.id=p.runtime_command_id JOIN agent_reinstall_operations op ON op.id=p.operation_id
  WHERE c.agent_id=? AND op.agent_id=c.agent_id AND op.state='review_required' AND c.state='pending' AND c.attempt=0
- ) WHERE (?='' OR id=?) ORDER BY created_at,id LIMIT 1`, agentID, agentID, requiredTaskID, requiredTaskID).Scan(&id)
+ UNION ALL SELECT p.listener_task_id,n.updated_at FROM agent_reinstall_app_preparations p JOIN agent_reinstall_operations op ON op.id=p.operation_id JOIN node_listener_states n ON n.node_id=op.agent_id
+ WHERE op.agent_id=? AND op.state='review_required' AND p.listener_state='pending' AND n.status='pending' AND n.desired_revision=p.listener_revision AND n.attempt=p.listener_attempt-1
+ ) WHERE (?='' OR id=?) ORDER BY created_at,id LIMIT 1`, agentID, agentID, agentID, requiredTaskID, requiredTaskID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errExecutionBlocked
 	}

@@ -361,7 +361,8 @@ export type AgentReinstallUnclaimedWork = { taskId: string; kind: string; revisi
 export type AgentReinstallLocalDisposition = { planRevision: string; executionIds: string[]; unclaimedWork: AgentReinstallUnclaimedWork[]; authorizedBy: string; disposedAt: string };
 export type AgentReinstallApplicationInput = { operationId: string; planRevision: string; applicationId: string };
 export type AgentReinstallRuntime = { commandId: string; state: string };
-export type AgentReinstallPreparation = { deploymentId: string; state: string; runtime?: AgentReinstallRuntime };
+export type AgentReinstallListener = { taskId: string; state: string };
+export type AgentReinstallPreparation = { deploymentId: string; state: string; runtime?: AgentReinstallRuntime; listener?: AgentReinstallListener };
 export type AgentReinstallMonitorInput = { operationId: string; planRevision: string; applicationId: string };
 export type AgentReinstallMonitorInspection = { commandId: string; state: string; nodeId?: string; error?: string; inspectedAt?: string };
 export type AgentReinstallPlan = {
@@ -369,7 +370,7 @@ export type AgentReinstallPlan = {
   recovery?: AgentReinstallOperation;
   networkReview?: AgentReinstallNetworkReview;
   privateNetwork: { ownership: string; serviceAddress: string; privateAddress: string; profileRetained: boolean; addressRecovery: string; landingRoutes: number; publications: number };
-  applications: Array<{ applicationId: string; name: string; appKey: string; deploymentId: string; version: string; operation: string; state: string; recovery: string; requirements: string[]; preparation?: AgentReinstallPreparation }>;
+  applications: Array<{ applicationId: string; name: string; appKey: string; deploymentId: string; version: string; operation: string; state: string; recovery: string; sharedEntry: boolean; requirements: string[]; preparation?: AgentReinstallPreparation }>;
   pendingWork: Array<{ agentId: string; kind: string; count: number }>;
   executions: Array<{ id: string; agentId: string; taskId: string; attempt: number; kind: string; state: string; phase: string; identityRetired: boolean; resolution: "local_after_isolation" | "manual_review" }>;
   unclaimedLocalWork: AgentReinstallUnclaimedWork[];

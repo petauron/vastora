@@ -420,6 +420,12 @@ for (const route of routes) {
     operation.description = "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization.";
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallPlan");
   }
+  if (route.handler === "handleAgentReinstallListener") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallListener");
+    operation.description = "Restore the reviewed saved shared listener after native Meridian runtime restoration. Uses only the approved backend and public bind address; other shared applications or a gateway require restoration first. A listener receipt does not verify public reachability, publish subscriptions or release the recovery fence.";
+  }
   if (route.handler === "handleAgentReinstallRuntime") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");

@@ -55,6 +55,7 @@ type AgentReinstallApplication struct {
 	Operation     string                     `json:"operation"`
 	State         string                     `json:"state"`
 	Recovery      string                     `json:"recovery"`
+	SharedEntry   bool                       `json:"sharedEntry"`
 	Requirements  []string                   `json:"requirements"`
 	Preparation   *AgentReinstallPreparation `json:"preparation,omitempty"`
 }
@@ -208,6 +209,8 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 	// latest successful deployment instead would resurrect an unwanted app.
 	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.name,a.app_key,COALESCE(d.id,''),COALESCE(d.app_version,''),
 		COALESCE(d.operation,''),COALESCE(d.state,''),COALESCE(d.manifest_json,'{}'),COALESCE(d.reconciliation_required,0),
+		EXISTS(SELECT 1 FROM publications p JOIN services service ON service.id=p.service_id WHERE service.application_id=a.id AND service.status<>'stopped'
+ AND p.ingress_owner='application_node' AND p.entry_node_id=a.node_id AND p.kind='public_shared_443' AND p.status<>'stopped'),
 		json_array(d.id,d.agent_id,d.application_id,d.app_key,d.app_version,CAST(d.manifest_json AS TEXT),CAST(d.config_json AS TEXT),
 		 d.operation,d.delete_data,d.service_address,d.secret_id,hex(saved.sealed),d.registry_credential_id,d.runtime_generation,
 		 registry.host,registry.username,registry.secret_id,hex(registry_secret.sealed))
@@ -227,7 +230,7 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 		var manifestJSON []byte
 		var reconciliation bool
 		var intent string
-		if err := rows.Scan(&app.ApplicationID, &app.Name, &app.AppKey, &app.DeploymentID, &app.Version, &app.Operation, &app.State, &manifestJSON, &reconciliation, &intent); err != nil {
+		if err := rows.Scan(&app.ApplicationID, &app.Name, &app.AppKey, &app.DeploymentID, &app.Version, &app.Operation, &app.State, &manifestJSON, &reconciliation, &app.SharedEntry, &intent); err != nil {
 			return "", err
 		}
 		// Successful deployments are restoration input too. Changes to their

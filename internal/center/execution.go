@@ -261,7 +261,11 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 		if err = tx.QueryRowContext(ctx, `SELECT version FROM agents WHERE id=?`, agentID).Scan(&version); err != nil {
 			return err
 		}
-		if strings.HasPrefix(id, "reinstall-runtime-") {
+		if strings.HasPrefix(id, "node-listener-") {
+			if _, err = s.reinstallListenerTask(ctx, tx, agentID, id, false); err != nil {
+				return err
+			}
+		} else if strings.HasPrefix(id, "reinstall-runtime-") {
 			if _, err = s.reinstallRuntimeTask(ctx, tx, agentID, id, false); err != nil {
 				return err
 			}
@@ -376,6 +380,17 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
 	}
+	listener, err := s.reinstallListenerTask(ctx, tx, agentID, task.ID, false)
+	if err != nil {
+		return controlplane.ExecutionAuthorization{}, err
+	}
+	if listener != nil {
+		expected, _ := json.Marshal(listener)
+		actual, _ := json.Marshal(task)
+		if string(expected) != string(actual) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
 	id, err := randomToken(24)
 	if err != nil {
 		return controlplane.ExecutionAuthorization{}, err
@@ -392,7 +407,7 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	now := s.now().UTC()
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return controlplane.ExecutionAuthorization{}, err
-	} else if blocked && !preparation && runtime == nil {
+	} else if blocked && !preparation && runtime == nil && listener == nil {
 		return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {

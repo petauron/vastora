@@ -17,6 +17,11 @@ func reinstallMeridianEvidence(ctx context.Context, tx *sql.Tx, agentID string) 
 	digest := sha256.New()
 	encoder := json.NewEncoder(digest)
 	for _, query := range []string{
+		`SELECT json_array(p.id,p.service_id,p.kind,p.ingress_owner,p.entry_node_id,p.hostname,p.sni_hostname,
+ p.dns_provider,p.desired_revision,p.status='stopped',p.action_required,p.cleanup_pending,s.application_id,s.status='stopped',
+ s.app_protocol,s.endpoint,s.container_port,a.runtime,a.role,a.runtime_generation)
+ FROM publications p JOIN services s ON s.id=p.service_id JOIN applications a ON a.id=s.application_id
+ WHERE a.node_id=? ORDER BY p.id`,
 		`SELECT json_array(e.id,e.application_id,e.service_id,e.inbound_tag,e.listen_address,e.listen_port,
  e.advertise_host,e.advertise_port,e.target,e.target_ip,CAST(e.server_names_json AS TEXT),e.private_key_secret_id,
  hex(private.sealed),e.public_key,CAST(e.short_ids_json AS TEXT),e.fingerprint,e.vless_enabled,e.hy2_enabled,

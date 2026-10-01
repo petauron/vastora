@@ -178,6 +178,12 @@ CREATE TABLE agent_reinstall_app_preparations (
  runtime_plan_revision TEXT NOT NULL DEFAULT '',
  runtime_revision INTEGER NOT NULL DEFAULT 0,
  runtime_task_sha256 TEXT NOT NULL DEFAULT '',
+ listener_task_id TEXT UNIQUE,
+ listener_revision INTEGER NOT NULL DEFAULT 0,
+ listener_attempt INTEGER NOT NULL DEFAULT 0,
+ listener_plan_revision TEXT NOT NULL DEFAULT '',
+ listener_task_sha256 TEXT NOT NULL DEFAULT '',
+ listener_state TEXT NOT NULL DEFAULT '' CHECK(listener_state IN ('','pending','running','succeeded','failed')),
  UNIQUE(operation_id,application_id)
 );
 CREATE TABLE agent_reinstall_monitor_inspections (

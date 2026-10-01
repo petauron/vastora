@@ -20,8 +20,12 @@ const restoreNativeID = "11111111-1111-4111-8111-111111111111"
 const restoreRouteID = "22222222-2222-4222-8222-222222222222"
 
 func reinstallRuntimeFixture(t *testing.T) (*Store, AgentCredential, AgentReinstallApplicationInput) {
+	return reinstallRuntimeNetworkFixture(t, false)
+}
+
+func reinstallRuntimeNetworkFixture(t *testing.T, public bool) (*Store, AgentCredential, AgentReinstallApplicationInput) {
 	t.Helper()
-	s, node, input := reinstallPreparationFixture(t)
+	s, node, input := reinstallPreparationNetworkFixture(t, public)
 	ctx := context.Background()
 	if _, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input); err != nil {
 		t.Fatal(err)

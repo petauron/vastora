@@ -9,7 +9,7 @@ import { dashboard, render, rerender } from "./views.test-support";
 const review = (): AgentReinstallPlan => ({
   agentId: "agent", revision: "a".repeat(64), checkedAt: "2026-10-01T00:00:00Z", identityFingerprint: "b".repeat(64), credentialRevoked: false,
   privateNetwork: { ownership: "managed", serviceAddress: "100.64.0.2", privateAddress: "100.64.0.2", profileRetained: false, addressRecovery: "explicit_migration_required", landingRoutes: 1, publications: 2 },
-  applications: [{ applicationId: "app", name: "Meridian", appKey: "vastora-official/meridian", deploymentId: "deployment", version: "0.1.0-alpha.12", operation: "install", state: "succeeded", recovery: "rebuild_configuration", requirements: [] }],
+  applications: [{ applicationId: "app", name: "Meridian", appKey: "vastora-official/meridian", deploymentId: "deployment", version: "0.1.0-alpha.12", operation: "install", state: "succeeded", recovery: "rebuild_configuration", sharedEntry: false, requirements: [] }],
   pendingWork: [{ agentId: "agent", kind: "application.apply", count: 1 }], unclaimedLocalWork: [], executions: [], monitoring: [], requirements: [],
 });
 const command = { token: "replacement-token", siteId: "site", centerUrl: "https://center.example.com", installerUrl: "https://center.example.com", expiresAt: "2099-01-01T00:00:00Z" };
@@ -257,6 +257,46 @@ describe("replacement application preparation", () => {
     plan.applications[0].preparation = { deploymentId: "fresh-preparation", state: "succeeded" };
     return plan;
   };
+  const listenerPlan = () => {
+    const plan = runtimePlan();
+    plan.applications[0].sharedEntry = true;
+    plan.applications[0].preparation!.runtime = { commandId: "approved-runtime", state: "succeeded" };
+    plan.networkReview!.approval = { planRevision: plan.revision, profile: { serviceAddress: "100.64.0.8", headscaleAddress: "100.64.0.8", publicAddress: "198.51.100.8", publicBindAddress: "100.64.0.8", publicMode: "nat", directPublic: true, enabledKinds: ["headscale", "public"] }, authorizedBy: "admin", approvedAt: "2026-10-01T00:00:00Z" };
+    return plan;
+  };
+  it("restores a saved shared entry explicitly without claiming public reachability", async () => {
+    const plan = listenerPlan();
+    const listener = { taskId: "approved-listener", state: "succeeded" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, applications: plan.applications.map((app) => ({ ...app, preparation: { ...app.preparation!, listener } })) });
+    const restore = vi.spyOn(api, "restoreAgentReinstallListener").mockResolvedValue(listener);
+    await show();
+    expect(restore).not.toHaveBeenCalled();
+    await act(async () => button("恢复入口")!.click());
+    expect(restore).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "app" });
+    expect(document.body.textContent).toContain("入口已应用 · 公网访问待验证");
+    expect(document.body.textContent).toContain("业务验证尚未完成");
+    expect(button("恢复入口")).toBeUndefined();
+  });
+  it.each(["network", "runtime", "no-entry"])("does not offer entry restoration with %s missing", async (mode) => {
+    const plan = listenerPlan();
+    if (mode === "network") plan.networkReview!.approval!.profile.directPublic = false;
+    else if (mode === "runtime") plan.applications[0].preparation!.runtime!.state = "pending";
+    else plan.applications[0].sharedEntry = false;
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    await show();
+    expect(button("恢复入口")).toBeUndefined();
+  });
+  it.each(["pending", "running", "failed", "needs_review"])("keeps the %s listener outcome without replaying", async (state) => {
+    const plan = listenerPlan();
+    plan.applications[0].preparation!.listener = { taskId: "approved-listener", state };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const restore = vi.spyOn(api, "restoreAgentReinstallListener");
+    await show();
+    await act(async () => button("刷新状态")!.click());
+    expect(restore).not.toHaveBeenCalled();
+    expect(button("恢复入口")).toBeUndefined();
+    expect(document.body.textContent).toContain(state === "pending" || state === "running" ? "正在恢复入口" : "入口恢复结果需核对");
+  });
   it("restores runtime only on explicit approval and retains pending business verification", async () => {
     const plan = runtimePlan();
     const runtime = { commandId: "approved-runtime", state: "succeeded" };
