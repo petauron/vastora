@@ -156,7 +156,7 @@ func deployXrayWorker(ctx context.Context, docker *client.Client, dockerSocket s
 	// recoverable through ResumeXrayWorker instead of making the old, still
 	// valid container look like an identity mismatch.
 	state.ImageReference = imageRef
-	options := xrayWorkerContainerOptions(task, imageRef, configPath, xrayWorkerHY2Enabled(state), false)
+	options := xrayWorkerContainerOptions(task, imageRef, configPath, xrayWorkerHY2Enabled(state))
 	if err := store.stopXrayWorkerAPI(ctx, false); err != nil {
 		return token, err
 	}
@@ -254,7 +254,7 @@ func deployMeridian(ctx context.Context, docker *client.Client, dockerSocket str
 	return "", nil
 }
 
-func xrayWorkerContainerOptions(task DeploymentTask, imageRef, configPath string, hy2Enabled, preserveLegacyAliases bool) client.ContainerCreateOptions {
+func xrayWorkerContainerOptions(task DeploymentTask, imageRef, configPath string, hy2Enabled bool) client.ContainerCreateOptions {
 	pidsLimit := int64(512)
 	exposed := dockernetwork.PortSet{dockernetwork.MustParsePort("443/tcp"): struct{}{}}
 	bindings := dockernetwork.PortMap{}
@@ -265,8 +265,6 @@ func xrayWorkerContainerOptions(task DeploymentTask, imageRef, configPath string
 	aliases := []string{dockerruntime.MeridianAlias}
 	if task.AppKey == threeXUIKey {
 		aliases = []string{dockerruntime.LegacyXrayAlias}
-	} else if preserveLegacyAliases {
-		aliases = append(aliases, dockerruntime.LegacyXrayAlias, dockerruntime.ThreeXUIAlias)
 	}
 	candidateName := xrayWorkerCandidateContainer
 	if task.AppKey == meridianKey {
@@ -771,12 +769,16 @@ func dockerXrayWorkerApply(store *Store, dockerSocket string) xrayWorkerApply {
 // validateXrayWorkerConfig invokes the exact declared Xray image without
 // network access. No active configuration is replaced until this exits zero.
 func validateXrayWorkerConfig(ctx context.Context, docker *client.Client, imageRef, stagedPath string) error {
+	return validateXrayWorkerConfigAs(ctx, docker, imageRef, stagedPath, xrayWorkerRuntimeUID())
+}
+
+func validateXrayWorkerConfigAs(ctx context.Context, docker *client.Client, imageRef, stagedPath string, uid int) error {
 	if strings.TrimSpace(imageRef) == "" || filepath.Base(stagedPath) == "" {
 		return errors.New("agent: Xray configuration validation identity is missing")
 	}
 	pidsLimit := int64(128)
 	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: &container.Config{Image: imageRef, Cmd: []string{"run", "-test", "-c", filepath.Join(filepath.Dir(xrayWorkerConfigPath), filepath.Base(stagedPath))}, User: strconv.Itoa(xrayWorkerRuntimeUID())},
+		Config: &container.Config{Image: imageRef, Cmd: []string{"run", "-test", "-c", filepath.Join(filepath.Dir(xrayWorkerConfigPath), filepath.Base(stagedPath))}, User: strconv.Itoa(uid)},
 		HostConfig: &container.HostConfig{
 			NetworkMode:    container.NetworkMode("none"),
 			ReadonlyRootfs: true,
@@ -864,7 +866,7 @@ func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) 
 	if err := s.stopLandingMonitor(ctx); err != nil {
 		return err
 	}
-	if err := closeMeridianGates(ctx, state.knownLandingGates(), newMeridianTrafficGate); err != nil {
+	if err := closeMeridianGates(ctx, state.knownLandingGates(), meridianTrafficGateFactory); err != nil {
 		return err
 	}
 	if state.Pending != nil {

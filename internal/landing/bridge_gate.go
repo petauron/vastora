@@ -22,15 +22,16 @@ const (
 	nftOutputLimit = 16 << 20
 )
 
-// BridgeGate fences one managed proxy runtime's traffic to one landing SOCKS
-// listener. It scopes forwarded container traffic by bridge interface so
-// host-local Agent probes do not traverse the rules. Install must be called by
+// TrafficGate fences one managed proxy runtime's traffic to one landing SOCKS
+// listener. Host sockets use a dedicated group; retained bridge runtimes use
+// their bridge interface. Agent probes remain independent. Install must be called by
 // a boot prerequisite before Docker can restore a saved landing route. This
 // type does not install that prerequisite itself.
-type BridgeGate struct {
+type TrafficGate struct {
 	mu       sync.Mutex
 	peer     PeerIdentity
 	bridge   string
+	gid      uint32
 	revision uint64
 	table    string
 	marker   string
@@ -38,10 +39,8 @@ type BridgeGate struct {
 }
 
 var bridgeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,14}$`)
-var bridgeGateTablePattern = regexp.MustCompile(`^vastora_landing_[0-9a-f]{24}$`)
-var bridgeGateMarkerPattern = regexp.MustCompile(`^vastora-landing-v1:[0-9a-f]{64}$`)
 
-func NewBridgeGate(peer PeerIdentity, bridge string, revision uint64) (*BridgeGate, error) {
+func NewBridgeGate(peer PeerIdentity, bridge string, revision uint64) (*TrafficGate, error) {
 	address, err := netip.ParseAddr(peer.Address)
 	if err != nil || !netip.MustParsePrefix("100.64.0.0/10").Contains(address) || address.String() != peer.Address || peer.ID == "" || peer.PublicKey == "" || !bridgeNamePattern.MatchString(bridge) || revision == 0 {
 		return nil, errors.New("landing: invalid bridge gate identity")
@@ -49,14 +48,14 @@ func NewBridgeGate(peer PeerIdentity, bridge string, revision uint64) (*BridgeGa
 	return newTrafficGate(peer, bridge, revision)
 }
 
-func newTrafficGate(peer PeerIdentity, bridge string, revision uint64) (*BridgeGate, error) {
+func newTrafficGate(peer PeerIdentity, bridge string, revision uint64) (*TrafficGate, error) {
 	identity, _ := json.Marshal(struct {
 		Peer     PeerIdentity
 		Bridge   string
 		Revision uint64
 	}{peer, bridge, revision})
 	hash := sha256.Sum256(identity)
-	return &BridgeGate{peer: peer, bridge: bridge, revision: revision,
+	return &TrafficGate{peer: peer, bridge: bridge, revision: revision,
 		table:  "vastora_landing_" + hex.EncodeToString(hash[:12]),
 		marker: "vastora-landing-v1:" + hex.EncodeToString(hash[:]), run: runNFT}, nil
 }
@@ -68,7 +67,10 @@ type nftDocument struct {
 
 // No packet-path update statement is emitted: traffic cannot refresh its own
 // permission. A persistent kernel set expires even if the Agent is killed.
-func (g *BridgeGate) objects() []map[string]nftObject {
+func (g *TrafficGate) objects() []map[string]nftObject {
+	if g.gid != 0 {
+		return g.hostObjects()
+	}
 	objects := []map[string]nftObject{
 		{"table": {"family": "inet", "name": g.table, "comment": g.marker}},
 		{"set": {"family": "inet", "table": g.table, "name": "allowed", "type": "ipv4_addr", "flags": []string{"timeout"}, "timeout": int(AllowLifetime / time.Second), "size": 1}},
@@ -107,7 +109,7 @@ func (g *BridgeGate) objects() []map[string]nftObject {
 // Install is idempotent and always starts closed. It never replaces a table
 // with different ownership or policy. A changed revision needs its own gate;
 // the route switcher must keep the old gate until old connections are stopped.
-func (g *BridgeGate) Install(ctx context.Context) error {
+func (g *TrafficGate) Install(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	document, err := g.snapshot(ctx)
@@ -143,7 +145,7 @@ func (g *BridgeGate) Install(ctx context.Context) error {
 	return g.block(ctx)
 }
 
-func (g *BridgeGate) Block(ctx context.Context) error {
+func (g *TrafficGate) Block(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.block(ctx)
@@ -151,7 +153,7 @@ func (g *BridgeGate) Block(ctx context.Context) error {
 
 // Remove is used only after restoring the direct configuration or replacing
 // this revision with another closed gate. Refuse foreign or still-open rules.
-func (g *BridgeGate) Remove(ctx context.Context) error {
+func (g *TrafficGate) Remove(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	document, err := g.snapshot(ctx)
@@ -181,7 +183,7 @@ func (g *BridgeGate) Remove(ctx context.Context) error {
 // base chain. It drops container packets even when the current gate has a live
 // lease. Remove only closed tables with the exact managed policy for this peer
 // address and bridge; the current gate remains the traffic authority.
-func (g *BridgeGate) RemoveClosedConflicts(ctx context.Context) error {
+func (g *TrafficGate) RemoveClosedConflicts(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	document, err := g.snapshot(ctx)
@@ -191,22 +193,21 @@ func (g *BridgeGate) RemoveClosedConflicts(ctx context.Context) error {
 	if found, err := g.validate(document); err != nil || !found {
 		return errors.Join(err, errors.New("landing: current gate is unavailable"))
 	}
-	conflicts := []*BridgeGate{}
+	conflicts := []*TrafficGate{}
 	for _, object := range document.Objects {
 		table := object["table"]
 		if table == nil || table["family"] != "inet" {
 			continue
 		}
 		name, _ := table["name"].(string)
-		if name == g.table || !strings.HasPrefix(name, "vastora_landing_") || !g.matchesForwardTarget(document, name) {
+		if name == g.table || !strings.HasPrefix(name, g.tablePrefix()) || !g.matchesTarget(document, name) {
 			continue
 		}
 		marker, _ := table["comment"].(string)
-		if !bridgeGateTablePattern.MatchString(name) || !bridgeGateMarkerPattern.MatchString(marker) ||
-			!strings.HasPrefix(strings.TrimPrefix(marker, "vastora-landing-v1:"), strings.TrimPrefix(name, "vastora_landing_")) {
+		if !g.validOwnership(name, marker) {
 			return errors.New("landing: conflicting gate ownership is unavailable")
 		}
-		candidate := &BridgeGate{peer: g.peer, bridge: g.bridge, revision: g.revision, table: name, marker: marker, run: g.run}
+		candidate := &TrafficGate{peer: g.peer, bridge: g.bridge, gid: g.gid, revision: g.revision, table: name, marker: marker, run: g.run}
 		if found, err := candidate.validate(document); err != nil || !found || len(candidate.elements(document)) != 0 {
 			return errors.Join(err, errors.New("landing: conflicting gate is not a closed managed policy"))
 		}
@@ -235,10 +236,10 @@ func (g *BridgeGate) RemoveClosedConflicts(ctx context.Context) error {
 	return nil // A lost command response is harmless after confirming all removals.
 }
 
-func (g *BridgeGate) matchesForwardTarget(document nftDocument, table string) bool {
+func (g *TrafficGate) matchesTarget(document nftDocument, table string) bool {
 	for _, object := range document.Objects {
 		rule := object["rule"]
-		if rule == nil || rule["family"] != "inet" || rule["table"] != table || rule["chain"] != "forward" {
+		if rule == nil || rule["family"] != "inet" || rule["table"] != table || rule["chain"] != g.scopeChain() {
 			continue
 		}
 		bridge, address := false, false
@@ -259,7 +260,7 @@ func (g *BridgeGate) matchesForwardTarget(document nftDocument, table string) bo
 			if !ok {
 				continue
 			}
-			if meta, ok := left["meta"].(map[string]any); ok && meta["key"] == "iifname" && match["right"] == g.bridge {
+			if meta, ok := left["meta"].(map[string]any); ok && (g.gid == 0 && meta["key"] == "iifname" && match["right"] == g.bridge || g.gid != 0 && meta["key"] == "skgid" && match["right"] == float64(g.gid)) {
 				bridge = true
 			}
 			if payload, ok := left["payload"].(map[string]any); ok && payload["protocol"] == "ip" && payload["field"] == "daddr" && match["right"] == g.peer.Address {
@@ -273,7 +274,7 @@ func (g *BridgeGate) matchesForwardTarget(document nftDocument, table string) bo
 	return false
 }
 
-func (g *BridgeGate) block(ctx context.Context) error {
+func (g *TrafficGate) block(ctx context.Context) error {
 	document, err := g.snapshot(ctx)
 	if err != nil {
 		return err
@@ -294,7 +295,7 @@ func (g *BridgeGate) block(ctx context.Context) error {
 
 // Renew is internal to Monitor: callers cannot open the gate based on a UI
 // flag, a historical ping, or a health result for an earlier revision.
-func (g *BridgeGate) renew(ctx context.Context, until time.Time) error {
+func (g *TrafficGate) renew(ctx context.Context, until time.Time) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	document, err := g.snapshot(ctx)
@@ -323,11 +324,11 @@ func (g *BridgeGate) renew(ctx context.Context, until time.Time) error {
 	return nil
 }
 
-func (g *BridgeGate) flushAllowed() any {
+func (g *TrafficGate) flushAllowed() any {
 	return nftObject{"flush": nftObject{"set": nftObject{"family": "inet", "table": g.table, "name": "allowed"}}}
 }
 
-func (g *BridgeGate) apply(ctx context.Context, commands []any) error {
+func (g *TrafficGate) apply(ctx context.Context, commands []any) error {
 	data, err := json.Marshal(nftObject{"nftables": commands})
 	if err != nil {
 		return errors.New("landing: invalid firewall transaction")
@@ -336,7 +337,7 @@ func (g *BridgeGate) apply(ctx context.Context, commands []any) error {
 	return err
 }
 
-func (g *BridgeGate) snapshot(ctx context.Context) (nftDocument, error) {
+func (g *TrafficGate) snapshot(ctx context.Context) (nftDocument, error) {
 	data, err := g.run(ctx, nil, "--json", "list", "ruleset")
 	var document nftDocument
 	if err != nil {
@@ -349,7 +350,7 @@ func (g *BridgeGate) snapshot(ctx context.Context) (nftDocument, error) {
 	return document, nil
 }
 
-func (g *BridgeGate) validate(document nftDocument) (bool, error) {
+func (g *TrafficGate) validate(document nftDocument) (bool, error) {
 	return validateNFTPolicy(document, g.table, g.objects(), true)
 }
 
@@ -425,7 +426,7 @@ func validateNFTPolicy(document nftDocument, table string, objects []map[string]
 	return true, nil
 }
 
-func (g *BridgeGate) elements(document nftDocument) []any {
+func (g *TrafficGate) elements(document nftDocument) []any {
 	for _, object := range document.Objects {
 		if set := object["set"]; set != nil && set["family"] == "inet" && set["table"] == g.table && set["name"] == "allowed" {
 			if set["elem"] == nil {
@@ -440,7 +441,7 @@ func (g *BridgeGate) elements(document nftDocument) []any {
 	return nil
 }
 
-func (g *BridgeGate) hasLiveLease(document nftDocument, until time.Time) bool {
+func (g *TrafficGate) hasLiveLease(document nftDocument, until time.Time) bool {
 	elements := g.elements(document)
 	if len(elements) != 1 || !time.Now().Before(until) {
 		return false

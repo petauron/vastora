@@ -57,8 +57,8 @@ func canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, g
 		// can switch before the 3x-ui application itself is replaced.
 		return endpoint
 	}
-	if appKey == meridianAppKey && runtime == "docker" && applicationNodeID == gatewayID && containerPort > 0 && containerPort <= 65535 {
-		return net.JoinHostPort(dockerruntime.MeridianAlias, strconv.Itoa(containerPort))
+	if appKey == meridianAppKey {
+		return endpoint
 	}
 	if appKey == threeXUIAppKey && runtime == "docker" && containerPort == 2096 {
 		// Only a controller with an applied landing subscription journal is

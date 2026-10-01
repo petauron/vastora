@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/meridian"
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/networking"
 )
 
 const nodeListenerMigrationSetting = "migration_56_node_local_listener"
@@ -33,9 +35,9 @@ func validateCenterNodeListenerState(state gateway.NodeListenerState) error {
 			}
 			continue
 		}
-		upstreamOK := len(route.Upstreams) == 1 && route.Upstreams[0].Port == centerThreeXUIRealityPort && (route.Upstreams[0].Address == dockerruntime.MeridianAlias || route.Upstreams[0].Address == dockerruntime.LegacyXrayAlias || route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias)
+		upstreamOK := (len(route.Upstreams) == 1 && route.Upstreams[0].Port == centerThreeXUIRealityPort && (route.Upstreams[0].Address == dockerruntime.MeridianAlias || route.Upstreams[0].Address == dockerruntime.LegacyXrayAlias || route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias)) || len(route.Upstreams) == 1 && route.Upstreams[0].Port == meridian.RealityBackendPort && networking.IsPrivateServiceAddress(route.Upstreams[0].Address)
 		if route.ProxyProtocol != gateway.ProxyProtocolV2 || !upstreamOK {
-			return errors.New("center: managed REALITY listener must target the local managed proxy port 443 with Proxy Protocol v2")
+			return errors.New("center: managed REALITY listener must target the approved managed backend with Proxy Protocol v2")
 		}
 	}
 	return nil
@@ -117,7 +119,8 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 		LEFT JOIN meridian_endpoints meridian ON meridian.service_id = s.id
 		LEFT JOIN meridian_cutover cutover ON cutover.id = 1
 		WHERE p.ingress_owner = 'application_node' AND p.entry_node_id = ? AND p.kind = 'public_shared_443' AND a.node_id = ?
-		AND p.status <> 'stopped' AND s.status <> 'stopped' ORDER BY p.id`, nodeID, nodeID)
+		AND p.status <> 'stopped' AND s.status <> 'stopped'
+		AND (meridian.id IS NULL OR meridian.vless_enabled=1) ORDER BY p.id`, nodeID, nodeID)
 	if err != nil {
 		return gateway.NodeListenerState{}, err
 	}
@@ -134,7 +137,7 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 			return gateway.NodeListenerState{}, errors.New("center: node-direct listener upstream belongs to another Agent")
 		}
 		route.ApplicationNodeID = applicationNodeID
-		if route.ManagedReality {
+		if route.ManagedReality && (appKey != meridianAppKey || cutoverLegacyRuntime != "") {
 			alias := dockerruntime.ThreeXUIAlias
 			if appKey == meridianAppKey {
 				alias = dockerruntime.MeridianAlias
@@ -147,7 +150,7 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 				alias = dockerruntime.LegacyXrayAlias
 			}
 			endpoint = net.JoinHostPort(alias, strconv.Itoa(centerThreeXUIRealityPort))
-		} else {
+		} else if !route.ManagedReality {
 			endpoint = canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, nodeID, "", containerPort, endpoint)
 		}
 		host, portValue, err := net.SplitHostPort(endpoint)
@@ -166,8 +169,9 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 		} else if role == threeXUIRoleWorker && runtimeGeneration >= 2 {
 			expectedAlias = dockerruntime.LegacyXrayAlias
 		}
-		if route.ManagedReality && (runtime != "docker" || host != expectedAlias || port != centerThreeXUIRealityPort || route.ProxyProtocol != gateway.ProxyProtocolV2) {
-			return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("managed REALITY listener requires its local managed Xray port 443 with Proxy Protocol v2")}
+		hostBackend := appKey == meridianAppKey && cutoverLegacyRuntime == "" && networking.IsPrivateServiceAddress(host) && port == meridian.RealityBackendPort
+		if route.ManagedReality && (runtime != "docker" || (!hostBackend && (host != expectedAlias || port != centerThreeXUIRealityPort)) || route.ProxyProtocol != gateway.ProxyProtocolV2) {
+			return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("managed REALITY listener requires its approved local Xray backend with Proxy Protocol v2")}
 		}
 		route.Upstreams = []gateway.Upstream{{Address: host, Port: port}}
 		routes = append(routes, route)

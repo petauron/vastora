@@ -236,10 +236,12 @@ func seedMeridianVersion88HealthFixture(t *testing.T, db *sql.DB) {
 	}
 }
 
+// Private listen_port is intentionally migrated in v102 and tested there.
+// Public subscription addresses, credentials and usage remain invariant.
 func meridianVersion88PreservedState(t *testing.T, db *sql.DB) map[string]string {
 	t.Helper()
 	queries := map[string]string{
-		"endpoints": `SELECT id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,
+		"endpoints": `SELECT id,application_id,service_id,inbound_tag,advertise_host,advertise_port,target,target_ip,server_names_json,
 			private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,
 			hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,applied_revision,legacy_retired,last_error,created_at,updated_at
 			FROM meridian_endpoints ORDER BY id`,

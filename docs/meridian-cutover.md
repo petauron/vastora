@@ -73,6 +73,9 @@ account or fetch mutable configuration from Meridian or 3x-ui.
   snapshots. If the route was configured to hide its native entry, that entry
   stays hidden so recovery cannot silently change the selected egress.
 
+The managed entry uses the [host runtime](meridian-host-runtime.md): private
+TCP `10443` behind HAProxy, public HY2 UDP `443`, and a loopback-only API.
+
 ## Entry-to-egress evidence
 
 A running container, an applied configuration, a listening SOCKS port, and a
@@ -198,11 +201,12 @@ confirmed.
    - Atomically replace the old Xray process and confirm its applied revision
      and configuration digest. Only then transfer gate ownership and start
      Meridian's monitors. Remove superseded closed gate tables by exact peer,
-     bridge, and revision so an old DROP rule cannot strand a new revision.
-     A peer-bearing runtime uses no automatic Docker restart: Agent startup
+     bridge or runtime group, and revision so an old DROP rule cannot strand a new revision.
+     Every host runtime uses no automatic Docker restart: Agent startup
      installs closed gates before starting the journaled container.
-   - During projection the subscription URL stays stable and the new runtime
-     temporarily keeps the old Docker aliases. Each applied endpoint's fixed
+   - During projection the subscription URL stays stable. The old HAProxy
+     endpoint stays recorded until the new private backend is acknowledged;
+     the new host runtime has no Docker aliases. Each applied endpoint's fixed
      routes now depend on its own fresh transport observations; other endpoints
      can still serve their not-yet-replaced imported legacy routes.
    - After the runtime receipt, Center marks the entry service ready, applies
@@ -229,17 +233,15 @@ confirmed.
 7. **Retire**
 	- Only after every imported entry is applied, both subscription formats
 	  render successfully, and every public subscription route targets Center,
-	  remove the old installation receipt, database volume, account journal,
-	  management API state, and temporary Docker aliases from every migrated
-	  node.
+	  remove the old installation receipt, database volume, account journal
+	  and management API state from every migrated node.
 	- Recheck the Center publication and every entry revision before each
 	  remaining retirement task and before marking the
 	  cutover complete. A landing or entry change during this phase first applies
-	  as an ordinary Meridian revision while retaining migration aliases; cleanup
+	  as an ordinary Meridian revision while retaining migration evidence; cleanup
 	  resumes only after that revision is healthy.
-   - Removing temporary aliases may replace the container and restart its
-     monitors. Before deleting legacy recovery journals or receipts, wait a
-     bounded time for fresh evidence from every required peer again. On failure,
+   - Verify the host runtime identity before deleting legacy recovery journals
+     or receipts, then wait a bounded time for fresh evidence from every required peer again. On failure,
      retain the legacy recovery evidence and report incomplete retirement
      without stopping the already running Meridian runtime or repeatedly
      restarting its monitors.
@@ -293,7 +295,7 @@ migration; they are not translated by guesswork.
 - Command prefix: `meridian.*`
 - API prefix: `/api/v1/meridian`
 - Xray container: `meridian-xray`
-- Internal Xray network alias: `meridian-xray`
+- Internal Xray backend: approved private IPv4 on TCP `10443` (no network alias)
 - Center subscription protocol: `meridian/subscription`
 - Subscription service record: `subscription` (the existing record is retained
   so its public URL and publication identity remain stable)

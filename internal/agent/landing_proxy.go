@@ -701,8 +701,8 @@ func (s *Store) startLandingMonitor(state landingRuntimeState) error {
 	return nil
 }
 
-func landingGates(state landing.DesiredState, bridge string) ([]*landing.BridgeGate, error) {
-	gates := []*landing.BridgeGate{}
+func landingGates(state landing.DesiredState, bridge string) ([]*landing.TrafficGate, error) {
+	gates := []*landing.TrafficGate{}
 	for _, use := range state.PeerUses() {
 		gate, err := newLandingGate(use.Peer, bridge, state.Revision)
 		if err != nil {
@@ -713,7 +713,7 @@ func landingGates(state landing.DesiredState, bridge string) ([]*landing.BridgeG
 	return gates, nil
 }
 
-func newLandingGate(peer landing.PeerIdentity, scope string, revision uint64) (*landing.BridgeGate, error) {
+func newLandingGate(peer landing.PeerIdentity, scope string, revision uint64) (*landing.TrafficGate, error) {
 	return landing.NewBridgeGate(peer, scope, revision)
 }
 

@@ -14,13 +14,14 @@ import (
 	"time"
 
 	"github.com/petauron/meridian"
-	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/secret"
 )
 
 type meridianRuntimeProjection struct {
+	backendAddress     string
+	backendPort        int
 	task               meridianruntime.Task
 	agentID            string
 	serviceID          string
@@ -294,11 +295,11 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 	var hysteriaEndpoint meridian.HysteriaEndpoint
 	var serverNamesJSON, shortIDsJSON, sourcePeerJSON []byte
 	var privateKeySecretID, expectedSHA, hy2InboundTag, hy2ServerName, hy2NotAfter, endpointStatus string
-	var hy2CertificateSecretID, hy2PrivateKeySecretID sql.NullString
+	var hy2CertID, hy2KeyID sql.NullString
 	var vlessEnabled, hy2Enabled, runtimeHealthy, legacyRetired int
 	var revision, appliedRevision int64
 	err := tx.QueryRowContext(ctx, `SELECT endpoint.application_id,application.node_id,application.image,endpoint.service_id,
-		endpoint.inbound_tag,endpoint.listen_port,endpoint.advertise_host,endpoint.advertise_port,endpoint.target,
+		endpoint.inbound_tag,endpoint.listen_address,endpoint.listen_port,endpoint.advertise_host,endpoint.advertise_port,endpoint.target,
 		endpoint.server_names_json,endpoint.private_key_secret_id,endpoint.public_key,endpoint.short_ids_json,endpoint.fingerprint,
 		endpoint.vless_enabled,endpoint.hy2_enabled,endpoint.hy2_inbound_tag,endpoint.hy2_server_name,endpoint.hy2_certificate_secret_id,endpoint.hy2_private_key_secret_id,endpoint.hy2_certificate_not_after,
 		endpoint.desired_revision,endpoint.applied_revision,endpoint.runtime_healthy,endpoint.legacy_retired,endpoint.status,COALESCE(deployment.desired_sha256,''),endpoint.source_peer_json
@@ -307,9 +308,9 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 		LEFT JOIN meridian_deployments deployment ON deployment.endpoint_id=endpoint.id AND deployment.desired_revision=endpoint.desired_revision
 		WHERE endpoint.id=? AND endpoint.status<>'retired'`, meridianAppKey, endpointID).Scan(
 		&projection.task.ApplicationID, &projection.agentID, &projection.task.ImageReference, &projection.serviceID,
-		&endpoint.InboundTag, &endpoint.ListenPort, &endpoint.AdvertiseHost, &endpoint.AdvertisePort, &endpoint.Target,
+		&endpoint.InboundTag, &endpoint.ListenAddress, &endpoint.ListenPort, &endpoint.AdvertiseHost, &endpoint.AdvertisePort, &endpoint.Target,
 		&serverNamesJSON, &privateKeySecretID, &endpoint.PublicKey, &shortIDsJSON, &endpoint.Fingerprint,
-		&vlessEnabled, &hy2Enabled, &hy2InboundTag, &hy2ServerName, &hy2CertificateSecretID, &hy2PrivateKeySecretID, &hy2NotAfter,
+		&vlessEnabled, &hy2Enabled, &hy2InboundTag, &hy2ServerName, &hy2CertID, &hy2KeyID, &hy2NotAfter,
 		&revision, &appliedRevision, &runtimeHealthy, &legacyRetired, &endpointStatus, &expectedSHA, &sourcePeerJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -346,14 +347,14 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 		if parseErr != nil || !expiresAt.After(s.now().Add(time.Hour)) {
 			return projection, errors.New("center: stored Meridian Hysteria certificate is unavailable or expired")
 		}
-		if !hy2CertificateSecretID.Valid || !hy2PrivateKeySecretID.Valid {
+		if !hy2CertID.Valid || !hy2KeyID.Valid {
 			return projection, errors.New("center: stored Meridian Hysteria certificate is unavailable")
 		}
-		certificate, secretErr := s.meridianSecretInTx(ctx, tx, hy2CertificateSecretID.String, meridianHY2CertificateSecretContext(endpointID))
+		certificate, secretErr := s.meridianSecretInTx(ctx, tx, hy2CertID.String, meridianHY2CertificateSecretContext(endpointID))
 		if secretErr != nil {
 			return projection, errors.New("center: stored Meridian Hysteria certificate is unavailable")
 		}
-		hy2PrivateKey, secretErr := s.meridianSecretInTx(ctx, tx, hy2PrivateKeySecretID.String, meridianHY2PrivateKeySecretContext(endpointID))
+		hy2PrivateKey, secretErr := s.meridianSecretInTx(ctx, tx, hy2KeyID.String, meridianHY2PrivateKeySecretContext(endpointID))
 		if secretErr != nil {
 			return projection, errors.New("center: stored Meridian Hysteria key is unavailable")
 		}
@@ -388,6 +389,8 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 		return projection, errors.New("center: Meridian desired state changed after it was queued")
 	}
 	projection.task.Desired, projection.materials = artifact, materials
+	projection.backendAddress = endpoint.ListenAddress
+	projection.backendPort = endpoint.ListenPort
 	projection.task.Peers, projection.routePeerIDs = routes.runtimePeers, routes.routePeerIDs
 	if len(routes.runtimePeers) != 0 {
 		var source landing.PeerIdentity
@@ -404,7 +407,7 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 	}
 	// Retirement replays only an already verified artifact. A route or landing
 	// mutation during the retirement phase must first apply as a normal runtime
-	// revision while retaining the migration aliases; otherwise the recovery
+	// revision before retiring migration evidence; otherwise the recovery
 	// task itself could retire the last known legacy boundary before the new
 	// route is healthy.
 	retirePhase := cutoverState == "retire" && subscriptionAuthority == "meridian" && backupRevision > 0 && len(importSHA) == 64 && importSecretID != ""
@@ -417,8 +420,6 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 		}
 	}
 	projection.task.RetireLegacy = retirePhase && legacyRetired == 0 && endpointStatus == "ready" && runtimeHealthy == 1 && appliedRevision == revision && unreadyRoutes == 0
-	projection.task.PreserveLegacyAliases = subscriptionAuthority == "meridian" && legacyRetired == 0 &&
-		((cutoverState == "project" || cutoverState == "verify") || retirePhase && !projection.task.RetireLegacy)
 	if projection.task.Validate() != nil {
 		return projection, errors.New("center: Meridian runtime task is invalid")
 	}
@@ -739,9 +740,9 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 		if changed, _ := endpointUpdate.RowsAffected(); changed != 1 {
 			return errors.New("center: Meridian endpoint changed before its runtime receipt was committed")
 		}
-		serviceUpdate, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,protocol='tcp',container_port=443,host_port=443,
-			app_protocol=?,observed_listen='0.0.0.0',status='ready',last_error='',updated_at=?
-			WHERE id=? AND application_id=? AND status<>'stopped'`, net.JoinHostPort(dockerruntime.MeridianAlias, "443"), meridianEntryProtocol, now, projection.serviceID, projection.task.ApplicationID)
+		serviceUpdate, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,protocol='tcp',container_port=?,host_port=?,
+			app_protocol=?,observed_listen=?,status='ready',last_error='',updated_at=?
+			WHERE id=? AND application_id=? AND status<>'stopped'`, net.JoinHostPort(projection.backendAddress, fmt.Sprint(projection.backendPort)), projection.backendPort, projection.backendPort, meridianEntryProtocol, projection.backendAddress, now, projection.serviceID, projection.task.ApplicationID)
 		if err != nil {
 			return err
 		}

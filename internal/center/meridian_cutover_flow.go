@@ -396,7 +396,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 			sourceJSON, _ = json.Marshal(endpoint.sourcePeer)
 		}
 		var hy2Tag, hy2ServerName string
-		var hy2CertificateSecretID, hy2PrivateKeySecretID any
+		var hy2CertID, hy2KeyID any
 		if endpoint.hy2 != nil {
 			hy2Tag, hy2ServerName = endpoint.hy2.InboundTag, endpoint.hy2.ServerName
 			certificateID, secretErr := s.putSecret(ctx, tx, []byte(endpoint.hy2.CertificatePEM), meridianHY2CertificateSecretContext(endpoint.model.ID))
@@ -407,9 +407,9 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 			if secretErr != nil {
 				return secretErr
 			}
-			hy2CertificateSecretID, hy2PrivateKeySecretID = certificateID, privateKeyID
+			hy2CertID, hy2KeyID = certificateID, privateKeyID
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,desired_revision,applied_revision,runtime_healthy,legacy_retired,status,last_error,created_at,updated_at,source_peer_json,total_bytes,used_bytes,quota_applied_enabled,reset_day,next_reset_at,last_reset_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,0,0,0,'pending','',?,?,?,?,?,?,?,?,?)`, endpoint.model.ID, endpoint.applicationID, endpoint.serviceID, endpoint.model.InboundTag, endpoint.model.ListenPort, endpoint.model.AdvertiseHost, endpoint.model.AdvertisePort, endpoint.model.Target, endpoint.targetIP, names, privateSecretID, endpoint.model.PublicKey, shortIDs, endpoint.model.Fingerprint, boolInt(endpoint.vlessEnabled), boolInt(endpoint.hy2Enabled), hy2Tag, hy2ServerName, hy2CertificateSecretID, hy2PrivateKeySecretID, endpoint.hy2NotAfter, stamp, stamp, sourceJSON, endpoint.totalBytes, endpoint.usedBytes, boolInt(endpoint.totalBytes == 0 || endpoint.usedBytes < endpoint.totalBytes), endpoint.resetDay, endpoint.nextResetAt, endpoint.lastResetAt); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,desired_revision,applied_revision,runtime_healthy,legacy_retired,status,last_error,created_at,updated_at,source_peer_json,total_bytes,used_bytes,quota_applied_enabled,reset_day,next_reset_at,last_reset_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,0,0,0,'pending','',?,?,?,?,?,?,?,?,?)`, endpoint.model.ID, endpoint.applicationID, endpoint.serviceID, endpoint.model.InboundTag, endpoint.model.ListenAddress, endpoint.model.ListenPort, endpoint.model.AdvertiseHost, endpoint.model.AdvertisePort, endpoint.model.Target, endpoint.targetIP, names, privateSecretID, endpoint.model.PublicKey, shortIDs, endpoint.model.Fingerprint, boolInt(endpoint.vlessEnabled), boolInt(endpoint.hy2Enabled), hy2Tag, hy2ServerName, hy2CertID, hy2KeyID, endpoint.hy2NotAfter, stamp, stamp, sourceJSON, endpoint.totalBytes, endpoint.usedBytes, boolInt(endpoint.totalBytes == 0 || endpoint.usedBytes < endpoint.totalBytes), endpoint.resetDay, endpoint.nextResetAt, endpoint.lastResetAt); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,protocol='tcp',container_port=443,host_port=443,source='observed',app_protocol=?,observed_listen='0.0.0.0',status='pending',last_error='',updated_at=? WHERE id=?`, net.JoinHostPort(dockerruntime.MeridianAlias, "443"), meridianEntryProtocol, stamp, endpoint.serviceID); err != nil {
@@ -538,8 +538,8 @@ func (s *Store) resolveLegacyMeridianEndpoint(ctx context.Context, tx *sql.Tx, c
 			return meridianImportedEndpoint{}, errors.New("center: legacy remote endpoint no longer maps to an application")
 		}
 	}
-	var nodeID string
-	if err := tx.QueryRowContext(ctx, `SELECT application.node_id FROM applications application WHERE application.id=? AND application.app_key=? AND application.status='running'`, applicationID, threeXUIAppKey).Scan(&nodeID); err != nil {
+	var nodeID, serviceAddress string
+	if err := tx.QueryRowContext(ctx, `SELECT application.node_id,profile.service_address FROM applications application JOIN agent_network_profiles profile ON profile.agent_id=application.node_id WHERE application.id=? AND application.app_key=? AND application.status='running'`, applicationID, threeXUIAppKey).Scan(&nodeID, &serviceAddress); err != nil {
 		return meridianImportedEndpoint{}, errors.New("center: legacy endpoint application is unavailable")
 	}
 	type serviceCandidate struct{ id, name, displayName, inboundTag string }
@@ -595,7 +595,7 @@ func (s *Store) resolveLegacyMeridianEndpoint(ctx context.Context, tx *sql.Tx, c
 	if displayName == "" {
 		displayName = strings.TrimSpace(legacy.DisplayName)
 	}
-	model := meridian.RealityEndpoint{ID: endpointID, EntryID: applicationID, InboundTag: legacy.Tag, ListenPort: legacy.Port, AdvertiseHost: advertiseHost, AdvertisePort: legacy.Port, Target: legacy.Target, ServerNames: slices.Clone(legacy.ServerNames), PrivateKey: legacy.PrivateKey, PublicKey: legacy.PublicKey, ShortIDs: slices.Clone(legacy.ShortIDs), Fingerprint: legacy.Fingerprint}
+	model := meridian.RealityEndpoint{ID: endpointID, EntryID: applicationID, InboundTag: legacy.Tag, ListenAddress: serviceAddress, ListenPort: meridian.RealityBackendPort, AdvertiseHost: advertiseHost, AdvertisePort: legacy.Port, Target: legacy.Target, ServerNames: slices.Clone(legacy.ServerNames), PrivateKey: legacy.PrivateKey, PublicKey: legacy.PublicKey, ShortIDs: slices.Clone(legacy.ShortIDs), Fingerprint: legacy.Fingerprint}
 	if model.Validate() != nil || displayName == "" {
 		return meridianImportedEndpoint{}, errors.New("center: legacy REALITY endpoint cannot be represented by Meridian")
 	}

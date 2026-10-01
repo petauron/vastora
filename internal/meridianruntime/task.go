@@ -31,18 +31,17 @@ func (c Command) Validate() error {
 }
 
 type Task struct {
-	ApplicationID         string                   `json:"applicationId"`
-	ImageReference        string                   `json:"imageReference"`
-	Desired               meridian.DesiredArtifact `json:"desired"`
-	PreserveLegacyAliases bool                     `json:"preserveLegacyAliases"`
-	RetireLegacy          bool                     `json:"retireLegacy"`
-	ReplacePendingState   bool                     `json:"replacePendingState,omitempty"`
-	Peers                 []Peer                   `json:"peers,omitempty"`
-	Source                *landing.PeerIdentity    `json:"source,omitempty"`
+	ApplicationID       string                   `json:"applicationId"`
+	ImageReference      string                   `json:"imageReference"`
+	Desired             meridian.DesiredArtifact `json:"desired"`
+	RetireLegacy        bool                     `json:"retireLegacy"`
+	ReplacePendingState bool                     `json:"replacePendingState,omitempty"`
+	Peers               []Peer                   `json:"peers,omitempty"`
+	Source              *landing.PeerIdentity    `json:"source,omitempty"`
 }
 
 func (t Task) Validate() error {
-	if strings.TrimSpace(t.ApplicationID) == "" || len(t.ApplicationID) > meridian.MaxIdentifierLength || strings.TrimSpace(t.ImageReference) == "" || len(t.ImageReference) > 1024 || t.PreserveLegacyAliases && t.RetireLegacy || t.ReplacePendingState && t.RetireLegacy {
+	if strings.TrimSpace(t.ApplicationID) == "" || len(t.ApplicationID) > meridian.MaxIdentifierLength || strings.TrimSpace(t.ImageReference) == "" || len(t.ImageReference) > 1024 || t.ReplacePendingState && t.RetireLegacy {
 		return errors.New("meridian runtime: invalid task identity")
 	}
 	if err := t.Desired.Validate(); err != nil {
