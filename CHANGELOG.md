@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.265](https://github.com/petauron/vastora/compare/v0.1.0-alpha.264...v0.1.0-alpha.265) (2026-10-01)
+
+
+### Bug Fixes
+
+* fence update helper results from late scheduler failures ([#770](https://github.com/petauron/vastora/issues/770)) ([1e12f8d](https://github.com/petauron/vastora/commit/1e12f8d9101f6f5057d2cde280fc87da3046a6f6))
+
 ## [0.1.0-alpha.264](https://github.com/petauron/vastora/compare/v0.1.0-alpha.263...v0.1.0-alpha.264) (2026-10-01)
 
 
