@@ -1,22 +1,25 @@
 import { HistoryIcon } from "lucide-react";
-import type { Action, AgentView } from "../types";
+import type { Action, AgentView, Screen } from "../types";
 import type { Language } from "../translations";
 import { ExecutionSettings } from "./ExecutionSettings";
-import { PageHeading, StateBadge, copy, formatDate, userError } from "./shared";
+import { PageHeading, StateBadge, copy, formatDate } from "./shared";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 
+import { actionKind, groupActions, visibleActionMessage } from "./activityPresentation";
+
 const visibleEventLimit = 100;
 
-export function ActivityView({ actions, agents, language }: { actions: Action[]; agents: AgentView[]; language: Language }) {
+export function ActivityView({ actions, agents, language, onNavigate }: { actions: Action[]; agents: AgentView[]; language: Language; onNavigate?: (screen: Screen) => void }) {
   const agentNames = new Map(agents.map((agent) => [agent.id, agent.name]));
   const visibleActions = actions.slice(0, visibleEventLimit);
   const groups = groupActions(visibleActions);
   return (
     <section className="flex flex-col gap-7">
-      <PageHeading title={copy(language, "活动", "Activity")} description={copy(language, "每次安装或网络变更只显示为一项操作；展开后可查看执行步骤。", "Each install or network change appears as one operation. Expand it to see execution steps.")} />
-      <ExecutionSettings agents={agents} language={language} />
+      <PageHeading title={copy(language, "活动", "Activity")} description={copy(language, "查看需要处理的任务，再按需查看历史操作。", "Review tasks needing attention, then browse historical activity.")} />
+      <ExecutionSettings agents={agents} language={language} onNavigate={onNavigate} />
+      <details className="rounded-xl border p-4"><summary className="cursor-pointer text-sm font-medium">{copy(language,"操作日志","Operation log")}</summary><div className="mt-4">
       {actions.length > visibleEventLimit ? <p className="text-xs text-muted-foreground">{copy(language, `显示最近 ${visibleEventLimit} 条事件，已按操作合并。`, `Showing the latest ${visibleEventLimit} events, grouped by operation.`)}</p> : null}
       {groups.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><HistoryIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有活动记录", "No activity yet")}</EmptyTitle><EmptyDescription>{copy(language, "创建安装或访问任务后，进度会显示在这里。", "Progress appears here after an install or access operation is created.")}</EmptyDescription></EmptyHeader></Empty> : (
         <div aria-live="polite" className="flex flex-col gap-3">
@@ -40,44 +43,7 @@ export function ActivityView({ actions, agents, language }: { actions: Action[];
           })}
         </div>
       )}
+      </div></details>
     </section>
   );
-}
-
-export function groupActions(actions: Action[]) {
-  const grouped = new Map<string, Action[]>();
-  for (const action of actions) {
-    const group = grouped.get(action.taskId);
-    if (group) group.push(action);
-    else grouped.set(action.taskId, [action]);
-  }
-  return [...grouped.entries()].map(([taskId, values]) => ({ taskId, actions: [...values].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)) }));
-}
-
-function visibleActionMessage(language: Language, action: Action) {
-  const localized = actionMessage(language, action.message);
-  if (!action.message || localized !== action.message || /^(install|upgrade|configure|uninstall) /.test(action.message)) return localized;
-  return action.event === "failed" ? userError(language, action.message) : actionKind(language, action.kind);
-}
-
-export function actionKind(language: Language, kind: string) {
-  const labels: Record<string, [string, string]> = {
-    "application.apply": ["应用变更", "Application change"],
-    "gateway.component.apply": ["准备服务入口", "Prepare service access"],
-    "gateway.routes.apply": ["更新访问方式", "Update service access"],
-    "tunnel.state.apply": ["更新 Cloudflare 连接", "Update Cloudflare connection"]
-  };
-  return labels[kind] ? copy(language, ...labels[kind]) : copy(language, "系统操作", "System operation");
-}
-
-export function actionMessage(language: Language, message?: string) {
-  if (!message) return "";
-  const operation = /^(install|upgrade|configure|uninstall) (.+)$/.exec(message);
-  if (operation) {
-    const labels: Record<string, [string, string]> = { install: ["安装", "Install"], upgrade: ["升级", "Upgrade"], configure: ["修改配置", "Configure"], uninstall: ["卸载", "Uninstall"] };
-    return `${copy(language, ...labels[operation[1]])} ${operation[2]}`;
-  }
-  if (message === "task lease expired; queued for retry") return copy(language, "节点响应较慢，系统正在自动重试。", "The node is responding slowly. Vastora is retrying automatically.");
-  if (message === "gateway health check failed; queued for reconcile") return copy(language, "服务入口暂时不可用，系统正在自动修复。", "Service access is temporarily unavailable. Vastora is repairing it automatically.");
-  return message;
 }

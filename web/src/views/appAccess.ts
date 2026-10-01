@@ -172,3 +172,17 @@ export function publicationKindLabel(language: Language, kind: PublicationKind) 
   const labels: Record<PublicationKind, [string, string]> = { lan_gateway: ["局域网访问", "Local network"], headscale_gateway: ["安全私网", "Secure private network"], public_direct: ["公网直连", "Direct public"], public_shared_443: ["节点直连 443", "Node-direct 443"], cloudflare_tunnel: ["Cloudflare 安全通道", "Cloudflare secure tunnel"] };
   return copy(language, ...labels[kind]);
 }
+
+function secureDashboardURL(value?: string) {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol === "https:" && url.hostname && !url.username && !url.password && !url.hash) return url.href;
+  } catch { /* An incomplete access publication cannot open the dashboard. */ }
+  return undefined;
+}
+
+export function pulseDashboardURL(data: AppData) {
+  const publication = pulsePrivateAccess(data);
+  return publication && !publication.actionRequired && !publication.lastError ? secureDashboardURL(publication.accessUrl) : undefined;
+}

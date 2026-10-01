@@ -1,14 +1,14 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { AppWindowIcon, ArrowRightIcon, CircleCheckIcon, CircleArrowUpIcon, PencilIcon, PlusIcon, ServerIcon } from "lucide-react";
 import { api } from "../api";
 import { browserTimezone } from "../lib/network";
-import { actionKind, actionMessage, groupActions } from "./ActivityView";
+import { actionKind, groupActions, visibleActionMessage } from "./activityPresentation";
 import type { AppData, Mutate, Screen } from "../App";
 import type { AgentView, Site, SiteInput } from "../types";
 import type { Language } from "../translations";
 import { PageHeading, StateBadge, copy, formatDate, userError } from "./shared";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldSet, FieldLegend } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -16,44 +16,44 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { TimezoneCombobox } from "@/components/TimezoneCombobox";
 
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { publicationNeedsAttention } from "./installed-apps-model";
+import { HomeTaskSummary } from "./HomeTaskSummary";
+
 export function HomeView({ data, language, onNavigate, mutate }: { data: AppData; language: Language; onNavigate: (screen: Screen) => void; mutate: Mutate }) {
   const [editingSite, setEditingSite] = useState<Site | null>(null);
   const [siteEditorOpen, setSiteEditorOpen] = useState(false);
   const activeAgents = data.agents.filter((agent) => agent.status === "active");
-  const connected = activeAgents.filter((agent) => agent.connected).length;
-  const readyEntries = data.publications.filter((publication) => publication.status === "ready").length;
+  const connected = activeAgents.filter((agent) => agent.connected && !agent.credentialRevoked).length;
+  const readyEntries = data.publications.filter((publication) => publication.status === "ready" && !publicationNeedsAttention(publication)).length;
+  const entryIssues = data.publications.filter((publication) => publication.status !== "stopped" && publicationNeedsAttention(publication)).length;
+  const appIssues = data.applications.filter((app) => ["failed", "degraded"].includes(app.status)).length;
   const needsNetwork = activeAgents.filter((agent) => !agent.networkProfile).length;
   const recentActions = groupActions(data.actions).slice(0, 5).map((group) => group.actions[0]);
   const editingServiceIDs = new Set(data.services.filter((service) => service.siteId === editingSite?.id).map((service) => service.id));
   const namespaceLocked = data.publications.some((publication) => publication.status !== "stopped" && editingServiceIDs.has(publication.serviceId));
-  return (
-    <section className="flex flex-col gap-7">
-      <PageHeading title={copy(language, "欢迎回来", "Welcome back")} description={copy(language, "从这里查看节点、应用和访问入口是否正常。", "See whether your nodes, apps, and access points are healthy.")} />
-      {data.centerUpdate.updateAvailable ? <Card size="sm"><CardHeader><CardTitle className="flex items-center gap-2"><CircleArrowUpIcon />{copy(language, `Center ${data.centerUpdate.latestVersion} 已发布`, `Center ${data.centerUpdate.latestVersion} is available`)}</CardTitle><CardDescription>{copy(language, "可在设置中查看并安全更新；配置和数据会保留。", "Review and update safely in Settings; configuration and data are preserved.")}</CardDescription><CardAction><Button onClick={() => onNavigate("settings")} size="sm">{copy(language, "查看更新", "View update")}<ArrowRightIcon data-icon="inline-end" /></Button></CardAction></CardHeader></Card> : null}
-      <SetupGuide activeAgents={activeAgents.length} language={language} needsNetwork={needsNetwork} onNavigate={onNavigate} runningApps={data.applications.filter((application) => application.status === "running").length} />
-      <div className="grid gap-4 sm:grid-cols-3">
-        <SummaryCard description={copy(language, "在线节点", "online nodes")} icon={<ServerIcon />} title={`${connected}/${activeAgents.length}`} />
-        <SummaryCard description={copy(language, "运行中的应用", "running apps")} icon={<AppWindowIcon />} title={String(data.applications.filter((application) => application.status === "running").length)} />
-        <SummaryCard description={copy(language, "可访问入口", "ready access points")} icon={<CircleCheckIcon />} title={String(readyEntries)} />
-      </div>
-
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">{copy(language, "位置", "Locations")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "位置把同一网络中的节点放在一起。", "A location groups nodes that share a network.")}</p></div><Button onClick={() => { setEditingSite(null); setSiteEditorOpen(true); }} size="sm" variant="outline"><PlusIcon data-icon="inline-start" />{copy(language, "新建位置", "New location")}</Button></div>
-        <div className="grid gap-4 lg:grid-cols-2">
-          {data.sites.map((site) => {
-            const agents = activeAgents.filter((agent) => agent.siteId === site.id);
-            return <Card key={site.id}><CardHeader><CardTitle>{site.name}</CardTitle><CardDescription>{site.description || copy(language, "一个网络位置", "A network location")}</CardDescription><CardAction><Button aria-label={copy(language, "编辑位置", "Edit location")} onClick={() => { setEditingSite(site); setSiteEditorOpen(true); }} size="icon-sm" variant="ghost"><PencilIcon /></Button></CardAction></CardHeader><CardContent><dl className="grid grid-cols-2 gap-4 text-sm"><div><dt className="text-muted-foreground">{copy(language, "节点", "Nodes")}</dt><dd className="mt-1 font-medium">{agents.length}</dd></div><div><dt className="text-muted-foreground">{copy(language, "网关", "Gateways")}</dt><dd className="mt-1 font-medium">{site.gatewayNodes.length}</dd></div><div><dt className="text-muted-foreground">{copy(language, "时区", "Time zone")}</dt><dd className="mt-1 truncate text-xs font-medium">{site.timezone}</dd></div><div><dt className="text-muted-foreground">{copy(language, "服务域名空间", "Service domain namespace")}</dt><dd className="mt-1 truncate font-mono text-xs">{site.domainSuffix || copy(language, "未设置", "Not set")}</dd></div></dl></CardContent><CardFooter className="justify-between"><StateBadge value={site.gatewayStatus} /><Button onClick={() => onNavigate("network")} size="sm" variant="ghost">{copy(language, "查看网络", "View network")}<ArrowRightIcon data-icon="inline-end" /></Button></CardFooter></Card>;
-          })}
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center justify-between"><h2 className="text-lg font-semibold">{copy(language, "最近活动", "Recent activity")}</h2><Button onClick={() => onNavigate("activity")} size="sm" variant="ghost">{copy(language, "查看全部", "View all")}<ArrowRightIcon data-icon="inline-end" /></Button></div>
-        <Card size="sm"><CardContent className="flex flex-col gap-3">{recentActions.map((action) => <div className="flex min-h-11 items-center gap-3 border-b border-border/70 py-2 last:border-b-0" key={action.id}><StateBadge language={language} value={action.event} /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{actionKind(language, action.kind)}</p><p className="truncate text-xs text-muted-foreground">{actionMessage(language, action.message) || action.taskId}</p></div><time className="hidden text-xs text-muted-foreground sm:block">{formatDate(language, action.createdAt)}</time></div>)}</CardContent></Card>
-      </div>
-      <SiteEditor agents={activeAgents} language={language} namespaceLocked={namespaceLocked} open={siteEditorOpen} site={editingSite} onClose={() => { setSiteEditorOpen(false); setEditingSite(null); }} onSave={async (site, input) => { await mutate(() => site ? api.updateSite(site, input) : api.createSite(input), copy(language, site ? "位置信息已保存。" : "位置已创建。", site ? "Location saved." : "Location created.")); setSiteEditorOpen(false); setEditingSite(null); }} />
-    </section>
-  );
+  const attention = [
+    connected < activeAgents.length ? copy(language, `${activeAgents.length - connected} 台节点未连接`, `${activeAgents.length - connected} nodes disconnected`) : "",
+    appIssues ? copy(language, `${appIssues} 个应用异常`, `${appIssues} app issues`) : "",
+    entryIssues ? copy(language, `${entryIssues} 个访问入口异常`, `${entryIssues} access issues`) : "",
+  ].filter(Boolean);
+  return <section className="flex min-w-0 flex-col gap-5">
+    <PageHeading title={copy(language, "概览", "Overview")} description={copy(language, "先看运行状态，再处理需要关注的事项。", "Check current status and anything that needs attention.")} />
+    {attention.length ? <Alert><AlertTitle>{attention.join(" · ")}</AlertTitle><AlertDescription><Button onClick={() => onNavigate(connected < activeAgents.length ? "nodes" : "apps")} size="sm" variant="outline">{copy(language, "查看运行状态", "View status")}</Button></AlertDescription></Alert> : null}
+    <HomeTaskSummary data={data} language={language} onNavigate={onNavigate} />
+    <div className="grid gap-3 sm:grid-cols-3">
+      {[{ screen: "nodes" as Screen, icon: ServerIcon, value: `${connected}/${activeAgents.length}`, label: copy(language, "节点在线", "Nodes online") }, { screen: "apps" as Screen, icon: AppWindowIcon, value: data.applications.filter((app) => app.status === "running").length, label: copy(language, "应用运行中", "Apps running") }, { screen: "apps" as Screen, icon: CircleCheckIcon, value: readyEntries, label: copy(language, "访问入口就绪", "Access points ready") }].map(({ screen, icon: Icon, value, label }) => <Button className="h-auto justify-between p-4" key={label} variant="outline" onClick={() => onNavigate(screen)}><span className="flex items-center gap-3"><Icon data-icon="inline-start" /><span className="text-left"><strong className="block text-xl tabular-nums">{value}</strong><span className="text-xs text-muted-foreground">{label}</span></span></span><ArrowRightIcon data-icon="inline-end" /></Button>)}
+    </div>
+    {data.centerUpdate.updateAvailable ? <Card size="sm"><CardHeader><CardTitle className="flex items-center gap-2"><CircleArrowUpIcon />{copy(language, "管理中心有新版本", "Management center update available")}</CardTitle><CardDescription>{data.centerUpdate.latestVersion}</CardDescription><CardAction><Button onClick={() => onNavigate("settings")} size="sm" variant="outline">{copy(language, "查看更新", "View update")}</Button></CardAction></CardHeader></Card> : null}
+    <SetupGuide activeAgents={activeAgents.length} language={language} needsNetwork={needsNetwork} onNavigate={onNavigate} runningApps={data.applications.filter((app) => app.status === "running").length} />
+    <Card size="sm"><CardHeader><CardTitle>{copy(language, "最近活动", "Recent activity")}</CardTitle><CardAction><Button onClick={() => onNavigate("activity")} size="sm" variant="ghost">{copy(language, "查看全部", "View all")}<ArrowRightIcon data-icon="inline-end" /></Button></CardAction></CardHeader><CardContent className="flex flex-col gap-2">
+      {recentActions.length ? recentActions.map((action) => <Button className="h-auto min-w-0 justify-start gap-3 whitespace-normal py-3 text-left" key={action.id} onClick={() => onNavigate("activity")} variant="ghost"><StateBadge language={language} value={action.currentState || action.event} /><span className="min-w-0 flex-1"><span className="block text-sm font-medium">{data.agents.find((agent) => agent.id === action.agentId)?.name ?? copy(language, "未知节点", "Unknown node")} · {actionKind(language, action.kind)}</span><span className="mt-1 block text-xs text-muted-foreground">{visibleActionMessage(language, action)}</span></span><time className="hidden shrink-0 text-xs text-muted-foreground sm:block">{formatDate(language, action.createdAt)}</time></Button>) : <p className="py-3 text-sm text-muted-foreground">{copy(language, "暂无活动。添加节点或安装应用后，进度会显示在这里。", "No activity yet. Node and app operations will appear here.")}</p>}
+    </CardContent></Card>
+    <details className="rounded-xl border bg-card"><summary className="cursor-pointer px-4 py-3 text-sm font-medium">{copy(language, `位置管理 · ${data.sites.length}`, `Locations · ${data.sites.length}`)}</summary><div className="flex flex-col gap-3 border-t p-4"><div className="flex items-center justify-between gap-3"><p className="text-sm text-muted-foreground">{copy(language, "按家庭、办公室或机房分组管理节点。", "Group nodes by home, office, or data center.")}</p><Button onClick={() => { setEditingSite(null); setSiteEditorOpen(true); }} size="sm" variant="outline"><PlusIcon data-icon="inline-start" />{copy(language, "新建位置", "New location")}</Button></div>
+      {data.sites.map((site) => <div className="flex min-w-0 items-center gap-3 border-b py-2 last:border-b-0" key={site.id}><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{site.name}</p><p className="text-xs text-muted-foreground">{copy(language, `${activeAgents.filter((agent) => agent.siteId === site.id).length} 台节点`, `${activeAgents.filter((agent) => agent.siteId === site.id).length} nodes`)}</p></div><Button aria-label={copy(language, `编辑位置 ${site.name}`, `Edit location ${site.name}`)} onClick={() => { setEditingSite(site); setSiteEditorOpen(true); }} size="sm" variant="ghost"><PencilIcon data-icon="inline-start" />{copy(language, "编辑", "Edit")}</Button></div>)}
+    </div></details>
+    <SiteEditor agents={activeAgents} language={language} namespaceLocked={namespaceLocked} open={siteEditorOpen} site={editingSite} onClose={() => { setSiteEditorOpen(false); setEditingSite(null); }} onSave={async (site, input) => { await mutate(() => site ? api.updateSite(site, input) : api.createSite(input), copy(language, site ? "位置信息已保存。" : "位置已创建。", site ? "Location saved." : "Location created.")); setSiteEditorOpen(false); setEditingSite(null); }} />
+  </section>;
 }
 
 function SetupGuide({ activeAgents, language, needsNetwork, onNavigate, runningApps }: { activeAgents: number; language: Language; needsNetwork: number; onNavigate: (screen: Screen) => void; runningApps: number }) {
@@ -66,10 +66,6 @@ function SetupGuide({ activeAgents, language, needsNetwork, onNavigate, runningA
   if (current === -1) return null;
   const completed = steps.filter((step) => step.done).length;
   return <Card className="overflow-hidden"><CardHeader><CardTitle>{copy(language, "完成首次设置", "Finish setup")}</CardTitle><CardDescription>{copy(language, "一次只完成当前步骤，Vastora 会自动显示下一步。", "Complete one step at a time; Vastora reveals what comes next automatically.")}</CardDescription><CardAction><span className="text-sm font-medium text-muted-foreground">{completed}/{steps.length}</span></CardAction></CardHeader><CardContent><ol className="flex flex-col">{steps.map((step, index) => <li aria-current={index === current ? "step" : undefined} className="grid min-h-16 grid-cols-[20px_minmax(0,1fr)] items-start gap-x-3 border-b py-3 last:border-b-0 sm:flex" key={step.title}>{step.done ? <CircleCheckIcon aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-success" /> : <span aria-hidden="true" className={`grid size-5 shrink-0 place-items-center rounded-full border text-[11px] font-semibold ${index === current ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground"}`}>{index + 1}</span>}<div className="min-w-0 flex-1"><p className="text-sm font-medium">{step.title}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{step.description}</p></div>{index === current ? <Button className="col-start-2 mt-2 w-full sm:mt-0 sm:w-auto sm:shrink-0" onClick={() => onNavigate(step.screen)} size="sm">{step.action}<ArrowRightIcon data-icon="inline-end" /></Button> : null}</li>)}</ol></CardContent></Card>;
-}
-
-function SummaryCard({ icon, title, description }: { icon: ReactNode; title: string; description: string }) {
-  return <Card size="sm"><CardHeader><CardTitle className="flex items-center gap-2">{icon}{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader></Card>;
 }
 
 function SiteEditor({ agents, language, namespaceLocked, open, site, onClose, onSave }: { agents: AgentView[]; language: Language; namespaceLocked: boolean; open: boolean; site: Site | null; onClose: () => void; onSave: (site: Site | null, input: SiteInput) => Promise<void> }) {
