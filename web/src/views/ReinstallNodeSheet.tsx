@@ -34,6 +34,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
   }, [agent.id, agent.reinstall?.updatedAt, language, revision]);
   const recovery = plan?.recovery;
   const joined = recovery?.state === "review_required";
+  const localExecutions = plan?.executions.filter((execution) => execution.agentId === agent.id && execution.resolution === "local_after_isolation").length ?? 0;
   const command = enrollment && !joined ? agentInstallCommand({ centerURL: enrollment.centerUrl ?? "", enrollment, installerAvailable }) : "";
   const confirm = async (resumeIsolation = false) => {
     if (!plan || busy) return;
@@ -74,6 +75,21 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
     }
   };
   const refresh = () => { request.current = null; setRevision((value) => value + 1); };
+  const settleLocalWork = async () => {
+    if (!plan || !recovery || busy) return;
+    const current = generation.current;
+    setBusy(true); setError("");
+    try {
+      await api.settleAgentReinstallLocalWork(agent.id, { operationId: recovery.id, planRevision: plan.revision, confirmLocal: true });
+      if (generation.current !== current) return;
+      const latest = await api.agentReinstallPlan(agent.id);
+      if (generation.current === current) setPlan(latest);
+    } catch (cause) {
+      if (generation.current === current) setError(userError(language, cause));
+    } finally {
+      if (generation.current === current) setBusy(false);
+    }
+  };
   return <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
     <SheetContent className="sm:max-w-xl">
       <SheetHeader>
@@ -97,6 +113,10 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
             <p className="text-xs text-muted-foreground">{copy(language, `${plan.executions.length} 条执行待核对 · ${plan.pendingWork.reduce((total, item) => total + item.count, 0)} 项历史工作保留`, `${plan.executions.length} executions to inspect · ${plan.pendingWork.reduce((total, item) => total + item.count, 0)} historical work items retained`)}</p>
             {plan.requirements.includes("inspect_remote_effects_before_restore") ? <p className="text-xs text-muted-foreground">{copy(language, "包含其他主机上关联此节点的任务，需单独核对执行结果。", "Includes related tasks on other hosts; inspect their outcomes separately.")}</p> : null}
           </section>
+          {joined && (localExecutions > 0 || plan.localWorkDisposition) ? <section className="flex flex-col gap-2 rounded-xl border p-4" aria-label={copy(language, "旧本机执行", "Previous machine executions")}>
+            {plan.localWorkDisposition ? <p className="text-sm">{copy(language, `已终止 ${plan.localWorkDisposition.executionIds.length} 条旧本机执行，历史记录已保留。`, `${plan.localWorkDisposition.executionIds.length} previous machine executions abandoned; history retained.`)}</p> : null}
+            {localExecutions > 0 ? <><p className="text-xs text-muted-foreground">{copy(language, "终止已隔离旧机器上的执行并保留记录。应用恢复将创建新任务。", "Abandon executions on the isolated previous machine and retain their records. Application restoration will create new tasks.")}</p><Button className="self-start" variant="outline" disabled={busy || recovery.privateIsolation === "pending"} onClick={() => void settleLocalWork()}>{copy(language, `终止 ${localExecutions} 条旧本机执行`, `Abandon ${localExecutions} previous machine executions`)}</Button></> : null}
+          </section> : null}
           {joined && plan.networkReview ? <ReinstallNetworkReview key={plan.revision} review={plan.networkReview} busy={busy} language={language} onApprove={approveNetwork} /> : null}
           {command ? <><p className="text-sm">{copy(language, "在重装后的原服务器执行一次", "Run once on the reinstalled original server")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div><p className="text-xs text-muted-foreground">{copy(language, `命令有效期至 ${formatDate(language, enrollment!.expiresAt)}`, `Command valid until ${formatDate(language, enrollment!.expiresAt)}`)}</p></> : null}
           {joined ? <p className="flex items-center gap-2 text-sm"><CheckCircle2Icon aria-hidden="true" className="size-4" />{copy(language, "身份接替已记录；网络、应用和业务验证尚未完成。", "Identity replacement recorded. Network, application and business verification are not complete.")}</p> : null}

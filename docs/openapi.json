@@ -7099,9 +7099,41 @@
                           },
                           "identityRetired": {
                             "type": "boolean"
+                          },
+                          "resolution": {
+                            "type": "string"
                           }
                         }
                       }
+                    },
+                    "localWorkDisposition": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "planRevision": {
+                              "type": "string"
+                            },
+                            "executionIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "authorizedBy": {
+                              "type": "string"
+                            },
+                            "disposedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "requirements": {
                       "type": "array",
@@ -7506,6 +7538,112 @@
           }
         },
         "description": "Explicit address migration approval bound to the replacement identity and reviewed network evidence. Verifies managed private identity through the controller and retains previous/new profiles plus administrator audit. Saves restoration intent only; does not activate addresses, change publications or release task execution."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-work/settle": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Settle Agent Reinstall Local Work",
+        "operationId": "settleAgentReinstallLocalWork_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "planRevision": {
+                      "type": "string"
+                    },
+                    "executionIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "authorizedBy": {
+                      "type": "string"
+                    },
+                    "disposedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "confirmLocal": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicit administrator settlement of reviewed, retired host-local executions after old identity isolation and replacement enrollment. Preserves historical outcomes and encrypted evidence, atomically abandons exact attempts and records a durable receipt. Remote or unclassified effects require separate review. Does not dispatch restoration or release the recovery fence."
       }
     },
     "/api/v1/agents/{id}": {

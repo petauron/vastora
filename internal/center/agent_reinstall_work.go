@@ -31,7 +31,7 @@ func pauseReinstallRelatedCommands(ctx context.Context, tx *sql.Tx, agentID, now
 // Read within the plan's transaction. Counts are presentation only: the review
 // revision binds the exact tasks, attempts, intent and retained result evidence.
 // Raw configuration and sealed evidence must never leave this function.
-func readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentReinstallPlan) (string, error) {
+func (s *Store) readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentReinstallPlan) (string, error) {
 	digest := sha256.New()
 	encoder := json.NewEncoder(digest)
 	remote := false
@@ -61,6 +61,20 @@ func readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentReinstallPlan
 	rows.Close()
 	if err != nil {
 		return "", err
+	}
+	for i := range plan.Executions {
+		execution := &plan.Executions[i]
+		execution.Resolution = "manual_review"
+		if execution.AgentID != plan.AgentID || !execution.IdentityRetired {
+			continue
+		}
+		task, err := s.reinstallLocalExecutionTask(ctx, tx, *execution)
+		if err != nil {
+			return "", err
+		}
+		if task != nil {
+			execution.Resolution = "local_after_isolation"
+		}
 	}
 	// Include unclaimed intents as well as executing work. In particular, Pulse
 	// enrollment runs on the monitoring host but targets the collector being

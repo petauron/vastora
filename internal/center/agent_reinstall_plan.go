@@ -19,18 +19,19 @@ import (
 // it. In particular, a successful historical deployment is not evidence that a
 // replacement machine has its data, private identity, or working applications.
 type AgentReinstallPlan struct {
-	Revision            string                       `json:"revision"`
-	Recovery            *AgentReinstallOperation     `json:"recovery,omitempty"`
-	AgentID             string                       `json:"agentId"`
-	CheckedAt           time.Time                    `json:"checkedAt"`
-	IdentityFingerprint string                       `json:"identityFingerprint"`
-	CredentialRevoked   bool                         `json:"credentialRevoked"`
-	NetworkReview       *AgentReinstallNetworkReview `json:"networkReview,omitempty"`
-	PrivateNetwork      AgentReinstallNetwork        `json:"privateNetwork"`
-	Applications        []AgentReinstallApplication  `json:"applications"`
-	PendingWork         []AgentReinstallPendingWork  `json:"pendingWork"`
-	Executions          []AgentReinstallExecution    `json:"executions"`
-	Requirements        []string                     `json:"requirements"`
+	Revision             string                          `json:"revision"`
+	Recovery             *AgentReinstallOperation        `json:"recovery,omitempty"`
+	AgentID              string                          `json:"agentId"`
+	CheckedAt            time.Time                       `json:"checkedAt"`
+	IdentityFingerprint  string                          `json:"identityFingerprint"`
+	CredentialRevoked    bool                            `json:"credentialRevoked"`
+	NetworkReview        *AgentReinstallNetworkReview    `json:"networkReview,omitempty"`
+	PrivateNetwork       AgentReinstallNetwork           `json:"privateNetwork"`
+	Applications         []AgentReinstallApplication     `json:"applications"`
+	PendingWork          []AgentReinstallPendingWork     `json:"pendingWork"`
+	Executions           []AgentReinstallExecution       `json:"executions"`
+	LocalWorkDisposition *AgentReinstallLocalDisposition `json:"localWorkDisposition,omitempty"`
+	Requirements         []string                        `json:"requirements"`
 }
 
 type AgentReinstallNetwork struct {
@@ -70,6 +71,7 @@ type AgentReinstallExecution struct {
 	State           string `json:"state"`
 	Phase           string `json:"phase"`
 	IdentityRetired bool   `json:"identityRetired"`
+	Resolution      string `json:"resolution"`
 }
 
 func (s *Store) AgentReinstallPlan(ctx context.Context, agentID string) (AgentReinstallPlan, error) {
@@ -134,7 +136,11 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 	if err := readReinstallApplications(ctx, tx, &plan); err != nil {
 		return plan, err
 	}
-	workRevision, err := readReinstallWork(ctx, tx, &plan)
+	workRevision, err := s.readReinstallWork(ctx, tx, &plan)
+	if err != nil {
+		return plan, err
+	}
+	plan.LocalWorkDisposition, err = readReinstallLocalDisposition(ctx, tx, plan.AgentID)
 	if err != nil {
 		return plan, err
 	}

@@ -356,6 +356,8 @@ export type AgentReinstallOperation = {
   lastError: string; createdAt: string; updatedAt: string;
 };
 export type AgentReinstallInput = { operationId: string; planRevision: string; confirmReplacement: boolean };
+export type AgentReinstallLocalWorkInput = { operationId: string; planRevision: string; confirmLocal: boolean };
+export type AgentReinstallLocalDisposition = { planRevision: string; executionIds: string[]; authorizedBy: string; disposedAt: string };
 export type AgentReinstallPlan = {
   agentId: string; revision: string; checkedAt: string; identityFingerprint: string; credentialRevoked: boolean;
   recovery?: AgentReinstallOperation;
@@ -363,7 +365,8 @@ export type AgentReinstallPlan = {
   privateNetwork: { ownership: string; serviceAddress: string; privateAddress: string; profileRetained: boolean; addressRecovery: string; landingRoutes: number; publications: number };
   applications: Array<{ applicationId: string; name: string; appKey: string; deploymentId: string; version: string; operation: string; state: string; recovery: string; requirements: string[] }>;
   pendingWork: Array<{ agentId: string; kind: string; count: number }>;
-  executions: Array<{ id: string; agentId: string; taskId: string; attempt: number; kind: string; state: string; phase: string; identityRetired: boolean }>;
+  executions: Array<{ id: string; agentId: string; taskId: string; attempt: number; kind: string; state: string; phase: string; identityRetired: boolean; resolution: "local_after_isolation" | "manual_review" }>;
+  localWorkDisposition?: AgentReinstallLocalDisposition;
   requirements: string[];
 };
 

@@ -23,6 +23,39 @@ const show = async () => {
 };
 
 describe("node reinstall review", () => {
+  it("settles reviewed local executions only after an explicit click", async () => {
+    const execution: AgentReinstallPlan["executions"][number] = { id: "old-local", agentId: "agent", taskId: "old-task", attempt: 1, kind: "agent.update", state: "unknown", phase: "started", identityRetired: true, resolution: "local_after_isolation" };
+    const plan = { ...review(), recovery: { ...recovery, state: "review_required" as const, replacementFingerprint: "c".repeat(64) }, executions: [execution] };
+    const receipt = { planRevision: plan.revision, executionIds: [execution.id], authorizedBy: "admin", disposedAt: "2026-10-01T00:00:00Z" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, executions: [], localWorkDisposition: receipt });
+    const settle = vi.spyOn(api, "settleAgentReinstallLocalWork").mockResolvedValue(receipt);
+    await show();
+    expect(settle).not.toHaveBeenCalled();
+    await act(async () => button("终止 1 条旧本机执行")!.click());
+    expect(settle).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, confirmLocal: true });
+    expect(document.body.textContent).toContain("已终止 1 条旧本机执行，历史记录已保留");
+    expect(document.body.textContent).toContain("业务验证尚未完成");
+    expect(button("终止 1 条旧本机执行")).toBeUndefined();
+  });
+  it("does not retry uncertain local settlement or count remote work as local", async () => {
+    const local: AgentReinstallPlan["executions"][number] = { id: "old-local", agentId: "agent", taskId: "old-task", attempt: 1, kind: "agent.update", state: "unknown", phase: "started", identityRetired: true, resolution: "local_after_isolation" };
+    const remote = { ...local, id: "remote", agentId: "monitor", resolution: "manual_review" as const };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue({ ...review(), recovery: { ...recovery, state: "review_required" }, executions: [local, remote] });
+    const settle = vi.spyOn(api, "settleAgentReinstallLocalWork").mockRejectedValue(new Error("connection lost"));
+    await show();
+    expect(button("终止 2 条旧本机执行")).toBeUndefined();
+    await act(async () => button("终止 1 条旧本机执行")!.click());
+    await act(async () => button("刷新状态")!.click());
+    expect(settle).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).not.toContain("已终止");
+  });
+  it("keeps local settlement disabled until old private isolation is recorded", async () => {
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue({ ...review(), recovery: { ...recovery, state: "review_required", privateIsolation: "pending" }, executions: [{ id: "old-local", agentId: "agent", taskId: "old-task", attempt: 1, kind: "agent.update", state: "unknown", phase: "started", identityRetired: true, resolution: "local_after_isolation" }] });
+    const settle = vi.spyOn(api, "settleAgentReinstallLocalWork");
+    await show();
+    expect(button("终止 1 条旧本机执行")!.disabled).toBe(true);
+    expect(settle).not.toHaveBeenCalled();
+  });
   it("identifies related work on other hosts before replacement", async () => {
     vi.spyOn(api, "agentReinstallPlan").mockResolvedValue({ ...review(), pendingWork: [{ agentId: "monitor", kind: "pulse.enrollment.create", count: 1 }], requirements: ["inspect_remote_effects_before_restore"] });
     const post = vi.spyOn(api, "createAgentReconnectEnrollment").mockResolvedValue(command);

@@ -36,6 +36,12 @@ export function userError(language: Language, error: unknown) {
     "center: recovery progress changed or command preparation already started; refresh before continuing": "恢复进度已变化，或已进入接入命令准备阶段。请刷新状态，勿重复操作。",
     "center: explicitly confirm private identity inspection before continuing": "请明确确认核对旧私网身份，再继续隔离。",
     "center: review address migration through the active reinstall recovery before confirming network settings": "节点正在重装恢复，请先在恢复流程中核对地址迁移。",
+    "center: explicitly confirm the reviewed old-machine executions": "请核对旧本机执行记录，再明确确认终止。",
+    "center: old-machine isolation and authorized replacement enrollment are required before settlement": "先完成旧机器隔离和新机器接入，再处理旧本机执行。",
+    "center: replacement identity changed; review recovery before continuing": "新机器身份已变化，请刷新并核对恢复状态。",
+    "center: previous execution evidence changed; inspect it before settlement": "旧执行证据已变化，请核对后再处理。",
+    "center: previous task attempt changed; inspect it before settlement": "旧任务的执行状态已变化，请到活动记录核对后再处理。",
+    "center: no isolated local executions are eligible for settlement": "当前没有可统一处理的旧本机执行，请刷新状态。",
   };
   if (reinstallErrors[normalized]) return copy(language, reinstallErrors[normalized], detail);
   if (normalized === "center: recovery plan changed; review it again before confirming") {

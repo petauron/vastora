@@ -26,6 +26,12 @@ CREATE TABLE agent_reinstall_network_approvals (
  approval_json BLOB NOT NULL CHECK(json_valid(approval_json)),
  PRIMARY KEY(operation_id,plan_revision)
 );
+CREATE TABLE agent_reinstall_local_dispositions (
+ operation_id TEXT NOT NULL REFERENCES agent_reinstall_operations(id) ON DELETE CASCADE,
+ plan_revision TEXT NOT NULL,
+ disposition_json BLOB NOT NULL CHECK(json_valid(disposition_json)),
+ PRIMARY KEY(operation_id,plan_revision)
+);
 
 -- Unused legacy replacement grants have no reviewed operation binding.
 DELETE FROM secrets WHERE id IN (SELECT bootstrap_secret_id FROM agent_enrollment_tokens WHERE target_agent_id IS NOT NULL AND used_at IS NULL);

@@ -91,6 +91,12 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
  approval_json BLOB NOT NULL CHECK(json_valid(approval_json)),
  PRIMARY KEY(operation_id,plan_revision)
 )`,
+		`CREATE TABLE agent_reinstall_local_dispositions (
+ operation_id TEXT NOT NULL REFERENCES agent_reinstall_operations(id) ON DELETE CASCADE,
+ plan_revision TEXT NOT NULL,
+ disposition_json BLOB NOT NULL CHECK(json_valid(disposition_json)),
+ PRIMARY KEY(operation_id,plan_revision)
+)`,
 		`CREATE TABLE recovery_evidence (
 			component_key TEXT PRIMARY KEY,
 			artifact_json BLOB NOT NULL CHECK(json_valid(artifact_json)),
