@@ -276,6 +276,9 @@ func (s *Store) createAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 		if _, err := tx.ExecContext(ctx, `UPDATE agents SET credential_revoked_at = ? WHERE id = ?`, now, targetAgentID); err != nil {
 			return AgentEnrollment{}, fmt.Errorf("center: revoke replaced Agent credential: %w", err)
 		}
+		if err := retireAgentExecutionIdentity(ctx, tx, targetAgentID, now); err != nil {
+			return AgentEnrollment{}, err
+		}
 	}
 	var bootstrapSecretID sql.NullString
 	if bootstrapCommand != "" {

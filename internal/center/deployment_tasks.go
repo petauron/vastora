@@ -821,8 +821,12 @@ func (s *Store) projectGatewayComponent(ctx context.Context, tx *sql.Tx, commit 
 }
 
 func (s *Store) authenticateAgent(ctx context.Context, id, credential string) error {
+	return authenticateAgentInQuery(ctx, s.db, id, credential)
+}
+
+func authenticateAgentInQuery(ctx context.Context, queryer networkQueryer, id, credential string) error {
 	var expected []byte
-	err := s.db.QueryRowContext(ctx, `SELECT credential_hash FROM agents WHERE id = ? AND status = 'active' AND credential_revoked_at = ''`, id).Scan(&expected)
+	err := queryer.QueryRowContext(ctx, `SELECT credential_hash FROM agents WHERE id = ? AND status = 'active' AND credential_revoked_at = ''`, id).Scan(&expected)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("center: agent authentication failed")
 	}
