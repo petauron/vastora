@@ -165,6 +165,13 @@ func TestAgentReinstallPlanRetainsNetworkAndUncertainEvidence(t *testing.T) {
 	if err != nil || plan.PrivateNetwork.AddressRecovery != "operator_managed" {
 		t.Fatalf("external network ownership: %+v %v", plan, err)
 	}
+	if _, err := store.db.Exec(`DELETE FROM agent_network_profile_recovery WHERE agent_id=?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = store.AgentReinstallPlan(context.Background(), node.ID)
+	if err != nil || plan.PrivateNetwork.AddressRecovery != "identity_evidence_required" || !slices.Contains(plan.Requirements, "withdraw_previous_private_identity") {
+		t.Fatalf("missing address hid private identity isolation: %+v %v", plan, err)
+	}
 }
 
 func TestAgentReinstallPlanHTTPReadOnlyAndNoSecrets(t *testing.T) {

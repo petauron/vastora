@@ -98,6 +98,9 @@ func (s *Store) AgentReinstallPlan(ctx context.Context, agentID string) (AgentRe
 			plan.PrivateNetwork.AddressRecovery = "explicit_migration_required"
 		}
 		plan.Requirements = append(plan.Requirements, "withdraw_previous_private_identity", "review_address_and_dependencies")
+	} else if plan.PrivateNetwork.Ownership != "" {
+		plan.PrivateNetwork.AddressRecovery = "identity_evidence_required"
+		plan.Requirements = append(plan.Requirements, "identify_previous_private_identity", "withdraw_previous_private_identity", "review_address_and_dependencies")
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id
 		JOIN applications a ON a.id=e.application_id WHERE (a.node_id=? OR g.egress_node_id=?) AND (g.enabled=1 OR g.status='revoking')`, plan.AgentID, plan.AgentID).
