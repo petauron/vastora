@@ -100,6 +100,31 @@ func TestMeridianLinkBandwidthQueuesBothPrivatePeers(t *testing.T) {
 	if err := store.StartMeridianLinkBandwidth(ctx, source.ID, egress.ID); err == nil {
 		t.Fatal("concurrent link check accepted")
 	}
+	// The paired listener must not hide an actionable client or server cause.
+	for _, sourceError := range []string{"transport_not_direct", "probe_failed"} {
+		if _, err := store.db.Exec(`UPDATE node_diagnostic_checks SET state='succeeded',error=CASE kind WHEN 'meridian.link-bandwidth' THEN ? ELSE 'peer_identity_changed' END`, sourceError); err != nil {
+			t.Fatal(err)
+		}
+		failed, err := store.ListNodeDiagnostics(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, check := range failed {
+			if check.Kind != nodediagnostics.LinkBandwidthKind {
+				continue
+			}
+			want := sourceError
+			if sourceError == "probe_failed" {
+				want = "peer_identity_changed"
+			}
+			if check.Error != want || check.State != "failed" {
+				t.Fatalf("paired error hidden: %+v", check)
+			}
+		}
+	}
+	if _, err := store.db.Exec(`UPDATE node_diagnostic_checks SET error=''`); err != nil {
+		t.Fatal(err)
+	}
 	// A later test to another landing must not erase the first pair or its peer.
 	if _, err := store.db.Exec(`UPDATE node_diagnostic_checks SET state='succeeded'`); err != nil {
 		t.Fatal(err)
