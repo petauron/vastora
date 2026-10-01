@@ -22,10 +22,11 @@ type AgentReinstallLocalWorkInput struct {
 }
 
 type AgentReinstallLocalDisposition struct {
-	PlanRevision string    `json:"planRevision"`
-	ExecutionIDs []string  `json:"executionIds"`
-	AuthorizedBy string    `json:"authorizedBy"`
-	DisposedAt   time.Time `json:"disposedAt"`
+	PlanRevision  string                        `json:"planRevision"`
+	ExecutionIDs  []string                      `json:"executionIds"`
+	UnclaimedWork []AgentReinstallUnclaimedWork `json:"unclaimedWork"`
+	AuthorizedBy  string                        `json:"authorizedBy"`
+	DisposedAt    time.Time                     `json:"disposedAt"`
 }
 
 func readReinstallLocalDisposition(ctx context.Context, tx *sql.Tx, agentID string) (*AgentReinstallLocalDisposition, error) {
@@ -143,7 +144,7 @@ func (s *Store) SettleAgentReinstallLocalWork(ctx context.Context, agentID, admi
 	if plan.Revision != input.PlanRevision {
 		return result, errors.New("center: recovery plan changed; review it again before confirming")
 	}
-	result = AgentReinstallLocalDisposition{PlanRevision: input.PlanRevision, ExecutionIDs: []string{}, AuthorizedBy: adminID, DisposedAt: s.now().UTC()}
+	result = AgentReinstallLocalDisposition{PlanRevision: input.PlanRevision, ExecutionIDs: []string{}, UnclaimedWork: []AgentReinstallUnclaimedWork{}, AuthorizedBy: adminID, DisposedAt: s.now().UTC()}
 	now := result.DisposedAt.Format(time.RFC3339Nano)
 	for _, execution := range plan.Executions {
 		if execution.AgentID != agentID || execution.Resolution != "local_after_isolation" {
@@ -156,13 +157,7 @@ func (s *Store) SettleAgentReinstallLocalWork(ctx context.Context, agentID, admi
 		if task == nil {
 			return result, errors.New("center: previous execution evidence changed; inspect it before settlement")
 		}
-		query, args, err := executionAbandonStatement(*task, agentID, now)
-		switch task.Kind {
-		case "agent.update":
-			query, args, err = `UPDATE agent_updates SET state='failed',last_error='Abandoned during reinstall recovery',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('failed','installing','running','pending')`, []any{now, task.ID, agentID, task.Attempt}, nil
-		case "agent.decommission":
-			query, args, err = `UPDATE agent_decommissions SET state='abandoned',last_error='Abandoned during reinstall recovery',lease_expires_at='',callback_token_hash=X'',updated_at=? WHERE agent_id=? AND attempt=? AND state IN ('failed','cleaning','running','pending')`, []any{now, agentID, task.Attempt}, nil
-		}
+		query, args, err := reinstallAbandonStatement(*task, agentID, now)
 		if err != nil {
 			return result, err
 		}
@@ -189,7 +184,13 @@ func (s *Store) SettleAgentReinstallLocalWork(ctx context.Context, agentID, admi
 		}
 		result.ExecutionIDs = append(result.ExecutionIDs, execution.ID)
 	}
-	if len(result.ExecutionIDs) == 0 {
+	for _, work := range plan.UnclaimedLocalWork {
+		if err := s.cancelReinstallUnclaimedWork(ctx, tx, agentID, work, now); err != nil {
+			return result, err
+		}
+		result.UnclaimedWork = append(result.UnclaimedWork, work)
+	}
+	if len(result.ExecutionIDs)+len(result.UnclaimedWork) == 0 {
 		return result, errors.New("center: no isolated local executions are eligible for settlement")
 	}
 	encoded, err := json.Marshal(result)

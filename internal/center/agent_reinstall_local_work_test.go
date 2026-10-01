@@ -194,7 +194,7 @@ func TestAgentReinstallLocalSettlementFailsClosed(t *testing.T) {
 	}
 }
 
-func TestAgentReinstallLocalSettlementDoesNotOverwriteNewerIntent(t *testing.T) {
+func TestAgentReinstallLocalSettlementPreservesNewerUninstallIntent(t *testing.T) {
 	store, node, _ := reinstallLocalWorkFixture(t)
 	if _, err := store.db.Exec(`UPDATE deployments SET state='failed' WHERE id='meridian-deployment'`); err != nil {
 		t.Fatal(err)
@@ -214,8 +214,17 @@ func TestAgentReinstallLocalSettlementDoesNotOverwriteNewerIntent(t *testing.T) 
 		t.Fatal(err)
 	}
 	var appState, taskState string
-	if err := store.db.QueryRow(`SELECT a.status,d.state FROM applications a JOIN deployments d ON d.application_id=a.id WHERE d.id='new-uninstall'`).Scan(&appState, &taskState); err != nil || appState != "pending" || taskState != "pending" {
-		t.Fatalf("settlement changed newer uninstall intent: %s %s %v", appState, taskState, err)
+	if err := store.db.QueryRow(`SELECT a.status,d.state FROM applications a JOIN deployments d ON d.application_id=a.id WHERE d.id='new-uninstall'`).Scan(&appState, &taskState); err != nil || appState != "failed" || taskState != "failed" {
+		t.Fatalf("unissued uninstall was not cancelled: %s %s %v", appState, taskState, err)
+	}
+	after, err := store.AgentReinstallPlan(context.Background(), node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range after.Applications {
+		if app.ApplicationID == "meridian" && (app.DeploymentID != "new-uninstall" || app.Operation != "uninstall" || app.Recovery != "keep_stopped") {
+			t.Fatalf("cancelled uninstall resurrected older install: %+v", app)
+		}
 	}
 }
 

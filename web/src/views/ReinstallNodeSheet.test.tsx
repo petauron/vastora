@@ -10,7 +10,7 @@ const review = (): AgentReinstallPlan => ({
   agentId: "agent", revision: "a".repeat(64), checkedAt: "2026-10-01T00:00:00Z", identityFingerprint: "b".repeat(64), credentialRevoked: false,
   privateNetwork: { ownership: "managed", serviceAddress: "100.64.0.2", privateAddress: "100.64.0.2", profileRetained: false, addressRecovery: "explicit_migration_required", landingRoutes: 1, publications: 2 },
   applications: [{ applicationId: "app", name: "Meridian", appKey: "vastora-official/meridian", deploymentId: "deployment", version: "0.1.0-alpha.12", operation: "install", state: "succeeded", recovery: "rebuild_configuration", requirements: [] }],
-  pendingWork: [{ agentId: "agent", kind: "application.apply", count: 1 }], executions: [], requirements: [],
+  pendingWork: [{ agentId: "agent", kind: "application.apply", count: 1 }], unclaimedLocalWork: [], executions: [], requirements: [],
 });
 const command = { token: "replacement-token", siteId: "site", centerUrl: "https://center.example.com", installerUrl: "https://center.example.com", expiresAt: "2099-01-01T00:00:00Z" };
 const recovery = { id: "replacement-operation", planRevision: "a".repeat(64), state: "awaiting_enrollment" as const, privateIsolation: "withdrawn" as const, attempt: 1, authorizedBy: "admin", previousFingerprint: "b".repeat(64), replacementFingerprint: "", lastError: "", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z" };
@@ -23,19 +23,33 @@ const show = async () => {
 };
 
 describe("node reinstall review", () => {
+  it("offers explicit cancellation when only unissued work remains", async () => {
+    const unclaimedWork = [{ taskId: "unissued-install", kind: "application.apply", revision: 0 }];
+    const plan = { ...review(), recovery: { ...recovery, state: "review_required" as const }, unclaimedLocalWork: unclaimedWork };
+    const receipt = { planRevision: plan.revision, executionIds: [], unclaimedWork, authorizedBy: "admin", disposedAt: "2026-10-01T00:00:00Z" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, unclaimedLocalWork: [], localWorkDisposition: receipt });
+    const settle = vi.spyOn(api, "settleAgentReinstallLocalWork").mockResolvedValue(receipt);
+    await show();
+    expect(document.body.textContent).toContain("从未下发的排队任务");
+    expect(settle).not.toHaveBeenCalled();
+    await act(async () => button("终止 1 条旧本机任务")!.click());
+    expect(settle).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, confirmLocal: true });
+    expect(document.body.textContent).toContain("本次已终止 1 条旧本机任务");
+    expect(button("终止 1 条旧本机任务")).toBeUndefined();
+  });
   it("settles reviewed local executions only after an explicit click", async () => {
     const execution: AgentReinstallPlan["executions"][number] = { id: "old-local", agentId: "agent", taskId: "old-task", attempt: 1, kind: "agent.update", state: "unknown", phase: "started", identityRetired: true, resolution: "local_after_isolation" };
     const plan = { ...review(), recovery: { ...recovery, state: "review_required" as const, replacementFingerprint: "c".repeat(64) }, executions: [execution] };
-    const receipt = { planRevision: plan.revision, executionIds: [execution.id], authorizedBy: "admin", disposedAt: "2026-10-01T00:00:00Z" };
+    const receipt = { planRevision: plan.revision, executionIds: [execution.id], unclaimedWork: [], authorizedBy: "admin", disposedAt: "2026-10-01T00:00:00Z" };
     vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, executions: [], localWorkDisposition: receipt });
     const settle = vi.spyOn(api, "settleAgentReinstallLocalWork").mockResolvedValue(receipt);
     await show();
     expect(settle).not.toHaveBeenCalled();
-    await act(async () => button("终止 1 条旧本机执行")!.click());
+    await act(async () => button("终止 1 条旧本机任务")!.click());
     expect(settle).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, confirmLocal: true });
-    expect(document.body.textContent).toContain("已终止 1 条旧本机执行，历史记录已保留");
+    expect(document.body.textContent).toContain("已终止 1 条旧本机任务，历史记录已保留");
     expect(document.body.textContent).toContain("业务验证尚未完成");
-    expect(button("终止 1 条旧本机执行")).toBeUndefined();
+    expect(button("终止 1 条旧本机任务")).toBeUndefined();
   });
   it("does not retry uncertain local settlement or count remote work as local", async () => {
     const local: AgentReinstallPlan["executions"][number] = { id: "old-local", agentId: "agent", taskId: "old-task", attempt: 1, kind: "agent.update", state: "unknown", phase: "started", identityRetired: true, resolution: "local_after_isolation" };
@@ -43,8 +57,8 @@ describe("node reinstall review", () => {
     vi.spyOn(api, "agentReinstallPlan").mockResolvedValue({ ...review(), recovery: { ...recovery, state: "review_required" }, executions: [local, remote] });
     const settle = vi.spyOn(api, "settleAgentReinstallLocalWork").mockRejectedValue(new Error("connection lost"));
     await show();
-    expect(button("终止 2 条旧本机执行")).toBeUndefined();
-    await act(async () => button("终止 1 条旧本机执行")!.click());
+    expect(button("终止 2 条旧本机任务")).toBeUndefined();
+    await act(async () => button("终止 1 条旧本机任务")!.click());
     await act(async () => button("刷新状态")!.click());
     expect(settle).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).not.toContain("已终止");
@@ -53,7 +67,7 @@ describe("node reinstall review", () => {
     vi.spyOn(api, "agentReinstallPlan").mockResolvedValue({ ...review(), recovery: { ...recovery, state: "review_required", privateIsolation: "pending" }, executions: [{ id: "old-local", agentId: "agent", taskId: "old-task", attempt: 1, kind: "agent.update", state: "unknown", phase: "started", identityRetired: true, resolution: "local_after_isolation" }] });
     const settle = vi.spyOn(api, "settleAgentReinstallLocalWork");
     await show();
-    expect(button("终止 1 条旧本机执行")!.disabled).toBe(true);
+    expect(button("终止 1 条旧本机任务")!.disabled).toBe(true);
     expect(settle).not.toHaveBeenCalled();
   });
   it("identifies related work on other hosts before replacement", async () => {

@@ -34,7 +34,8 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
   }, [agent.id, agent.reinstall?.updatedAt, language, revision]);
   const recovery = plan?.recovery;
   const joined = recovery?.state === "review_required";
-  const localExecutions = plan?.executions.filter((execution) => execution.agentId === agent.id && execution.resolution === "local_after_isolation").length ?? 0;
+  const localTasks = plan ? plan.executions.filter((execution) => execution.agentId === agent.id && execution.resolution === "local_after_isolation").length + plan.unclaimedLocalWork.length : 0;
+  const settledTasks = plan?.localWorkDisposition ? plan.localWorkDisposition.executionIds.length + plan.localWorkDisposition.unclaimedWork.length : 0;
   const command = enrollment && !joined ? agentInstallCommand({ centerURL: enrollment.centerUrl ?? "", enrollment, installerAvailable }) : "";
   const confirm = async (resumeIsolation = false) => {
     if (!plan || busy) return;
@@ -113,9 +114,9 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
             <p className="text-xs text-muted-foreground">{copy(language, `${plan.executions.length} 条执行待核对 · ${plan.pendingWork.reduce((total, item) => total + item.count, 0)} 项历史工作保留`, `${plan.executions.length} executions to inspect · ${plan.pendingWork.reduce((total, item) => total + item.count, 0)} historical work items retained`)}</p>
             {plan.requirements.includes("inspect_remote_effects_before_restore") ? <p className="text-xs text-muted-foreground">{copy(language, "包含其他主机上关联此节点的任务，需单独核对执行结果。", "Includes related tasks on other hosts; inspect their outcomes separately.")}</p> : null}
           </section>
-          {joined && (localExecutions > 0 || plan.localWorkDisposition) ? <section className="flex flex-col gap-2 rounded-xl border p-4" aria-label={copy(language, "旧本机执行", "Previous machine executions")}>
-            {plan.localWorkDisposition ? <p className="text-sm">{copy(language, `已终止 ${plan.localWorkDisposition.executionIds.length} 条旧本机执行，历史记录已保留。`, `${plan.localWorkDisposition.executionIds.length} previous machine executions abandoned; history retained.`)}</p> : null}
-            {localExecutions > 0 ? <><p className="text-xs text-muted-foreground">{copy(language, "终止已隔离旧机器上的执行并保留记录。应用恢复将创建新任务。", "Abandon executions on the isolated previous machine and retain their records. Application restoration will create new tasks.")}</p><Button className="self-start" variant="outline" disabled={busy || recovery.privateIsolation === "pending"} onClick={() => void settleLocalWork()}>{copy(language, `终止 ${localExecutions} 条旧本机执行`, `Abandon ${localExecutions} previous machine executions`)}</Button></> : null}
+          {joined && (localTasks > 0 || plan.localWorkDisposition) ? <section className="flex flex-col gap-2 rounded-xl border p-4" aria-label={copy(language, "旧本机任务", "Previous machine tasks")}>
+            {plan.localWorkDisposition ? <p className="text-sm">{copy(language, `本次已终止 ${settledTasks} 条旧本机任务，历史记录已保留。`, `${settledTasks} previous machine tasks abandoned; history retained.`)}</p> : null}
+            {localTasks > 0 ? <><p className="text-xs text-muted-foreground">{copy(language, "终止已隔离的旧本机执行及从未下发的排队任务，保留配置和记录。应用恢复将创建新任务。", "Abandon isolated local executions and cancel unissued queued tasks, retaining configuration and records. Application restoration will create new tasks.")}</p><Button className="self-start" variant="outline" disabled={busy || recovery.privateIsolation === "pending"} onClick={() => void settleLocalWork()}>{copy(language, `终止 ${localTasks} 条旧本机任务`, `Abandon ${localTasks} previous machine tasks`)}</Button></> : null}
           </section> : null}
           {joined && plan.networkReview ? <ReinstallNetworkReview key={plan.revision} review={plan.networkReview} busy={busy} language={language} onApprove={approveNetwork} /> : null}
           {command ? <><p className="text-sm">{copy(language, "在重装后的原服务器执行一次", "Run once on the reinstalled original server")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div><p className="text-xs text-muted-foreground">{copy(language, `命令有效期至 ${formatDate(language, enrollment!.expiresAt)}`, `Command valid until ${formatDate(language, enrollment!.expiresAt)}`)}</p></> : null}

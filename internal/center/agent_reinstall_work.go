@@ -35,6 +35,7 @@ func (s *Store) readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentRe
 	digest := sha256.New()
 	encoder := json.NewEncoder(digest)
 	remote := false
+	var unclaimed []AgentReinstallUnclaimedWork
 	rows, err := tx.QueryContext(ctx, `SELECT e.id,e.agent_id,e.task_id,e.attempt,e.kind,e.state,e.phase,e.identity_retired_at<>'',e.digest,e.sealed_result
 		FROM task_executions e WHERE e.disposition='' AND e.state<>'succeeded' AND (e.agent_id=? OR
 		(e.kind='application.command' AND EXISTS(SELECT 1 FROM application_commands c
@@ -123,6 +124,11 @@ func (s *Store) readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentRe
 			return "", err
 		}
 		remote = remote || agentID != plan.AgentID
+		if agentID == plan.AgentID && state == "pending" && attempt == 0 {
+			if taskID := reinstallUnclaimedTaskID(kind, id, revision); taskID != "" {
+				unclaimed = append(unclaimed, AgentReinstallUnclaimedWork{TaskID: taskID, Kind: kind, Revision: revision})
+			}
+		}
 		last := len(plan.PendingWork) - 1
 		if last >= 0 && plan.PendingWork[last].Kind == kind && plan.PendingWork[last].AgentID == agentID {
 			plan.PendingWork[last].Count++
@@ -132,6 +138,21 @@ func (s *Store) readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentRe
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
+	}
+	if err := rows.Close(); err != nil {
+		return "", err
+	}
+	for _, work := range unclaimed {
+		var authorized bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND task_id=?)`, plan.AgentID, work.TaskID).Scan(&authorized); err != nil {
+			return "", err
+		}
+		// Attempt zero alone is insufficient: a previously authorized task may
+		// have been reset. Every historical authorization, even disposed, rules
+		// out cancellation as unissued work.
+		if !authorized {
+			plan.UnclaimedLocalWork = append(plan.UnclaimedLocalWork, work)
+		}
 	}
 	if len(plan.PendingWork)+len(plan.Executions) > 0 {
 		plan.Requirements = append(plan.Requirements, "inspect_previous_effects_and_generate_fresh_plan")

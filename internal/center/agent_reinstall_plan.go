@@ -29,6 +29,7 @@ type AgentReinstallPlan struct {
 	PrivateNetwork       AgentReinstallNetwork           `json:"privateNetwork"`
 	Applications         []AgentReinstallApplication     `json:"applications"`
 	PendingWork          []AgentReinstallPendingWork     `json:"pendingWork"`
+	UnclaimedLocalWork   []AgentReinstallUnclaimedWork   `json:"unclaimedLocalWork"`
 	Executions           []AgentReinstallExecution       `json:"executions"`
 	LocalWorkDisposition *AgentReinstallLocalDisposition `json:"localWorkDisposition,omitempty"`
 	Requirements         []string                        `json:"requirements"`
@@ -89,7 +90,7 @@ func (s *Store) AgentReinstallPlan(ctx context.Context, agentID string) (AgentRe
 
 func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID string) (AgentReinstallPlan, error) {
 	plan := AgentReinstallPlan{AgentID: strings.TrimSpace(agentID), CheckedAt: s.now().UTC(),
-		Applications: []AgentReinstallApplication{}, PendingWork: []AgentReinstallPendingWork{}, Executions: []AgentReinstallExecution{},
+		Applications: []AgentReinstallApplication{}, PendingWork: []AgentReinstallPendingWork{}, Executions: []AgentReinstallExecution{}, UnclaimedLocalWork: []AgentReinstallUnclaimedWork{},
 		Requirements: []string{"authorize_new_machine_identity", "verify_business_before_completion"}}
 	var publicKey []byte
 	err := tx.QueryRowContext(ctx, `SELECT a.x25519_public_key,a.credential_revoked_at<>'',COALESCE((SELECT json_extract(op.plan_json,'$.privateNetwork.ownership') FROM agent_reinstall_operations op WHERE op.agent_id=a.id AND op.state NOT IN ('superseded','completed')),a.tailscale_ownership),
@@ -133,7 +134,8 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 	if plan.PrivateNetwork.LandingRoutes > 0 {
 		plan.Requirements = append(plan.Requirements, "withdraw_then_replace_landing_authorizations")
 	}
-	if err := readReinstallApplications(ctx, tx, &plan); err != nil {
+	applicationRevision, err := readReinstallApplications(ctx, tx, &plan)
+	if err != nil {
 		return plan, err
 	}
 	workRevision, err := s.readReinstallWork(ctx, tx, &plan)
@@ -168,9 +170,10 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 		review.NetworkReview = &network
 	}
 	encoded, err := json.Marshal(struct {
-		Plan         AgentReinstallPlan
-		WorkRevision string
-	}{review, workRevision})
+		Plan                AgentReinstallPlan
+		WorkRevision        string
+		ApplicationRevision string
+	}{review, workRevision, applicationRevision})
 	if err != nil {
 		return plan, err
 	}
@@ -180,24 +183,39 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 	return plan, err
 }
 
-func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReinstallPlan) error {
+func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReinstallPlan) (string, error) {
+	digest := sha256.New()
+	encoder := json.NewEncoder(digest)
 	// Latest intent, including a failed/pending uninstall, wins. Selecting the
 	// latest successful deployment instead would resurrect an unwanted app.
 	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.name,a.app_key,COALESCE(d.id,''),COALESCE(d.app_version,''),
-		COALESCE(d.operation,''),COALESCE(d.state,''),COALESCE(d.manifest_json,'{}'),COALESCE(d.reconciliation_required,0)
+		COALESCE(d.operation,''),COALESCE(d.state,''),COALESCE(d.manifest_json,'{}'),COALESCE(d.reconciliation_required,0),
+		json_array(d.id,d.agent_id,d.application_id,d.app_key,d.app_version,CAST(d.manifest_json AS TEXT),CAST(d.config_json AS TEXT),
+		 d.operation,d.delete_data,d.service_address,d.secret_id,hex(saved.sealed),d.registry_credential_id,d.runtime_generation,
+		 registry.host,registry.username,registry.secret_id,hex(registry_secret.sealed))
 		FROM applications a LEFT JOIN deployments d ON d.rowid=(SELECT previous.rowid FROM deployments previous
 		WHERE previous.application_id=a.id AND previous.agent_id=a.node_id ORDER BY previous.created_at DESC,previous.rowid DESC LIMIT 1)
+		LEFT JOIN secrets saved ON saved.id=d.secret_id
+		LEFT JOIN registry_credentials registry ON registry.id=d.registry_credential_id
+		LEFT JOIN secrets registry_secret ON registry_secret.id=registry.secret_id
 		WHERE a.node_id=? ORDER BY a.id`, plan.AgentID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		app := AgentReinstallApplication{Requirements: []string{}}
 		var manifestJSON []byte
 		var reconciliation bool
-		if err := rows.Scan(&app.ApplicationID, &app.Name, &app.AppKey, &app.DeploymentID, &app.Version, &app.Operation, &app.State, &manifestJSON, &reconciliation); err != nil {
-			return err
+		var intent string
+		if err := rows.Scan(&app.ApplicationID, &app.Name, &app.AppKey, &app.DeploymentID, &app.Version, &app.Operation, &app.State, &manifestJSON, &reconciliation, &intent); err != nil {
+			return "", err
+		}
+		// Successful deployments are restoration input too. Changes to their
+		// configuration, artifact or credential must invalidate the review just
+		// as changes to unfinished work do; none of this input is returned.
+		if err := encoder.Encode(intent); err != nil {
+			return "", err
 		}
 		app.Recovery = "restore_data"
 		switch {
@@ -235,7 +253,7 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 		}
 		plan.Applications = append(plan.Applications, app)
 	}
-	return rows.Err()
+	return hex.EncodeToString(digest.Sum(nil)), rows.Err()
 }
 
 func (s *Server) handleAgentReinstallPlan(writer http.ResponseWriter, request *http.Request) {

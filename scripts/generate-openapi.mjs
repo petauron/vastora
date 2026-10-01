@@ -424,7 +424,7 @@ for (const route of routes) {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallLocalWorkInput");
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallLocalDisposition");
-    operation.description = "Explicit administrator settlement of reviewed, retired host-local executions after old identity isolation and replacement enrollment. Preserves historical outcomes and encrypted evidence, atomically abandons exact attempts and records a durable receipt. Remote or unclassified effects require separate review. Does not dispatch restoration or release the recovery fence.";
+    operation.description = "Explicit administrator settlement of reviewed, retired host-local executions after old identity isolation and replacement enrollment. Preserves historical outcomes and encrypted evidence, atomically abandons exact attempts, cancels reviewed pending attempt-zero local tasks with no historical authorization, and records a durable receipt. Saved application intent and credentials are retained. Remote or unclassified effects require separate review. Does not dispatch restoration or release the recovery fence.";
   }
   if (["handleGetExecutionClaimControl", "handleSetExecutionClaimControl"].includes(route.handler)) {
     operation.responses[status].headers = noStoreHeaders;
