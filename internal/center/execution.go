@@ -50,6 +50,7 @@ CREATE TABLE task_executions (
  disposition_note TEXT NOT NULL DEFAULT '',
  disposition_actor TEXT NOT NULL DEFAULT '',
  disposed_at TEXT NOT NULL DEFAULT '',
+ identity_retired_at TEXT NOT NULL DEFAULT '',
  UNIQUE(task_id, attempt)
 );
 CREATE INDEX task_executions_agent_unresolved ON task_executions(agent_id, state)
@@ -73,7 +74,7 @@ CREATE TRIGGER execution_insert_audit AFTER INSERT ON task_executions BEGIN
  VALUES(NEW.id,NEW.phase,NEW.state,NEW.agent_id,NEW.updated_at);
 END;
 CREATE TRIGGER execution_update_audit AFTER UPDATE ON task_executions
- WHEN OLD.state<>NEW.state OR OLD.phase<>NEW.phase OR OLD.disposition<>NEW.disposition BEGIN
+ WHEN OLD.state<>NEW.state OR OLD.phase<>NEW.phase OR OLD.disposition<>NEW.disposition OR OLD.identity_retired_at<>NEW.identity_retired_at BEGIN
  INSERT INTO execution_events(execution_id,phase,state,actor,created_at)
  VALUES(NEW.id,NEW.phase,NEW.state,CASE WHEN NEW.disposition_actor<>'' THEN NEW.disposition_actor ELSE NEW.agent_id END,NEW.updated_at);
 END;`
@@ -98,14 +99,16 @@ func (s *Store) RegisterExecutionSession(ctx context.Context, agentID, credentia
 	if protocol != controlplane.ExecutionProtocol || len(sessionID) < 24 || len(sessionID) > 128 || strings.ContainsAny(sessionID, " \r\n\t") {
 		return errExecutionAuthorization
 	}
-	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
-		return err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	// Serialize authentication with reconnect's credential/session revocation.
+	// A request authenticated before replacement must not restore its session.
+	if err := authenticateAgentInQuery(ctx, tx, agentID, credential); err != nil {
+		return err
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	var current string
 	err = tx.QueryRowContext(ctx, `SELECT session_id FROM agent_execution_sessions WHERE agent_id=?`, agentID).Scan(&current)
@@ -148,7 +151,7 @@ func (s *Store) RegisterExecutionSession(ctx context.Context, agentID, credentia
 
 func (s *Store) recoverReceivedExecutionResults(ctx context.Context, agentID string) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM task_executions
-		WHERE agent_id=? AND state='unknown' AND phase='result_received' AND disposition=''
+		WHERE agent_id=? AND state='unknown' AND phase='result_received' AND disposition='' AND identity_retired_at=''
 		ORDER BY created_at,id`, agentID)
 	if err != nil {
 		return
@@ -190,7 +193,7 @@ func (s *Store) recoverReceivedExecutionResults(ctx context.Context, agentID str
 func (s *Store) recoverExpiredReceivedExecutionResults(ctx context.Context) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM task_executions
-		WHERE disposition='' AND state IN ('running','helper_running','unknown') AND phase='result_received'
+		WHERE disposition='' AND identity_retired_at='' AND state IN ('running','helper_running','unknown') AND phase='result_received'
 		AND expires_at<>'' AND expires_at<=? ORDER BY created_at,id`, now)
 	if err != nil {
 		return err
@@ -216,7 +219,7 @@ func (s *Store) recoverExpiredReceivedExecutionResults(ctx context.Context) erro
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE task_executions
 		SET state='unknown',last_error='Execution authorization expired; retained result pending recovery',updated_at=?
-		WHERE disposition='' AND state IN ('running','helper_running','unknown') AND phase='result_received'
+		WHERE disposition='' AND identity_retired_at='' AND state IN ('running','helper_running','unknown') AND phase='result_received'
 		AND expires_at<>'' AND expires_at<=?`, now, now)
 	if err != nil {
 		return err
@@ -557,7 +560,7 @@ func (s *Store) ListExecutions(ctx context.Context, before int64) (ExecutionPage
 	if before < 0 {
 		return ExecutionPage{}, errors.New("center: invalid execution cursor")
 	}
-	query := `SELECT rowid,id,agent_id,task_id,kind,attempt,state,phase,last_error,updated_at,disposition,sealed_result FROM task_executions`
+	query := `SELECT rowid,id,agent_id,task_id,kind,attempt,state,phase,last_error,updated_at,disposition,sealed_result,identity_retired_at FROM task_executions`
 	var args []any
 	if before > 0 {
 		query += ` WHERE rowid<?`
@@ -577,10 +580,11 @@ func (s *Store) ListExecutions(ctx context.Context, before int64) (ExecutionPage
 		}
 		var value ExecutionView
 		var sealedResult []byte
-		if err := rows.Scan(&last, &value.ID, &value.AgentID, &value.TaskID, &value.Kind, &value.Attempt, &value.State, &value.Phase, &value.LastError, &value.UpdatedAt, &value.Disposition, &sealedResult); err != nil {
+		var identityRetiredAt string
+		if err := rows.Scan(&last, &value.ID, &value.AgentID, &value.TaskID, &value.Kind, &value.Attempt, &value.State, &value.Phase, &value.LastError, &value.UpdatedAt, &value.Disposition, &sealedResult, &identityRetiredAt); err != nil {
 			return ExecutionPage{}, fmt.Errorf("center: read execution: %w", err)
 		}
-		if value.Disposition == "" && (value.State == "failed" || value.State == "unknown") && len(sealedResult) != 0 {
+		if identityRetiredAt == "" && value.Disposition == "" && (value.State == "failed" || value.State == "unknown") && len(sealedResult) != 0 {
 			if raw, err := secret.Open(s.key, sealedResult, []byte("execution-result:"+value.ID)); err == nil {
 				var evidence executionResultEvidence
 				value.CanConfirm = json.Unmarshal(raw, &evidence) == nil && retainedResultSupportsConfirmation(value.Kind, evidence)
