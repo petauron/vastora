@@ -472,6 +472,11 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'deploying', updated_at = ? WHERE id = ? AND NOT ?`, now.Format(time.RFC3339Nano), task.ApplicationID, preparation); err != nil {
 		return nil, fmt.Errorf("center: mark application deploying: %w", err)
 	}
+	if preparation {
+		if err := s.recordReinstallPreparationProgress(ctx, tx, task.ID); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.recordTaskEvent(ctx, tx, task.ID, agentID, task.Kind, task.Revision, "claimed", fmt.Sprintf("attempt %d", task.Attempt)); err != nil {
 		return nil, err
 	}
@@ -774,6 +779,11 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 	}
 	if changed != 1 {
 		return "", nil, errors.New("center: task is not active")
+	}
+	if preparation {
+		if err := s.recordReinstallPreparationProgress(ctx, tx, taskID); err != nil {
+			return "", nil, err
+		}
 	}
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.apply", applicationTaskRevision, state, taskError); err != nil {
 		return "", nil, err

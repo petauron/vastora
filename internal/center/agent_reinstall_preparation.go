@@ -155,6 +155,9 @@ func (s *Store) QueueAgentReinstallPreparation(ctx context.Context, agentID, adm
 	if _, err = s.validateReinstallPreparation(ctx, tx, agentID, id); err != nil {
 		return result, err
 	}
+	if err = s.recordReinstallPreparationProgress(ctx, tx, id); err != nil {
+		return result, err
+	}
 	if err = s.recordTaskEvent(ctx, tx, id, agentID, "application.apply", applicationTaskRevision, "queued", "Prepare the reviewed Meridian package; business restoration remains pending"); err != nil {
 		return result, err
 	}
@@ -163,6 +166,12 @@ func (s *Store) QueueAgentReinstallPreparation(ctx context.Context, agentID, adm
 	}
 	s.taskChanges.notify("agent:" + agentID)
 	return AgentReinstallPreparation{DeploymentID: id, State: "pending"}, nil
+}
+
+// Recovery sheets refresh when the operation changes, including task progress.
+func (s *Store) recordReinstallPreparationProgress(ctx context.Context, tx *sql.Tx, taskID string) error {
+	_, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_operations SET updated_at=? WHERE id=(SELECT operation_id FROM agent_reinstall_app_preparations WHERE deployment_id=?)`, s.now().UTC().Format(time.RFC3339Nano), taskID)
+	return err
 }
 
 // Called again at selection, execution authorization and result projection.

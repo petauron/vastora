@@ -57,6 +57,10 @@ func preparationResult(t *testing.T, s *Store, node AgentCredential, task *Agent
 func TestAgentReinstallPreparationRoundTripKeepsBusinessFenced(t *testing.T) {
 	s, node, input := reinstallPreparationFixture(t)
 	ctx := context.Background()
+	before, err := s.AgentReinstallPlan(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	receipt, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
 	if err != nil {
 		t.Fatal(err)
@@ -76,6 +80,13 @@ func TestAgentReinstallPreparationRoundTripKeepsBusinessFenced(t *testing.T) {
 	if task.ID != receipt.DeploymentID || task.ID == "retained-meridian-deployment" || task.ApplicationID != input.ApplicationID || task.ServiceAddress != "10.0.0.8" || task.Manifest.Version != "0.1.0-alpha.12" || task.Attempt != 1 {
 		t.Fatalf("wrong restore binding: %+v", task)
 	}
+	claimedPlan, err := s.AgentReinstallPlan(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pendingPlan.Recovery.UpdatedAt == before.Recovery.UpdatedAt || claimedPlan.Recovery.UpdatedAt == pendingPlan.Recovery.UpdatedAt {
+		t.Fatal("queued/claimed progress did not refresh recovery")
+	}
 	response := preparationResult(t, s, node, task, true)
 	if response.Code != http.StatusOK {
 		t.Fatalf("result: %d %s", response.Code, response.Body.String())
@@ -86,6 +97,9 @@ func TestAgentReinstallPreparationRoundTripKeepsBusinessFenced(t *testing.T) {
 	}
 	if len(plan.Applications) != 1 || plan.Applications[0].DeploymentID != "retained-meridian-deployment" || plan.Applications[0].Preparation == nil || plan.Applications[0].Preparation.State != "succeeded" || plan.Recovery.State != "review_required" {
 		t.Fatalf("preparation became business restoration: %+v", plan)
+	}
+	if plan.Recovery.UpdatedAt == claimedPlan.Recovery.UpdatedAt {
+		t.Fatal("completion did not refresh recovery")
 	}
 	var activated int
 	if err = s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM agent_network_profiles WHERE agent_id=?)+(SELECT COUNT(*) FROM services WHERE application_id=?)`, node.ID, input.ApplicationID).Scan(&activated); err != nil || activated != 0 {
