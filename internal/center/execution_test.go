@@ -56,7 +56,7 @@ func TestExecutionAuthorizationCannotReplayAfterLostResponseOrRestart(t *testing
 				}
 			}
 			if failure == "result response lost" {
-				if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{"secret":"result-secret"}`), true, false, "", nil); err != nil {
+				if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{"secret":"result-secret"}`), true, false, "", nil, false); err != nil {
 					t.Fatal(err)
 				}
 				if err := store.executionClaimAllowed(ctx, node.ID, session); !errors.Is(err, errExecutionBlocked) {
@@ -132,7 +132,10 @@ func TestExecutionFailureRemainsFencedAndSuccessRequiresResultCommit(t *testing.
 		if err := store.CheckExecutionStep(ctx, node.ID, session, auth.ID, "apply"); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), succeeded, false, "", nil); err != nil {
+		if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), succeeded, false, "", nil, true); !errors.Is(err, errExecutionAuthorization) {
+			t.Fatalf("update helper claimed ordinary task result: %v", err)
+		}
+		if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), succeeded, false, "", nil, false); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.CheckExecutionStep(ctx, node.ID, session, auth.ID, "apply"); !errors.Is(err, errExecutionAuthorization) {
@@ -176,7 +179,7 @@ func TestReadOnlyClientInventoryFailureReleasesExecutionFence(t *testing.T) {
 	if err := store.CheckExecutionStep(ctx, node.ID, session, auth.ID, "apply"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), false, false, "inventory unavailable", nil); err != nil {
+	if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), false, false, "inventory unavailable", nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinalizeExecution(ctx, node.ID, session, auth.ID); err != nil {

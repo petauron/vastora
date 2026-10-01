@@ -9348,6 +9348,9 @@
                   "sessionId": {
                     "type": "string"
                   },
+                  "hostUpdateHelper": {
+                    "type": "boolean"
+                  },
                   "attempt": {
                     "type": "integer"
                   },

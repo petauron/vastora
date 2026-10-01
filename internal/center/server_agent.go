@@ -359,6 +359,7 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 	var input struct {
 		ExecutionID                  string          `json:"executionId"`
 		SessionID                    string          `json:"sessionId"`
+		HostUpdateHelper             bool            `json:"hostUpdateHelper"`
 		Attempt                      int64           `json:"attempt"`
 		Succeeded                    bool            `json:"succeeded"`
 		Error                        string          `json:"error"`
@@ -383,7 +384,7 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 	if len(input.Result) == 0 {
 		input.Result = json.RawMessage(`{}`)
 	}
-	if err := s.store.StoreExecutionResult(request.Context(), agentID, input.SessionID, input.ExecutionID, input.Result, input.Succeeded, input.ReconciliationRequired, input.Error, input.ApplicationRuntimeGeneration); err != nil {
+	if err := s.store.StoreExecutionResult(request.Context(), agentID, input.SessionID, input.ExecutionID, input.Result, input.Succeeded, input.ReconciliationRequired, input.Error, input.ApplicationRuntimeGeneration, input.HostUpdateHelper); err != nil {
 		writeError(writer, http.StatusConflict, err)
 		return
 	}

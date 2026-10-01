@@ -453,7 +453,7 @@ type executionResultEvidence struct {
 	ApplicationRuntimeGeneration *int            `json:"applicationRuntimeGeneration"`
 }
 
-func (s *Store) StoreExecutionResult(ctx context.Context, agentID, sessionID, id string, result json.RawMessage, succeeded, unknown bool, taskError string, runtimeGeneration *int) error {
+func (s *Store) StoreExecutionResult(ctx context.Context, agentID, sessionID, id string, result json.RawMessage, succeeded, unknown bool, taskError string, runtimeGeneration *int, hostUpdateHelper bool) error {
 	if !json.Valid(result) || len(result) > 2<<20 {
 		return errors.New("center: invalid execution result")
 	}
@@ -467,15 +467,18 @@ func (s *Store) StoreExecutionResult(ctx context.Context, agentID, sessionID, id
 	}
 	// Keep the fence until the business projection has committed as well. A
 	// crash between evidence persistence and projection is an unknown outcome.
+	// The scheduler may report an error after systemd has started its helper.
+	// Check ownership in this same write so a late scheduler cannot overwrite
+	// the helper's outcome, including a handoff concurrent with result delivery.
 	message := controlplane.SafeError(taskError)
 	if len(message) > 1024 {
 		message = message[:1024]
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	updated, err := s.db.ExecContext(ctx, `UPDATE task_executions SET sealed_result=?,phase='result_received',last_error=?,updated_at=?
-		WHERE id=? AND agent_id=? AND session_id=? AND state IN ('running','helper_running') AND phase<>'result_received' AND disposition='' AND expires_at>?
+		WHERE id=? AND agent_id=? AND session_id=? AND ((?=0 AND state='running') OR (?=1 AND kind='agent.update' AND state='helper_running')) AND phase<>'result_received' AND disposition='' AND expires_at>?
 		AND (state<>'helper_running' OR ?=0 OR phase='start')
-		AND (state='helper_running' OR EXISTS(SELECT 1 FROM agent_execution_sessions WHERE agent_id=? AND session_id=?))`, sealed, message, now, id, agentID, sessionID, now, succeeded, agentID, sessionID)
+		AND (state='helper_running' OR EXISTS(SELECT 1 FROM agent_execution_sessions WHERE agent_id=? AND session_id=?))`, sealed, message, now, id, agentID, sessionID, hostUpdateHelper, hostUpdateHelper, now, succeeded, agentID, sessionID)
 	if err != nil {
 		return err
 	}

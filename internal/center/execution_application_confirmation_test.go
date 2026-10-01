@@ -43,7 +43,7 @@ func TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically(t *testi
 			if mode == "missing-generation" {
 				generation = nil
 			}
-			if err := store.StoreExecutionResult(ctx, node.ID, session, task.Authorization.ID, result, mode != "failed-result", mode == "unknown-result", "", generation); err != nil {
+			if err := store.StoreExecutionResult(ctx, node.ID, session, task.Authorization.ID, result, mode != "failed-result", mode == "unknown-result", "", generation, false); err != nil {
 				t.Fatal(err)
 			}
 			// Model an older unresolved execution so the administrator recovery
@@ -179,7 +179,7 @@ func TestExecutionSessionRecoversRetainedSuccessfulResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	generation := task.RequiredRuntimeGeneration
-	if err := store.StoreExecutionResult(ctx, node.ID, session, task.Authorization.ID, cpaApplicationResult("10.0.0.19"), true, false, "", &generation); err != nil {
+	if err := store.StoreExecutionResult(ctx, node.ID, session, task.Authorization.ID, cpaApplicationResult("10.0.0.19"), true, false, "", &generation, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, "automatic-result-replacement-session", controlplane.ExecutionProtocol); err != nil {
@@ -233,7 +233,7 @@ func testCenterStartupRecoversExpiredRetainedSuccessfulResult(t *testing.T, prev
 		t.Fatal(err)
 	}
 	generation := task.RequiredRuntimeGeneration
-	if err := store.StoreExecutionResult(ctx, node.ID, session, task.Authorization.ID, cpaApplicationResult("10.0.0.20"), true, false, "", &generation); err != nil {
+	if err := store.StoreExecutionResult(ctx, node.ID, session, task.Authorization.ID, cpaApplicationResult("10.0.0.20"), true, false, "", &generation, false); err != nil {
 		t.Fatal(err)
 	}
 	clock = clock.Add(taskLeaseDuration + time.Second)
