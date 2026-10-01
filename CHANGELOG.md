@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.269](https://github.com/petauron/vastora/compare/v0.1.0-alpha.268...v0.1.0-alpha.269) (2026-10-01)
+
+
+### Bug Fixes
+
+* **recovery:** fence execution evidence across Agent replacement ([#779](https://github.com/petauron/vastora/issues/779)) ([f9a8fb1](https://github.com/petauron/vastora/commit/f9a8fb159bb427252816e25c5ab5bc2921a11d3b))
+
 ## [0.1.0-alpha.268](https://github.com/petauron/vastora/compare/v0.1.0-alpha.267...v0.1.0-alpha.268) (2026-10-01)
 
 
