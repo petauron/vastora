@@ -92,6 +92,15 @@ export function userError(language: Language, error: unknown) {
   return copy(language, "操作未完成，请检查填写内容后重试。", "The operation did not complete. Check your entries and try again.");
 }
 
+// Task failures are not form validation failures. Keep raw diagnostics in details.
+export function taskError(language: Language, error?: string) {
+  const value = (error ?? "").toLowerCase();
+  if (value.includes("private identity changed before handover")) return copy(language, "节点重新接入后，连接身份已变化，这次落地配置未完成。请到应用中核对线路与落地机，再重新配置。", "The node rejoined with a new identity, so this exit configuration did not complete. Review its entry and exit connection in Apps before configuring it again.");
+  if (value.includes("deadline exceeded") || value.includes("timeout") || value.includes("timed out")) return copy(language, "节点没有在规定时间内返回结果。请先检查节点是否在线，并核对任务是否已完成。", "The node did not return a result in time. Check whether it is online and whether the task actually completed.");
+  if (value.includes("offline") || value.includes("not connected")) return copy(language, "节点暂时离线。请先恢复节点连接，再检查这项任务。", "The node is offline. Restore its connection, then review this task.");
+  return copy(language, "任务未能完成。请先查看对应节点或应用的状态；技术详情可用于进一步排查。", "The task did not complete. Check the affected node or app; technical details are available for troubleshooting.");
+}
+
 export function TechnicalError({ language, error }: { language: Language; error: unknown }) {
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   return <div className="text-sm text-destructive"><p>{userError(language, error)}</p>{detail ? <details className="mt-1"><summary className="cursor-pointer text-xs font-medium">{copy(language, "查看技术详情", "Technical details")}</summary><code className="mt-2 block break-all text-xs">{detail}</code></details> : null}</div>;

@@ -6,7 +6,7 @@ import type { Application, ApplicationCredentialRotation, ApplicationCredentials
 import type { Language } from "../../translations";
 import { administratorPasswordMinLength } from "../../lib/security";
 import { clearSecretOperation, secretOperation } from "../../secret-delivery";
-import { localized, operationLabel, publicationKindLabel } from "../appAccess";
+import { localized, operationLabel, publicationKindLabel, pulseDashboardURL } from "../appAccess";
 import { AppHostAccessNote, AppIdentityBadge } from "../AppIdentity";
 import { canCreateRealityNode, type InstalledAppInstance } from "../installed-apps-model";
 import { PulseSetupNotice } from "../PulseSetupNotice";
@@ -25,6 +25,8 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
   const { application, app, agent, services, deployment, activeChange, locked: serviceAccessLocked } = instance;
   const subscriptionService = services.find((service) => service.name === "subscription");
   const subscriptionPublication = subscriptionService ? data.publications.find((value) => value.serviceId === subscriptionService.id && value.status !== "stopped" && (value.kind === "cloudflare_tunnel" || value.kind === "public_direct")) : undefined;
+  const isPulse = application.appKey === "vastora-official/pulse";
+  const dashboardURL = isPulse ? pulseDashboardURL(data) : undefined;
   const isThreeXUI = application.appKey === "vastora-official/3x-ui";
 	const isMeridian = application.appKey === "vastora-official/meridian";
 	const isCPA = application.appKey === "vastora-official/cpa";
@@ -52,6 +54,7 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
       setSyncingNode(false);
     }
   };
+  const serviceRows = visibleServices.map((service) => <ServiceRow data={data} key={service.id} language={language} locked={serviceAccessLocked} onPublish={() => onPublish(service)} onRename={() => onRenameReality(service)} onRemove={isController && service.appProtocol === "vless/tcp/reality" ? () => onRemoveReality(service) : undefined} onTraffic={() => onTraffic(service)} service={service} mutate={mutate} />);
   return <SheetContent className="apps-workspace data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
     <SheetHeader className="pr-12">
       <SheetTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app ? <AppIdentityBadge app={app} language={language} /> : null}{isController ? <Badge>{copy(language, "全局订阅主机", "Global subscription controller")}</Badge> : null}{isLegacyController ? <Badge variant="outline">{copy(language, "待替换为 Xray", "Converting to Xray")}</Badge> : null}{isWorker ? <Badge variant="outline">{copy(language, "Xray 节点", "Xray node")}</Badge> : null}</SheetTitle>
@@ -77,9 +80,9 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
       </div> : null}
 			{isMeridian || ownsMeridianCutover ? <div className="grid gap-2 sm:grid-cols-2"><Button disabled={Boolean(activeChange)} onClick={onAppManager} size="sm"><UsersIcon data-icon="inline-start" />{canStartMeridianCutover ? copy(language, "迁移到 Meridian", "Migrate to Meridian") : ownsMeridianCutover ? copy(language, "查看 Meridian 迁移", "View Meridian migration") : copy(language, "管理账号与节点", "Manage accounts & nodes")}</Button>{isMeridian && subscriptionService ? <Button disabled={serviceAccessLocked} onClick={onSubscription} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{subscriptionPublication ? copy(language, "公网订阅", "Public subscription") : copy(language, "开启订阅", "Enable subscription")}</Button> : null}</div> : null}
 			{isCPA ? <Button disabled={Boolean(activeChange)} onClick={onCredentials} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "凭据", "Credentials")}</Button> : null}
-      {!isWorker && !isLegacyController && deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{application.appKey === "vastora-official/pulse" ? copy(language, "打开监控", "Open monitoring") : copy(language, "打开主页", "Open homepage")}</Button> : !isWorker && !isLegacyController && app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}
+      {isPulse ? <div className="rounded-lg border p-3"><p className="mb-2 text-sm font-medium">{copy(language, "监控面板", "Monitoring dashboard")}</p>{dashboardURL ? <Button nativeButton={false} render={<a href={dashboardURL} rel="noreferrer" target="_blank" />} size="sm"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开 Pulse 监控", "Open Pulse dashboard")}</Button> : <p className="text-sm">{copy(language, "访问入口尚未就绪，请在下方查看配置。", "Access is not ready. Check its configuration below.")}</p>}<p className="mt-2 text-xs text-muted-foreground">{copy(language, "私网入口：设备需要连接安全私网。其他地址请展开「访问配置」。", "Private access: connect your device to the private network. Expand Access configuration for other addresses.")}</p></div> : !isWorker && !isLegacyController && deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{application.appKey === "vastora-official/pulse" ? copy(language, "打开监控", "Open monitoring") : copy(language, "打开主页", "Open homepage")}</Button> : !isWorker && !isLegacyController && app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}
       {!isWorker && !isLegacyController && visibleServices.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : null}
-			{visibleServices.map((service) => <ServiceRow data={data} key={service.id} language={language} locked={serviceAccessLocked} onPublish={() => onPublish(service)} onRename={() => onRenameReality(service)} onRemove={isController && service.appProtocol === "vless/tcp/reality" ? () => onRemoveReality(service) : undefined} onTraffic={() => onTraffic(service)} service={service} mutate={mutate} />)}
+      {isPulse ? <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">{copy(language, "访问配置", "Access configuration")}</summary><div className="mt-3 flex flex-col gap-3">{serviceRows}</div></details> : serviceRows}
       {isController && activeWorkers.length > 0 ? <p className="text-xs text-muted-foreground">{copy(language, "移除所有 Xray 节点后才能卸载订阅主机。", "Remove all Xray nodes before uninstalling the subscription controller.")}</p> : null}
     </div>
     <SheetFooter className="border-t">

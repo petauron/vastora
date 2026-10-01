@@ -21,6 +21,7 @@ it("loads actual pages and does not offer execution mutations until opened and c
   const list = vi.spyOn(api, "executions").mockResolvedValueOnce({ executions: [execution], nextCursor: 10 }).mockResolvedValueOnce({ executions: [{ ...execution, id: "older", disposition: "abandon" }], nextCursor: 0 });
   const dispose = vi.spyOn(api, "disposeExecution");
   await mount();
+  expect(list.mock.calls[0][2]).toBe("attention");
   expect(document.body.textContent).toContain("Outcome unconfirmed");
   expect(document.body.textContent).toContain("Emergency maintenance: all new task claims paused");
   expect(button("Execute again")).toBeUndefined();

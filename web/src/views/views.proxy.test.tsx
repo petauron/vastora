@@ -30,18 +30,19 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("Home");
     expect(container.textContent).toContain("Singapore");
     expect(container.querySelector('table[aria-label="节点列表"]')).not.toBeNull();
-    expect(container.textContent).not.toContain("IP 质量");
+    expect(container.querySelector("table")?.textContent).not.toContain("IP 质量");
     expect(container.textContent).not.toContain("Netflix");
     expect(container.textContent).not.toContain("ChatGPT");
     expect(container.querySelectorAll("tbody tr").length).toBeGreaterThanOrEqual(4);
   });
 
-  it("shows the native architecture of each node", () => {
+  it("shows architecture in node management without crowding the list", () => {
     const data = dashboard();
     data.agents.push({ ...data.agents[0], id: "arm-node", name: "arm-edge", architecture: "arm64" });
     const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
-    expect(container.textContent).toContain("x64");
-    expect(container.textContent).toContain("ARM64");
+    expect(container.querySelector("table")?.textContent).not.toContain("ARM64");
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 arm-edge"]')?.click());
+    expect(document.body.textContent).toContain("ARM64");
   });
 
   it.each([false, true])("requires confirmation before removing the controller local node: %s", async (confirmed) => {
