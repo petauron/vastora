@@ -40,6 +40,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var reconciliationRequested int
 	err := tx.QueryRowContext(ctx, `SELECT id, kind, input_json, attempt, reconciliation_requested FROM application_commands
 		WHERE agent_id = ? AND state = 'pending'
+		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=application_commands.gateway_node_id AND r.state NOT IN ('superseded','completed'))
 		ORDER BY CASE WHEN kind = ? AND COALESCE(json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END, '$.migrationId'), '') = '' THEN 1 ELSE 0 END,
 		created_at, rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt, &reconciliationRequested)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -375,6 +376,11 @@ func (s *Store) completeApplicationCommand(ctx context.Context, commit projectio
 }
 
 func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commit projectionCommit, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, reconciliationRequired bool) error {
+	if blocked, err := reinstallCommandTargetBlocked(ctx, tx, agentID, taskID); err != nil {
+		return err
+	} else if blocked {
+		return errExecutionBlocked
+	}
 	taskError = strings.TrimSpace(taskError)
 	if len(taskError) > 1024 {
 		taskError = taskError[:1024]

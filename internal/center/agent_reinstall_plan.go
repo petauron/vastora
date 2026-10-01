@@ -56,12 +56,16 @@ type AgentReinstallApplication struct {
 }
 
 type AgentReinstallPendingWork struct {
-	Kind  string `json:"kind"`
-	Count int    `json:"count"`
+	AgentID string `json:"agentId"`
+	Kind    string `json:"kind"`
+	Count   int    `json:"count"`
 }
 
 type AgentReinstallExecution struct {
 	ID              string `json:"id"`
+	AgentID         string `json:"agentId"`
+	TaskID          string `json:"taskId"`
+	Attempt         int64  `json:"attempt"`
 	Kind            string `json:"kind"`
 	State           string `json:"state"`
 	Phase           string `json:"phase"`
@@ -130,7 +134,8 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 	if err := readReinstallApplications(ctx, tx, &plan); err != nil {
 		return plan, err
 	}
-	if err := readReinstallWork(ctx, tx, &plan); err != nil {
+	workRevision, err := readReinstallWork(ctx, tx, &plan)
+	if err != nil {
 		return plan, err
 	}
 	plan.NetworkReview, err = s.agentReinstallNetworkReview(ctx, tx, plan.AgentID)
@@ -156,7 +161,10 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 		}
 		review.NetworkReview = &network
 	}
-	encoded, err := json.Marshal(review)
+	encoded, err := json.Marshal(struct {
+		Plan         AgentReinstallPlan
+		WorkRevision string
+	}{review, workRevision})
 	if err != nil {
 		return plan, err
 	}
@@ -220,60 +228,6 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 			app.Requirements = append(app.Requirements, "inspect_previous_operation")
 		}
 		plan.Applications = append(plan.Applications, app)
-	}
-	return rows.Err()
-}
-
-func readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentReinstallPlan) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id,kind,state,phase,identity_retired_at<>'' FROM task_executions
-		WHERE agent_id=? AND disposition='' AND state<>'succeeded' ORDER BY created_at,id`, plan.AgentID)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var execution AgentReinstallExecution
-		if err := rows.Scan(&execution.ID, &execution.Kind, &execution.State, &execution.Phase, &execution.IdentityRetired); err != nil {
-			rows.Close()
-			return err
-		}
-		plan.Executions = append(plan.Executions, execution)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	// Include intents that never acquired an execution authorization. They are
-	// not cleared by session retirement and must not become a recovery queue.
-	rows, err = tx.QueryContext(ctx, `SELECT kind,COUNT(*) FROM (
-		SELECT 'application.apply' AS kind,agent_id FROM deployments WHERE state IN ('pending','running') OR reconciliation_required=1
-		UNION ALL SELECT kind,agent_id FROM application_commands WHERE state IN ('pending','running') OR reconciliation_required=1
-		UNION ALL SELECT 'gateway.component.apply',gateway_node_id FROM gateway_components WHERE status IN ('pending','applying','failed')
-		UNION ALL SELECT 'gateway.routes.apply',gateway_node_id FROM gateway_states WHERE status IN ('pending','applying','failed')
-		UNION ALL SELECT 'node.listener.apply',node_id FROM node_listener_states WHERE status IN ('pending','applying','failed')
-		UNION ALL SELECT 'landing.server.apply',node_id FROM landing_server_states WHERE status IN ('pending','applying','failed')
-		UNION ALL SELECT 'landing.proxy.apply',node_id FROM landing_proxy_states WHERE status IN ('pending','applying','failed')
-		UNION ALL SELECT 'tunnel.state.apply',agent_id FROM cloudflare_tunnels WHERE status IN ('pending','applying','failed')
-		UNION ALL SELECT 'agent.update',agent_id FROM agent_updates WHERE state IN ('pending','running','installing')
-		UNION ALL SELECT 'agent.decommission',agent_id FROM agent_decommissions WHERE state IN ('pending','running','cleaning')
-		UNION ALL SELECT CASE WHEN action='inspect' THEN 'xray.configuration.inspect' ELSE 'xray.configuration.apply' END,agent_id
-			FROM xray_configuration_recoveries WHERE state<>'succeeded'
-		UNION ALL SELECT 'node.ip-quality',agent_id FROM ip_quality_checks WHERE state IN ('pending','running')
-		UNION ALL SELECT kind,agent_id FROM node_diagnostic_checks WHERE state IN ('pending','running')
-	) WHERE agent_id=? GROUP BY kind ORDER BY kind`, plan.AgentID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var work AgentReinstallPendingWork
-		if err := rows.Scan(&work.Kind, &work.Count); err != nil {
-			return err
-		}
-		plan.PendingWork = append(plan.PendingWork, work)
-	}
-	if len(plan.PendingWork)+len(plan.Executions) > 0 {
-		plan.Requirements = append(plan.Requirements, "inspect_previous_effects_and_generate_fresh_plan")
 	}
 	return rows.Err()
 }

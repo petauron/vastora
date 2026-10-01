@@ -362,8 +362,8 @@ export type AgentReinstallPlan = {
   networkReview?: AgentReinstallNetworkReview;
   privateNetwork: { ownership: string; serviceAddress: string; privateAddress: string; profileRetained: boolean; addressRecovery: string; landingRoutes: number; publications: number };
   applications: Array<{ applicationId: string; name: string; appKey: string; deploymentId: string; version: string; operation: string; state: string; recovery: string; requirements: string[] }>;
-  pendingWork: Array<{ kind: string; count: number }>;
-  executions: Array<{ id: string; kind: string; state: string; phase: string; identityRetired: boolean }>;
+  pendingWork: Array<{ agentId: string; kind: string; count: number }>;
+  executions: Array<{ id: string; agentId: string; taskId: string; attempt: number; kind: string; state: string; phase: string; identityRetired: boolean }>;
   requirements: string[];
 };
 

@@ -304,6 +304,13 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	if task.ID == "" || task.Attempt <= 0 {
 		return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 	}
+	if task.Kind == "application.command" {
+		if blocked, err := reinstallCommandTargetBlocked(ctx, tx, agentID, task.ID); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		} else if blocked {
+			return controlplane.ExecutionAuthorization{}, errExecutionBlocked
+		}
+	}
 	id, err := randomToken(24)
 	if err != nil {
 		return controlplane.ExecutionAuthorization{}, err

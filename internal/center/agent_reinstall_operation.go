@@ -219,6 +219,9 @@ func (s *Store) beginAgentReinstall(ctx context.Context, agentID, adminID string
 	if err = retireAgentExecutionIdentity(ctx, tx, agentID, now); err != nil {
 		return nil, err
 	}
+	if err = pauseReinstallRelatedCommands(ctx, tx, agentID, now); err != nil {
+		return nil, err
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}

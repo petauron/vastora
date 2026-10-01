@@ -58,6 +58,13 @@ func (s *Store) disposeTaskExecution(ctx context.Context, executionID, adminID s
 	if identityRetired != "" && input.Action == "reexecute" {
 		return errors.New("center: previous machine identity was retired; create a new recovery task from reviewed intent")
 	}
+	if kind == "application.command" && input.Action == "reexecute" {
+		if blocked, err := reinstallCommandTargetBlocked(ctx, tx, agentID, taskID); err != nil {
+			return err
+		} else if blocked {
+			return errExecutionBlocked
+		}
+	}
 	raw, err := secret.Open(s.key, sealed, []byte("execution-task:"+executionID))
 	if err != nil {
 		return errors.New("center: execution evidence cannot be verified")

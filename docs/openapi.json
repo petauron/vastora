@@ -7058,6 +7058,9 @@
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
+                          "agentId": {
+                            "type": "string"
+                          },
                           "kind": {
                             "type": "string"
                           },
@@ -7075,6 +7078,15 @@
                         "properties": {
                           "id": {
                             "type": "string"
+                          },
+                          "agentId": {
+                            "type": "string"
+                          },
+                          "taskId": {
+                            "type": "string"
+                          },
+                          "attempt": {
+                            "type": "integer"
                           },
                           "kind": {
                             "type": "string"
