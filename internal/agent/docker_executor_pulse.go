@@ -37,7 +37,7 @@ func deployPulse(ctx context.Context, docker *client.Client, task DeploymentTask
 	if err := ensureOwnedApplicationVolumes(ctx, docker, applicationVolumes[pulse.ServiceKey], pulse.ServiceKey, task.ApplicationID); err != nil {
 		return err
 	}
-	_, exists, err := inspectOwnedApplicationContainer(ctx, docker, pulseContainer, pulse.ServiceKey, "pulse", task.ApplicationID, anyApplicationDeployment)
+	inspected, exists, err := inspectOwnedApplicationContainer(ctx, docker, pulseContainer, pulse.ServiceKey, "pulse", task.ApplicationID, anyApplicationDeployment)
 	if err != nil {
 		return err
 	}
@@ -45,7 +45,7 @@ func deployPulse(ctx context.Context, docker *client.Client, task DeploymentTask
 		// Pulse performs forward-only migrations at startup. Take its supported
 		// online SQLite backup before replacing the running service; never start
 		// an old image against a database touched by the new one.
-		if _, err := pulseServiceCLI(ctx, docker, []string{"backup"}); err != nil {
+		if _, err := pulseServiceCLI(ctx, docker, inspected.Container.ID, []string{"backup"}); err != nil {
 			return errors.New("agent: Pulse backup failed; upgrade was not started")
 		}
 	}
@@ -108,10 +108,10 @@ func copyPulseSetupToken(ctx context.Context, docker *client.Client, containerID
 
 // pulseServiceCLI is only used by fixed Pulse administration operations. Neither an
 // HTTP caller nor a catalog may supply an executable or arbitrary arguments.
-func pulseServiceCLI(ctx context.Context, docker *client.Client, args []string) ([]byte, error) {
+func pulseServiceCLI(ctx context.Context, docker *client.Client, containerID string, args []string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	execution, err := docker.ExecCreate(ctx, pulseContainer, client.ExecCreateOptions{Cmd: append([]string{"/usr/local/bin/pulse-service"}, args...), AttachStdout: true, AttachStderr: true})
+	execution, err := docker.ExecCreate(ctx, containerID, client.ExecCreateOptions{Cmd: append([]string{"/usr/local/bin/pulse-service"}, args...), AttachStdout: true, AttachStderr: true})
 	if err != nil {
 		return nil, errors.New("agent: Pulse administration could not start")
 	}
@@ -149,14 +149,19 @@ func (e ApplicationExecutor) InspectPulse(ctx context.Context, task pulse.Inspec
 		return result, err
 	}
 	defer docker.Close()
-	_, exists, err := inspectOwnedApplicationContainer(ctx, docker, pulseContainer, pulse.ServiceKey, "pulse", task.ApplicationID, task.DeploymentID)
+	inspected, exists, err := inspectOwnedApplicationContainer(ctx, docker, pulseContainer, pulse.ServiceKey, "pulse", task.ApplicationID, task.DeploymentID)
 	if err != nil {
 		return result, err
 	}
 	if !exists {
 		return result, errors.New("agent: reviewed Pulse service is unavailable")
 	}
-	help, err := pulseServiceCLI(ctx, docker, []string{"--help"})
+	return inspectPulseEnrollments(ctx, docker, inspected.Container.ID, task)
+}
+
+func inspectPulseEnrollments(ctx context.Context, docker *client.Client, containerID string, task pulse.InspectionTask) (pulse.InspectionResult, error) {
+	result := pulse.InspectionResult{}
+	help, err := pulseServiceCLI(ctx, docker, containerID, []string{"--help"})
 	if err != nil {
 		return result, err
 	}
@@ -164,7 +169,7 @@ func (e ApplicationExecutor) InspectPulse(ctx context.Context, task pulse.Inspec
 		return result, errors.New("agent: installed Pulse does not support enrollment inspection; upgrade the managed service explicitly")
 	}
 	for _, id := range task.EnrollmentIDs {
-		output, err := pulseServiceCLI(ctx, docker, []string{"enrollment", "inspect", id})
+		output, err := pulseServiceCLI(ctx, docker, containerID, []string{"enrollment", "inspect", id})
 		if err != nil {
 			return pulse.InspectionResult{}, err
 		}
@@ -199,20 +204,62 @@ func (e ApplicationExecutor) EnrollPulse(ctx context.Context, task pulse.Enrollm
 		return pulse.EnrollmentResult{}, err
 	}
 	defer docker.Close()
-	_, exists, err := inspectOwnedApplicationContainer(ctx, docker, pulseContainer, pulse.ServiceKey, "pulse", task.ApplicationID, anyApplicationDeployment)
+	inspected, exists, err := inspectOwnedApplicationContainer(ctx, docker, pulseContainer, pulse.ServiceKey, "pulse", task.ApplicationID, anyApplicationDeployment)
 	if err != nil {
 		return pulse.EnrollmentResult{}, err
 	}
 	if !exists {
 		return pulse.EnrollmentResult{}, errors.New("agent: managed Pulse service is unavailable")
 	}
-	output, err := pulseServiceCLI(ctx, docker, []string{"enrollment", "create", "--ttl-seconds", "3600"})
+	output, err := pulseServiceCLI(ctx, docker, inspected.Container.ID, []string{"enrollment", "create", "--ttl-seconds", "3600"})
 	if err != nil {
 		return pulse.EnrollmentResult{}, err
 	}
 	var result pulse.EnrollmentResult
 	if json.Unmarshal(output, &result) != nil || result.ID == "" || len(result.Token) < 16 || len(result.Token) > 512 || result.ExpiresAtUnixMS <= time.Now().UnixMilli() {
 		return pulse.EnrollmentResult{}, errors.New("agent: invalid Pulse enrollment response")
+	}
+	return result, nil
+}
+
+// A failed invocation may already have replaced the credential. The execution
+// journal retains an uncertain outcome; it must never be retried automatically.
+func (e ApplicationExecutor) RotatePulse(ctx context.Context, task pulse.RotationTask) (pulse.RotationResult, error) {
+	if err := task.Validate(); err != nil {
+		return pulse.RotationResult{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	socket := e.DockerSocket
+	if socket == "" {
+		socket = "unix:///var/run/docker.sock"
+	}
+	docker, err := client.New(client.WithHost(socket))
+	if err != nil {
+		return pulse.RotationResult{}, err
+	}
+	defer docker.Close()
+	inspected, exists, err := inspectOwnedApplicationContainer(ctx, docker, pulseContainer, pulse.ServiceKey, "pulse", task.Inspection.ApplicationID, task.Inspection.DeploymentID)
+	if err != nil || !exists {
+		return pulse.RotationResult{}, errors.New("agent: reviewed Pulse service is unavailable")
+	}
+	// Pin every read and the write to this container ID, even if the managed name
+	// is reassigned while the operation is running.
+	records, err := inspectPulseEnrollments(ctx, docker, inspected.Container.ID, task.Inspection)
+	if err != nil {
+		return pulse.RotationResult{}, err
+	}
+	id, err := records.OriginalNodeID(task.Inspection)
+	if err != nil || id != task.NodeID {
+		return pulse.RotationResult{}, errors.New("agent: original Pulse identity changed before credential rotation")
+	}
+	output, err := pulseServiceCLI(ctx, docker, inspected.Container.ID, []string{"node", "rotate", task.NodeID})
+	if err != nil {
+		return pulse.RotationResult{}, uncertainTaskOutcome(errors.New("agent: Pulse credential rotation outcome needs inspection"))
+	}
+	result := pulse.RotationResult{NodeID: task.NodeID, Token: strings.TrimSpace(string(output))}
+	if result.Validate(task) != nil {
+		return pulse.RotationResult{}, uncertainTaskOutcome(errors.New("agent: Pulse credential rotation response needs inspection"))
 	}
 	return result, nil
 }

@@ -37,6 +37,7 @@ type reinstallMonitorCommand struct {
 
 func monitorEvidenceRevision(review AgentReinstallMonitoring, evidence string) string {
 	review.Inspection = nil
+	review.Rotation = nil
 	raw, _ := json.Marshal(struct {
 		Review   AgentReinstallMonitoring
 		Evidence string

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/secret"
@@ -21,6 +22,7 @@ type AgentReinstallMonitoring struct {
 	ServiceAgentID       string                            `json:"serviceAgentId"`
 	State                string                            `json:"state"`
 	Enrollments          []AgentReinstallMonitorEnrollment `json:"enrollments"`
+	Rotation             *AgentReinstallMonitorRotation    `json:"rotation,omitempty"`
 	Inspection           *AgentReinstallMonitorInspection  `json:"inspection,omitempty"`
 }
 
@@ -58,6 +60,19 @@ func (s *Store) readReinstallMonitoring(ctx context.Context, tx *sql.Tx, plan *A
 					review.Inspection.NodeID = ""
 					review.Inspection.Error = "Reviewed monitoring evidence changed; inspect it again"
 				}
+			}
+		}
+		if op != nil {
+			review.Rotation, err = s.readReinstallMonitorRotation(ctx, tx, op.ID, app.ApplicationID)
+			if err != nil {
+				return "", err
+			}
+		}
+		if review.Rotation == nil && review.Inspection != nil && review.Inspection.State == "verified" {
+			at, err := time.Parse(time.RFC3339Nano, review.Inspection.InspectedAt)
+			if err != nil || at.After(s.now()) || s.now().Sub(at) > 30*time.Minute {
+				review.Inspection.State = "stale"
+				review.Inspection.Error = "Original monitoring inspection expired; inspect it again"
 			}
 		}
 		plan.Monitoring = append(plan.Monitoring, review)

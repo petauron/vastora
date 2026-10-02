@@ -556,6 +556,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE agent_reinstall_landing_sources`,
 		`DROP TABLE agent_reinstall_access_activations`,
 		`DROP TABLE agent_reinstall_app_preparations`,
+		`DROP TABLE agent_reinstall_monitor_rotations`,
 		`DROP TABLE agent_reinstall_monitor_inspections`,
 		`DROP TABLE agent_reinstall_operations`,
 		`DROP TABLE execution_events`,

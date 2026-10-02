@@ -464,6 +464,12 @@ for (const route of routes) {
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallPreparation");
     operation.description = "Prepare the reviewed saved Meridian package on its authorized replacement machine. Creates one durable application deployment bound to original intent and approved network, without activating services or releasing the recovery fence. Source changes and uncertain outcomes require review.";
   }
+  if (route.handler === "handleAgentReinstallMonitorRotation") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallMonitorInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallMonitorRotation");
+    operation.description = "Explicit single rotation of a recently verified original Pulse node credential. Bound to the administrator, replacement identity, original registration evidence and exact managed service deployment at selection, sealing and projection. Retains the original node and history; stores the new credential only in encrypted execution evidence. Repeats return the saved operation, including unknown outcomes, without issuing another rotation. Collector import, reporting verification and recovery completion remain separate.";
+  }
   if (route.handler === "handleAgentReinstallMonitorInspection") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallMonitorInput");

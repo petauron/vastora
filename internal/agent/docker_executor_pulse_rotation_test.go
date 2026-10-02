@@ -16,10 +16,10 @@ import (
 	"github.com/petauron/vastora/internal/pulse"
 )
 
-// All allowed API calls are read-only Docker inspection and fixed Pulse CLI
-// reads. A create/revoke/import/upgrade or arbitrary shell endpoint fails here.
-func TestPulseInspectionUsesReviewedContainerAndFixedCLI(t *testing.T) {
-	for _, mode := range []string{"success", "old-service", "wrong-owner", "wrong-deployment", "wrong-id", "secret-field", "partial-failure", "trailing-json", "invalid-active"} {
+// Rotation must inspect all original registrations before its single write.
+// No enrollment, delete, arbitrary shell or container-name mutation is accepted.
+func TestPulseRotationPinsContainerAndRechecksOriginalNode(t *testing.T) {
+	for _, mode := range []string{"success", "old-service", "wrong-owner", "wrong-deployment", "wrong-id", "secret-field", "partial-failure", "trailing-json", "invalid-active", "different-node", "rotation-failed", "bad-token"} {
 		t.Run(mode, func(t *testing.T) {
 			task := pulse.InspectionTask{ApplicationID: "monitor-service", DeploymentID: "reviewed-deployment", EnrollmentIDs: []string{"registration-1", "registration-2"}}
 			labels := applicationResourceLabels(pulse.ServiceKey, "pulse", task.ApplicationID, task.DeploymentID)
@@ -61,7 +61,7 @@ func TestPulseInspectionUsesReviewedContainerAndFixedCLI(t *testing.T) {
 					_, _ = writer.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Type: application/vnd.docker.raw-stream\r\n\r\n")
 					output := ""
 					if slices.Equal(current, []string{"/usr/local/bin/pulse-service", "--help"}) {
-						output = "pulse-service enrollment inspect ID"
+						output = "pulse-service enrollment inspect ID | node rotate ID"
 						if mode == "old-service" {
 							output = "pulse-service enrollment create"
 						}
@@ -72,6 +72,9 @@ func TestPulseInspectionUsesReviewedContainerAndFixedCLI(t *testing.T) {
 						}
 						raw, _ := json.Marshal(map[string]any{"id": id, "expires_at_unix_ms": 100, "consumed_at_unix_ms": 90, "node_id": "original-node", "node_active": true})
 						output = string(raw)
+						if mode == "different-node" {
+							output = strings.ReplaceAll(output, `"node_id":"original-node"`, `"node_id":"another-node"`)
+						}
 						if mode == "invalid-active" {
 							output = strings.ReplaceAll(output, `"node_id":"original-node"`, `"node_id":null`)
 						}
@@ -80,6 +83,11 @@ func TestPulseInspectionUsesReviewedContainerAndFixedCLI(t *testing.T) {
 						}
 						if mode == "trailing-json" {
 							output += "{}"
+						}
+					} else if slices.Equal(current, []string{"/usr/local/bin/pulse-service", "node", "rotate", "original-node"}) {
+						output = "test-rotated-credential-never-publish\n"
+						if mode == "bad-token" {
+							output = "must-not-leak"
 						}
 					} else {
 						t.Errorf("unexpected CLI command: %v", current)
@@ -92,6 +100,9 @@ func TestPulseInspectionUsesReviewedContainerAndFixedCLI(t *testing.T) {
 					_ = writer.Flush()
 				case r.Method == http.MethodGet && strings.HasSuffix(path, "/exec/inspection-exec/json"):
 					code := 0
+					if mode == "rotation-failed" && len(current) == 4 && current[2] == "rotate" {
+						code = 1
+					}
 					if mode == "partial-failure" && len(current) == 4 && current[3] == "registration-2" {
 						code = 1
 					}
@@ -103,17 +114,33 @@ func TestPulseInspectionUsesReviewedContainerAndFixedCLI(t *testing.T) {
 			}))
 			defer server.Close()
 			executor := ApplicationExecutor{DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}
-			result, err := executor.InspectPulse(context.Background(), task)
+			rotation := pulse.RotationTask{Inspection: task, NodeID: "original-node"}
+			result, err := executor.RotatePulse(context.Background(), rotation)
 			mu.Lock()
 			defer mu.Unlock()
 			if mode == "success" {
-				id, identityErr := result.OriginalNodeID(task)
-				if err != nil || identityErr != nil || id != "original-node" || len(commands) != 3 {
-					t.Fatalf("inspection result: %+v %v %v", result, err, identityErr)
+				if err != nil || result.Validate(rotation) != nil || result.NodeID != "original-node" || len(commands) != 4 {
+					t.Fatalf("rotation result invalid: %v", err)
 				}
 			} else {
-				if err == nil || len(result.Records) != 0 {
-					t.Fatalf("invalid or partial inspection accepted: %+v %v", result, err)
+				if err == nil || result.Token != "" {
+					t.Fatalf("invalid or partial rotation accepted: %v", err)
+				}
+				if (mode == "rotation-failed" || mode == "bad-token") != taskOutcomeIsUncertain(err) {
+					t.Fatal("incorrect uncertainty classification")
+				}
+				rotations := 0
+				for _, args := range commands {
+					if len(args) == 4 && args[2] == "rotate" {
+						rotations++
+					}
+				}
+				expected := 0
+				if mode == "rotation-failed" || mode == "bad-token" {
+					expected = 1
+				}
+				if rotations != expected {
+					t.Fatalf("unexpected mutation count %d", rotations)
 				}
 				if strings.Contains(err.Error(), "must-not-leak") {
 					t.Fatal("response secret leaked")

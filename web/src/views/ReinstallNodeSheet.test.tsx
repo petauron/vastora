@@ -608,3 +608,46 @@ describe("replacement application preparation", () => {
     expect(document.body.textContent).toContain(state === "pending" ? "正在准备" : state === "needs_review" ? "结果未确认" : "准备失败");
   });
 });
+
+describe("original monitoring credential rotation", () => {
+  const rotationPlan = (): AgentReinstallPlan => {
+    const plan = monitorPlan();
+    plan.monitoring[0].inspection = { commandId: "inspection", state: "verified", nodeId: "original-monitor-node" };
+    return plan;
+  };
+  it("requires explicit rotation and retains the pending operation across refreshes", async () => {
+    const plan = rotationPlan();
+    const rotation = { commandId: "rotation", state: "pending", nodeId: "original-monitor-node" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, monitoring: [{ ...plan.monitoring[0], rotation }] });
+    const post = vi.spyOn(api, "rotateAgentReinstallMonitor").mockResolvedValue(rotation);
+    await show();
+    expect(post).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("旧凭据立即失效，监控历史保留");
+    await act(async () => button("轮换原监控凭据")!.click());
+    expect(post).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "collector" });
+    expect(document.body.textContent).toContain("等待轮换监控凭据");
+    expect(button("轮换原监控凭据")).toBeUndefined();
+    await act(async () => button("刷新状态")!.click());
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+  it.each(["needs_review", "failed", "rotated"])("does not reissue a retained credential operation: %s", async (state) => {
+    const plan = rotationPlan();
+    plan.monitoring[0].rotation = { commandId: "rotation", state, nodeId: "original-monitor-node" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const post = vi.spyOn(api, "rotateAgentReinstallMonitor");
+    await show();
+    expect(button("轮换原监控凭据")).toBeUndefined();
+    expect(button("核验原监控身份")).toBeUndefined();
+    expect(document.body.textContent).toContain(state === "rotated" ? "采集端恢复与上报待验证" : "凭据轮换结果需核对");
+    expect(post).not.toHaveBeenCalled();
+  });
+  it("does not retry a lost rotation response", async () => {
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(rotationPlan());
+    const post = vi.spyOn(api, "rotateAgentReinstallMonitor").mockRejectedValue(new Error("response lost"));
+    await show();
+    await act(async () => button("轮换原监控凭据")!.click());
+    expect(document.body.textContent).toContain("操作未完成");
+    await act(async () => button("刷新状态")!.click());
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+});

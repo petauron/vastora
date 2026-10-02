@@ -30,6 +30,7 @@ type AgentTask struct {
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
+	PulseRotation             *pulse.RotationTask                  `json:"pulseRotation,omitempty"`
 	PulseInspection           *pulse.InspectionTask                `json:"pulseInspection,omitempty"`
 	PulseEnrollment           *pulse.EnrollmentTask                `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                   `json:"protocolCommand,omitempty"`
