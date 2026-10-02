@@ -420,6 +420,13 @@ for (const route of routes) {
     operation.description = "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization.";
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallPlan");
   }
+  if (route.handler === "handleAgentReinstallDNS") {
+    operation.operationId = route.path.endsWith("/inspect-dns") ? "agentReinstallDNSInspect_post" : "agentReinstallDNSMigrate_post";
+    operation.responses[status].headers = noStoreHeaders;
+    operation.description = "Explicitly migrate owned DNS records, or inspect a saved uncertain attempt without writing external DNS. Bound to the reviewed recovery; never releases its execution fence.";
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallDNSInput");
+    operation.responses["200"].content["application/json"].schema = schemaForGoType("AgentReinstallDNS");
+  }
   if (route.handler === "handleAgentReinstallAccess") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");

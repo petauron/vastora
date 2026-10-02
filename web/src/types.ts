@@ -362,12 +362,17 @@ export type AgentReinstallLocalDisposition = { planRevision: string; executionId
 export type AgentReinstallApplicationInput = { operationId: string; planRevision: string; applicationId: string };
 export type AgentReinstallRuntime = { commandId: string; state: string };
 export type AgentReinstallListener = { taskId: string; state: string };
+export type AgentReinstallDNS = {
+  id: string; state: string; attempt: number; current: boolean; canContinue: boolean; checkedAt: string;
+  entries: { publicationId: string; hostname: string; provider: string; previousAddress: string; address: string; state: string }[];
+};
+export type AgentReinstallDNSInput = AgentReinstallApplicationInput & { expectedAttempt: number };
 export type AgentReinstallAccess = { state: "applied" | "needs_review"; serviceAddress: string; publicAddress: string; activatedAt: string };
 export type AgentReinstallEntryCheck = {
   id: string; state: "passed" | "pending"; current: boolean; checkedAt: string;
   entries: Array<{ publicationId: string; hostname: string; publicAddress: string; sniHostname: string; state: "passed" | "dns_pending" | "tls_pending" | "not_checked" }>;
 };
-export type AgentReinstallPreparation = { deploymentId: string; state: string; runtime?: AgentReinstallRuntime; listener?: AgentReinstallListener; entryCheck?: AgentReinstallEntryCheck; access?: AgentReinstallAccess };
+export type AgentReinstallPreparation = { deploymentId: string; state: string; runtime?: AgentReinstallRuntime; listener?: AgentReinstallListener; entryCheck?: AgentReinstallEntryCheck; access?: AgentReinstallAccess; dns?: AgentReinstallDNS };
 export type AgentReinstallMonitorInput = { operationId: string; planRevision: string; applicationId: string };
 export type AgentReinstallMonitorInspection = { commandId: string; state: string; nodeId?: string; error?: string; inspectedAt?: string };
 export type AgentReinstallPlan = {

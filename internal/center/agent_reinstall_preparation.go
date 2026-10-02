@@ -29,6 +29,7 @@ type AgentReinstallPreparation struct {
 	Runtime      *AgentReinstallRuntime    `json:"runtime,omitempty"`
 	Listener     *AgentReinstallListener   `json:"listener,omitempty"`
 	Access       *AgentReinstallAccess     `json:"access,omitempty"`
+	DNS          *AgentReinstallDNS        `json:"dns,omitempty"`
 	EntryCheck   *AgentReinstallEntryCheck `json:"entryCheck,omitempty"`
 }
 

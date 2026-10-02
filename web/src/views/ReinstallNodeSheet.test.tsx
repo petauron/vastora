@@ -2,7 +2,7 @@
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../api";
-import type { AgentReinstallAccess, AgentReinstallEntryCheck, AgentReinstallPlan } from "../types";
+import type { AgentReinstallAccess, AgentReinstallDNS, AgentReinstallEntryCheck, AgentReinstallPlan } from "../types";
 import { NodesView } from "./NodesView";
 import { dashboard, render, rerender } from "./views.test-support";
 
@@ -271,6 +271,79 @@ describe("replacement application preparation", () => {
     return plan;
   };
   const entryCheck = (): AgentReinstallEntryCheck => ({ id: "entry-check", state: "passed", current: true, checkedAt: "2026-10-01T00:00:00Z", entries: [{ publicationId: "entry", hostname: "entry.example.test", publicAddress: "198.51.100.8", sniHostname: "www.example.com", state: "passed" }] });
+  const dnsPlan = () => {
+    const plan = entryCheckPlan();
+    plan.applications[0].preparation!.dns = { id: "", state: "pending", attempt: 0, current: true, canContinue: false, checkedAt: "2026-10-01T00:00:00Z", entries: [{ publicationId: "entry", hostname: "entry.example.test", provider: "cloudflare", previousAddress: "198.51.100.7", address: "198.51.100.8", state: "pending" }] };
+    return plan;
+  };
+  it("migrates owned DNS only after an explicit click and leaves client verification pending", async () => {
+    const plan = dnsPlan();
+    const dns = plan.applications[0].preparation!.dns!;
+    const result = { ...dns, id: "migration", state: "succeeded", attempt: 1, entries: dns.entries.map((entry) => ({ ...entry, state: "applied" })) };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, applications: plan.applications.map((app) => ({ ...app, preparation: { ...app.preparation!, dns: result } })) });
+    let finish!: (value: AgentReinstallDNS) => void;
+    const migrate = vi.spyOn(api, "migrateAgentReinstallDNS").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    await show();
+    expect(migrate).not.toHaveBeenCalled();
+    await act(async () => button("迁移 DNS")!.click());
+    expect(migrate).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "app", expectedAttempt: 0 });
+    expect(button("迁移 DNS")!.disabled).toBe(true);
+    expect(document.body.textContent).toContain("正在处理 DNS");
+    await act(async () => finish(result));
+    expect(document.body.textContent).toContain("受管 DNS 已更新 · 公网访问待验证");
+    expect(document.body.textContent).toContain("业务验证尚未完成");
+    expect(button("迁移 DNS")).toBeUndefined();
+    expect(document.body.textContent).toContain("entry.example.test · A · 198.51.100.8");
+  });
+  it("inspects uncertainty before offering an explicit DNS continuation", async () => {
+    const plan = dnsPlan();
+    const dns = plan.applications[0].preparation!.dns!;
+    Object.assign(dns, { id: "migration", state: "needs_review", attempt: 1 });
+    const inspected = { ...dns, canContinue: true };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, applications: plan.applications.map((app) => ({ ...app, preparation: { ...app.preparation!, dns: inspected } })) });
+    const inspect = vi.spyOn(api, "inspectAgentReinstallDNS").mockResolvedValue(inspected);
+    const migrate = vi.spyOn(api, "migrateAgentReinstallDNS").mockResolvedValue({ ...dns, attempt: 2 });
+    await show();
+    expect(button("继续 DNS 迁移")).toBeUndefined();
+    expect(migrate).not.toHaveBeenCalled();
+    await act(async () => button("核对 DNS 结果")!.click());
+    expect(inspect).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "app", expectedAttempt: 1 });
+    expect(migrate).not.toHaveBeenCalled();
+    await act(async () => button("继续 DNS 迁移")!.click());
+    expect(migrate).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "app", expectedAttempt: 1 });
+  });
+  it("shows manual DNS instructions without offering provider writes", async () => {
+    const plan = dnsPlan();
+    plan.applications[0].preparation!.dns!.entries[0].provider = "manual";
+    plan.applications[0].preparation!.dns!.entries[0].state = "manual";
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const migrate = vi.spyOn(api, "migrateAgentReinstallDNS");
+    await show();
+    expect(document.body.textContent).toContain("按下方地址更新 DNS 后，验证公网入口");
+    expect(button("迁移 DNS")).toBeUndefined();
+    expect(button("验证公网入口")).not.toBeUndefined();
+    expect(migrate).not.toHaveBeenCalled();
+  });
+  it.each(["stale", "blocked", "network"])("disables DNS migration for %s evidence", async (mode) => {
+    const plan = dnsPlan();
+    if (mode === "stale") plan.applications[0].preparation!.dns!.current = false;
+    else if (mode === "blocked") plan.applications[0].preparation!.dns!.entries[0].state = "blocked";
+    else plan.networkReview!.approvalCurrent = false;
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    await show();
+    expect(button("迁移 DNS")!.disabled).toBe(true);
+  });
+  it("refreshes a lost DNS response without replaying migration", async () => {
+    const plan = dnsPlan();
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const migrate = vi.spyOn(api, "migrateAgentReinstallDNS").mockRejectedValue(new Error("response lost"));
+    await show();
+    await act(async () => button("迁移 DNS")!.click());
+    expect(document.body.textContent).toContain("操作未完成");
+    await act(async () => button("刷新状态")!.click());
+    expect(migrate).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).not.toContain("受管 DNS 已更新");
+  });
   it("activates the reviewed address explicitly and keeps business recovery pending", async () => {
     const plan = entryCheckPlan();
     const receipt = plan.applications[0].preparation!.access!;

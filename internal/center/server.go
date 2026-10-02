@@ -218,6 +218,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-network/approve", s.requireAuth(true, s.handleApproveAgentReinstallNetwork))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-work/settle", s.requireAuth(true, s.handleSettleAgentReinstallLocalWork))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/restore-runtime", s.requireAuth(true, s.handleAgentReinstallRuntime))
+	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/migrate-dns", s.requireAuth(true, s.handleAgentReinstallDNS))
+	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/inspect-dns", s.requireAuth(true, s.handleAgentReinstallDNS))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/activate-address", s.requireAuth(true, s.handleAgentReinstallAccess))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/verify-entry", s.requireAuth(true, s.handleAgentReinstallEntryCheck))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/restore-entry", s.requireAuth(true, s.handleAgentReinstallListener))

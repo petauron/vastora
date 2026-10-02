@@ -18,7 +18,9 @@ func reinstallMeridianEvidence(ctx context.Context, tx *sql.Tx, agentID string) 
 	encoder := json.NewEncoder(digest)
 	for _, query := range []string{
 		`SELECT json_array(p.id,p.service_id,p.kind,p.ingress_owner,p.entry_node_id,p.hostname,p.sni_hostname,
- p.dns_provider,p.desired_revision,p.status='stopped',p.action_required,p.cleanup_pending,s.application_id,s.status='stopped',
+ p.dns_provider,p.dns_record_id,
+ CASE WHEN p.dns_provider='cloudflare' THEN (SELECT json_array(i.mode,i.account_id,i.zone_id,i.status) FROM network_integrations i WHERE i.kind='cloudflare') ELSE '' END,
+ p.desired_revision,p.status='stopped',p.action_required,p.cleanup_pending,s.application_id,s.status='stopped',
  s.app_protocol,s.endpoint,s.container_port,a.runtime,a.role,a.runtime_generation)
  FROM publications p JOIN services s ON s.id=p.service_id JOIN applications a ON a.id=s.application_id
  WHERE a.node_id=? ORDER BY p.id`,

@@ -26,6 +26,9 @@ func reinstallPreparationNetworkFixture(t *testing.T, public bool) (*Store, Agen
 	ctx := context.Background()
 	heartbeat.ApplicationRuntimeGeneration = platform.ApplicationRuntimeGeneration
 	if public {
+		if _, err := s.db.Exec(`UPDATE agent_network_profile_recovery SET profile_json=json_set(profile_json,'$.publicAddress','198.51.100.7','$.publicBindAddress','10.0.0.7','$.publicMode','nat','$.directPublic',json('true')) WHERE agent_id=?`, node.ID); err != nil {
+			t.Fatal(err)
+		}
 		heartbeat.PublicEgress = &networking.PublicEgress{Address: "198.51.100.8", BindAddress: "10.0.0.8", Mode: networking.PublicModeNAT, ObservedAt: s.now().UTC()}
 	}
 	if err := s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
