@@ -24,13 +24,14 @@ type AgentReinstallApplicationInput struct {
 }
 
 type AgentReinstallPreparation struct {
-	DeploymentID string                    `json:"deploymentId"`
-	State        string                    `json:"state"`
-	Runtime      *AgentReinstallRuntime    `json:"runtime,omitempty"`
-	Listener     *AgentReinstallListener   `json:"listener,omitempty"`
-	Access       *AgentReinstallAccess     `json:"access,omitempty"`
-	DNS          *AgentReinstallDNS        `json:"dns,omitempty"`
-	EntryCheck   *AgentReinstallEntryCheck `json:"entryCheck,omitempty"`
+	DeploymentID string                       `json:"deploymentId"`
+	State        string                       `json:"state"`
+	Landing      *AgentReinstallLandingSource `json:"landing,omitempty"`
+	Runtime      *AgentReinstallRuntime       `json:"runtime,omitempty"`
+	Listener     *AgentReinstallListener      `json:"listener,omitempty"`
+	Access       *AgentReinstallAccess        `json:"access,omitempty"`
+	DNS          *AgentReinstallDNS           `json:"dns,omitempty"`
+	EntryCheck   *AgentReinstallEntryCheck    `json:"entryCheck,omitempty"`
 }
 
 func (s *Store) readReinstallPreparation(ctx context.Context, tx *sql.Tx, agentID, applicationID string) (*AgentReinstallPreparation, error) {
@@ -40,6 +41,10 @@ func (s *Store) readReinstallPreparation(ctx context.Context, tx *sql.Tx, agentI
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	value.Landing, err = s.readReinstallLandingSource(ctx, tx, agentID, value.DeploymentID)
 	if err != nil {
 		return nil, err
 	}

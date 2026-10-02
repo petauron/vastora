@@ -115,7 +115,7 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 	// a different capability, but must never silently repin a live source grant.
 	// Keep authorization through quota changes, health loss and revocation until
 	// the entry confirms removal and the grant becomes revoked.
-	rows, err = tx.QueryContext(ctx, `SELECT DISTINCT endpoint.source_peer_json,agent.id,capability.peer_json
+	rows, err = tx.QueryContext(ctx, `SELECT DISTINCT endpoint.source_peer_json,agent.id,capability.peer_json,endpoint.id
 		FROM meridian_route_grants grant_row
 		JOIN meridian_endpoints endpoint ON endpoint.id=grant_row.endpoint_id
 		JOIN applications application ON application.id=endpoint.application_id
@@ -129,8 +129,8 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 	}
 	for rows.Next() {
 		var raw, observedJSON []byte
-		var entryID string
-		if err := rows.Scan(&raw, &entryID, &observedJSON); err != nil {
+		var entryID, endpointID string
+		if err := rows.Scan(&raw, &entryID, &observedJSON, &endpointID); err != nil {
 			rows.Close()
 			return err
 		}
@@ -138,6 +138,17 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 		if json.Unmarshal(raw, &peer) != nil || (meridianruntime.Peer{EgressID: entryID, Identity: peer}).Validate() != nil {
 			rows.Close()
 			return errors.Join(errLandingSourceReconciliation, errors.New("center: invalid Meridian grant source snapshot"))
+		}
+		allowed, recovering, err := s.reinstallLandingSourceAllowed(ctx, tx, entryID, endpointID, landingID, peer)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		if recovering {
+			if allowed {
+				uses = append(uses, landing.AuthorizedNode{Address: peer.Address, TCPOnly: true})
+			}
+			continue
 		}
 		var observed landing.PeerIdentity
 		if json.Unmarshal(observedJSON, &observed) == nil && (meridianruntime.Peer{EgressID: entryID, Identity: observed}).Validate() == nil && observed != peer {

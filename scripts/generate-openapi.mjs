@@ -420,6 +420,13 @@ for (const route of routes) {
     operation.description = "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization.";
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallPlan");
   }
+  if (route.handler === "handleAgentReinstallLandingSource") {
+    operation.operationId = route.path.endsWith("/authorize-landing") ? "agentReinstallLandingAuthorize_post" : "agentReinstallLandingWithdraw_post";
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallLandingSource");
+    operation.description = "Explicitly withdraw saved landing source permissions, then replace the source identity only after applied withdrawal receipts. Reuses existing landing tasks, preserves independent sources and never establishes runtime or client health. Failed or changed evidence requires inspection; repeated requests do not queue work again.";
+  }
   if (route.handler === "handleAgentReinstallDNS") {
     operation.operationId = route.path.endsWith("/inspect-dns") ? "agentReinstallDNSInspect_post" : "agentReinstallDNSMigrate_post";
     operation.responses[status].headers = noStoreHeaders;

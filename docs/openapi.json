@@ -7067,6 +7067,64 @@
                                   "state": {
                                     "type": "string"
                                   },
+                                  "landing": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "state": {
+                                            "type": "string"
+                                          },
+                                          "identity": {
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "previousFingerprint": {
+                                                "type": "string"
+                                              },
+                                              "currentFingerprint": {
+                                                "type": "string"
+                                              },
+                                              "previousAddress": {
+                                                "type": "string"
+                                              },
+                                              "currentAddress": {
+                                                "type": "string"
+                                              },
+                                              "endpointRevision": {
+                                                "type": "integer"
+                                              },
+                                              "observedAt": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "landings": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "object",
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "nodeId": {
+                                                  "type": "string"
+                                                },
+                                                "revision": {
+                                                  "type": "integer"
+                                                },
+                                                "peerFingerprint": {
+                                                  "type": "string"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
                                   "runtime": {
                                     "anyOf": [
                                       {
@@ -7962,6 +8020,276 @@
         "description": "Explicit administrator settlement of reviewed, retired host-local executions after old identity isolation and replacement enrollment. Preserves historical outcomes and encrypted evidence, atomically abandons exact attempts, cancels reviewed pending attempt-zero local tasks with no historical authorization, and records a durable receipt. Saved application intent and credentials are retained. Remote or unclassified effects require separate review. Does not dispatch restoration or release the recovery fence."
       }
     },
+    "/api/v1/agents/{id}/reinstall-applications/withdraw-landing": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Landing Source",
+        "operationId": "agentReinstallLandingWithdraw_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "state": {
+                      "type": "string"
+                    },
+                    "identity": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "previousFingerprint": {
+                          "type": "string"
+                        },
+                        "currentFingerprint": {
+                          "type": "string"
+                        },
+                        "previousAddress": {
+                          "type": "string"
+                        },
+                        "currentAddress": {
+                          "type": "string"
+                        },
+                        "endpointRevision": {
+                          "type": "integer"
+                        },
+                        "observedAt": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "landings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "nodeId": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "integer"
+                          },
+                          "peerFingerprint": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicitly withdraw saved landing source permissions, then replace the source identity only after applied withdrawal receipts. Reuses existing landing tasks, preserves independent sources and never establishes runtime or client health. Failed or changed evidence requires inspection; repeated requests do not queue work again."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-applications/authorize-landing": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Landing Source",
+        "operationId": "agentReinstallLandingAuthorize_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "state": {
+                      "type": "string"
+                    },
+                    "identity": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "previousFingerprint": {
+                          "type": "string"
+                        },
+                        "currentFingerprint": {
+                          "type": "string"
+                        },
+                        "previousAddress": {
+                          "type": "string"
+                        },
+                        "currentAddress": {
+                          "type": "string"
+                        },
+                        "endpointRevision": {
+                          "type": "integer"
+                        },
+                        "observedAt": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "landings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "nodeId": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "integer"
+                          },
+                          "peerFingerprint": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicitly withdraw saved landing source permissions, then replace the source identity only after applied withdrawal receipts. Reuses existing landing tasks, preserves independent sources and never establishes runtime or client health. Failed or changed evidence requires inspection; repeated requests do not queue work again."
+      }
+    },
     "/api/v1/agents/{id}/reinstall-applications/restore-runtime": {
       "post": {
         "tags": [
@@ -8690,6 +9018,64 @@
                     },
                     "state": {
                       "type": "string"
+                    },
+                    "landing": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "state": {
+                              "type": "string"
+                            },
+                            "identity": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "previousFingerprint": {
+                                  "type": "string"
+                                },
+                                "currentFingerprint": {
+                                  "type": "string"
+                                },
+                                "previousAddress": {
+                                  "type": "string"
+                                },
+                                "currentAddress": {
+                                  "type": "string"
+                                },
+                                "endpointRevision": {
+                                  "type": "integer"
+                                },
+                                "observedAt": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "landings": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "nodeId": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "type": "integer"
+                                  },
+                                  "peerFingerprint": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "runtime": {
                       "anyOf": [

@@ -251,6 +251,45 @@ describe("original monitoring identity inspection", () => {
 });
 
 describe("replacement application preparation", () => {
+  const landingPlan = (state: string) => {
+    const plan = runtimePlan();
+    plan.applications[0].preparation!.landing = { state, identity: { previousAddress: "100.64.0.7", currentAddress: "100.64.0.8", previousFingerprint: "old", currentFingerprint: "new", endpointRevision: 1, observedAt: plan.checkedAt }, landings: [{ nodeId: "landing", revision: 2, peerFingerprint: "landing-peer" }] };
+    return plan;
+  };
+  it.each([false, true])("requires an explicit landing action (authorize=%s)", async (authorize) => {
+    const plan = landingPlan(authorize ? "withdrawn" : "pending");
+    const next = landingPlan(authorize ? "authorizing" : "withdrawing");
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue(next);
+    const action = vi.spyOn(api, authorize ? "authorizeAgentReinstallLanding" : "withdrawAgentReinstallLanding").mockResolvedValue(next.applications[0].preparation!.landing!);
+    await show();
+    expect(action).not.toHaveBeenCalled();
+    expect(button("恢复运行配置")!.disabled).toBe(true);
+    await act(async () => button(authorize ? "授权新机器身份" : "撤销旧落地授权")!.click());
+    expect(action).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "app" });
+    expect(document.body.textContent).toContain(authorize ? "等待落地确认新授权" : "等待落地确认撤销");
+    expect(document.body.textContent).toContain("业务验证尚未完成");
+  });
+  it.each(["withdrawing", "authorizing", "needs_review", "authorized"])("does not repeat a %s landing operation on refresh", async (state) => {
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(landingPlan(state));
+    const withdraw = vi.spyOn(api, "withdrawAgentReinstallLanding");
+    const authorize = vi.spyOn(api, "authorizeAgentReinstallLanding");
+    await show();
+    await act(async () => button("刷新状态")!.click());
+    expect(withdraw).not.toHaveBeenCalled(); expect(authorize).not.toHaveBeenCalled();
+    expect(button("撤销旧落地授权")).toBeUndefined(); expect(button("授权新机器身份")).toBeUndefined();
+    expect(button("恢复运行配置")!.disabled).toBe(state !== "authorized");
+  });
+  it("does not retry a landing action after a lost response", async () => {
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(landingPlan("pending"));
+    const action = vi.spyOn(api, "withdrawAgentReinstallLanding").mockRejectedValue(new Error("connection lost"));
+    await show();
+    await act(async () => button("撤销旧落地授权")!.click());
+    expect(document.body.textContent).toContain("操作未完成");
+    await act(async () => button("刷新状态")!.click());
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+
+
   const preparedPlan = (): AgentReinstallPlan => ({ ...review(), recovery: { ...recovery, state: "review_required", replacementFingerprint: "c".repeat(64) }, networkReview: { ...networkReview(), approvalCurrent: true } });
   const runtimePlan = () => {
     const plan = preparedPlan();

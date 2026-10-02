@@ -96,6 +96,23 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
       if (generation.current === current) setBusy(false);
     }
   };
+  const updateLanding = async (applicationId: string, authorize: boolean) => {
+    if (!plan || !recovery || busy) return;
+    const current = generation.current;
+    setBusy(true); setError("");
+    try {
+      const input = { operationId: recovery.id, planRevision: plan.revision, applicationId };
+      if (authorize) await api.authorizeAgentReinstallLanding(agent.id, input);
+      else await api.withdrawAgentReinstallLanding(agent.id, input);
+      if (generation.current !== current) return;
+      const latest = await api.agentReinstallPlan(agent.id);
+      if (generation.current === current) setPlan(latest);
+    } catch (cause) {
+      if (generation.current === current) setError(userError(language, cause));
+    } finally {
+      if (generation.current === current) setBusy(false);
+    }
+  };
   const restoreRuntime = async (applicationId: string) => {
     if (!plan || !recovery || busy) return;
     const current = generation.current;
@@ -233,7 +250,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
           </section> : null}
           {joined && plan.monitoring.length > 0 ? <ReinstallMonitorReview plan={plan} busy={busy} language={language} onInspect={inspectMonitor} /> : null}
           {joined && plan.networkReview ? <ReinstallNetworkReview key={plan.revision} review={plan.networkReview} busy={busy} language={language} onApprove={approveNetwork} /> : null}
-          {joined ? <ReinstallApplicationReview plan={plan} busy={busy} language={language} onPrepare={prepareApplication} onRestoreRuntime={restoreRuntime} onRestoreListener={restoreListener} onActivateAccess={activateAccess} onDNS={migrateDNS} workingDNS={workingDNS} onVerifyEntry={verifyEntry} checkingEntry={checkingEntry} /> : null}
+          {joined ? <ReinstallApplicationReview onLanding={updateLanding} plan={plan} busy={busy} language={language} onPrepare={prepareApplication} onRestoreRuntime={restoreRuntime} onRestoreListener={restoreListener} onActivateAccess={activateAccess} onDNS={migrateDNS} workingDNS={workingDNS} onVerifyEntry={verifyEntry} checkingEntry={checkingEntry} /> : null}
           {command ? <><p className="text-sm">{copy(language, "在重装后的原服务器执行一次", "Run once on the reinstalled original server")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div><p className="text-xs text-muted-foreground">{copy(language, `命令有效期至 ${formatDate(language, enrollment!.expiresAt)}`, `Command valid until ${formatDate(language, enrollment!.expiresAt)}`)}</p></> : null}
           {joined ? <p className="flex items-center gap-2 text-sm"><CheckCircle2Icon aria-hidden="true" className="size-4" />{copy(language, "身份接替已记录；网络、应用和业务验证尚未完成。", "Identity replacement recorded. Network, application and business verification are not complete.")}</p> : null}
         </> : null}

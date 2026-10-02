@@ -132,6 +132,13 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 	if state != "succeeded" {
 		return result, errors.New("center: prepare the saved Meridian package before restoring runtime")
 	}
+	landing, err := s.readReinstallLandingSource(ctx, tx, agentID, preparationID)
+	if err != nil {
+		return result, err
+	}
+	if landing != nil && landing.State != "authorized" {
+		return result, errors.New("center: finish landing identity replacement before restoring runtime")
+	}
 	var endpointID string
 	var revision int64
 	if err = tx.QueryRowContext(ctx, `SELECT id,desired_revision FROM meridian_endpoints WHERE application_id=? AND status<>'retired'`, input.ApplicationID).Scan(&endpointID, &revision); err != nil {
