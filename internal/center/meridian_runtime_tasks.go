@@ -289,12 +289,13 @@ func (s *Store) discardSupersededMeridianRuntimeCommand(ctx context.Context, tx 
 	return true, errApplicationCommandDiscarded
 }
 
-// A replacement first restores only native credentials on its approved address.
-// Fixed egress requires separate withdrawal and authorization of its new peer.
+// A replacement restores on the reviewed address. Fixed egress is included
+// only after its separate identity withdrawal and authorization receipts.
 type meridianRuntimeRestoreTarget struct {
-	Address  string
-	Image    string
-	Revision uint64
+	RestoreLandings bool
+	Address         string
+	Image           string
+	Revision        uint64
 }
 
 func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpointID, expectedAgentID string) (meridianRuntimeProjection, error) {
@@ -394,14 +395,14 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 		routeInboundTag = endpoint.InboundTag
 	}
 	routes := meridianRuntimeRoutes{}
-	if restore == nil {
+	if restore == nil || restore.RestoreLandings {
 		routes, err = s.meridianRuntimeGrants(ctx, tx, endpointID, routeInboundTag, credentialByID)
 		if err != nil {
 			return projection, err
 		}
 	}
 	for index := range materials {
-		if routes.disabledCredentialIDs[materials[index].Credential.ID] || restore != nil && materials[index].Credential.EgressID != "" {
+		if routes.disabledCredentialIDs[materials[index].Credential.ID] || restore != nil && !restore.RestoreLandings && materials[index].Credential.EgressID != "" {
 			materials[index].Credential.Enabled = false
 		}
 	}

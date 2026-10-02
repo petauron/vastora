@@ -456,7 +456,7 @@ for (const route of routes) {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallRuntime");
-    operation.description = "Restore one reviewed native Meridian runtime using the saved package and credentials on the approved replacement address. Fixed egress remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery.";
+    operation.description = "Restore one reviewed native Meridian runtime using the saved package and credentials on the approved replacement address. Fixed egress is restored only after reviewed source replacement and applied landing authorization; otherwise it remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery.";
   }
   if (route.handler === "handleAgentReinstallPreparation") {
     operation.responses[status].headers = noStoreHeaders;

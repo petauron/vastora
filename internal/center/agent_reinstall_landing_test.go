@@ -143,8 +143,8 @@ func TestAgentReinstallLandingWithdrawalThenAuthorization(t *testing.T) {
 			if err != nil || task == nil || task.ID != receipt.CommandID {
 				t.Fatalf("native runtime: %v", err)
 			}
-			if strings.Contains(string(task.MeridianRuntime.Desired.Config), restoreRouteID) {
-				t.Fatal("landing authorization enabled fixed credentials before runtime verification")
+			if !strings.Contains(string(task.MeridianRuntime.Desired.Config), restoreRouteID) || task.MeridianRuntime.Source == nil || task.MeridianRuntime.Source.PublicKey != "nodekey:replacement-entry" || len(task.MeridianRuntime.Peers) != 1 || task.MeridianRuntime.Peers[0].EgressID != egress.ID {
+				t.Fatal("reviewed fixed route or exact replacement identity missing from restored runtime")
 			}
 			if resp := submitRestoredRuntime(t, s, node, task, true, true); resp.Code != http.StatusOK {
 				t.Fatal(resp.Body.String())
@@ -326,6 +326,126 @@ func TestAgentReinstallLandingClaimDoesNotGrantChangedAuthority(t *testing.T) {
 			}
 			if plan.Applications[0].Preparation.Landing.State == "authorized" {
 				t.Fatal("changed authority reported applied")
+			}
+		})
+	}
+}
+
+func queueReinstallLandingRuntime(t *testing.T) (*Store, AgentCredential, AgentReinstallApplicationInput) {
+	t.Helper()
+	s, node, egress, input := reinstallLandingFixture(t, false)
+	ctx := context.Background()
+	for _, authorize := range []bool{false, true} {
+		plan, err := s.AgentReinstallPlan(ctx, node.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input.PlanRevision = plan.Revision
+		if _, err = s.UpdateAgentReinstallLandingSource(ctx, node.ID, "reinstall-review-admin", input, authorize); err != nil {
+			t.Fatal(err)
+		}
+		applyReinstallLanding(t, s, egress, true)
+	}
+	plan, err := s.AgentReinstallPlan(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.PlanRevision = plan.Revision
+	if _, err = s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err != nil {
+		t.Fatal(err)
+	}
+	return s, node, input
+}
+
+func TestAgentReinstallLandingRuntimeRejectsChangedAuthorization(t *testing.T) {
+	for _, stage := range []string{"claim", "result"} {
+		t.Run(stage, func(t *testing.T) {
+			s, node, _ := queueReinstallLandingRuntime(t)
+			ctx := context.Background()
+			var task *AgentTask
+			var err error
+			if stage == "result" {
+				task, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
+				if err != nil || task == nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err = s.db.Exec(`DELETE FROM agent_reinstall_landing_sources`); err != nil {
+				t.Fatal(err)
+			}
+			if stage == "claim" {
+				task, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
+				if err == nil && task != nil {
+					t.Fatal("runtime claimed missing landing approval")
+				}
+			} else {
+				response := submitRestoredRuntime(t, s, node, task, true, true)
+				if response.Code == http.StatusOK {
+					t.Fatal("runtime projected with missing landing approval")
+				}
+			}
+			var healthy int
+			if err = s.db.QueryRow(`SELECT runtime_healthy FROM meridian_endpoints WHERE id='restore-endpoint'`).Scan(&healthy); err != nil || healthy != 0 {
+				t.Fatal("invalid authority marked runtime healthy")
+			}
+		})
+	}
+}
+
+func TestAgentReinstallLandingRuntimeRequiresExactHealthyTransport(t *testing.T) {
+	for _, mode := range []string{"healthy", "blocked", "stale", "wrong-source", "missing-peer"} {
+		t.Run(mode, func(t *testing.T) {
+			s, node, _ := queueReinstallLandingRuntime(t)
+			ctx := context.Background()
+			task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
+			if err != nil || task == nil {
+				t.Fatal(err)
+			}
+			result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+			switch mode {
+			case "blocked":
+				result.Peers[0].Status.State = "blocked"
+			case "stale":
+				result.Peers[0].Status.CheckedAt = s.now().Add(-time.Hour)
+			case "wrong-source":
+				result.Source = &landing.PeerIdentity{ID: "other", PublicKey: "nodekey:other", Address: "100.64.0.8"}
+			case "missing-peer":
+				result.Peers = nil
+			}
+			response := submitReinstallRuntimeResult(t, s, node, task, result, true)
+			invalid := mode == "wrong-source" || mode == "missing-peer"
+			if (response.Code != http.StatusOK) != invalid {
+				t.Fatalf("result %s: %d %s", mode, response.Code, response.Body.String())
+			}
+			plan, err := s.AgentReinstallPlan(ctx, node.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := plan.Applications[0].Preparation.Runtime.State
+			if mode == "healthy" && state != "succeeded" || mode != "healthy" && state == "succeeded" {
+				t.Fatalf("runtime state %s: %s", mode, state)
+			}
+			if !invalid {
+				var body string
+				if err = s.db.QueryRow(`SELECT result_json FROM application_commands WHERE id=?`, task.ID).Scan(&body); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(body, "replacement-entry") || !strings.Contains(body, "receipt") {
+					t.Fatal("discarded applied runtime or transport evidence")
+				}
+			}
+			if plan.Recovery.State != "review_required" {
+				t.Fatal("transport receipt finished client acceptance")
+			}
+			if mode == "blocked" || mode == "stale" {
+				input := AgentReinstallApplicationInput{OperationID: plan.Recovery.ID, ApplicationID: "retained-meridian", PlanRevision: plan.Revision}
+				if _, err = s.ActivateAgentReinstallAccess(ctx, node.ID, "reinstall-review-admin", input); err == nil {
+					t.Fatal("activated address with unverified transport")
+				}
+				var commandState string
+				if err = s.db.QueryRow(`SELECT state FROM application_commands WHERE id=?`, task.ID).Scan(&commandState); err != nil || commandState != "succeeded" {
+					t.Fatal("rewrote applied execution as failure")
+				}
 			}
 		})
 	}

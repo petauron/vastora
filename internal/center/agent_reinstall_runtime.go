@@ -23,7 +23,7 @@ type AgentReinstallRuntime struct {
 
 func (s *Store) readReinstallRuntime(ctx context.Context, tx *sql.Tx, preparationID string) (*AgentReinstallRuntime, error) {
 	var result AgentReinstallRuntime
-	err := tx.QueryRowContext(ctx, `SELECT c.id,CASE WHEN c.state='running' AND (c.lease_expires_at<=? OR EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=c.id AND (e.state IN ('unknown','failed') OR e.phase='result_received'))) THEN 'needs_review' ELSE c.state END
+	err := tx.QueryRowContext(ctx, `SELECT c.id,CASE WHEN c.state='running' AND (c.lease_expires_at<=? OR EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=c.id AND (e.state IN ('unknown','failed') OR e.phase='result_received'))) THEN 'needs_review' WHEN c.state='succeeded' AND COALESCE(json_extract(c.result_json,'$.transportReady'),0)<>1 THEN 'needs_review' ELSE c.state END
  FROM agent_reinstall_app_preparations p JOIN application_commands c ON c.id=p.runtime_command_id WHERE p.deployment_id=?`, s.now().UTC().Format(time.RFC3339Nano), preparationID).Scan(&result.CommandID, &result.State)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -39,15 +39,19 @@ func (s *Store) reinstallRuntimeTask(ctx context.Context, tx *sql.Tx, agentID, c
 	var revision uint64
 	var input, packageJSON []byte
 	var attempt int64
-	err := tx.QueryRowContext(ctx, `SELECT p.deployment_id,p.runtime_endpoint_id,p.runtime_revision,p.runtime_task_sha256,p.task_json,c.input_json,c.attempt
+	var completedWithoutTransport bool
+	err := tx.QueryRowContext(ctx, `SELECT p.deployment_id,p.runtime_endpoint_id,p.runtime_revision,p.runtime_task_sha256,p.task_json,c.input_json,c.attempt,c.state='succeeded' AND COALESCE(json_extract(c.result_json,'$.transportReady'),0)<>1
  FROM agent_reinstall_app_preparations p JOIN deployments d ON d.id=p.deployment_id JOIN application_commands c ON c.id=p.runtime_command_id
  WHERE c.id=? AND d.agent_id=? AND c.agent_id=d.agent_id AND c.gateway_node_id=d.agent_id AND c.application_id=p.application_id
- AND d.state='succeeded' AND c.kind=? AND c.reconciliation_requested=0 AND c.reconciliation_required=0`, commandID, agentID, meridianruntime.ApplyKind).Scan(&preparationID, &endpointID, &revision, &expected, &packageJSON, &input, &attempt)
+ AND d.state='succeeded' AND c.kind=? AND c.reconciliation_requested=0 AND c.reconciliation_required=0`, commandID, agentID, meridianruntime.ApplyKind).Scan(&preparationID, &endpointID, &revision, &expected, &packageJSON, &input, &attempt, &completedWithoutTransport)
 	if errors.Is(err, sql.ErrNoRows) && !strings.HasPrefix(commandID, "reinstall-runtime-") {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, errExecutionAuthorization
+	}
+	if completedWithoutTransport {
+		return nil, errors.New("center: restored landing transport requires inspection before activating access")
 	}
 	if valid, err := s.validateReinstallPreparation(ctx, tx, agentID, preparationID); err != nil {
 		return nil, err
@@ -68,7 +72,18 @@ func (s *Store) reinstallRuntimeTask(ctx context.Context, tx *sql.Tx, agentID, c
 			image = entry.Reference
 		}
 	}
-	projection, err := s.buildMeridianRuntimeProjection(ctx, tx, endpointID, agentID, &meridianRuntimeRestoreTarget{Address: prepared.ServiceAddress, Image: image, Revision: revision})
+	target := &meridianRuntimeRestoreTarget{Address: prepared.ServiceAddress, Image: image, Revision: revision}
+	landing, err := s.readReinstallLandingSource(ctx, tx, agentID, preparationID)
+	if err != nil {
+		return nil, err
+	}
+	if landing != nil {
+		if landing.State != "authorized" {
+			return nil, errors.New("center: reviewed landing authorization changed")
+		}
+		target.RestoreLandings = true
+	}
+	projection, err := s.buildMeridianRuntimeProjection(ctx, tx, endpointID, agentID, target)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +162,7 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 	if revision < 1 || revision >= math.MaxInt64 {
 		return result, errors.New("center: invalid saved Meridian revision")
 	}
-	// Preserve the prior source identity for the later landing withdrawal review.
+	// Keep the reviewed source pin and reserve the runtime after landing receipts.
 	// Reserving a fresh revision invalidates old runtime/publication readiness.
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err = tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',updated_at=? WHERE id=?`, now, endpointID); err != nil {
@@ -180,12 +195,13 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 	if err = s.recordReinstallPreparationProgress(ctx, tx, preparationID); err != nil {
 		return result, err
 	}
-	if err = s.recordTaskEvent(ctx, tx, id, agentID, "application.command", revision+1, "queued", "Restore reviewed native Meridian runtime; entry and landing recovery remain pending"); err != nil {
+	if err = s.recordTaskEvent(ctx, tx, id, agentID, "application.command", revision+1, "queued", "Restore reviewed Meridian runtime; entry and client verification remain pending"); err != nil {
 		return result, err
 	}
 	if err = tx.Commit(); err != nil {
 		return result, err
 	}
+	s.taskChanges.notify("agent:" + agentID)
 	return AgentReinstallRuntime{CommandID: id, State: "pending"}, nil
 }
 
@@ -208,7 +224,7 @@ func (s *Store) claimReinstallRuntime(ctx context.Context, tx *sql.Tx, agentID, 
 	if err = s.recordReinstallRuntimeProgress(ctx, tx, id); err != nil {
 		return nil, err
 	}
-	if err = s.recordTaskEvent(ctx, tx, id, agentID, task.Kind, task.Revision, "claimed", "Restore approved native runtime"); err != nil {
+	if err = s.recordTaskEvent(ctx, tx, id, agentID, task.Kind, task.Revision, "claimed", "Restore approved runtime"); err != nil {
 		return nil, err
 	}
 	if err = commitTask(tx, task); err != nil {
@@ -237,7 +253,8 @@ func (s *Store) completeReinstallRuntime(ctx context.Context, tx *sql.Tx, commit
 		if json.Unmarshal(raw, &envelope) != nil || envelope.MeridianRuntime == nil || envelope.MeridianRuntime.LegacyRetired || len(envelope.GeneratedSecrets) != 0 || envelope.MeridianRuntime.Validate(task.MeridianRuntime.Desired) != nil {
 			return errors.New("center: invalid restored Meridian runtime receipt")
 		}
-		if _, err = envelope.MeridianRuntime.PeerHealth(*task.MeridianRuntime, s.now().UTC()); err != nil {
+		health, err := envelope.MeridianRuntime.PeerHealth(*task.MeridianRuntime, s.now().UTC())
+		if err != nil {
 			return err
 		}
 		// Validate retained usage evidence without inventing a reset or changing the
@@ -253,9 +270,21 @@ func (s *Store) completeReinstallRuntime(ctx context.Context, tx *sql.Tx, commit
 		if _, err = meridian.ParseXrayUserCounters(materials, envelope.MeridianRuntime.Stats); err != nil {
 			return err
 		}
-		resultJSON, _ = json.Marshal(envelope.MeridianRuntime.Receipt)
-		state = "succeeded"
-		taskError = ""
+		transportReady := true
+		for _, healthy := range health {
+			if !healthy {
+				transportReady = false
+			}
+		}
+		resultJSON, _ = json.Marshal(struct {
+			Runtime        *meridianruntime.Result `json:"runtime"`
+			TransportReady bool                    `json:"transportReady"`
+		}{envelope.MeridianRuntime, transportReady})
+		// Execution success records the applied configuration. Transport is
+		// independent evidence: a negative result blocks recovery progression
+		// without rewriting the successful execution as a failed side effect.
+		state, taskError = "succeeded", ""
+
 	}
 	updated, err := tx.ExecContext(ctx, `UPDATE application_commands SET state=?,result_json=?,error=?,lease_expires_at='',updated_at=? WHERE id=? AND state='running' AND attempt=1`, state, resultJSON, taskError, s.now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
@@ -267,7 +296,7 @@ func (s *Store) completeReinstallRuntime(ctx context.Context, tx *sql.Tx, commit
 	if err = s.recordReinstallRuntimeProgress(ctx, tx, id); err != nil {
 		return err
 	}
-	if err = s.recordTaskEvent(ctx, tx, id, agentID, task.Kind, task.Revision, state, "Native runtime restoration receipt recorded; business verification remains pending"); err != nil {
+	if err = s.recordTaskEvent(ctx, tx, id, agentID, task.Kind, task.Revision, state, "Runtime restoration receipt recorded; client verification remains pending"); err != nil {
 		return err
 	}
 	return commit(tx)

@@ -93,13 +93,17 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool) (*Store, AgentCre
 
 func submitRestoredRuntime(t *testing.T, s *Store, node AgentCredential, task *AgentTask, valid, succeeded bool) *httptest.ResponseRecorder {
 	t.Helper()
-	ctx := context.Background()
-	if err := s.StartExecution(ctx, node.ID, "package-preparation-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
-		t.Fatal(err)
-	}
-	result := meridianruntime.Result{Receipt: meridian.AppliedReceipt{Revision: task.MeridianRuntime.Desired.Revision, ConfigSHA256: task.MeridianRuntime.Desired.ConfigSHA256, RuntimeReady: true}, Stats: json.RawMessage(`{}`)}
+	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
 	if !valid {
 		result.Receipt.ConfigSHA256 = strings.Repeat("f", 64)
+	}
+	return submitReinstallRuntimeResult(t, s, node, task, result, succeeded)
+}
+
+func submitReinstallRuntimeResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, result meridianruntime.Result, succeeded bool) *httptest.ResponseRecorder {
+	t.Helper()
+	if err := s.StartExecution(context.Background(), node.ID, "package-preparation-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
+		t.Fatal(err)
 	}
 	input, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": "package-preparation-session", "attempt": task.Attempt, "succeeded": succeeded, "result": ApplicationTaskResult{MeridianRuntime: &result}})
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(input))

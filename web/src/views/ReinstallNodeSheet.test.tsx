@@ -269,6 +269,14 @@ describe("replacement application preparation", () => {
     expect(document.body.textContent).toContain(authorize ? "等待落地确认新授权" : "等待落地确认撤销");
     expect(document.body.textContent).toContain("业务验证尚未完成");
   });
+  it("distinguishes restored landing configuration from client acceptance", async () => {
+    const plan = landingPlan("authorized");
+    plan.applications[0].preparation!.runtime = { commandId: "restored-runtime", state: "succeeded" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    await show();
+    expect(document.body.textContent).toContain("原生与落地配置已恢复 · 客户端访问待验证");
+    expect(document.body.textContent).toContain("业务验证尚未完成");
+  });
   it.each(["withdrawing", "authorizing", "needs_review", "authorized"])("does not repeat a %s landing operation on refresh", async (state) => {
     vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(landingPlan(state));
     const withdraw = vi.spyOn(api, "withdrawAgentReinstallLanding");

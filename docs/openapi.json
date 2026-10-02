@@ -8383,7 +8383,7 @@
             }
           }
         },
-        "description": "Restore one reviewed native Meridian runtime using the saved package and credentials on the approved replacement address. Fixed egress remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery."
+        "description": "Restore one reviewed native Meridian runtime using the saved package and credentials on the approved replacement address. Fixed egress is restored only after reviewed source replacement and applied landing authorization; otherwise it remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery."
       }
     },
     "/api/v1/agents/{id}/reinstall-applications/migrate-dns": {
