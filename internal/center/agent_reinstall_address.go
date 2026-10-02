@@ -25,6 +25,7 @@ type AgentReinstallNetworkReview struct {
 	PrivatePeer     *landing.PeerIdentity          `json:"privatePeer,omitempty"`
 	Ready           bool                           `json:"ready"`
 	Approval        *AgentReinstallNetworkApproval `json:"approval,omitempty"`
+	ProfileActive   bool                           `json:"profileActive"`
 	ApprovalCurrent bool                           `json:"approvalCurrent"`
 }
 
@@ -81,6 +82,9 @@ func (s *Store) agentReinstallNetworkReview(ctx context.Context, tx *sql.Tx, age
 		if err = json.Unmarshal(approval, &review.Approval); err != nil {
 			return nil, err
 		}
+		// After activation the retained-profile row is removed or may contain
+		// newer invalid network evidence. The approval preserves old intent.
+		review.Previous = review.Approval.Previous
 	}
 	cutoff := s.now().UTC().Add(-agentConnectedMaxAge)
 	observedAt, _ := time.Parse(time.RFC3339Nano, observed)
@@ -108,6 +112,11 @@ func (s *Store) agentReinstallNetworkReview(ctx context.Context, tx *sql.Tx, age
 	if review.Approval != nil {
 		_, err := validateReinstallProfile(review, normalizeReinstallProfile(review.Approval.Profile))
 		review.ApprovalCurrent = err == nil && (review.Approval.PrivatePeer == nil || reflect.DeepEqual(review.Approval.PrivatePeer, review.PrivatePeer))
+		active, readErr := networkProfile(ctx, tx, agentID)
+		if readErr != nil {
+			return nil, readErr
+		}
+		review.ProfileActive = review.ApprovalCurrent && active != nil && reflect.DeepEqual(normalizeReinstallProfile(*active), normalizeReinstallProfile(review.Approval.Profile))
 	}
 	return review, nil
 }

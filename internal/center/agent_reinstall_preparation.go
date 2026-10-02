@@ -28,6 +28,7 @@ type AgentReinstallPreparation struct {
 	State        string                    `json:"state"`
 	Runtime      *AgentReinstallRuntime    `json:"runtime,omitempty"`
 	Listener     *AgentReinstallListener   `json:"listener,omitempty"`
+	Access       *AgentReinstallAccess     `json:"access,omitempty"`
 	EntryCheck   *AgentReinstallEntryCheck `json:"entryCheck,omitempty"`
 }
 
@@ -46,6 +47,10 @@ func (s *Store) readReinstallPreparation(ctx context.Context, tx *sql.Tx, agentI
 		return nil, err
 	}
 	value.Listener, err = s.readReinstallListener(ctx, tx, value.DeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	value.Access, err = s.readReinstallAccess(ctx, tx, agentID, value.DeploymentID)
 	return &value, err
 }
 

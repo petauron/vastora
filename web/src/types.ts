@@ -362,11 +362,12 @@ export type AgentReinstallLocalDisposition = { planRevision: string; executionId
 export type AgentReinstallApplicationInput = { operationId: string; planRevision: string; applicationId: string };
 export type AgentReinstallRuntime = { commandId: string; state: string };
 export type AgentReinstallListener = { taskId: string; state: string };
+export type AgentReinstallAccess = { state: "applied" | "needs_review"; serviceAddress: string; publicAddress: string; activatedAt: string };
 export type AgentReinstallEntryCheck = {
   id: string; state: "passed" | "pending"; current: boolean; checkedAt: string;
   entries: Array<{ publicationId: string; hostname: string; publicAddress: string; sniHostname: string; state: "passed" | "dns_pending" | "tls_pending" | "not_checked" }>;
 };
-export type AgentReinstallPreparation = { deploymentId: string; state: string; runtime?: AgentReinstallRuntime; listener?: AgentReinstallListener; entryCheck?: AgentReinstallEntryCheck };
+export type AgentReinstallPreparation = { deploymentId: string; state: string; runtime?: AgentReinstallRuntime; listener?: AgentReinstallListener; entryCheck?: AgentReinstallEntryCheck; access?: AgentReinstallAccess };
 export type AgentReinstallMonitorInput = { operationId: string; planRevision: string; applicationId: string };
 export type AgentReinstallMonitorInspection = { commandId: string; state: string; nodeId?: string; error?: string; inspectedAt?: string };
 export type AgentReinstallPlan = {
@@ -390,7 +391,7 @@ export type AgentReinstallNetworkApproval = {
 };
 export type AgentReinstallNetworkReview = {
   previous?: NetworkProfile; candidates: NetworkCandidate[]; publicEgress?: PublicEgress;
-  privatePeer?: ReinstallPrivatePeer; ready: boolean; approvalCurrent: boolean; approval?: AgentReinstallNetworkApproval;
+  privatePeer?: ReinstallPrivatePeer; ready: boolean; approvalCurrent: boolean; profileActive: boolean; approval?: AgentReinstallNetworkApproval;
 };
 export type AgentReinstallNetworkInput = { operationId: string; planRevision: string; confirmMigration: boolean; profile: NetworkProfile };
 

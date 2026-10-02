@@ -6976,6 +6976,9 @@
                                 }
                               ]
                             },
+                            "profileActive": {
+                              "type": "boolean"
+                            },
                             "approvalCurrent": {
                               "type": "boolean"
                             }
@@ -7094,6 +7097,32 @@
                                           },
                                           "state": {
                                             "type": "string"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "access": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "state": {
+                                            "type": "string"
+                                          },
+                                          "serviceAddress": {
+                                            "type": "string"
+                                          },
+                                          "publicAddress": {
+                                            "type": "string"
+                                          },
+                                          "activatedAt": {
+                                            "type": "string",
+                                            "format": "date-time"
                                           }
                                         }
                                       },
@@ -7970,6 +7999,109 @@
         "description": "Restore one reviewed native Meridian runtime using the saved package and credentials on the approved replacement address. Fixed egress remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery."
       }
     },
+    "/api/v1/agents/{id}/reinstall-applications/activate-address": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Access",
+        "operationId": "agentReinstallAccess_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "state": {
+                      "type": "string"
+                    },
+                    "serviceAddress": {
+                      "type": "string"
+                    },
+                    "publicAddress": {
+                      "type": "string"
+                    },
+                    "activatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Activate the reviewed replacement network profile and one restored Meridian service binding after exact runtime and applicable shared-listener receipts. Atomically retain original address approval and activation evidence. Repeated requests return the same receipt; changed bindings require inspection. Does not alter DNS, landing identities, account usage or business readiness, and never releases the recovery fence."
+      }
+    },
     "/api/v1/agents/{id}/reinstall-applications/verify-entry": {
       "post": {
         "tags": [
@@ -8252,6 +8384,32 @@
                             },
                             "state": {
                               "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "access": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "state": {
+                              "type": "string"
+                            },
+                            "serviceAddress": {
+                              "type": "string"
+                            },
+                            "publicAddress": {
+                              "type": "string"
+                            },
+                            "activatedAt": {
+                              "type": "string",
+                              "format": "date-time"
                             }
                           }
                         },

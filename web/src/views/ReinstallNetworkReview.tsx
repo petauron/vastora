@@ -50,7 +50,7 @@ export function ReinstallNetworkReview({ review, busy, language, onApprove }: {
         {approval.profile.headscaleAddress ? <><dt className="text-muted-foreground">Headscale</dt><dd className="break-all text-right">{approval.previous?.headscaleAddress || "—"} → {approval.profile.headscaleAddress}</dd></> : null}
         {approval.profile.directPublic ? <><dt className="text-muted-foreground">{copy(language, "公网入口", "Public entry")}</dt><dd className="break-all text-right">{approval.previous?.publicAddress || "—"} → {approval.profile.publicAddress}</dd></> : null}
       </dl>
-      <p className="text-xs text-muted-foreground">{copy(language, "已保存，待应用恢复时启用。", "Saved for activation during application restoration.")} {formatDate(language, approval.approvedAt)}</p>
+      <p className="text-xs text-muted-foreground">{review.profileActive ? copy(language, "新网络地址已启用，各应用继续独立验证。", "Replacement network addresses are active. Each application still needs verification.") : copy(language, "已保存，待应用恢复时启用。", "Saved for activation during application restoration.")} {formatDate(language, approval.approvedAt)}</p>
       <Button className="self-end" disabled={busy || !review.ready} onClick={() => setEditing(true)} size="sm" variant="outline">{copy(language, "重新核对", "Review again")}</Button>
     </> : !review.ready ? <p className="text-sm text-muted-foreground">{copy(language, "等待新机器上报当前网络地址。", "Waiting for current network addresses from the replacement machine.")}</p> : <>
       <FieldGroup>

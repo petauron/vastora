@@ -2,7 +2,7 @@
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../api";
-import type { AgentReinstallEntryCheck, AgentReinstallPlan } from "../types";
+import type { AgentReinstallAccess, AgentReinstallEntryCheck, AgentReinstallPlan } from "../types";
 import { NodesView } from "./NodesView";
 import { dashboard, render, rerender } from "./views.test-support";
 
@@ -154,7 +154,7 @@ describe("node reinstall review", () => {
 const networkReview = (): NonNullable<AgentReinstallPlan["networkReview"]> => ({
   previous: { serviceAddress: "100.64.0.2", headscaleAddress: "100.64.0.2", enabledKinds: ["headscale"], directPublic: false },
   candidates: [{ address: "100.64.0.8", interface: "tailscale0", kind: "headscale", observedAt: "2026-10-01T00:00:00Z" }],
-  privatePeer: { id: "replacement-peer", publicKey: "nodekey:replacement", address: "100.64.0.8" }, ready: true, approvalCurrent: false,
+  privatePeer: { id: "replacement-peer", publicKey: "nodekey:replacement", address: "100.64.0.8" }, ready: true, approvalCurrent: false, profileActive: false,
 });
 
 describe("replacement network review", () => {
@@ -267,9 +267,68 @@ describe("replacement application preparation", () => {
   const entryCheckPlan = () => {
     const plan = listenerPlan();
     plan.applications[0].preparation!.listener = { taskId: "approved-listener", state: "succeeded" };
+    plan.applications[0].preparation!.access = { state: "applied", serviceAddress: "100.64.0.8", publicAddress: "198.51.100.8", activatedAt: "2026-10-01T00:00:00Z" };
     return plan;
   };
   const entryCheck = (): AgentReinstallEntryCheck => ({ id: "entry-check", state: "passed", current: true, checkedAt: "2026-10-01T00:00:00Z", entries: [{ publicationId: "entry", hostname: "entry.example.test", publicAddress: "198.51.100.8", sniHostname: "www.example.com", state: "passed" }] });
+  it("activates the reviewed address explicitly and keeps business recovery pending", async () => {
+    const plan = entryCheckPlan();
+    const receipt = plan.applications[0].preparation!.access!;
+    delete plan.applications[0].preparation!.access;
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, networkReview: { ...plan.networkReview!, profileActive: true }, applications: plan.applications.map((app) => ({ ...app, preparation: { ...app.preparation!, access: receipt } })) });
+    let finish!: (value: AgentReinstallAccess) => void;
+    const activate = vi.spyOn(api, "activateAgentReinstallAccess").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    await show();
+    expect(activate).not.toHaveBeenCalled();
+    expect(button("验证公网入口")).toBeUndefined();
+    await act(async () => button("启用恢复地址")!.click());
+    expect(activate).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "app" });
+    expect(button("启用恢复地址")!.disabled).toBe(true);
+    await act(async () => finish(receipt));
+    expect(button("启用恢复地址")).toBeUndefined();
+    expect(document.body.textContent).toContain("恢复地址已启用 · DNS、落地与客户端访问待验证");
+    expect(document.body.textContent).toContain("新网络地址已启用，各应用继续独立验证");
+    expect(document.body.textContent).toContain("业务验证尚未完成");
+    expect(button("验证公网入口")).not.toBeUndefined();
+    await act(async () => button("刷新状态")!.click());
+    expect(activate).toHaveBeenCalledTimes(1);
+  });
+  it.each(["runtime", "listener", "approval", "old-work"])("blocks address activation without %s", async (mode) => {
+    const plan = entryCheckPlan();
+    delete plan.applications[0].preparation!.access;
+    if (mode === "runtime") plan.applications[0].preparation!.runtime!.state = "pending";
+    else if (mode === "listener") plan.applications[0].preparation!.listener!.state = "needs_review";
+    else if (mode === "approval") plan.networkReview!.approvalCurrent = false;
+    else plan.unclaimedLocalWork = [{ taskId: "previous-task", kind: "application.apply", revision: 0 }];
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const activate = vi.spyOn(api, "activateAgentReinstallAccess");
+    await show();
+    const action = button("启用恢复地址");
+    expect(!action || action.disabled).toBe(true);
+    expect(button("验证公网入口")).toBeUndefined();
+    expect(activate).not.toHaveBeenCalled();
+  });
+  it("shows changed active bindings without a reapply action", async () => {
+    const plan = entryCheckPlan(); plan.applications[0].preparation!.access!.state = "needs_review";
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const activate = vi.spyOn(api, "activateAgentReinstallAccess");
+    await show();
+    expect(document.body.textContent).toContain("恢复地址已变化 · 需核对，未重新应用");
+    expect(button("启用恢复地址")).toBeUndefined();
+    expect(button("验证公网入口")).toBeUndefined();
+    expect(activate).not.toHaveBeenCalled();
+  });
+  it("does not retry address activation after losing its response", async () => {
+    const plan = entryCheckPlan(); delete plan.applications[0].preparation!.access;
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const activate = vi.spyOn(api, "activateAgentReinstallAccess").mockRejectedValue(new Error("connection lost"));
+    await show();
+    await act(async () => button("启用恢复地址")!.click());
+    expect(document.body.textContent).toContain("操作未完成");
+    await act(async () => button("刷新状态")!.click());
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).not.toContain("恢复地址已启用");
+  });
   it("checks public entry explicitly and separates TLS from real client verification", async () => {
     const plan = entryCheckPlan();
     const result = entryCheck();
