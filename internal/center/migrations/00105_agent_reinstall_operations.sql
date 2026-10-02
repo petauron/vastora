@@ -21,7 +21,7 @@ CREATE TABLE application_commands_v105 (
 			display_name TEXT NOT NULL DEFAULT '' COLLATE NOCASE,
 			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
 			gateway_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
-			kind TEXT NOT NULL CHECK(kind IN ('meridian.runtime.apply', 'meridian.legacy.export', 'meridian.legacy.retire', 'meridian.subscription.publish', 'pulse.enrollment.create', 'pulse.enrollment.inspect', 'pulse.node.rotate', '3xui.reality.create', '3xui.reality.verify', '3xui.reality.harden', '3xui.reality.rename', '3xui.reality.remove', '3xui.protocols.configure', '3xui.subscription.configure', '3xui.clients.manage', '3xui.node.reconcile', '3xui.controller.manage')),
+			kind TEXT NOT NULL CHECK(kind IN ('meridian.runtime.apply', 'meridian.legacy.export', 'meridian.legacy.retire', 'meridian.subscription.publish', 'pulse.enrollment.create', 'pulse.enrollment.inspect', 'pulse.node.rotate', 'pulse.node.reporting', '3xui.reality.create', '3xui.reality.verify', '3xui.reality.harden', '3xui.reality.rename', '3xui.reality.remove', '3xui.protocols.configure', '3xui.subscription.configure', '3xui.clients.manage', '3xui.node.reconcile', '3xui.controller.manage')),
 			input_json BLOB NOT NULL,
 			result_json BLOB NOT NULL DEFAULT '{}',
 			result_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,
@@ -56,7 +56,7 @@ CREATE UNIQUE INDEX application_commands_one_active_reality_name_idx ON applicat
 -- +goose StatementBegin
 CREATE TRIGGER application_commands_block_during_three_x_ui_migration
 			BEFORE INSERT ON application_commands
-			WHEN NEW.kind NOT IN ('3xui.controller.manage', 'pulse.enrollment.create', 'pulse.enrollment.inspect', 'pulse.node.rotate')
+			WHEN NEW.kind NOT IN ('3xui.controller.manage', 'pulse.enrollment.create', 'pulse.enrollment.inspect', 'pulse.node.rotate', 'pulse.node.reporting')
 			AND NOT (NEW.kind = '3xui.node.reconcile' AND EXISTS (
 				SELECT 1 FROM three_x_ui_migrations
 				WHERE id = json_extract(CASE WHEN json_valid(NEW.input_json) THEN NEW.input_json ELSE '{}' END, '$.migrationId') AND state = 'switching'
@@ -68,7 +68,7 @@ CREATE TRIGGER application_commands_block_during_three_x_ui_migration
 -- +goose StatementBegin
 CREATE TRIGGER application_command_updates_block_during_three_x_ui_migration
 			BEFORE UPDATE OF application_id, kind, input_json, state, reconciliation_required ON application_commands
-			WHEN NEW.kind NOT IN ('3xui.controller.manage', 'pulse.enrollment.create', 'pulse.enrollment.inspect', 'pulse.node.rotate') AND (NEW.state IN ('pending', 'running') OR NEW.reconciliation_required = 1)
+			WHEN NEW.kind NOT IN ('3xui.controller.manage', 'pulse.enrollment.create', 'pulse.enrollment.inspect', 'pulse.node.rotate', 'pulse.node.reporting') AND (NEW.state IN ('pending', 'running') OR NEW.reconciliation_required = 1)
 			AND NOT (NEW.kind = '3xui.node.reconcile' AND EXISTS (
 				SELECT 1 FROM three_x_ui_migrations
 				WHERE id = json_extract(CASE WHEN json_valid(NEW.input_json) THEN NEW.input_json ELSE '{}' END, '$.migrationId') AND state = 'switching'
@@ -80,7 +80,7 @@ CREATE TRIGGER application_command_updates_block_during_three_x_ui_migration
 -- +goose StatementBegin
 CREATE TRIGGER application_commands_block_during_three_x_ui_deployment
 			BEFORE INSERT ON application_commands
-			WHEN NEW.kind NOT IN ('3xui.controller.manage', '3xui.node.reconcile', 'pulse.enrollment.create', 'pulse.enrollment.inspect', 'pulse.node.rotate')
+			WHEN NEW.kind NOT IN ('3xui.controller.manage', '3xui.node.reconcile', 'pulse.enrollment.create', 'pulse.enrollment.inspect', 'pulse.node.rotate', 'pulse.node.reporting')
 			AND (NEW.state IN ('pending', 'running') OR NEW.reconciliation_required = 1)
 			AND EXISTS (
 				SELECT 1 FROM deployments deployment
@@ -93,7 +93,7 @@ CREATE TRIGGER application_commands_block_during_three_x_ui_deployment
 -- +goose StatementBegin
 CREATE TRIGGER application_command_updates_block_during_three_x_ui_deployment
 			BEFORE UPDATE OF application_id, kind, input_json, state, reconciliation_required ON application_commands
-			WHEN NEW.kind NOT IN ('3xui.controller.manage', '3xui.node.reconcile', 'pulse.enrollment.create', 'pulse.enrollment.inspect', 'pulse.node.rotate')
+			WHEN NEW.kind NOT IN ('3xui.controller.manage', '3xui.node.reconcile', 'pulse.enrollment.create', 'pulse.enrollment.inspect', 'pulse.node.rotate', 'pulse.node.reporting')
 			AND (NEW.state IN ('pending', 'running') OR NEW.reconciliation_required = 1) AND EXISTS (
 				SELECT 1 FROM deployments deployment
 				WHERE deployment.app_key = 'vastora-official/3x-ui'
@@ -257,6 +257,13 @@ DELETE FROM secrets WHERE id IN (SELECT bootstrap_secret_id FROM agent_enrollmen
 DELETE FROM agent_enrollment_tokens WHERE target_agent_id IS NOT NULL AND used_at IS NULL;
 
 
+
+CREATE TABLE agent_reinstall_monitor_reports (
+ command_id TEXT PRIMARY KEY REFERENCES application_commands(id) ON DELETE CASCADE,
+ restoration_id TEXT NOT NULL REFERENCES agent_reinstall_monitor_restorations(deployment_id) ON DELETE RESTRICT,
+ input_json BLOB NOT NULL CHECK(json_valid(input_json)),
+ result_json BLOB NOT NULL DEFAULT '{}' CHECK(json_valid(result_json))
+);
 
 CREATE TEMP TABLE migration_105_integrity(valid INTEGER CHECK(valid=1));
 INSERT INTO migration_105_integrity SELECT NOT EXISTS(SELECT 1 FROM pragma_foreign_key_check);

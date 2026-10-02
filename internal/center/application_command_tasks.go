@@ -40,7 +40,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var reconciliationRequested int
 	err := tx.QueryRowContext(ctx, `SELECT c.id, c.kind, c.input_json, c.attempt, c.reconciliation_requested FROM application_commands c
 		WHERE c.agent_id = ? AND state = 'pending'
-		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=c.gateway_node_id AND r.state NOT IN ('superseded','completed') AND NOT (`+reinstallInspectionAuthoritySQL+` OR `+reinstallRotationAuthoritySQL+`))
+		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=c.gateway_node_id AND r.state NOT IN ('superseded','completed') AND NOT (`+reinstallInspectionAuthoritySQL+` OR `+reinstallRotationAuthoritySQL+` OR `+reinstallReportingAuthoritySQL+`))
 		ORDER BY CASE WHEN kind = ? AND COALESCE(json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END, '$.migrationId'), '') = '' THEN 1 ELSE 0 END,
 		created_at, c.rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt, &reconciliationRequested)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -55,6 +55,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var node *ThreeXUINodeCommandTask
 	var controller *ThreeXUIControllerCommandTask
 	var protocols *nodeprotocol.Task
+	var pulseReporting *pulse.ReportingTask
 	var pulseRotation *pulse.RotationTask
 	var pulseInspection *pulse.InspectionTask
 	var pulseEnrollment *pulse.EnrollmentTask
@@ -104,6 +105,12 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: Meridian legacy retirement is outside the authorized controller-only phase"))
 		}
 		meridianLegacyRetire = &command
+	case pulse.ReportingKind:
+		_, task, err := s.validateReinstallMonitorReporting(ctx, tx, agentID, id)
+		if err != nil {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
+		}
+		pulseReporting = &task
 	case pulse.RotationKind:
 		command, err := s.validateReinstallMonitorRotation(ctx, tx, agentID, id)
 		if err != nil {
@@ -292,7 +299,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, err
 		}
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, PulseEnrollment: pulseEnrollment, PulseInspection: pulseInspection, PulseRotation: pulseRotation, MeridianRuntime: meridianTask, MeridianLegacyExport: meridianLegacyExport, MeridianLegacyRetire: meridianLegacyRetire, Reconcile: reconciliationRequested == 1}, nil
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, PulseEnrollment: pulseEnrollment, PulseInspection: pulseInspection, PulseReporting: pulseReporting, PulseRotation: pulseRotation, MeridianRuntime: meridianTask, MeridianLegacyExport: meridianLegacyExport, MeridianLegacyRetire: meridianLegacyRetire, Reconcile: reconciliationRequested == 1}, nil
 }
 
 func (s *Store) failUnclaimableThreeXUIInboundPlanCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command ThreeXUIClientCommandTask, cause error) error {
@@ -465,6 +472,9 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 	}
 	if kind == subscriptionCommandKind {
 		return s.completeSubscriptionCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind == pulse.ReportingKind {
+		return s.completeReinstallMonitorReporting(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
 	}
 	if kind == pulse.RotationKind {
 		return s.completeReinstallMonitorRotation(ctx, commit, tx, taskID, agentID, succeeded, rawResult)

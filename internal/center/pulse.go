@@ -72,7 +72,7 @@ func (s *Store) validatePulseDeployment(ctx context.Context, request DeploymentR
 	}
 	if request.Operation != "install" {
 		var pending int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands c JOIN applications a ON a.id = c.application_id WHERE a.app_key = ? AND c.kind IN (?,?,?) AND c.state IN ('pending','running')`, pulseAppKey, pulse.EnrollmentKind, pulse.InspectionKind, pulse.RotationKind).Scan(&pending); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands c JOIN applications a ON a.id = c.application_id WHERE a.app_key = ? AND c.kind IN (?,?,?,?) AND c.state IN ('pending','running')`, pulseAppKey, pulse.EnrollmentKind, pulse.InspectionKind, pulse.RotationKind, pulse.ReportingKind).Scan(&pending); err != nil {
 			return err
 		}
 		if pending != 0 {

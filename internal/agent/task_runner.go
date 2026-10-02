@@ -288,6 +288,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			defer store.landingMutationMu.Unlock()
 		}
 		commands := 0
+		if task.PulseReporting != nil {
+			commands++
+		}
 		if task.PulseRotation != nil {
 			commands++
 		}
@@ -356,6 +359,19 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				retireResult, err = executor.RetireLegacyMeridianInstallation(ctx, *task.MeridianLegacyRetire)
 				if err == nil {
 					result.MeridianLegacyRetire = &retireResult
+				}
+			}
+		} else if task.PulseReporting != nil {
+			executor, ok := c.Executor.(interface {
+				InspectPulseReporting(context.Context, pulse.ReportingTask) (pulse.ReportingResult, error)
+			})
+			if !ok {
+				err = errors.New("agent: Pulse reporting capability is not configured")
+			} else {
+				var reporting pulse.ReportingResult
+				reporting, err = executor.InspectPulseReporting(ctx, *task.PulseReporting)
+				if err == nil {
+					result.PulseReporting = &reporting
 				}
 			}
 		} else if task.PulseRotation != nil {

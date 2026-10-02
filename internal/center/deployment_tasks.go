@@ -31,6 +31,7 @@ type AgentTask struct {
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
 	PulseRestore              *pulse.RestoreCredentials            `json:"pulseRestore,omitempty"`
+	PulseReporting            *pulse.ReportingTask                 `json:"pulseReporting,omitempty"`
 	PulseRotation             *pulse.RotationTask                  `json:"pulseRotation,omitempty"`
 	PulseInspection           *pulse.InspectionTask                `json:"pulseInspection,omitempty"`
 	PulseEnrollment           *pulse.EnrollmentTask                `json:"pulseEnrollment,omitempty"`

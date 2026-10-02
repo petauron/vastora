@@ -573,6 +573,7 @@ func runAgent(arguments []string) error {
 		client.Capabilities.MeridianLinkRevision = nodediagnostics.LinkBandwidthRevision
 		client.Capabilities.PulseInspection = capabilities.Docker && runtime.GOOS == "linux"
 		client.Capabilities.PulseRotation = client.Capabilities.PulseInspection
+		client.Capabilities.PulseReporting = client.Capabilities.PulseInspection
 		client.Capabilities.PulseRestore = runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.HostProfile = runtime.GOOS == "linux"
 		if capabilities.Docker {

@@ -39,6 +39,7 @@ func monitorEvidenceRevision(review AgentReinstallMonitoring, evidence string) s
 	review.Inspection = nil
 	review.Rotation = nil
 	review.Restoration = nil
+	review.Reporting = nil
 	raw, _ := json.Marshal(struct {
 		Review   AgentReinstallMonitoring
 		Evidence string

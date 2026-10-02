@@ -379,6 +379,7 @@ export type AgentReinstallLandingSource = {
 };
 export type AgentReinstallPreparation = { landing?: AgentReinstallLandingSource; deploymentId: string; state: string; runtime?: AgentReinstallRuntime; listener?: AgentReinstallListener; entryCheck?: AgentReinstallEntryCheck; access?: AgentReinstallAccess; dns?: AgentReinstallDNS };
 export type AgentReinstallMonitorInput = { operationId: string; planRevision: string; applicationId: string };
+export type AgentReinstallMonitorReporting = { commandId: string; state: string; checkedAt?: string };
 export type AgentReinstallMonitorRestore = { deploymentId: string; state: string };
 export type AgentReinstallMonitorRotation = { commandId: string; state: string; nodeId: string; rotatedAt?: string };
 export type AgentReinstallMonitorInspection = { commandId: string; state: string; nodeId?: string; error?: string; inspectedAt?: string };
@@ -392,7 +393,7 @@ export type AgentReinstallPlan = {
   executions: Array<{ id: string; agentId: string; taskId: string; attempt: number; kind: string; state: string; phase: string; identityRetired: boolean; resolution: "local_after_isolation" | "manual_review" }>;
   unclaimedLocalWork: AgentReinstallUnclaimedWork[];
   localWorkDisposition?: AgentReinstallLocalDisposition;
-  monitoring: Array<{ applicationId: string; serviceApplicationId: string; serviceAgentId: string; state: string; enrollments: Array<{ enrollmentId: string; executionId: string }>; inspection?: AgentReinstallMonitorInspection; rotation?: AgentReinstallMonitorRotation; restoration?: AgentReinstallMonitorRestore }>;
+  monitoring: Array<{ applicationId: string; serviceApplicationId: string; serviceAgentId: string; state: string; enrollments: Array<{ enrollmentId: string; executionId: string }>; inspection?: AgentReinstallMonitorInspection; rotation?: AgentReinstallMonitorRotation; reporting?: AgentReinstallMonitorReporting; restoration?: AgentReinstallMonitorRestore }>;
   requirements: string[];
 };
 

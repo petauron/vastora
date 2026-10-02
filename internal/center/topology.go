@@ -29,6 +29,7 @@ var (
 
 type NodeCapabilities struct {
 	PulseRestore          bool `json:"pulseRestore"`
+	PulseReporting        bool `json:"pulseReporting"`
 	PulseRotation         bool `json:"pulseRotation"`
 	PulseInspection       bool `json:"pulseInspection"`
 	IPQuality             bool `json:"ipQuality"`

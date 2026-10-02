@@ -335,6 +335,26 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 		}
 	}
+	var pulseReporting bool
+	if task.Kind == "application.command" {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.node.reporting')`, task.ID, agentID).Scan(&pulseReporting); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+	}
+	if pulseReporting || task.PulseReporting != nil {
+		if !pulseReporting || task.PulseReporting == nil || task.Attempt != 1 || task.Reconcile {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+		_, expectedTask, err := s.validateReinstallMonitorReporting(ctx, tx, agentID, task.ID)
+		if err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		expected, _ := json.Marshal(expectedTask)
+		actual, _ := json.Marshal(task.PulseReporting)
+		if string(expected) != string(actual) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
 	var pulseRotation bool
 	if task.Kind == "application.command" {
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.node.rotate')`, task.ID, agentID).Scan(&pulseRotation); err != nil {

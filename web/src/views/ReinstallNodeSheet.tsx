@@ -235,6 +235,21 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
       if (generation.current === current) setBusy(false);
     }
   };
+  const inspectMonitorReporting = async (applicationId: string) => {
+    if (!plan || !recovery || busy) return;
+    const current = generation.current;
+    setBusy(true); setError("");
+    try {
+      await api.inspectAgentReinstallMonitorReporting(agent.id, { operationId: recovery.id, planRevision: plan.revision, applicationId });
+      if (generation.current !== current) return;
+      const latest = await api.agentReinstallPlan(agent.id);
+      if (generation.current === current) setPlan(latest);
+    } catch (cause) {
+      if (generation.current === current) setError(userError(language, cause));
+    } finally {
+      if (generation.current === current) setBusy(false);
+    }
+  };
   const refresh = () => { request.current = null; setRevision((value) => value + 1); };
   const settleLocalWork = async () => {
     if (!plan || !recovery || busy) return;
@@ -278,7 +293,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
             {plan.localWorkDisposition ? <p className="text-sm">{copy(language, `本次已终止 ${settledTasks} 条旧本机任务，历史记录已保留。`, `${settledTasks} previous machine tasks abandoned; history retained.`)}</p> : null}
             {localTasks > 0 ? <><p className="text-xs text-muted-foreground">{copy(language, "终止已隔离的旧本机执行及从未下发的排队任务，保留配置和记录。应用恢复将创建新任务。", "Abandon isolated local executions and cancel unissued queued tasks, retaining configuration and records. Application restoration will create new tasks.")}</p><Button className="self-start" variant="outline" disabled={busy || recovery.privateIsolation === "pending"} onClick={() => void settleLocalWork()}>{copy(language, `终止 ${localTasks} 条旧本机任务`, `Abandon ${localTasks} previous machine tasks`)}</Button></> : null}
           </section> : null}
-          {joined && plan.monitoring.length > 0 ? <ReinstallMonitorReview plan={plan} busy={busy} language={language} onInspect={inspectMonitor} onRotate={rotateMonitor} onRestore={restoreMonitor} /> : null}
+          {joined && plan.monitoring.length > 0 ? <ReinstallMonitorReview plan={plan} busy={busy} language={language} onInspect={inspectMonitor} onRotate={rotateMonitor} onRestore={restoreMonitor} onReporting={inspectMonitorReporting} /> : null}
           {joined && plan.networkReview ? <ReinstallNetworkReview key={plan.revision} review={plan.networkReview} busy={busy} language={language} onApprove={approveNetwork} /> : null}
           {joined ? <ReinstallApplicationReview onLanding={updateLanding} plan={plan} busy={busy} language={language} onPrepare={prepareApplication} onRestoreRuntime={restoreRuntime} onRestoreListener={restoreListener} onActivateAccess={activateAccess} onDNS={migrateDNS} workingDNS={workingDNS} onVerifyEntry={verifyEntry} checkingEntry={checkingEntry} /> : null}
           {command ? <><p className="text-sm">{copy(language, "在重装后的原服务器执行一次", "Run once on the reinstalled original server")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div><p className="text-xs text-muted-foreground">{copy(language, `命令有效期至 ${formatDate(language, enrollment!.expiresAt)}`, `Command valid until ${formatDate(language, enrollment!.expiresAt)}`)}</p></> : null}

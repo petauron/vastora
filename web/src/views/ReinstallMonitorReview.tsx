@@ -4,7 +4,7 @@ import { copy } from "./shared";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
-export function ReinstallMonitorReview({ plan, busy, language, onInspect, onRotate, onRestore }: { plan: AgentReinstallPlan; busy: boolean; language: Language; onInspect: (applicationId: string) => Promise<void>; onRotate: (applicationId: string) => Promise<void>; onRestore: (applicationId: string) => Promise<void> }) {
+export function ReinstallMonitorReview({ plan, busy, language, onInspect, onRotate, onRestore, onReporting }: { plan: AgentReinstallPlan; busy: boolean; language: Language; onInspect: (applicationId: string) => Promise<void>; onRotate: (applicationId: string) => Promise<void>; onRestore: (applicationId: string) => Promise<void>; onReporting: (applicationId: string) => Promise<void> }) {
   return <section aria-label={copy(language, "监控身份", "Monitoring identity")} className="flex flex-col gap-3 rounded-xl border p-4">
     <h3 className="text-sm font-medium">{copy(language, "监控身份", "Monitoring identity")}</h3>
     {plan.monitoring.map((monitor) => {
@@ -22,6 +22,10 @@ export function ReinstallMonitorReview({ plan, busy, language, onInspect, onRota
           <Button className="self-start" variant="outline" disabled={busy || plan.recovery?.privateIsolation === "pending"} onClick={() => void onRotate(monitor.applicationId)}>{copy(language, "轮换原监控凭据", "Rotate original monitoring credential")}</Button>
         </> : null}
         {monitor.restoration ? <p className="text-xs text-muted-foreground" role="status">{restoreState(monitor.restoration.state, language)}</p> : monitor.rotation?.state === "rotated" ? <Button className="self-start" variant="outline" disabled={busy || !plan.networkReview?.approvalCurrent} onClick={() => void onRestore(monitor.applicationId)}>{copy(language, "恢复原监控采集端", "Restore original monitoring collector")}</Button> : null}
+        {monitor.restoration?.state === "succeeded" ? <>
+          {monitor.reporting ? <p className="text-xs text-muted-foreground" role="status">{reportingState(monitor.reporting.state, language)}</p> : null}
+          {monitor.reporting?.state !== "verified" ? <Button className="self-start" variant="outline" disabled={busy || !plan.networkReview?.approvalCurrent || monitor.reporting?.state === "pending" || monitor.reporting?.state === "running"} onClick={() => void onReporting(monitor.applicationId)}>{copy(language, "验证原节点上报", "Verify original node reporting")}</Button> : null}
+        </> : null}
         {canInspect || pending ? <Button className="self-start" variant="outline" disabled={busy || pending || plan.recovery?.privateIsolation === "pending"} onClick={() => void onInspect(monitor.applicationId)}>
           {pending ? <Spinner data-icon="inline-start" /> : null}
           {pending ? copy(language, "等待核验结果", "Awaiting inspection result") : copy(language, "核验原监控身份", "Inspect original monitoring identity")}
@@ -59,7 +63,17 @@ function restoreState(state: string, language: Language) {
   switch (state) {
     case "pending": return copy(language, "等待恢复采集端", "Waiting to restore collector");
     case "running": return copy(language, "正在导入原身份并启动采集端", "Importing original identity and starting collector");
-    case "succeeded": return copy(language, "采集端已启动 · 原节点数据上报待验证", "Collector started · original node reporting needs verification");
+    case "succeeded": return copy(language, "采集端已启动", "Collector started");
     default: return copy(language, "采集端恢复结果需核对", "Collector restoration outcome needs review");
+  }
+}
+
+function reportingState(state: string, language: Language) {
+  switch (state) {
+    case "pending": case "running": return copy(language, "正在验证原节点上报", "Verifying original node reports");
+    case "verified": return copy(language, "原节点已恢复上报", "Original node reporting restored");
+    case "not_reporting": return copy(language, "尚未收到轮换后的新数据，请检查采集端后重试", "No fresh report after rotation; check the collector and retry");
+    case "stale": return copy(language, "上报验证已过期，请重新验证", "Reporting verification expired; verify again");
+    default: return copy(language, "上报结果需核对", "Reporting result needs review");
   }
 }

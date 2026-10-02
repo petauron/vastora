@@ -7460,6 +7460,28 @@
                               }
                             }
                           },
+                          "reporting": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "commandId": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  },
+                                  "checkedAt": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "restoration": {
                             "anyOf": [
                               {
@@ -9361,6 +9383,105 @@
         "description": "Prepare the reviewed saved Meridian package on its authorized replacement machine. Creates one durable application deployment bound to original intent and approved network, without activating services or releasing the recovery fence. Source changes and uncertain outcomes require review."
       }
     },
+    "/api/v1/agents/{id}/reinstall-monitor/reporting": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Monitor Reporting",
+        "operationId": "agentReinstallMonitorReporting_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "commandId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "checkedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Restore the reviewed saved Pulse collector package and configuration on the replacement host. Imports the original node's credential from authenticated encrypted rotation evidence using Pulse's fixed stdin CLI. Exact task digest binds approval, claim, sealing and result projection. Does not create another monitoring node, verify metric reporting or release the recovery fence."
+      }
+    },
     "/api/v1/agents/{id}/reinstall-monitor/restore": {
       "post": {
         "tags": [
@@ -10354,6 +10475,9 @@
                     "additionalProperties": false,
                     "properties": {
                       "pulseRestore": {
+                        "type": "boolean"
+                      },
+                      "pulseReporting": {
                         "type": "boolean"
                       },
                       "pulseRotation": {

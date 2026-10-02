@@ -28,7 +28,7 @@ func reinstallCommandTargetBlocked(ctx context.Context, q networkQueryer, agentI
 	var blocked bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands c
 	 JOIN agent_reinstall_operations r ON r.agent_id=c.gateway_node_id
-	 WHERE c.id=? AND c.agent_id=? AND r.state NOT IN ('superseded','completed') AND NOT (`+reinstallInspectionAuthoritySQL+` OR `+reinstallRotationAuthoritySQL+` OR `+reinstallRuntimeAuthoritySQL+`))`, taskID, agentID).Scan(&blocked)
+	 WHERE c.id=? AND c.agent_id=? AND r.state NOT IN ('superseded','completed') AND NOT (`+reinstallInspectionAuthoritySQL+` OR `+reinstallRotationAuthoritySQL+` OR `+reinstallReportingAuthoritySQL+` OR `+reinstallRuntimeAuthoritySQL+`))`, taskID, agentID).Scan(&blocked)
 	return blocked, err
 }
 

@@ -22,6 +22,7 @@ type AgentReinstallMonitoring struct {
 	ServiceAgentID       string                            `json:"serviceAgentId"`
 	State                string                            `json:"state"`
 	Enrollments          []AgentReinstallMonitorEnrollment `json:"enrollments"`
+	Reporting            *AgentReinstallMonitorReporting   `json:"reporting,omitempty"`
 	Restoration          *AgentReinstallMonitorRestore     `json:"restoration,omitempty"`
 	Rotation             *AgentReinstallMonitorRotation    `json:"rotation,omitempty"`
 	Inspection           *AgentReinstallMonitorInspection  `json:"inspection,omitempty"`
@@ -78,6 +79,12 @@ func (s *Store) readReinstallMonitoring(ctx context.Context, tx *sql.Tx, plan *A
 		}
 		if review.Rotation != nil {
 			review.Restoration, err = s.readReinstallMonitorRestore(ctx, tx, review.Rotation.CommandID)
+			if err != nil {
+				return "", err
+			}
+		}
+		if review.Restoration != nil {
+			review.Reporting, err = s.readReinstallMonitorReporting(ctx, tx, review.Restoration.DeploymentID)
 			if err != nil {
 				return "", err
 			}

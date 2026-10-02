@@ -674,6 +674,31 @@ describe("restore original monitoring collector", () => {
     await act(async () => button("刷新状态")!.click());
     expect(post).toHaveBeenCalledTimes(1);
   });
+  it("verifies actual original-node reporting only on an explicit click", async () => {
+    const plan = readyPlan();
+    plan.monitoring[0].restoration = { deploymentId: "restoration", state: "succeeded" };
+    const reporting = { commandId: "report", state: "verified", checkedAt: "2026-10-01T00:00:00Z" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, monitoring: [{ ...plan.monitoring[0], reporting }] });
+    const post = vi.spyOn(api, "inspectAgentReinstallMonitorReporting").mockResolvedValue(reporting);
+    await show();
+    expect(post).not.toHaveBeenCalled();
+    await act(async () => button("验证原节点上报")!.click());
+    expect(post).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "collector" });
+    expect(document.body.textContent).toContain("原节点已恢复上报");
+    expect(button("验证原节点上报")).toBeUndefined();
+    expect(document.body.textContent).not.toContain("原节点数据上报待验证");
+  });
+  it.each(["pending", "running", "not_reporting", "stale"])("retains honest report state and explicit retry: %s", async (state) => {
+    const plan = readyPlan();
+    plan.monitoring[0].restoration = { deploymentId: "restoration", state: "succeeded" };
+    plan.monitoring[0].reporting = { commandId: "report", state };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const post = vi.spyOn(api, "inspectAgentReinstallMonitorReporting");
+    await show();
+    expect(button("验证原节点上报")!.disabled).toBe(state === "pending" || state === "running");
+    expect(document.body.textContent).not.toContain("原节点已恢复上报");
+    expect(post).not.toHaveBeenCalled();
+  });
   it("requires an approved current network", async () => {
     const plan = readyPlan();
     plan.networkReview = { ...plan.networkReview!, approvalCurrent: false };
@@ -687,6 +712,6 @@ describe("restore original monitoring collector", () => {
     vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
     await show();
     expect(button("恢复原监控采集端")).toBeUndefined();
-    expect(document.body.textContent).toContain(state === "succeeded" ? "原节点数据上报待验证" : "采集端恢复结果需核对");
+    expect(document.body.textContent).toContain(state === "succeeded" ? "采集端已启动" : "采集端恢复结果需核对");
   });
 });
