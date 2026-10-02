@@ -77,7 +77,11 @@ func (s *Store) reinstallRotatedCredentials(ctx context.Context, tx *sql.Tx, ser
 	if json.Unmarshal(raw, &evidence) != nil || !evidence.Succeeded || evidence.Unknown || json.Unmarshal(evidence.Result, &result) != nil || result.Rotation == nil || result.Rotation.Validate(expected) != nil {
 		return credentials, errExecutionAuthorization
 	}
-	return pulse.RestoreCredentials{NodeID: result.Rotation.NodeID, Token: result.Rotation.Token}, nil
+	credentials = pulse.RestoreCredentials{NodeID: result.Rotation.NodeID, Token: result.Rotation.Token}
+	if credentials.Validate() != nil {
+		return pulse.RestoreCredentials{}, errExecutionAuthorization
+	}
+	return credentials, nil
 }
 
 func (s *Store) QueueAgentReinstallMonitorRestore(ctx context.Context, agentID, adminID string, input AgentReinstallMonitorInput) (AgentReinstallMonitorRestore, error) {

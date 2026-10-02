@@ -58,7 +58,7 @@ func submitMonitorInspection(t *testing.T, s *Store, service AgentCredential, ta
 }
 
 func successfulInspectionJSON() json.RawMessage {
-	return json.RawMessage(`{"pulseInspection":{"records":[{"id":"original-registration","expires_at_unix_ms":100,"consumed_at_unix_ms":90,"node_id":"retained-monitor-node","node_active":true}]}}`)
+	return json.RawMessage(`{"pulseInspection":{"records":[{"id":"original-registration","expires_at_unix_ms":100,"consumed_at_unix_ms":90,"node_id":"11111111-1111-4111-8111-111111111111","node_active":true}]}}`)
 }
 
 func TestAgentReinstallMonitorInspectionReadOnlyRoundTrip(t *testing.T) {
@@ -103,7 +103,7 @@ func TestAgentReinstallMonitorInspectionReadOnlyRoundTrip(t *testing.T) {
 		t.Fatalf("receipt missing: %+v %v", plan.Monitoring, err)
 	}
 	got := plan.Monitoring[0].Inspection
-	if got.State != "verified" || got.NodeID != "retained-monitor-node" || got.InspectedAt == "" {
+	if got.State != "verified" || got.NodeID != "11111111-1111-4111-8111-111111111111" || got.InspectedAt == "" {
 		t.Fatalf("identity not retained: %+v", got)
 	}
 	replay, err = s.QueueAgentReinstallMonitorInspection(ctx, collector.ID, "reinstall-review-admin", input)

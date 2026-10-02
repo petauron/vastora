@@ -40,7 +40,7 @@ func monitorRotationFixture(t *testing.T) (*Store, AgentCredential, AgentCredent
 }
 
 func successfulMonitorRotationJSON() json.RawMessage {
-	return json.RawMessage(`{"pulseRotation":{"nodeId":"retained-monitor-node","token":"test-rotated-credential-never-publish"}}`)
+	return json.RawMessage(`{"pulseRotation":{"nodeId":"11111111-1111-4111-8111-111111111111","token":"test-rotated-credential-never-publish"}}`)
 }
 
 func TestAgentReinstallMonitorRotationKeepsOriginalIdentityAndSealsSecret(t *testing.T) {
@@ -58,7 +58,7 @@ func TestAgentReinstallMonitorRotationKeepsOriginalIdentityAndSealsSecret(t *tes
 	if err != nil || task == nil || task.PulseRotation == nil || task.ID != receipt.CommandID || task.PulseEnrollment != nil || task.PulseInspection != nil {
 		t.Fatalf("rotation task: %+v %v", task, err)
 	}
-	if task.PulseRotation.NodeID != "retained-monitor-node" || len(task.PulseRotation.Inspection.EnrollmentIDs) != 1 {
+	if task.PulseRotation.NodeID != "11111111-1111-4111-8111-111111111111" || len(task.PulseRotation.Inspection.EnrollmentIDs) != 1 {
 		t.Fatal("original node lost")
 	}
 	if response := submitMonitorInspection(t, s, service, task, successfulMonitorRotationJSON(), true); response.Code != http.StatusOK {
@@ -263,7 +263,7 @@ func TestAgentReinstallMonitorRotationNeverReplaysFailedOrUnknownWrites(t *testi
 					raw = json.RawMessage(`{}`)
 				}
 				if mode == "wrong-node" {
-					raw = bytes.ReplaceAll(raw, []byte("retained-monitor-node"), []byte("other"))
+					raw = bytes.ReplaceAll(raw, []byte("11111111-1111-4111-8111-111111111111"), []byte("other"))
 				}
 				if mode == "bad-token" {
 					raw = bytes.ReplaceAll(raw, []byte("test-rotated-credential-never-publish"), []byte("short"))

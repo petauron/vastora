@@ -90,13 +90,13 @@ func TestAgentReinstallMonitorRestoreOriginalCredentialsRoundTrip(t *testing.T) 
 	if err != nil || task == nil || task.ID != receipt.DeploymentID || task.PulseRestore == nil {
 		t.Fatalf("restore claim: %+v %v", task, err)
 	}
-	if task.PulseRestore.NodeID != "retained-monitor-node" || task.PulseRestore.Token != "test-rotated-credential-never-publish" || string(task.Secrets) != "{}" || task.PulseEnrollment != nil || task.Operation != "install" {
+	if task.PulseRestore.NodeID != "11111111-1111-4111-8111-111111111111" || task.PulseRestore.Token != "test-rotated-credential-never-publish" || string(task.Secrets) != "{}" || task.PulseEnrollment != nil || task.Operation != "install" {
 		t.Fatal("wrong credential or enrollment replay")
 	}
 	if task.Manifest.Version != before.Applications[0].Version {
 		t.Fatal("saved package version changed")
 	}
-	response := monitorRestoreResult(t, s, node, task, json.RawMessage(`{"services":[],"pulseRestored":{"nodeId":"retained-monitor-node"}}`))
+	response := monitorRestoreResult(t, s, node, task, json.RawMessage(`{"services":[],"pulseRestored":{"nodeId":"11111111-1111-4111-8111-111111111111"}}`))
 	if response.Code != http.StatusOK {
 		t.Fatalf("restore result: %s", response.Body.String())
 	}
@@ -207,7 +207,7 @@ func TestAgentReinstallMonitorRestoreRequiresAuthenticCurrentEvidence(t *testing
 					if err != nil {
 						t.Fatal(err)
 					}
-					_, _, err = s.projectApplicationDeployment(ctx, tx, node.ID, task.ID, task.Attempt, true, "", json.RawMessage(`{"pulseRestored":{"nodeId":"retained-monitor-node"}}`), false, platform.ApplicationRuntimeGeneration)
+					_, _, err = s.projectApplicationDeployment(ctx, tx, node.ID, task.ID, task.Attempt, true, "", json.RawMessage(`{"pulseRestored":{"nodeId":"11111111-1111-4111-8111-111111111111"}}`), false, platform.ApplicationRuntimeGeneration)
 					_ = tx.Rollback()
 					if err == nil {
 						t.Fatal("invalid restore projected")
@@ -236,7 +236,7 @@ func TestAgentReinstallMonitorRestoreMissingReceiptRemainsFenced(t *testing.T) {
 			case "wrong-node":
 				raw = json.RawMessage(`{"pulseRestored":{"nodeId":"other"}}`)
 			case "extra-service":
-				raw = json.RawMessage(`{"pulseRestored":{"nodeId":"retained-monitor-node"},"services":[{"name":"unexpected"}]}`)
+				raw = json.RawMessage(`{"pulseRestored":{"nodeId":"11111111-1111-4111-8111-111111111111"},"services":[{"name":"unexpected"}]}`)
 			case "lost-authority":
 				_, err = s.db.Exec(`DELETE FROM agent_reinstall_monitor_restorations WHERE deployment_id=?`, task.ID)
 			case "expired":

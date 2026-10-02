@@ -30,7 +30,7 @@ func TestPulseRestoreUsesStdinImporterBeforeStartingOriginalIdentity(t *testing.
 			defer server.Close()
 			config := pulse.AgentConfig{ServiceURL: "https://pulse.private.example.com/", ServiceApplicationID: "monitor", NodeName: "saved-name", NodeGroup: "saved-group"}
 			raw, _ := json.Marshal(config)
-			credentials := pulse.RestoreCredentials{NodeID: "original-node", Token: "test-rotated-credential-never-publish"}
+			credentials := pulse.RestoreCredentials{NodeID: "11111111-1111-4111-8111-111111111111", Token: "test-rotated-credential-never-publish"}
 			task := DeploymentTask{ID: "restore", ApplicationID: "collector", AppKey: pulse.AgentKey, Operation: "install", Config: raw, Secrets: json.RawMessage(`{}`), PulseRestore: &credentials, Manifest: catalog.AppManifest{ID: "pulse-agent", Version: "0.1.0-alpha.2", Artifacts: []catalog.Artifact{{Name: "pulse-agent", OperatingSystem: "linux", Architecture: "amd64", URL: server.URL, SHA256: hex.EncodeToString(digest[:])}}}}
 			manager := SystemdHostApplicationManager{RootDir: t.TempDir(), HTTPClient: server.Client(), HostTarget: platform.Target{OS: "linux", Architecture: "amd64"}}
 			if err := writeHostFileAtomic(manager.path("/etc/os-release"), []byte("ID=debian\nVERSION_ID=12\n"), 0o644); err != nil {

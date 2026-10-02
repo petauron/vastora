@@ -1,6 +1,10 @@
 package pulse
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/google/uuid"
+)
 
 type RestoreCredentials struct {
 	NodeID string `json:"nodeId"`
@@ -12,7 +16,8 @@ type RestoreResult struct {
 }
 
 func (credentials RestoreCredentials) Validate() error {
-	if !validNodeID(credentials.NodeID) || !validAgentToken(credentials.Token) {
+	id, err := uuid.Parse(credentials.NodeID)
+	if err != nil || id.String() != credentials.NodeID || !validAgentToken(credentials.Token) {
 		return errors.New("pulse: invalid original monitoring credentials")
 	}
 	return nil
