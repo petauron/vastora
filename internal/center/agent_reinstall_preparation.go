@@ -193,7 +193,10 @@ func (s *Store) QueueAgentReinstallPreparation(ctx context.Context, agentID, adm
 // Recovery sheets refresh when the operation changes, including task progress.
 func (s *Store) recordReinstallPreparationProgress(ctx context.Context, tx *sql.Tx, taskID string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_operations SET updated_at=? WHERE id=(SELECT operation_id FROM agent_reinstall_app_preparations WHERE deployment_id=?)`, s.now().UTC().Format(time.RFC3339Nano), taskID)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.recordReinstallMonitorRestoreProgress(ctx, tx, taskID)
 }
 
 // Called again at selection, execution authorization and result projection.
@@ -338,7 +341,9 @@ func pendingAgentReinstallTask(ctx context.Context, tx *sql.Tx, agentID, require
  WHERE c.agent_id=? AND op.agent_id=c.agent_id AND op.state='review_required' AND c.state='pending' AND c.attempt=0
  UNION ALL SELECT p.listener_task_id,n.updated_at FROM agent_reinstall_app_preparations p JOIN agent_reinstall_operations op ON op.id=p.operation_id JOIN node_listener_states n ON n.node_id=op.agent_id
  WHERE op.agent_id=? AND op.state='review_required' AND p.listener_state='pending' AND n.status='pending' AND n.desired_revision=p.listener_revision AND n.attempt=p.listener_attempt-1
- ) WHERE (?='' OR id=?) ORDER BY created_at,id LIMIT 1`, agentID, agentID, agentID, requiredTaskID, requiredTaskID).Scan(&id)
+ UNION ALL SELECT d.id,d.created_at FROM agent_reinstall_monitor_restorations m JOIN deployments d ON d.id=m.deployment_id JOIN agent_reinstall_monitor_rotations r ON r.command_id=m.rotation_command_id JOIN agent_reinstall_operations op ON op.id=r.operation_id
+ WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND d.attempt=0
+ ) WHERE (?='' OR id=?) ORDER BY created_at,id LIMIT 1`, agentID, agentID, agentID, agentID, requiredTaskID, requiredTaskID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errExecutionBlocked
 	}

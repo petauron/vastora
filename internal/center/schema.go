@@ -173,6 +173,14 @@ CREATE TABLE agent_reinstall_access_activations (
  result_json BLOB NOT NULL DEFAULT '{}' CHECK(json_valid(result_json)),
  UNIQUE(operation_id,application_id)
 )`,
+		`CREATE TABLE agent_reinstall_monitor_restorations (
+ deployment_id TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+ rotation_command_id TEXT NOT NULL UNIQUE REFERENCES agent_reinstall_monitor_rotations(command_id) ON DELETE RESTRICT,
+ source_deployment_id TEXT NOT NULL REFERENCES deployments(id) ON DELETE RESTRICT,
+ plan_revision TEXT NOT NULL,
+ approval_json BLOB NOT NULL CHECK(json_valid(approval_json)),
+ task_sha256 TEXT NOT NULL
+)`,
 		`CREATE TABLE recovery_evidence (
 			component_key TEXT PRIMARY KEY,
 			artifact_json BLOB NOT NULL CHECK(json_valid(artifact_json)),

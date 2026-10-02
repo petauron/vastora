@@ -22,6 +22,7 @@ type AgentReinstallMonitoring struct {
 	ServiceAgentID       string                            `json:"serviceAgentId"`
 	State                string                            `json:"state"`
 	Enrollments          []AgentReinstallMonitorEnrollment `json:"enrollments"`
+	Restoration          *AgentReinstallMonitorRestore     `json:"restoration,omitempty"`
 	Rotation             *AgentReinstallMonitorRotation    `json:"rotation,omitempty"`
 	Inspection           *AgentReinstallMonitorInspection  `json:"inspection,omitempty"`
 }
@@ -73,6 +74,12 @@ func (s *Store) readReinstallMonitoring(ctx context.Context, tx *sql.Tx, plan *A
 			if err != nil || at.After(s.now()) || s.now().Sub(at) > 30*time.Minute {
 				review.Inspection.State = "stale"
 				review.Inspection.Error = "Original monitoring inspection expired; inspect it again"
+			}
+		}
+		if review.Rotation != nil {
+			review.Restoration, err = s.readReinstallMonitorRestore(ctx, tx, review.Rotation.CommandID)
+			if err != nil {
+				return "", err
 			}
 		}
 		plan.Monitoring = append(plan.Monitoring, review)

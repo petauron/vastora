@@ -30,6 +30,7 @@ type AgentTask struct {
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
+	PulseRestore              *pulse.RestoreCredentials            `json:"pulseRestore,omitempty"`
 	PulseRotation             *pulse.RotationTask                  `json:"pulseRotation,omitempty"`
 	PulseInspection           *pulse.InspectionTask                `json:"pulseInspection,omitempty"`
 	PulseEnrollment           *pulse.EnrollmentTask                `json:"pulseEnrollment,omitempty"`
@@ -400,6 +401,11 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	if err != nil {
 		return nil, err
 	}
+	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, task.ID, false)
+	if err != nil {
+		return nil, err
+	}
+	preparation = preparation || restoredMonitor != nil
 	task.Config = json.RawMessage(config)
 	if err := json.Unmarshal(manifest, &task.Manifest); err != nil {
 		return nil, fmt.Errorf("center: decode pending task: %w", err)
@@ -447,6 +453,10 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 		}
 		task.Secrets = secretValue
 	} else {
+		task.Secrets = json.RawMessage(`{}`)
+	}
+	if restoredMonitor != nil {
+		task.PulseRestore = restoredMonitor.PulseRestore
 		task.Secrets = json.RawMessage(`{}`)
 	}
 	if registryCredentialID.Valid {
@@ -675,6 +685,11 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 	if err != nil {
 		return "", nil, err
 	}
+	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, taskID, false)
+	if err != nil {
+		return "", nil, err
+	}
+	preparation = preparation || restoredMonitor != nil
 	if preparation && reconciliationRequired {
 		return "", nil, errors.New("center: package preparation requires explicit outcome review")
 	}
@@ -685,6 +700,9 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 		if len(rawResult) != 0 && string(rawResult) != "null" && json.Unmarshal(rawResult, &taskResult) != nil {
 			return "", nil, errors.New("center: invalid Agent task result")
 		}
+	}
+	if restoredMonitor != nil && succeeded && (taskResult.PulseRestored == nil || taskResult.PulseRestored.NodeID != restoredMonitor.PulseRestore.NodeID || len(taskResult.Services) != 0) {
+		return "", nil, errors.New("center: restored Pulse collector did not confirm the original monitoring identity")
 	}
 	if preparation && len(taskResult.GeneratedSecrets) != 0 {
 		return "", nil, errors.New("center: package preparation cannot change application credentials")

@@ -651,3 +651,42 @@ describe("original monitoring credential rotation", () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("restore original monitoring collector", () => {
+  const readyPlan = (): AgentReinstallPlan => {
+    const plan = monitorPlan();
+    plan.monitoring[0].inspection = { commandId: "inspection", state: "verified", nodeId: "original-monitor-node" };
+    plan.monitoring[0].rotation = { commandId: "rotation", state: "rotated", nodeId: "original-monitor-node" };
+    plan.networkReview = { candidates: [], ready: true, approvalCurrent: true, profileActive: false };
+    return plan;
+  };
+  it("restores only after an explicit reviewed click", async () => {
+    const plan = readyPlan();
+    const restoration = { deploymentId: "restoration", state: "pending" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValueOnce(plan).mockResolvedValue({ ...plan, monitoring: [{ ...plan.monitoring[0], restoration }] });
+    const post = vi.spyOn(api, "restoreAgentReinstallMonitor").mockResolvedValue(restoration);
+    await show();
+    expect(post).not.toHaveBeenCalled();
+    await act(async () => button("恢复原监控采集端")!.click());
+    expect(post).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "collector" });
+    expect(document.body.textContent).toContain("等待恢复采集端");
+    expect(button("恢复原监控采集端")).toBeUndefined();
+    await act(async () => button("刷新状态")!.click());
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+  it("requires an approved current network", async () => {
+    const plan = readyPlan();
+    plan.networkReview = { ...plan.networkReview!, approvalCurrent: false };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    await show();
+    expect(button("恢复原监控采集端")!.disabled).toBe(true);
+  });
+  it.each(["succeeded", "needs_review"])("keeps reporting verification separate: %s", async (state) => {
+    const plan = readyPlan();
+    plan.monitoring[0].restoration = { deploymentId: "restoration", state };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    await show();
+    expect(button("恢复原监控采集端")).toBeUndefined();
+    expect(document.body.textContent).toContain(state === "succeeded" ? "原节点数据上报待验证" : "采集端恢复结果需核对");
+  });
+});

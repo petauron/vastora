@@ -160,7 +160,7 @@ func (s *Store) readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentRe
 	}
 	for _, work := range unclaimed {
 		var authorized bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND task_id=?) OR EXISTS(SELECT 1 FROM agent_reinstall_app_preparations WHERE deployment_id=? OR listener_task_id=?)`, plan.AgentID, work.TaskID, work.TaskID, work.TaskID).Scan(&authorized); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND task_id=?) OR EXISTS(SELECT 1 FROM agent_reinstall_app_preparations WHERE deployment_id=? OR listener_task_id=?) OR EXISTS(SELECT 1 FROM agent_reinstall_monitor_restorations WHERE deployment_id=?)`, plan.AgentID, work.TaskID, work.TaskID, work.TaskID, work.TaskID).Scan(&authorized); err != nil {
 			return "", err
 		}
 		// Attempt zero alone is insufficient: a previously authorized task may

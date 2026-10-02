@@ -4,7 +4,7 @@ import { copy } from "./shared";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
-export function ReinstallMonitorReview({ plan, busy, language, onInspect, onRotate }: { plan: AgentReinstallPlan; busy: boolean; language: Language; onInspect: (applicationId: string) => Promise<void>; onRotate: (applicationId: string) => Promise<void> }) {
+export function ReinstallMonitorReview({ plan, busy, language, onInspect, onRotate, onRestore }: { plan: AgentReinstallPlan; busy: boolean; language: Language; onInspect: (applicationId: string) => Promise<void>; onRotate: (applicationId: string) => Promise<void>; onRestore: (applicationId: string) => Promise<void> }) {
   return <section aria-label={copy(language, "监控身份", "Monitoring identity")} className="flex flex-col gap-3 rounded-xl border p-4">
     <h3 className="text-sm font-medium">{copy(language, "监控身份", "Monitoring identity")}</h3>
     {plan.monitoring.map((monitor) => {
@@ -17,10 +17,11 @@ export function ReinstallMonitorReview({ plan, busy, language, onInspect, onRota
         <p className="text-sm" role="status" aria-atomic="true">{name} · {monitorState(state, language)}</p>
         {localService ? <p className="text-xs text-muted-foreground">{copy(language, "先恢复本机的 Pulse 服务和数据，再核验原监控身份。", "Restore this host's Pulse service and data before inspecting the original monitoring identity.")}</p> : null}
         {state === "verified" && !monitor.rotation ? <p className="text-xs text-muted-foreground">{copy(language, "凭据恢复和数据上报仍待完成。", "Credential restoration and metric reporting are still pending.")}</p> : null}
-        {monitor.rotation ? <p className="text-xs text-muted-foreground" role="status">{rotationState(monitor.rotation.state, language)}</p> : state === "verified" && !localService ? <>
+        {monitor.rotation ? <p className="text-xs text-muted-foreground" role="status">{monitor.restoration && monitor.rotation.state === "rotated" ? copy(language, "原节点凭据已轮换", "Original node credential rotated") : rotationState(monitor.rotation.state, language)}</p> : state === "verified" && !localService ? <>
           <p className="text-xs text-muted-foreground">{copy(language, "下一步轮换原节点凭据，旧凭据立即失效，监控历史保留。", "Next, rotate the original node credential. The old credential stops working; monitoring history is retained.")}</p>
           <Button className="self-start" variant="outline" disabled={busy || plan.recovery?.privateIsolation === "pending"} onClick={() => void onRotate(monitor.applicationId)}>{copy(language, "轮换原监控凭据", "Rotate original monitoring credential")}</Button>
         </> : null}
+        {monitor.restoration ? <p className="text-xs text-muted-foreground" role="status">{restoreState(monitor.restoration.state, language)}</p> : monitor.rotation?.state === "rotated" ? <Button className="self-start" variant="outline" disabled={busy || !plan.networkReview?.approvalCurrent} onClick={() => void onRestore(monitor.applicationId)}>{copy(language, "恢复原监控采集端", "Restore original monitoring collector")}</Button> : null}
         {canInspect || pending ? <Button className="self-start" variant="outline" disabled={busy || pending || plan.recovery?.privateIsolation === "pending"} onClick={() => void onInspect(monitor.applicationId)}>
           {pending ? <Spinner data-icon="inline-start" /> : null}
           {pending ? copy(language, "等待核验结果", "Awaiting inspection result") : copy(language, "核验原监控身份", "Inspect original monitoring identity")}
@@ -51,5 +52,14 @@ function rotationState(state: string, language: Language) {
     case "running": return copy(language, "正在轮换监控凭据", "Rotating monitoring credential");
     case "rotated": return copy(language, "原节点凭据已轮换 · 采集端恢复与上报待验证", "Original node credential rotated · collector restoration and reporting pending");
     default: return copy(language, "凭据轮换结果需核对，请勿重复操作", "Review the credential rotation outcome before any further action");
+  }
+}
+
+function restoreState(state: string, language: Language) {
+  switch (state) {
+    case "pending": return copy(language, "等待恢复采集端", "Waiting to restore collector");
+    case "running": return copy(language, "正在导入原身份并启动采集端", "Importing original identity and starting collector");
+    case "succeeded": return copy(language, "采集端已启动 · 原节点数据上报待验证", "Collector started · original node reporting needs verification");
+    default: return copy(language, "采集端恢复结果需核对", "Collector restoration outcome needs review");
   }
 }

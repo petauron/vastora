@@ -389,6 +389,20 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
 	}
+	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, task.ID, false)
+	if err != nil {
+		return controlplane.ExecutionAuthorization{}, err
+	}
+	if restoredMonitor != nil || task.PulseRestore != nil {
+		if restoredMonitor == nil || task.PulseRestore == nil {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+		expected, _ := json.Marshal(restoredMonitor)
+		actual, _ := json.Marshal(task)
+		if string(actual) != string(expected) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
 	runtime, err := s.reinstallRuntimeTask(ctx, tx, agentID, task.ID, false)
 	if err != nil {
 		return controlplane.ExecutionAuthorization{}, err
@@ -427,7 +441,7 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	now := s.now().UTC()
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return controlplane.ExecutionAuthorization{}, err
-	} else if blocked && !preparation && runtime == nil && listener == nil {
+	} else if blocked && !preparation && runtime == nil && listener == nil && restoredMonitor == nil {
 		return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {

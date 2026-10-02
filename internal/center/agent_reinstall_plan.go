@@ -226,7 +226,7 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 		 registry.host,registry.username,registry.secret_id,hex(registry_secret.sealed))
 		FROM applications a LEFT JOIN deployments d ON d.rowid=(SELECT previous.rowid FROM deployments previous
 		WHERE previous.application_id=a.id AND previous.agent_id=a.node_id
- AND NOT EXISTS(SELECT 1 FROM agent_reinstall_app_preparations rp WHERE rp.deployment_id=previous.id) ORDER BY previous.created_at DESC,previous.rowid DESC LIMIT 1)
+ AND NOT EXISTS(SELECT 1 FROM agent_reinstall_app_preparations rp WHERE rp.deployment_id=previous.id) AND NOT EXISTS(SELECT 1 FROM agent_reinstall_monitor_restorations mr WHERE mr.deployment_id=previous.id) ORDER BY previous.created_at DESC,previous.rowid DESC LIMIT 1)
 		LEFT JOIN secrets saved ON saved.id=d.secret_id
 		LEFT JOIN registry_credentials registry ON registry.id=d.registry_credential_id
 		LEFT JOIN secrets registry_secret ON registry_secret.id=registry.secret_id

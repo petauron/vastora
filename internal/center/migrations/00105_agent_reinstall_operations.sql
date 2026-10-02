@@ -243,6 +243,15 @@ CREATE TABLE agent_reinstall_monitor_rotations (
  UNIQUE(operation_id,application_id)
 );
 
+CREATE TABLE agent_reinstall_monitor_restorations (
+ deployment_id TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+ rotation_command_id TEXT NOT NULL UNIQUE REFERENCES agent_reinstall_monitor_rotations(command_id) ON DELETE RESTRICT,
+ source_deployment_id TEXT NOT NULL REFERENCES deployments(id) ON DELETE RESTRICT,
+ plan_revision TEXT NOT NULL,
+ approval_json BLOB NOT NULL CHECK(json_valid(approval_json)),
+ task_sha256 TEXT NOT NULL
+);
+
 -- Unused legacy replacement grants have no reviewed operation binding.
 DELETE FROM secrets WHERE id IN (SELECT bootstrap_secret_id FROM agent_enrollment_tokens WHERE target_agent_id IS NOT NULL AND used_at IS NULL);
 DELETE FROM agent_enrollment_tokens WHERE target_agent_id IS NOT NULL AND used_at IS NULL;
