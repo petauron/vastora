@@ -94,6 +94,8 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...str
 func submitRestoredRuntime(t *testing.T, s *Store, node AgentCredential, task *AgentTask, valid, succeeded bool) *httptest.ResponseRecorder {
 	t.Helper()
 	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+	// Fresh machines have no superseded 3x-ui installation to retire.
+	result.LegacyRetired = true
 	if !valid {
 		result.Receipt.ConfigSHA256 = strings.Repeat("f", 64)
 	}

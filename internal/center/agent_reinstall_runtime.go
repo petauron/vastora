@@ -250,7 +250,9 @@ func (s *Store) completeReinstallRuntime(ctx context.Context, tx *sql.Tx, commit
 	state := "failed"
 	if succeeded {
 		var envelope ApplicationTaskResult
-		if json.Unmarshal(raw, &envelope) != nil || envelope.MeridianRuntime == nil || envelope.MeridianRuntime.LegacyRetired || len(envelope.GeneratedSecrets) != 0 || envelope.MeridianRuntime.Validate(task.MeridianRuntime.Desired) != nil {
+		// LegacyRetired also describes a fresh machine with no legacy installation.
+		// Removal authority is constrained by the task, not this observed state.
+		if json.Unmarshal(raw, &envelope) != nil || envelope.MeridianRuntime == nil || len(envelope.GeneratedSecrets) != 0 || envelope.MeridianRuntime.Validate(task.MeridianRuntime.Desired) != nil {
 			return errors.New("center: invalid restored Meridian runtime receipt")
 		}
 		health, err := envelope.MeridianRuntime.PeerHealth(*task.MeridianRuntime, s.now().UTC())
