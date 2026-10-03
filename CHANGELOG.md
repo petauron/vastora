@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.278](https://github.com/petauron/vastora/compare/v0.1.0-alpha.277...v0.1.0-alpha.278) (2026-10-03)
+
+
+### Bug Fixes
+
+* accept fresh-machine runtime restoration receipts ([#798](https://github.com/petauron/vastora/issues/798)) ([7b21838](https://github.com/petauron/vastora/commit/7b218383d0b6dbdd1d7cae80ed57533af9c5efeb))
+
 ## [0.1.0-alpha.277](https://github.com/petauron/vastora/compare/v0.1.0-alpha.276...v0.1.0-alpha.277) (2026-10-03)
 
 
