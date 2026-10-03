@@ -43,6 +43,9 @@ func (s *Store) reinstallAccessTarget(ctx context.Context, tx *sql.Tx, agentID, 
 	if task == nil {
 		return "", nil, errExecutionAuthorization
 	}
+	if _, err := s.currentReinstallRuntimeObservation(ctx, tx, runtimeID, *task.MeridianRuntime); err != nil {
+		return "", nil, err
+	}
 	if shared || listenerID != "" {
 		if listenerState != "succeeded" || !listenerReady {
 			return "", nil, errors.New("center: restore the saved entry before activating its address")

@@ -39,19 +39,15 @@ func (s *Store) reinstallRuntimeTask(ctx context.Context, tx *sql.Tx, agentID, c
 	var revision uint64
 	var input, packageJSON []byte
 	var attempt int64
-	var completedWithoutTransport bool
-	err := tx.QueryRowContext(ctx, `SELECT p.deployment_id,p.runtime_endpoint_id,p.runtime_revision,p.runtime_task_sha256,p.task_json,c.input_json,c.attempt,c.state='succeeded' AND COALESCE(json_extract(c.result_json,'$.transportReady'),0)<>1
+	err := tx.QueryRowContext(ctx, `SELECT p.deployment_id,p.runtime_endpoint_id,p.runtime_revision,p.runtime_task_sha256,p.task_json,c.input_json,c.attempt
  FROM agent_reinstall_app_preparations p JOIN deployments d ON d.id=p.deployment_id JOIN application_commands c ON c.id=p.runtime_command_id
  WHERE c.id=? AND d.agent_id=? AND c.agent_id=d.agent_id AND c.gateway_node_id=d.agent_id AND c.application_id=p.application_id
- AND d.state='succeeded' AND c.kind=? AND c.reconciliation_requested=0 AND c.reconciliation_required=0`, commandID, agentID, meridianruntime.ApplyKind).Scan(&preparationID, &endpointID, &revision, &expected, &packageJSON, &input, &attempt, &completedWithoutTransport)
+ AND d.state='succeeded' AND c.kind=? AND c.reconciliation_requested=0 AND c.reconciliation_required=0`, commandID, agentID, meridianruntime.ApplyKind).Scan(&preparationID, &endpointID, &revision, &expected, &packageJSON, &input, &attempt)
 	if errors.Is(err, sql.ErrNoRows) && !strings.HasPrefix(commandID, "reinstall-runtime-") {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, errExecutionAuthorization
-	}
-	if completedWithoutTransport {
-		return nil, errors.New("center: restored landing transport requires inspection before activating access")
 	}
 	if valid, err := s.validateReinstallPreparation(ctx, tx, agentID, preparationID); err != nil {
 		return nil, err
