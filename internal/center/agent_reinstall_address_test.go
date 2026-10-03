@@ -215,12 +215,14 @@ func TestAgentReinstallAddressApprovalChecksNewPrivateIdentity(t *testing.T) {
 			}
 			h.TailscaleOwnership = "managed"
 			h.NetworkCandidates = append(h.NetworkCandidates, networking.Candidate{Address: address, Kind: "headscale", Interface: "tailscale0"})
-			h.LandingClientRuntime = &landing.ClientRuntime{Generation: landing.ClientRuntimeGeneration, Peer: landing.PeerIdentity{ID: "new-peer", PublicKey: key, Address: address}}
+			h.PrivateNetworkPeer = &landing.PeerIdentity{ID: "new-peer", PublicKey: key, Address: address}
 			if scenario == "old_key" {
-				h.LandingClientRuntime.Peer.PublicKey = "nodekey:old-key"
+				h.PrivateNetworkPeer.PublicKey = "nodekey:old-key"
 			}
 			if scenario == "missing_peer" {
-				h.LandingClientRuntime = nil
+				// Installed runtime evidence cannot substitute for the replacement network observation.
+				h.LandingClientRuntime = &landing.ClientRuntime{Generation: landing.ClientRuntimeGeneration, Peer: *h.PrivateNetworkPeer}
+				h.PrivateNetworkPeer = nil
 			}
 			requests := 0
 			serveRemovalHeadscale(t, s, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

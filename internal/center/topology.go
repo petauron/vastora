@@ -51,6 +51,7 @@ type NodeCapabilities struct {
 
 type NodeHeartbeat struct {
 	LandingEgressAddresses       []landing.EgressAddress
+	PrivateNetworkPeer           *landing.PeerIdentity
 	LandingClientRuntime         *landing.ClientRuntime
 	LandingHealth                *landing.Health
 	PublicKey                    []byte

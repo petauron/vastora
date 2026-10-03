@@ -49,10 +49,10 @@ type AgentReinstallNetworkInput struct {
 	Profile          networking.Profile `json:"profile"`
 }
 
-func recordReinstallNetworkObservation(ctx context.Context, tx *sql.Tx, agentID string, runtime *landing.ClientRuntime, ownership string, now time.Time) error {
+func recordReinstallNetworkObservation(ctx context.Context, tx *sql.Tx, agentID string, peer *landing.PeerIdentity, ownership string, now time.Time) error {
 	encoded := []byte(`{}`)
-	if ownership == "managed" && runtime != nil && runtime.Generation == landing.ClientRuntimeGeneration && runtime.Peer.ID != "" && strings.TrimPrefix(runtime.Peer.PublicKey, "nodekey:") != "" && (landing.ServerPlan{Revision: 1, Address: runtime.Peer.Address}).Validate() == nil {
-		encoded, _ = json.Marshal(runtime.Peer)
+	if ownership == "managed" && peer != nil && peer.ID != "" && strings.TrimPrefix(peer.PublicKey, "nodekey:") != "" && (landing.ServerPlan{Revision: 1, Address: peer.Address}).Validate() == nil {
+		encoded, _ = json.Marshal(peer)
 	}
 	// This record is authenticated by the replacement heartbeat, separately from
 	// the capability table, which requires an already active network profile.

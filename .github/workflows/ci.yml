@@ -66,7 +66,7 @@ jobs:
         run: go test ./internal/meridianruntime ./internal/agent ./internal/center -run '^(TestNativeEgress|TestNodeEgress|TestVersion106)' -count=1
       - name: Verify Agent reconnect execution boundary
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/center -run '^(TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1
+        run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1
       - name: Verify isolated Meridian UDP evidence
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         timeout-minutes: 6
