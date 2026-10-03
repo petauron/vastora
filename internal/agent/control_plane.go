@@ -112,6 +112,7 @@ func taskOutcomeIsUncertain(err error) bool {
 
 type Capabilities struct {
 	PulseRestore          bool `json:"pulseRestore"`
+	MeridianAcceptance    bool `json:"meridianAcceptance"`
 	PulseReporting        bool `json:"pulseReporting"`
 	PulseRotation         bool `json:"pulseRotation"`
 	PulseInspection       bool `json:"pulseInspection"`
@@ -139,6 +140,7 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
@@ -203,6 +205,7 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	MeridianAcceptance   *meridianruntime.AcceptanceResult   `json:"meridianAcceptance,omitempty"`
 	IPQuality            *ipquality.Result                   `json:"ipQuality,omitempty"`
 	NodeDiagnostics      *nodediagnostics.Result             `json:"nodeDiagnostics,omitempty"`
 	PulseRestored        *pulse.RestoreResult                `json:"pulseRestored,omitempty"`

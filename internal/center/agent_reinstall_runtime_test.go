@@ -23,9 +23,9 @@ func reinstallRuntimeFixture(t *testing.T) (*Store, AgentCredential, AgentReinst
 	return reinstallRuntimeNetworkFixture(t, false)
 }
 
-func reinstallRuntimeNetworkFixture(t *testing.T, public bool) (*Store, AgentCredential, AgentReinstallApplicationInput) {
+func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...string) (*Store, AgentCredential, AgentReinstallApplicationInput) {
 	t.Helper()
-	s, node, input := reinstallPreparationNetworkFixture(t, public)
+	s, node, input := reinstallPreparationNetworkFixture(t, public, publicExit...)
 	ctx := context.Background()
 	if _, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input); err != nil {
 		t.Fatal(err)

@@ -23,6 +23,30 @@ const show = async () => {
 };
 
 describe("node reinstall review", () => {
+  it("requests final server verification and keeps the sheet open on rejection", async () => {
+    const plan = { ...review(), recovery: { ...recovery, state: "review_required" as const } };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const complete = vi.spyOn(api, "completeAgentReinstall").mockRejectedValue(new Error("center: current authenticated client verification is incomplete"));
+    await show();
+    expect(complete).not.toHaveBeenCalled();
+    await act(async () => button("校验并完成恢复")!.click());
+    expect(complete).toHaveBeenCalledWith("agent", { operationId: recovery.id, planRevision: plan.revision });
+    expect(button("校验并完成恢复")).toBeDefined();
+    expect(document.body.textContent).toContain("真实客户端验收未通过或已过期");
+  });
+
+  it("shows server-reported remaining work without offering premature completion", async () => {
+    const plan = { ...review(), recovery: { ...recovery, state: "review_required" as const }, remaining: [
+      { code: "client_acceptance", applicationId: "app" }, { code: "completion_review" },
+    ] };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    await show();
+    const section = document.body.querySelector('[aria-label="恢复尚缺"]');
+    expect(section?.textContent).toContain("Meridian：待验收原生线路及已配置落地线路的真实客户端请求");
+    expect(section?.textContent).toContain("由服务端核对全部证据后完成恢复");
+    expect(button("完成恢复")).toBeUndefined();
+  });
+
   it("offers explicit cancellation when only unissued work remains", async () => {
     const unclaimedWork = [{ taskId: "unissued-install", kind: "application.apply", revision: 0 }];
     const plan = { ...review(), recovery: { ...recovery, state: "review_required" as const }, unclaimedLocalWork: unclaimedWork };

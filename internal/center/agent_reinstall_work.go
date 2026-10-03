@@ -28,7 +28,7 @@ func reinstallCommandTargetBlocked(ctx context.Context, q networkQueryer, agentI
 	var blocked bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands c
 	 JOIN agent_reinstall_operations r ON r.agent_id=c.gateway_node_id
-	 WHERE c.id=? AND c.agent_id=? AND r.state NOT IN ('superseded','completed') AND NOT (`+reinstallInspectionAuthoritySQL+` OR `+reinstallRotationAuthoritySQL+` OR `+reinstallReportingAuthoritySQL+` OR `+reinstallRuntimeAuthoritySQL+`))`, taskID, agentID).Scan(&blocked)
+	 WHERE c.id=? AND c.agent_id=? AND r.state NOT IN ('superseded','completed') AND NOT (`+reinstallInspectionAuthoritySQL+` OR `+reinstallRotationAuthoritySQL+` OR `+reinstallReportingAuthoritySQL+` OR `+reinstallAcceptanceAuthoritySQL+` OR `+reinstallRuntimeAuthoritySQL+`))`, taskID, agentID).Scan(&blocked)
 	return blocked, err
 }
 
@@ -53,9 +53,9 @@ func (s *Store) readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentRe
 	remote := false
 	var unclaimed []AgentReinstallUnclaimedWork
 	rows, err := tx.QueryContext(ctx, `SELECT e.id,e.agent_id,e.task_id,e.attempt,e.kind,e.state,e.phase,e.identity_retired_at<>'',e.digest,e.sealed_result
-		FROM task_executions e WHERE e.disposition='' AND e.state<>'succeeded' AND (e.agent_id=? OR
+		FROM task_executions e WHERE NOT EXISTS(SELECT 1 FROM agent_reinstall_client_checks a JOIN agent_reinstall_operations op ON op.id=a.operation_id WHERE a.command_id=e.task_id AND op.agent_id=? AND op.state='review_required') AND e.disposition='' AND e.state<>'succeeded' AND (e.agent_id=? OR
 		(e.kind='application.command' AND EXISTS(SELECT 1 FROM application_commands c
-		 WHERE c.id=e.task_id AND c.agent_id=e.agent_id AND c.gateway_node_id=?))) ORDER BY e.created_at,e.id`, plan.AgentID, plan.AgentID)
+		 WHERE c.id=e.task_id AND c.agent_id=e.agent_id AND c.gateway_node_id=?))) ORDER BY e.created_at,e.id`, plan.AgentID, plan.AgentID, plan.AgentID)
 	if err != nil {
 		return "", err
 	}
@@ -103,7 +103,7 @@ func (s *Store) readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentRe
 		 FROM deployments WHERE state IN ('pending','running') OR reconciliation_required=1
 		UNION ALL SELECT kind,agent_id,id,state,attempt,0,
 		 json_array(application_id,gateway_node_id,CAST(input_json AS TEXT),CAST(result_json AS TEXT),result_secret_id,reconciliation_required,reconciliation_requested)
-		 FROM application_commands WHERE (state IN ('pending','running') OR reconciliation_required=1) AND (agent_id=? OR gateway_node_id=?)
+		 FROM application_commands WHERE NOT EXISTS(SELECT 1 FROM agent_reinstall_client_checks a JOIN agent_reinstall_operations op ON op.id=a.operation_id WHERE a.command_id=application_commands.id AND op.agent_id=application_commands.gateway_node_id AND op.state='review_required') AND (state IN ('pending','running') OR reconciliation_required=1) AND (agent_id=? OR gateway_node_id=?)
 		UNION ALL SELECT 'gateway.component.apply',gateway_node_id,gateway_node_id,status,attempt,generation,json_array(desired_status,applied_generation)
 		 FROM gateway_components WHERE status IN ('pending','applying','failed')
 		UNION ALL SELECT 'gateway.routes.apply',gateway_node_id,gateway_node_id,status,attempt,desired_revision,json_array(CAST(desired_json AS TEXT),applied_revision)

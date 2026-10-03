@@ -4,6 +4,7 @@ import secrets
 import socket
 import struct
 import sys
+import time
 
 
 def receive(sock, size):
@@ -18,7 +19,7 @@ def receive(sock, size):
 
 def probe(expected):
     nonce = secrets.token_hex(16)
-    with socket.create_connection(("192.168.241.3", 1080), 3) as sock:
+    with socket.create_connection(("127.0.0.1", 1080), 3) as sock:
         sock.settimeout(8)
         sock.sendall(b"\x05\x01\x00")
         if receive(sock, 2) != b"\x05\x00":
@@ -55,6 +56,16 @@ def probe(expected):
 
 
 phase, kind, expected = sys.argv[1:]
+# Only local process readiness is retried. The business request below runs once.
+for attempt in range(50):
+    try:
+        with socket.create_connection(("127.0.0.1", 1080), .2):
+            pass
+        break
+    except OSError:
+        time.sleep(.1)
+else:
+    raise RuntimeError("client not ready")
 if kind == "invalid":
     try:
         probe(None)

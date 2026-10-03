@@ -34,6 +34,7 @@ type AgentReinstallPlan struct {
 	LocalWorkDisposition *AgentReinstallLocalDisposition `json:"localWorkDisposition,omitempty"`
 	Monitoring           []AgentReinstallMonitoring      `json:"monitoring"`
 	Requirements         []string                        `json:"requirements"`
+	Remaining            []AgentReinstallRemaining       `json:"remaining,omitempty"`
 }
 
 type AgentReinstallNetwork struct {
@@ -209,6 +210,9 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 		}
 	}
 	plan.Recovery, err = readAgentReinstallOperation(ctx, tx, plan.AgentID)
+	if err == nil && plan.Recovery != nil {
+		plan.Remaining = reinstallRemaining(plan)
+	}
 	return plan, err
 }
 

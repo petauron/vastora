@@ -25,6 +25,19 @@ import (
 // blocked. It never opens a direct connection to a public probe destination.
 type Probe struct{ TCPOnly bool }
 
+// CheckClientTCP uses the same verified HTTPS exit check through a separately
+// managed real protocol client. Only a loopback SOCKS listener is accepted;
+// callers must own its lifecycle and validate its configuration independently.
+func (p Probe) CheckClientTCP(ctx context.Context, endpoint string) (string, error) {
+	address, err := netip.ParseAddrPort(endpoint)
+	if err != nil || !address.Addr().IsLoopback() || address.Port() == 0 {
+		return "", errors.New("landing: invalid local protocol client")
+	}
+	ctx, cancel := context.WithTimeout(ctx, businessCheckTimeout(true))
+	defer cancel()
+	return p.tcp(ctx, endpoint)
+}
+
 func (p Probe) Check(ctx context.Context, peer PeerIdentity, revision uint64) (BusinessResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, businessCheckTimeout(p.TCPOnly))
 	defer cancel()

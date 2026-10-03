@@ -293,6 +293,15 @@ func (s *Store) completeReinstallRuntime(ctx context.Context, tx *sql.Tx, commit
 	if n, _ := updated.RowsAffected(); n != 1 {
 		return errExecutionAuthorization
 	}
+	if succeeded {
+		var envelope ApplicationTaskResult
+		if json.Unmarshal(raw, &envelope) != nil || envelope.MeridianRuntime == nil {
+			return errExecutionAuthorization
+		}
+		if err = s.recordReinstallRuntimeObservation(ctx, tx, agentID, *envelope.MeridianRuntime, s.now().UTC()); err != nil {
+			return err
+		}
+	}
 	if err = s.recordReinstallRuntimeProgress(ctx, tx, id); err != nil {
 		return err
 	}

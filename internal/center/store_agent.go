@@ -777,6 +777,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
+	if reinstalling && heartbeat.MeridianRuntime != nil {
+		if err := s.recordReinstallRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
+			return err
+		}
+	}
 	if !executionBlocked && heartbeat.MeridianRuntime != nil {
 		if err := s.recordMeridianRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
 			return err

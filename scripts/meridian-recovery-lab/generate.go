@@ -18,6 +18,7 @@ import (
 	"time"
 
 	m "github.com/petauron/meridian"
+	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
 func must[T any](value T, err error) T {
@@ -75,11 +76,18 @@ func main() {
 	// replacement host's approved listen address in the isolated fixture.
 	writeFile(d+"/server-replacement.json", []byte(strings.ReplaceAll(string(fixture), "192.168.241.2", "192.168.241.7")))
 	write := func(name string, v any) { writeFile(d+"/"+name, must(json.MarshalIndent(v, "", "  "))) }
-	vless := map[string]any{"protocol": "vless", "settings": map[string]any{"address": "192.168.241.6", "port": 443, "id": id, "encryption": "none", "flow": "xtls-rprx-vision-udp443"}, "streamSettings": map[string]any{"method": "raw", "security": "reality", "realitySettings": map[string]any{"serverName": "entry.example.test", "fingerprint": "chrome", "password": base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()), "shortId": "0123456789abcdef"}}, "mux": map[string]any{"enabled": true, "concurrency": -1, "xudpConcurrency": 16, "xudpProxyUDP443": "allow"}}
-
+	public := m.RealityEndpoint{ID: "entry", EntryID: "entry", AdvertiseHost: "192.168.241.6", AdvertisePort: 443, ServerNames: []string{"entry.example.test"}, PublicKey: base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()), ShortIDs: []string{"0123456789abcdef"}, Fingerprint: "chrome"}
 	for name, credential := range map[string]string{"native": id, "fixed": "00000000-0000-4000-8000-000000000002", "invalid": "00000000-0000-4000-8000-000000000003"} {
-		vless["settings"].(map[string]any)["id"] = credential
-		write(name+".json", map[string]any{"log": map[string]any{"loglevel": "none"}, "inbounds": []any{map[string]any{"listen": "0.0.0.0", "port": 1080, "protocol": "socks", "settings": map[string]any{"auth": "noauth"}}}, "outbounds": []any{vless}})
+		selected := material
+		selected.Credential.ID = name
+		selected.Credential.Identity = m.Identity(credential)
+		selected.ProtocolID = credential
+		if name == "fixed" {
+			selected.Credential.Kind = m.RouteCredential
+			selected.Credential.EgressID = "landing"
+		}
+		config := must((meridianruntime.AcceptanceClient{Protocol: m.VLESSReality, Reality: &public, Material: selected}).Config(1080))
+		writeFile(d+"/"+name+".json", config)
 	}
 	write("landing.json", map[string]any{"log": map[string]any{"loglevel": "none"}, "inbounds": []any{map[string]any{"listen": "0.0.0.0", "port": 1080, "protocol": "socks", "settings": map[string]any{"auth": "noauth"}}}, "outbounds": []any{map[string]any{"protocol": "freedom", "settings": map[string]any{"finalRules": []any{map[string]any{"action": "allow", "network": "tcp", "ip": []string{"192.168.241.4/32"}, "port": "8080"}}}}}})
 }

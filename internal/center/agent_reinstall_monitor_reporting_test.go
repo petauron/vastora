@@ -7,7 +7,72 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestAgentReinstallMonitorReportingRetainsSampleAge(t *testing.T) {
+	for _, mode := range []string{"fresh", "expired", "delayed-receipt", "future-receipt", "future-authorization", "missing-proof", "corrupt-proof"} {
+		t.Run(mode, func(t *testing.T) {
+			s, service, node, input := monitorReportingFixture(t)
+			ctx := context.Background()
+			receipt, err := s.QueueAgentReinstallMonitorReporting(ctx, node.ID, "reinstall-review-admin", input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			task, err := s.claimExecutionTask(ctx, service.ID, service.Credential, "monitor-registration-evidence-session", 0)
+			if err != nil || task == nil || task.PulseReporting == nil {
+				t.Fatalf("report claim: %v", err)
+			}
+			// The Service observed a sample already nine minutes old. Its
+			// receipt must retain only one minute of freshness, not ten.
+			raw := json.RawMessage(`{"pulseReporting":{"node_id":"11111111-1111-4111-8111-111111111111","observed_at_unix_ms":542000,"rotated_at_unix_ms":1000,"last_seen_at_unix_ms":2000}}`)
+			if response := submitMonitorInspection(t, s, service, task, raw, true); response.Code != http.StatusOK {
+				t.Fatal(response.Body.String())
+			}
+			checked := s.now().Add(-30 * time.Second)
+			want := "verified"
+			switch mode {
+			case "expired":
+				checked, want = s.now().Add(-61*time.Second), "stale"
+			case "delayed-receipt":
+				checked, want = s.now(), "stale"
+			case "future-receipt":
+				checked, want = s.now().Add(time.Minute), "stale"
+			case "missing-proof":
+				_, err = s.db.Exec(`UPDATE task_executions SET phase='result_received' WHERE task_id=?`, task.ID)
+				want = "needs_review"
+			case "corrupt-proof":
+				_, err = s.db.Exec(`UPDATE task_executions SET sealed_result=X'1234' WHERE task_id=?`, task.ID)
+				want = "needs_review"
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			created := checked.Add(-time.Second)
+			if mode == "delayed-receipt" {
+				created = checked.Add(-61 * time.Second)
+			} else if mode == "future-authorization" {
+				created, want = checked.Add(time.Second), "needs_review"
+			}
+			if _, err = s.db.Exec(`UPDATE task_executions SET created_at=? WHERE task_id=?`, created.UTC().Format(time.RFC3339Nano), task.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = s.db.Exec(`UPDATE agent_reinstall_monitor_reports SET result_json=json_set(result_json,'$.checkedAt',?) WHERE command_id=?`, checked.UTC().Format(time.RFC3339Nano), receipt.CommandID); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := s.AgentReinstallPlan(ctx, node.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := plan.Monitoring[0].Reporting; got == nil || got.State != want {
+				t.Fatalf("sample age lost: got %+v, want %s", got, want)
+			}
+			if blocked, err := agentReinstallBlocked(ctx, s.db, node.ID); err != nil || !blocked {
+				t.Fatal("report freshness released the business fence")
+			}
+		})
+	}
+}
 
 func monitorReportingFixture(t *testing.T) (*Store, AgentCredential, AgentCredential, AgentReinstallMonitorInput) {
 	t.Helper()

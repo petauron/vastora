@@ -1,5 +1,6 @@
+import { ReinstallClientAcceptance } from "./ReinstallClientAcceptance";
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2Icon, RotateCcwIcon, ShieldCheckIcon } from "lucide-react";
+import { RotateCcwIcon, ShieldCheckIcon } from "lucide-react";
 import { api } from "../api";
 import type { AgentEnrollment, AgentReinstallInput, AgentReinstallPlan, AgentView, NetworkProfile } from "../types";
 import type { Language } from "../translations";
@@ -13,6 +14,7 @@ import { ReinstallNetworkReview } from "./ReinstallNetworkReview";
 import { ReinstallApplicationReview } from "./ReinstallApplicationReview";
 import { ReinstallMonitorReview } from "./ReinstallMonitorReview";
 import { Spinner } from "@/components/ui/spinner";
+import { ReinstallRemaining } from "./ReinstallRemaining";
 
 export function ReinstallNodeSheet({ agent, installerAvailable, language, onClose }: { agent: AgentView; installerAvailable: boolean; language: Language; onClose: () => void }) {
   const [plan, setPlan] = useState<AgentReinstallPlan | null>(null);
@@ -175,6 +177,19 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
       if (generation.current === current) setBusy(false);
     }
   };
+  const completeRecovery = async () => {
+    if (!plan || !recovery || busy) return;
+    const current = generation.current;
+    setBusy(true); setError("");
+    try {
+      await api.completeAgentReinstall(agent.id, { operationId: recovery.id, planRevision: plan.revision });
+      if (generation.current === current) onClose();
+    } catch (cause) {
+      if (generation.current === current) setError(userError(language, cause));
+    } finally {
+      if (generation.current === current) setBusy(false);
+    }
+  };
   const verifyEntry = async (applicationId: string) => {
     if (!plan || !recovery || busy) return;
     const current = generation.current;
@@ -297,11 +312,12 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
           {joined && plan.networkReview ? <ReinstallNetworkReview key={plan.revision} review={plan.networkReview} busy={busy} language={language} onApprove={approveNetwork} /> : null}
           {joined ? <ReinstallApplicationReview onLanding={updateLanding} plan={plan} busy={busy} language={language} onPrepare={prepareApplication} onRestoreRuntime={restoreRuntime} onRestoreListener={restoreListener} onActivateAccess={activateAccess} onDNS={migrateDNS} workingDNS={workingDNS} onVerifyEntry={verifyEntry} checkingEntry={checkingEntry} /> : null}
           {command ? <><p className="text-sm">{copy(language, "在重装后的原服务器执行一次", "Run once on the reinstalled original server")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div><p className="text-xs text-muted-foreground">{copy(language, `命令有效期至 ${formatDate(language, enrollment!.expiresAt)}`, `Command valid until ${formatDate(language, enrollment!.expiresAt)}`)}</p></> : null}
-          {joined ? <p className="flex items-center gap-2 text-sm"><CheckCircle2Icon aria-hidden="true" className="size-4" />{copy(language, "身份接替已记录；网络、应用和业务验证尚未完成。", "Identity replacement recorded. Network, application and business verification are not complete.")}</p> : null}
+          {joined ? <><ReinstallClientAcceptance plan={plan} language={language} revision={revision} /><ReinstallRemaining plan={plan} language={language} /></> : null}
         </> : null}
       </div>
       <SheetFooter className="flex-row flex-wrap justify-end gap-2">
         <Button disabled={busy} onClick={refresh} variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "刷新状态", "Refresh status")}</Button>
+        {joined ? <Button disabled={busy} onClick={() => void completeRecovery()}>{copy(language, "校验并完成恢复", "Verify and complete recovery")}</Button> : null}
         <Button onClick={onClose} variant="outline">{copy(language, "关闭", "Close")}</Button>
         {plan && !command && (!recovery || recovery.state === "awaiting_enrollment") ? <Button disabled={busy || (agent.connected && !recovery)} onClick={() => void confirm()}>{recovery ? copy(language, "取回接入命令", "Retrieve command") : copy(language, "确认接替并生成命令", "Confirm and create command")}</Button> : null}
         {recovery?.privateIsolation === "pending" && (recovery.state === "failed" || recovery.state === "preparing") ? <Button disabled={busy} onClick={() => void confirm(true)}>{copy(language, "核对并继续隔离", "Inspect and continue isolation")}</Button> : null}

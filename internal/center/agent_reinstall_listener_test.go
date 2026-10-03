@@ -13,9 +13,9 @@ import (
 	"time"
 )
 
-func reinstallListenerFixture(t *testing.T) (*Store, AgentCredential, AgentReinstallApplicationInput) {
+func reinstallListenerFixture(t *testing.T, publicExit ...string) (*Store, AgentCredential, AgentReinstallApplicationInput) {
 	t.Helper()
-	s, node, input := reinstallRuntimeNetworkFixture(t, true)
+	s, node, input := reinstallRuntimeNetworkFixture(t, true, publicExit...)
 	ctx := context.Background()
 	if _, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err != nil {
 		t.Fatal(err)

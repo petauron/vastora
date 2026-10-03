@@ -335,6 +335,26 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 		}
 	}
+	var acceptance bool
+	if task.Kind == "application.command" {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='meridian.recovery.acceptance')`, task.ID, agentID).Scan(&acceptance); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+	}
+	if acceptance || task.MeridianAcceptance != nil {
+		if !acceptance || task.MeridianAcceptance == nil || task.Attempt != 1 || task.Reconcile {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+		expected, err := s.validateReinstallAcceptance(ctx, tx, agentID, task.ID)
+		if err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		a, _ := json.Marshal(expected)
+		b, _ := json.Marshal(task.MeridianAcceptance)
+		if string(a) != string(b) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
 	var pulseReporting bool
 	if task.Kind == "application.command" {
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.node.reporting')`, task.ID, agentID).Scan(&pulseReporting); err != nil {

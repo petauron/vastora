@@ -21,6 +21,27 @@ export function userError(language: Language, error: unknown) {
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const normalized = detail.toLowerCase();
   const reinstallErrors: Record<string, string> = {
+    "center: current authenticated client verification is incomplete": "真实客户端验收未通过或已过期，请查看验收结果并明确重新验证。",
+    "center: real client verification is required": "请先完成真实客户端验收。",
+    "center: an original client identity has no current verification": "部分原有账号或协议尚无有效验收结果，请重新验证全部线路。",
+    "center: client verification is still running or requires inspection": "客户端验证仍在执行或结果不明确，请先核对该任务。",
+    "center: fresh authenticated runtime observation is required": "运行时上报已过期，请等待新机器上报后刷新。",
+    "center: landing transport authorization has expired; wait for a fresh observation": "落地连接授权已过期，请等待新鲜运行时上报。",
+    "center: fresh reports from the original monitoring identity are required": "请先验证原监控身份的新鲜上报。",
+    "center: current shared entry verification is required": "请先重新验证共享入口的解析和 TLS。",
+    "center: current entry DNS verification is required": "请先核对入口 DNS；手动 DNS 需通过入口验证。",
+    "center: business data restoration has not been verified": "业务数据尚未恢复并验证，不能完成全部恢复。",
+    "center: an application has no verified recovery procedure": "部分应用尚无经过验证的恢复方式，请先处理恢复清单。",
+    "center: a separate online verifier is required": "请选择另一台在线且支持自动验收的节点。",
+    "center: inspect the outstanding client check before starting another request": "已有客户端验证尚未结束或结果不明，请先核对，不要重复发起。",
+    "center: fresh exit evidence is required": "出口上报已过期，请等待相关节点重新上报。",
+    "center: selected landing exit is unconfirmed": "当前选择的落地出口尚未确认，请核对出口配置。",
+    "center: usage changed restored access requirements; review runtime before completion": "最新用量改变了访问权限，请核对运行配置后再完成恢复。",
+    "center: resolve outstanding work before completing recovery": "请先处理未完成或结果不明的历史任务。",
+    "center: restored application runtime and reviewed access are required": "请先恢复应用运行配置并启用已确认的访问地址。",
+    "center: current replacement network approval is required": "请先确认当前新机器的网络地址。",
+    "center: an uninstalled application still has running state": "应保持卸载的应用仍显示运行中，请核对后再完成恢复。",
+
     "center: authenticated previous private identity evidence is missing": "缺少旧机器已认证的私网身份记录，无法安全撤销旧身份。恢复已暂停。",
     "center: previous private network is externally managed; verify its isolation before recovery": "旧私网由外部管理，请先核对旧机器的访问权限是否已撤销。",
     "center: previous private address is assigned to another node": "原私网地址已属于另一节点，恢复已暂停。",

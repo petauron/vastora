@@ -4,6 +4,9 @@ This isolated Linux Docker lab validates real VLESS/REALITY client requests
 before and after reconstructing the entry runtime on a different listen address.
 It uses the current Meridian Go dependency's production artifact renderer,
 digest-pinned Xray 26.7.28 and HAProxy, and disposable synthetic credentials.
+Client configurations use the production recovery client renderer, retaining
+the same business identities and a loopback-only SOCKS listener. The probe
+shares only the client's network namespace; no SOCKS port is exposed to peers.
 
 The same saved clients run in both phases:
 

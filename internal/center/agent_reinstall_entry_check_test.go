@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-func reinstallEntryCheckFixture(t *testing.T) (*Store, AgentCredential, AgentReinstallApplicationInput) {
+func reinstallEntryCheckFixture(t *testing.T, publicExit ...string) (*Store, AgentCredential, AgentReinstallApplicationInput) {
 	t.Helper()
-	s, node, input := reinstallListenerFixture(t)
+	s, node, input := reinstallListenerFixture(t, publicExit...)
 	ctx := context.Background()
 	if _, err := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input); err != nil {
 		t.Fatal(err)

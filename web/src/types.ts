@@ -300,7 +300,7 @@ export type AgentView = {
   credentialRevoked: boolean;
   siteId: string;
   roles: string[];
-  capabilities: { docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean };
+  capabilities: { meridianAcceptance?: boolean; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean };
   networkCandidates: NetworkCandidate[];
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;
@@ -385,6 +385,7 @@ export type AgentReinstallMonitorRotation = { commandId: string; state: string; 
 export type AgentReinstallMonitorInspection = { commandId: string; state: string; nodeId?: string; error?: string; inspectedAt?: string };
 export type AgentReinstallPlan = {
   agentId: string; revision: string; checkedAt: string; identityFingerprint: string; credentialRevoked: boolean;
+  remaining?: Array<{ code: string; applicationId?: string }>;
   recovery?: AgentReinstallOperation;
   networkReview?: AgentReinstallNetworkReview;
   privateNetwork: { ownership: string; serviceAddress: string; privateAddress: string; profileRetained: boolean; addressRecovery: string; landingRoutes: number; publications: number };

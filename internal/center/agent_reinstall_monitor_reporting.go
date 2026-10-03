@@ -124,16 +124,59 @@ func (s *Store) readReinstallMonitorReporting(ctx context.Context, tx *sql.Tx, r
 	if string(raw) != "{}" && json.Unmarshal(raw, &receipt) != nil {
 		return nil, errExecutionAuthorization
 	}
-	if _, _, err = s.validateReinstallMonitorReporting(ctx, tx, serviceID, receipt.CommandID); err != nil {
+	_, task, authorityErr := s.validateReinstallMonitorReporting(ctx, tx, serviceID, receipt.CommandID)
+	if authorityErr != nil {
 		receipt.State = "needs_review"
 	}
 	if receipt.State == "verified" {
+		// CheckedAt is the receipt time, not the last collector sample. Carry
+		// forward the sample's age from the authenticated Service observation
+		// rather than granting an already-old sample another ten minutes.
 		checked, err := time.Parse(time.RFC3339Nano, receipt.CheckedAt)
-		if err != nil || checked.After(s.now()) || s.now().Sub(checked) > 10*time.Minute {
+		now := s.now()
+		age, valid := s.reinstallMonitorSampleAge(ctx, tx, serviceID, receipt.CommandID, task, checked)
+		if !valid {
+			receipt.State = "needs_review"
+		} else if err != nil || checked.After(now) || now.Sub(checked) > 10*time.Minute-age {
 			receipt.State = "stale"
 		}
 	}
 	return &receipt, nil
+}
+
+func (s *Store) reinstallMonitorSampleAge(ctx context.Context, tx *sql.Tx, serviceID, commandID string, task pulse.ReportingTask, checked time.Time) (time.Duration, bool) {
+	var executionID, createdAt string
+	var sealed []byte
+	if err := tx.QueryRowContext(ctx, `SELECT id,sealed_result,created_at FROM task_executions
+ WHERE task_id=? AND agent_id=? AND kind='application.command' AND attempt=1 AND state='succeeded' AND phase='reported'`, commandID, serviceID).Scan(&executionID, &sealed, &createdAt); err != nil {
+		return 0, false
+	}
+	created, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil || created.After(checked) {
+		return 0, false
+	}
+	raw, err := secret.Open(s.key, sealed, []byte("execution-result:"+executionID))
+	if err != nil {
+		return 0, false
+	}
+	var proof executionResultEvidence
+	var result struct {
+		Reporting *pulse.ReportingResult `json:"pulseReporting"`
+	}
+	if json.Unmarshal(raw, &proof) != nil || !proof.Succeeded || proof.Unknown ||
+		json.Unmarshal(proof.Result, &result) != nil || result.Reporting == nil || !result.Reporting.FreshAfterRotation(task) {
+		return 0, false
+	}
+	age := time.Duration(result.Reporting.ObservedAt-*result.Reporting.LastSeenAt) * time.Millisecond
+	// Service and Center clocks need not agree. Authorization precedes the
+	// observation, so this Center-local interval conservatively bounds time
+	// spent collecting, delivering and projecting the result. Never reset the
+	// freshness window merely because a delayed result was finally received.
+	delay := checked.Sub(created)
+	if delay > 10*time.Minute-age {
+		return 10*time.Minute + time.Nanosecond, true
+	}
+	return age + delay, true
 }
 
 func (s *Store) QueueAgentReinstallMonitorReporting(ctx context.Context, target, adminID string, input AgentReinstallMonitorInput) (AgentReinstallMonitorReporting, error) {

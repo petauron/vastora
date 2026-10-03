@@ -288,6 +288,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			defer store.landingMutationMu.Unlock()
 		}
 		commands := 0
+		if task.MeridianAcceptance != nil {
+			commands++
+		}
 		if task.PulseReporting != nil {
 			commands++
 		}
@@ -329,6 +332,22 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		}
 		if !c.Capabilities.Docker || commands != 1 {
 			err = errors.New("agent: application command received without Docker capability")
+		} else if task.MeridianAcceptance != nil {
+			executor, ok := c.Executor.(interface {
+				VerifyMeridianAcceptance(context.Context, meridianruntime.AcceptanceTask) (meridianruntime.AcceptanceResult, error)
+			})
+			connection, connectionErr := store.Connection(ctx)
+			if connectionErr != nil || task.MeridianAcceptance.VerifierAgentID != connection.AgentID {
+				err = errors.New("agent: recovery verifier identity mismatch")
+			} else if !ok || !c.Capabilities.MeridianAcceptance {
+				err = errors.New("agent: recovery client capability is not configured")
+			} else {
+				var acceptance meridianruntime.AcceptanceResult
+				acceptance, err = executor.VerifyMeridianAcceptance(ctx, *task.MeridianAcceptance)
+				if err == nil {
+					result.MeridianAcceptance = &acceptance
+				}
+			}
 		} else if task.MeridianLegacyExport != nil {
 			var exportResult meridianruntime.LegacyExportResult
 			exportResult, err = exportLegacyMeridianState(ctx, store, *task.MeridianLegacyExport)
