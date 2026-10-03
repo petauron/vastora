@@ -27,6 +27,20 @@ func (s *Store) recordReinstallRuntimeObservation(ctx context.Context, tx *sql.T
 	if err != nil {
 		return err
 	}
+	// Startup clears cached public mapping before it is observed again. That
+	// invalidates recovery approval temporarily, but must not reject the
+	// heartbeat needed to refresh the network observation in the first place.
+	review, err := s.agentReinstallNetworkReview(ctx, tx, target)
+	if err != nil {
+		return err
+	}
+	if review == nil || !review.ApprovalCurrent {
+		if _, err = tx.ExecContext(ctx, `UPDATE agent_reinstall_app_preparations SET runtime_observation=X'' WHERE runtime_command_id=?`, id); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE application_commands SET result_json=json_set(result_json,'$.transportReady',json('false')) WHERE id=?`, id)
+		return err
+	}
 	task, err := s.reinstallRuntimeTask(ctx, tx, target, id, false)
 	if err != nil || task == nil || task.MeridianRuntime == nil {
 		return errExecutionAuthorization

@@ -14,6 +14,7 @@ import (
 
 	"github.com/petauron/meridian"
 	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/networking"
 )
 
 const restoreNativeID = "11111111-1111-4111-8111-111111111111"
@@ -359,5 +360,52 @@ func TestAgentReinstallRuntimeSealingRejectsTaskSubstitution(t *testing.T) {
 	var count int
 	if err = s.db.QueryRow(`SELECT COUNT(*) FROM application_commands WHERE id LIKE 'reinstall-runtime-%' AND state='pending' AND attempt=0`).Scan(&count); err != nil || count != 1 {
 		t.Fatal("failed sealing committed a claim")
+	}
+}
+
+func TestAgentReinstallRuntimeStartupHeartbeatRefreshesNetworkBeforeApproval(t *testing.T) {
+	s, node, input := reinstallRuntimeNetworkFixture(t, true)
+	ctx := context.Background()
+	if _, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
+	if err != nil || task == nil {
+		t.Fatal(err)
+	}
+	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+	if response := submitReinstallRuntimeResult(t, s, node, task, result, true); response.Code != http.StatusOK {
+		t.Fatal(response.Body.String())
+	}
+	var key []byte
+	if err = s.db.QueryRow(`SELECT x25519_public_key FROM agents WHERE id=?`, node.ID).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	heartbeat := NodeHeartbeat{Startup: true, Version: Version, PublicKey: key, Capabilities: NodeCapabilities{Docker: true}, Roles: []string{"worker"}, NetworkCandidates: []networking.Candidate{{Address: "10.0.0.8", Interface: "eth0", Kind: "lan"}}, MeridianRuntime: &result}
+	if err = s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatalf("startup deadlocked before network refresh: %v", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.currentReinstallRuntimeObservation(ctx, tx, task.ID, *task.MeridianRuntime)
+	tx.Rollback()
+	if err == nil {
+		t.Fatal("startup retained stale acceptance evidence")
+	}
+	heartbeat.Startup = false
+	heartbeat.PublicEgress = &networking.PublicEgress{Address: "198.51.100.8", BindAddress: "10.0.0.8", Mode: networking.PublicModeNAT, ObservedAt: s.now().UTC()}
+	if err = s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatalf("fresh observation rejected: %v", err)
+	}
+	tx, err = s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.currentReinstallRuntimeObservation(ctx, tx, task.ID, *task.MeridianRuntime)
+	tx.Rollback()
+	if err != nil {
+		t.Fatalf("fresh approved runtime unavailable: %v", err)
 	}
 }
