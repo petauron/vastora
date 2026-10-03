@@ -80,7 +80,11 @@ func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			next, err := s.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, id)
+			if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1 WHERE id=?`, sharedSnapshotEndpointID); err != nil {
+				tx.Rollback()
+				t.Fatal(err)
+			}
+			next, err := s.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, "")
 			tx.Rollback()
 			if err != nil || len(next.task.EgressClients) != 0 || next.task.NativeEgress != meridian.EgressIPv6Only {
 				t.Fatalf("quota mutation lost policy: %v", err)
