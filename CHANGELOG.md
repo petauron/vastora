@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.272](https://github.com/petauron/vastora/compare/v0.1.0-alpha.271...v0.1.0-alpha.272) (2026-10-03)
+
+
+### Bug Fixes
+
+* verify native egress through the managed entry ([3222be4](https://github.com/petauron/vastora/commit/3222be4fbe87d20383623e9ae165d0c6e71b6f95))
+
 ## [0.1.0-alpha.271](https://github.com/petauron/vastora/compare/v0.1.0-alpha.270...v0.1.0-alpha.271) (2026-10-03)
 
 
