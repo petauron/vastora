@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.281](https://github.com/petauron/vastora/compare/v0.1.0-alpha.280...v0.1.0-alpha.281) (2026-10-03)
+
+
+### Bug Fixes
+
+* **center:** preserve recovery grants and review runtime successors ([#804](https://github.com/petauron/vastora/issues/804)) ([70d7e44](https://github.com/petauron/vastora/commit/70d7e44c904572bb8a6d553a38de2ffc4bcb8256))
+
 ## [0.1.0-alpha.280](https://github.com/petauron/vastora/compare/v0.1.0-alpha.279...v0.1.0-alpha.280) (2026-10-03)
 
 
