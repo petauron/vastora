@@ -502,3 +502,50 @@ func TestAgentReinstallLandingRuntimeRecoversFromStartupTransportFailure(t *test
 		}
 	}
 }
+
+func TestAgentReinstallLandingGrantSurvivesObservationGapButNotIdentityChange(t *testing.T) {
+	for _, mode := range []string{"fresh", "offline", "mapping-pending", "peer-pending", "revoked", "replacement-key", "changed-peer", "changed-landing"} {
+		t.Run(mode, func(t *testing.T) {
+			s, node, _ := queueReinstallLandingRuntime(t)
+			ctx := context.Background()
+			tx, err := s.db.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			var encoded []byte
+			var endpoint, egress string
+			if err = tx.QueryRow(`SELECT e.id,e.source_peer_json,g.egress_node_id FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id JOIN meridian_route_grants g ON g.endpoint_id=e.id WHERE a.node_id=?`, node.ID).Scan(&endpoint, &encoded, &egress); err != nil {
+				t.Fatal(err)
+			}
+			var peer landing.PeerIdentity
+			if err = json.Unmarshal(encoded, &peer); err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "offline":
+				_, err = tx.Exec(`UPDATE agent_reinstall_operations SET replacement_network_observed_at='2000-01-01T00:00:00Z' WHERE agent_id=?`, node.ID)
+			case "mapping-pending":
+				_, err = tx.Exec(`UPDATE agents SET public_egress_address='',public_egress_bind_address='',public_egress_mode='',public_egress_observed_at='' WHERE id=?`, node.ID)
+			case "peer-pending":
+				_, err = tx.Exec(`UPDATE agent_reinstall_operations SET replacement_peer_json='{}' WHERE agent_id=?`, node.ID)
+			case "revoked":
+				_, err = tx.Exec(`UPDATE agents SET credential_revoked_at='2026-01-01T00:00:00Z' WHERE id=?`, node.ID)
+			case "replacement-key":
+				_, err = tx.Exec(`UPDATE agents SET x25519_public_key=? WHERE id=?`, testAgentPublicKey(t), node.ID)
+			case "changed-peer":
+				_, err = tx.Exec(`UPDATE agent_reinstall_operations SET replacement_peer_json=json_set(replacement_peer_json,'$.id','different-peer') WHERE agent_id=?`, node.ID)
+			case "changed-landing":
+				_, err = tx.Exec(`UPDATE landing_server_states SET peer_json=json_set(peer_json,'$.id','different-peer') WHERE node_id=?`, egress)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			allowed, recovering, err := s.reinstallLandingSourceAllowed(ctx, tx, node.ID, endpoint, egress, peer)
+			want := mode == "fresh" || mode == "offline" || mode == "mapping-pending" || mode == "peer-pending"
+			if err != nil || !recovering || allowed != want {
+				t.Fatalf("durable grant: allowed=%v recovering=%v error=%v", allowed, recovering, err)
+			}
+		})
+	}
+}

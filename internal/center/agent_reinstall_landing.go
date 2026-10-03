@@ -84,26 +84,41 @@ func reinstallLandingTargets(ctx context.Context, tx *sql.Tx, endpointID string)
 	return targets, rows.Err()
 }
 
-// While recovery fences execution, neither a missing live capability nor an old
-// pin can grant landing access. Only the explicit, still-current handoff can.
+// A reviewed source grant is durable identity authority, not a liveness lease.
+// Restarting the Agent must not withdraw it while its network is rediscovered.
+// Fresh observations and applied transport remain mandatory for entry activation
+// and final acceptance; identity replacement or revocation invalidates this pin.
 func (s *Store) reinstallLandingSourceAllowed(ctx context.Context, tx *sql.Tx, agentID, endpointID, landingID string, peer landing.PeerIdentity) (bool, bool, error) {
 	recovering, err := agentReinstallBlocked(ctx, tx, agentID)
 	if err != nil || !recovering {
 		return !recovering, recovering, err
 	}
-	var preparationID string
-	var identityJSON, targetsJSON []byte
-	err = tx.QueryRowContext(ctx, `SELECT p.deployment_id,r.identity_json,r.targets_json FROM agent_reinstall_landing_sources r JOIN agent_reinstall_app_preparations p ON p.deployment_id=r.preparation_id JOIN agent_reinstall_operations op ON op.id=p.operation_id WHERE op.agent_id=? AND op.state='review_required' AND r.endpoint_id=? AND r.phase='authorize'`, agentID, endpointID).Scan(&preparationID, &identityJSON, &targetsJSON)
+	var identityJSON, targetsJSON, approvalJSON, pinJSON, observedJSON []byte
+	err = tx.QueryRowContext(ctx, `SELECT r.identity_json,r.targets_json,p.approval_json,e.source_peer_json,op.replacement_peer_json
+ FROM agent_reinstall_landing_sources r
+ JOIN agent_reinstall_app_preparations p ON p.deployment_id=r.preparation_id
+ JOIN agent_reinstall_operations op ON op.id=p.operation_id
+ JOIN agents n ON n.id=op.agent_id
+ JOIN meridian_endpoints e ON e.id=r.endpoint_id AND e.application_id=p.application_id
+ WHERE op.agent_id=? AND op.state='review_required' AND r.endpoint_id=? AND r.phase='authorize'
+ AND n.status='active' AND n.credential_revoked_at='' AND n.x25519_public_key=p.replacement_key
+ AND n.tailscale_ownership='managed' AND EXISTS(SELECT 1 FROM admins WHERE id=op.authorized_by)`, agentID, endpointID).Scan(&identityJSON, &targetsJSON, &approvalJSON, &pinJSON, &observedJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, true, nil
 	}
 	if err != nil {
 		return false, true, err
 	}
-	actualEndpoint, identity, _, err := s.reinstallLandingIdentity(ctx, tx, agentID, preparationID)
 	var expected MeridianSourceRecoveryView
 	var targets []AgentReinstallLandingTarget
-	if err != nil || actualEndpoint != endpointID || json.Unmarshal(identityJSON, &expected) != nil || json.Unmarshal(targetsJSON, &targets) != nil || identity.CurrentFingerprint != expected.CurrentFingerprint || identity.PreviousFingerprint != expected.CurrentFingerprint || meridianPeerFingerprint(peer) != expected.CurrentFingerprint {
+	var approval AgentReinstallNetworkApproval
+	var pin, observed landing.PeerIdentity
+	if json.Unmarshal(identityJSON, &expected) != nil || json.Unmarshal(targetsJSON, &targets) != nil ||
+		json.Unmarshal(approvalJSON, &approval) != nil || approval.PrivatePeer == nil || approval.ControllerID == "" ||
+		json.Unmarshal(pinJSON, &pin) != nil || json.Unmarshal(observedJSON, &observed) != nil ||
+		meridianPeerFingerprint(pin) != expected.CurrentFingerprint || meridianPeerFingerprint(peer) != expected.CurrentFingerprint ||
+		meridianPeerFingerprint(*approval.PrivatePeer) != expected.CurrentFingerprint ||
+		observed.ID != "" && meridianPeerFingerprint(observed) != expected.CurrentFingerprint {
 		return false, true, nil
 	}
 	for _, target := range targets {

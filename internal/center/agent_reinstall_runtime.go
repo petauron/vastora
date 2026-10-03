@@ -23,7 +23,7 @@ type AgentReinstallRuntime struct {
 
 func (s *Store) readReinstallRuntime(ctx context.Context, tx *sql.Tx, preparationID string) (*AgentReinstallRuntime, error) {
 	var result AgentReinstallRuntime
-	err := tx.QueryRowContext(ctx, `SELECT c.id,CASE WHEN c.state='running' AND (c.lease_expires_at<=? OR EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=c.id AND (e.state IN ('unknown','failed') OR e.phase='result_received'))) THEN 'needs_review' WHEN c.state='succeeded' AND COALESCE(json_extract(c.result_json,'$.transportReady'),0)<>1 THEN 'needs_review' ELSE c.state END
+	err := tx.QueryRowContext(ctx, `SELECT c.id,CASE WHEN c.state='running' AND (c.lease_expires_at<=? OR EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=c.id AND (e.state IN ('unknown','failed') OR e.phase='result_received'))) THEN 'needs_review' WHEN c.state='succeeded' AND EXISTS(SELECT 1 FROM meridian_endpoints e WHERE e.id=p.runtime_endpoint_id AND e.desired_revision<>p.runtime_revision) THEN 'review_changed' WHEN c.state='succeeded' AND COALESCE(json_extract(c.result_json,'$.transportReady'),0)<>1 THEN 'needs_review' ELSE c.state END
  FROM agent_reinstall_app_preparations p JOIN application_commands c ON c.id=p.runtime_command_id WHERE p.deployment_id=?`, s.now().UTC().Format(time.RFC3339Nano), preparationID).Scan(&result.CommandID, &result.State)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -120,7 +120,7 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 	if err != nil {
 		return result, err
 	}
-	if saved != nil {
+	if saved != nil && saved.State != "review_changed" {
 		if _, err = s.reinstallRuntimeTask(ctx, tx, agentID, saved.CommandID, false); err != nil {
 			return result, err
 		}
@@ -135,6 +135,21 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 	}
 	if len(plan.Executions) != 0 || len(plan.UnclaimedLocalWork) != 0 {
 		return result, errors.New("center: settle previous work before runtime restoration")
+	}
+	if saved != nil {
+		// Supersede only a confirmed completed runtime before any entry/access
+		// activation. Preserve its command, sealed receipt and audit history.
+		reset, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_app_preparations
+ SET runtime_command_id=NULL,runtime_endpoint_id=NULL,runtime_plan_revision='',runtime_revision=0,runtime_task_sha256='',runtime_observation=X''
+ WHERE deployment_id=? AND runtime_command_id=? AND listener_task_id IS NULL
+ AND NOT EXISTS(SELECT 1 FROM agent_reinstall_access_activations WHERE preparation_id=?)
+ AND EXISTS(SELECT 1 FROM application_commands WHERE id=? AND state='succeeded' AND reconciliation_required=0 AND reconciliation_requested=0)`, preparationID, saved.CommandID, preparationID, saved.CommandID)
+		if err != nil {
+			return result, err
+		}
+		if changed, _ := reset.RowsAffected(); changed != 1 {
+			return result, errors.New("center: inspect activated access or unresolved runtime before reviewing a successor")
+		}
 	}
 	var state string
 	if err = tx.QueryRowContext(ctx, `SELECT state FROM deployments WHERE id=?`, preparationID).Scan(&state); err != nil {
