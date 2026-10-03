@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/realitytarget"
@@ -716,6 +717,12 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		return value, err
 	}
 	switch value.Kind {
+	case meridianruntime.ApplyKind:
+		var input meridianruntime.Command
+		if json.Unmarshal(inputJSON, &input) != nil || input.Validate() != nil {
+			return value, errors.New("center: stored Meridian runtime command is invalid")
+		}
+		value.Action = "apply"
 	case "pulse.enrollment.create":
 		value.Action = "enroll"
 	case nodeprotocol.CommandKind:

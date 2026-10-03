@@ -53,7 +53,16 @@ export function NodeEgressControls({ nodeId, language }: { nodeId: string; langu
         return api.applicationCommand(view.commandId);
       }, setCommand);
       if (result) setReload((value) => value + 1);
-    } catch (cause) { setError(userError(language, cause)); }
+    } catch (cause) {
+      setError(userError(language, cause));
+      // The request may have queued work before monitoring failed. Read its
+      // durable state; never retry a mutation to recover the display.
+      try {
+        const view = await api.nodeEgress(nodeId);
+        setSaved(view); setDraft(view.policy);
+        if (view.commandId) setCommand(await api.applicationCommand(view.commandId));
+      } catch { /* Keep the error and allow an explicit status refresh. */ }
+    }
     finally { setBusy(false); }
   };
   return <FieldSet>
@@ -70,7 +79,7 @@ export function NodeEgressControls({ nodeId, language }: { nodeId: string; langu
       {command?.reconciliationRequired ? <FieldError>{copy(language, "任务结果需要核对，请先在活动页面处理。", "Resolve this task’s uncertain outcome in Activity before applying again.")}</FieldError> : null}
       <div className="flex gap-2">
         <Button type="button" variant="outline" disabled={active || !saved.available || command?.reconciliationRequired || draft === saved.policy && saved.state !== "failed"} onClick={() => void apply()}>{active ? <Spinner data-icon="inline-start" /> : null}{copy(language, "应用并验证", "Apply and verify")}</Button>
-        <Button type="button" variant="ghost" disabled={active} onClick={() => setReload((value) => value + 1)}>{copy(language, "刷新状态", "Refresh")}</Button>
+        <Button type="button" variant="ghost" disabled={busy} onClick={() => setReload((value) => value + 1)}>{copy(language, "刷新状态", "Refresh")}</Button>
       </div>
     </> : null}
     {error ? <FieldError role="alert">{error}</FieldError> : null}

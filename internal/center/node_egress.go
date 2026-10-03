@@ -152,17 +152,15 @@ func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRun
 	if material == nil {
 		return errors.New("center: an enabled native client is required to verify the egress policy")
 	}
-	// Verification reaches the real configured private backend with its original
-	// REALITY identity, avoiding a provider's public-address hairpin requirement.
+	// Use the original subscription entry. The private REALITY backend requires
+	// a PROXY header from HAProxy and is not a direct client endpoint.
 	if vlessEnabled == 1 {
 		endpoint.PrivateKey = ""
-		endpoint.AdvertiseHost, endpoint.AdvertisePort = endpoint.ListenAddress, endpoint.ListenPort
 		p.task.EgressClients = append(p.task.EgressClients, meridianruntime.AcceptanceClient{Protocol: meridian.VLESSReality, Reality: &endpoint, Material: *material})
 	}
 	if hy2Enabled == 1 {
 		hy2.PrivateKeyPEM = ""
 		hy2.CertificatePEM = ""
-		hy2.AdvertiseHost = endpoint.ListenAddress
 		p.task.EgressClients = append(p.task.EgressClients, meridianruntime.AcceptanceClient{Protocol: meridian.Hysteria2, Hysteria: &hy2, Material: *material})
 	}
 	return nil
