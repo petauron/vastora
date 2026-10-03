@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.282](https://github.com/petauron/vastora/compare/v0.1.0-alpha.281...v0.1.0-alpha.282) (2026-10-03)
+
+
+### Bug Fixes
+
+* **center:** sequence recovery client verification tasks ([#806](https://github.com/petauron/vastora/issues/806)) ([e7b13f3](https://github.com/petauron/vastora/commit/e7b13f3f17ff208453df993e6123854518f52e0a))
+
 ## [0.1.0-alpha.281](https://github.com/petauron/vastora/compare/v0.1.0-alpha.280...v0.1.0-alpha.281) (2026-10-03)
 
 
