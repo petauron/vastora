@@ -106,6 +106,8 @@ func (s *Store) QueueAgentReinstallListener(ctx context.Context, agentID, adminI
 		return result, err
 	} else if task == nil {
 		return result, errExecutionAuthorization
+	} else if _, err := s.currentReinstallRuntimeObservation(ctx, tx, runtimeID, *task.MeridianRuntime); err != nil {
+		return result, err
 	}
 	saved, err := s.readReinstallListener(ctx, tx, preparationID)
 	if err != nil {

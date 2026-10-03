@@ -450,3 +450,55 @@ func TestAgentReinstallLandingRuntimeRequiresExactHealthyTransport(t *testing.T)
 		})
 	}
 }
+
+func TestAgentReinstallLandingRuntimeRecoversFromStartupTransportFailure(t *testing.T) {
+	s, node, _ := queueReinstallLandingRuntime(t)
+	ctx := context.Background()
+	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
+	if err != nil || task == nil {
+		t.Fatal(err)
+	}
+	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+	result.Peers[0].Status.State = "blocked"
+	response := submitReinstallRuntimeResult(t, s, node, task, result, true)
+	if response.Code != http.StatusOK {
+		t.Fatalf("startup result: %d %s", response.Code, response.Body.String())
+	}
+	for _, healthy := range []bool{true, false} {
+		result = meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+		if !healthy {
+			result.Peers[0].Status.State = "blocked"
+		}
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = s.recordReinstallRuntimeObservation(ctx, tx, node.ID, result, s.now()); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		_, observationErr := s.currentReinstallRuntimeObservation(ctx, tx, task.ID, *task.MeridianRuntime)
+		if (observationErr == nil) != healthy {
+			tx.Rollback()
+			t.Fatalf("current transport healthy=%v: %v", healthy, observationErr)
+		}
+		if err = tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		plan, err := s.AgentReinstallPlan(ctx, node.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (plan.Applications[0].Preparation.Runtime.State == "succeeded") != healthy {
+			t.Fatal("runtime readiness did not follow current observation")
+		}
+		var attempt int
+		var state string
+		if err = s.db.QueryRow(`SELECT attempt,state FROM application_commands WHERE id=?`, task.ID).Scan(&attempt, &state); err != nil || attempt != 1 || state != "succeeded" {
+			t.Fatalf("replayed or changed execution: attempt=%d state=%s err=%v", attempt, state, err)
+		}
+		if plan.Recovery.State != "review_required" {
+			t.Fatal("observation bypassed real client acceptance")
+		}
+	}
+}

@@ -20,7 +20,7 @@ type reinstallRuntimeObservation struct {
 // Persist evidence without projecting endpoint/route health across the fence.
 func (s *Store) recordReinstallRuntimeObservation(ctx context.Context, tx *sql.Tx, target string, result meridianruntime.Result, now time.Time) error {
 	var id, digest string
-	err := tx.QueryRowContext(ctx, `SELECT p.runtime_command_id,p.runtime_task_sha256 FROM agent_reinstall_app_preparations p JOIN agent_reinstall_operations op ON op.id=p.operation_id JOIN application_commands c ON c.id=p.runtime_command_id WHERE op.agent_id=? AND op.state='review_required' AND c.state='succeeded' AND COALESCE(json_extract(c.result_json,'$.transportReady'),0)=1`, target).Scan(&id, &digest)
+	err := tx.QueryRowContext(ctx, `SELECT p.runtime_command_id,p.runtime_task_sha256 FROM agent_reinstall_app_preparations p JOIN agent_reinstall_operations op ON op.id=p.operation_id JOIN application_commands c ON c.id=p.runtime_command_id WHERE op.agent_id=? AND op.state='review_required' AND c.state='succeeded'`, target).Scan(&id, &digest)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -34,7 +34,8 @@ func (s *Store) recordReinstallRuntimeObservation(ctx context.Context, tx *sql.T
 	if result.Validate(task.MeridianRuntime.Desired) != nil {
 		return errors.New("center: recovery runtime observation does not match restored configuration")
 	}
-	if _, err = result.PeerHealth(*task.MeridianRuntime, now); err != nil {
+	health, err := result.PeerHealth(*task.MeridianRuntime, now)
+	if err != nil {
 		return err
 	}
 	raw, err := json.Marshal(reinstallRuntimeObservation{ObservedAt: now.UTC(), Result: result})
@@ -46,6 +47,17 @@ func (s *Store) recordReinstallRuntimeObservation(ctx context.Context, tx *sql.T
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE agent_reinstall_app_preparations SET runtime_observation=? WHERE runtime_command_id=? AND runtime_task_sha256=?`, sealed, id, digest)
+	if err != nil {
+		return err
+	}
+	ready := true
+	for _, peerReady := range health {
+		ready = ready && peerReady
+	}
+	readyJSON, _ := json.Marshal(ready)
+	// Readiness is a current projection. The sealed execution receipt remains
+	// unchanged, including any startup transport failure.
+	_, err = tx.ExecContext(ctx, `UPDATE application_commands SET result_json=json_set(result_json,'$.transportReady',json(?)) WHERE id=? AND state='succeeded'`, string(readyJSON), id)
 	return err
 }
 
