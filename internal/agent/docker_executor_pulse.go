@@ -109,7 +109,14 @@ func copyPulseSetupToken(ctx context.Context, docker *client.Client, containerID
 // pulseServiceCLI is only used by fixed Pulse administration operations. Neither an
 // HTTP caller nor a catalog may supply an executable or arbitrary arguments.
 func pulseServiceCLI(ctx context.Context, docker *client.Client, containerID string, args []string, input io.Reader) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	timeout := 30 * time.Second
+	if len(args) == 1 && args[0] == "backup" {
+		// Copying and checking the metrics database can exceed the short
+		// administration deadline. Keep a bounded backup budget and still
+		// require successful completion before replacing the service.
+		timeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	execution, err := docker.ExecCreate(ctx, containerID, client.ExecCreateOptions{Cmd: append([]string{"/usr/local/bin/pulse-service"}, args...), AttachStdout: true, AttachStderr: true, AttachStdin: input != nil})
 	if err != nil {
