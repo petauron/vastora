@@ -136,6 +136,13 @@ func (s *Store) readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentRe
 		if err := rows.Scan(&kind, &agentID, &id, &state, &attempt, &revision, &intent); err != nil {
 			return "", err
 		}
+		settled, err := reinstallSettledProjection(ctx, tx, kind, agentID, state, attempt, revision, intent)
+		if err != nil {
+			return "", err
+		}
+		if settled {
+			continue
+		}
 		if err := encoder.Encode([]any{kind, agentID, id, state, attempt, revision, intent}); err != nil {
 			return "", err
 		}
