@@ -120,6 +120,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"nodeListenerHealthy":          nodeListenerHealthy,
 		"landingHealth":                store.landingHealth(),
 		"landingClientRuntime":         store.observeLandingClientRuntime(ctx),
+		"privateNetworkPeer":           store.observePrivateNetworkPeer(ctx, candidates, c.TailscaleOwnership),
 		"nodeListenerRevision":         nodeListenerRevision,
 		"nodeListenerConfigHash":       nodeListenerConfigHash,
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,

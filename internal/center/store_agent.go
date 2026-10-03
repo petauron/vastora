@@ -767,7 +767,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		return err
 	}
 	if reinstalling {
-		if err := recordReinstallNetworkObservation(ctx, tx, id, heartbeat.LandingClientRuntime, heartbeat.TailscaleOwnership, now); err != nil {
+		if err := recordReinstallNetworkObservation(ctx, tx, id, heartbeat.PrivateNetworkPeer, heartbeat.TailscaleOwnership, now); err != nil {
 			return err
 		}
 	}
