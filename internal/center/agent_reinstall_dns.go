@@ -100,35 +100,36 @@ func (s *Store) reinstallDNSTargets(ctx context.Context, tx *sql.Tx, agentID, pr
 	return targets, rows.Err()
 }
 
-func (s *Store) savedReinstallDNS(ctx context.Context, tx *sql.Tx, preparationID string) (*AgentReinstallDNS, []reinstallDNSTarget, string, error) {
+func (s *Store) savedReinstallDNS(ctx context.Context, tx *sql.Tx, preparationID string) (*AgentReinstallDNS, []reinstallDNSTarget, error) {
 	var body, targetJSON []byte
-	var revision string
-	err := tx.QueryRowContext(ctx, `SELECT result_json,targets_json,plan_revision FROM agent_reinstall_dns_migrations WHERE preparation_id=? ORDER BY attempt DESC LIMIT 1`, preparationID).Scan(&body, &targetJSON, &revision)
+	err := tx.QueryRowContext(ctx, `SELECT result_json,targets_json FROM agent_reinstall_dns_migrations WHERE preparation_id=? ORDER BY attempt DESC LIMIT 1`, preparationID).Scan(&body, &targetJSON)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil, "", nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
 	var value AgentReinstallDNS
 	var targets []reinstallDNSTarget
 	if err = json.Unmarshal(body, &value); err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
 	if err = json.Unmarshal(targetJSON, &targets); err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
-	return &value, targets, revision, nil
+	return &value, targets, nil
 }
 
-func (s *Store) readReinstallDNS(ctx context.Context, tx *sql.Tx, agentID, preparationID, revision string) (*AgentReinstallDNS, error) {
-	saved, expected, reviewed, err := s.savedReinstallDNS(ctx, tx, preparationID)
+func (s *Store) readReinstallDNS(ctx context.Context, tx *sql.Tx, agentID, preparationID string) (*AgentReinstallDNS, error) {
+	saved, expected, err := s.savedReinstallDNS(ctx, tx, preparationID)
 	if err != nil {
 		return nil, err
 	}
 	targets, err := s.reinstallDNSTargets(ctx, tx, agentID, preparationID)
 	if saved != nil {
-		saved.Current = err == nil && reviewed == revision && reflect.DeepEqual(expected, targets)
+		// Bind durable DNS evidence to its owned records and approved addresses.
+		// Unrelated task history must not invalidate an unchanged external result.
+		saved.Current = err == nil && reflect.DeepEqual(expected, targets)
 		age := s.now().UTC().Sub(saved.CheckedAt)
 		saved.CanContinue = saved.CanContinue && saved.Current && age >= 0 && age <= 30*time.Minute
 		return saved, nil
@@ -188,11 +189,11 @@ func (s *Store) runReinstallDNS(ctx context.Context, agentID, adminID string, in
 	if err != nil {
 		return result, err
 	}
-	saved, expected, reviewed, err := s.savedReinstallDNS(ctx, tx, preparationID)
+	saved, expected, err := s.savedReinstallDNS(ctx, tx, preparationID)
 	if err != nil {
 		return result, err
 	}
-	if saved != nil && (reviewed != input.PlanRevision || !reflect.DeepEqual(expected, targets)) {
+	if saved != nil && !reflect.DeepEqual(expected, targets) {
 		return result, errors.New("center: saved DNS migration no longer matches the reviewed recovery")
 	}
 	if !inspect && saved != nil && input.ExpectedAttempt == 0 {

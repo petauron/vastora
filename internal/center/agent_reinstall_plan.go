@@ -199,7 +199,7 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 			return plan, err
 		}
 		if preparation := plan.Applications[i].Preparation; preparation != nil {
-			preparation.DNS, err = s.readReinstallDNS(ctx, tx, agentID, preparation.DeploymentID, plan.Revision)
+			preparation.DNS, err = s.readReinstallDNS(ctx, tx, agentID, preparation.DeploymentID)
 			if err != nil {
 				return plan, err
 			}
