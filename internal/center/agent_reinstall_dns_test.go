@@ -317,3 +317,48 @@ func TestAgentReinstallDNSResultCommitFailureCanBeInspectedWithoutReplay(t *test
 		t.Fatalf("inspection replayed mutation: %+v %v", result, err)
 	}
 }
+
+func TestAgentReinstallDNSRetainsEvidenceAcrossUnrelatedPlanChange(t *testing.T) {
+	s, node, input, api := reinstallDNSFixture(t)
+	ctx := context.Background()
+	saved, err := s.MigrateAgentReinstallDNS(ctx, node.ID, "reinstall-review-admin", input)
+	if err != nil || saved.State != "succeeded" {
+		t.Fatalf("migration: %+v %v", saved, err)
+	}
+	if _, err = s.db.Exec(`UPDATE applications SET name='Renamed application' WHERE id=?`, input.ApplicationID); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := s.AgentReinstallPlan(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Revision == input.PlanRevision {
+		t.Fatal("fixture did not change plan")
+	}
+	if !plan.Applications[0].Preparation.DNS.Current {
+		t.Fatal("unchanged DNS evidence was invalidated")
+	}
+	input.ExpectedAttempt = saved.Attempt
+	if _, err = s.InspectAgentReinstallDNS(ctx, node.ID, "reinstall-review-admin", input); err == nil {
+		t.Fatal("stale request authorization accepted")
+	}
+	input.PlanRevision = plan.Revision
+	checked, err := s.InspectAgentReinstallDNS(ctx, node.ID, "reinstall-review-admin", input)
+	if err != nil || checked.State != "succeeded" || !checked.Current || api.writes != 1 {
+		t.Fatalf("read-only review: %+v %v writes=%d", checked, err, api.writes)
+	}
+	if _, err = s.db.Exec(`UPDATE publications SET dns_record_id='changed-record' WHERE id='restored-entry'`); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = s.AgentReinstallPlan(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Applications[0].Preparation.DNS.Current {
+		t.Fatal("changed record reused old evidence")
+	}
+	input.PlanRevision = plan.Revision
+	if _, err = s.InspectAgentReinstallDNS(ctx, node.ID, "reinstall-review-admin", input); err == nil {
+		t.Fatal("changed record was adopted")
+	}
+}
