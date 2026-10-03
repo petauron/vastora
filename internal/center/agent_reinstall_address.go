@@ -99,7 +99,10 @@ func (s *Store) agentReinstallNetworkReview(ctx context.Context, tx *sql.Tx, age
 	if err != nil {
 		return nil, err
 	}
-	if egress != nil && egress.ObservedAt.After(cutoff) {
+	// Enrollment clears old-machine observations. The replacement reports its
+	// startup-cached mapping on authenticated heartbeats; its original detection
+	// time is not a heartbeat expiry. Match ordinary network-profile approval.
+	if egress != nil && review.Ready {
 		review.PublicEgress = egress
 	}
 	var identity landing.PeerIdentity
