@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.275](https://github.com/petauron/vastora/compare/v0.1.0-alpha.274...v0.1.0-alpha.275) (2026-10-03)
+
+
+### Bug Fixes
+
+* observe replacement network identity before restoring apps ([#792](https://github.com/petauron/vastora/issues/792)) ([db878ca](https://github.com/petauron/vastora/commit/db878cacffced474f4a88ab83bfa3a78f1d0a325))
+
 ## [0.1.0-alpha.274](https://github.com/petauron/vastora/compare/v0.1.0-alpha.273...v0.1.0-alpha.274) (2026-10-03)
 
 
