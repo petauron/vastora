@@ -505,7 +505,7 @@ func (s *Store) EnrollAgentOperation(ctx context.Context, enrollmentToken, opera
 		VALUES(?, ?, ?, ?, ?, ?, ?)`, enrollmentTokenHash, operationID, requestHash[:], id, responseSecretID, now.Add(agentEnrollmentReplayLifetime).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return AgentCredential{}, fmt.Errorf("center: save Agent enrollment operation: %w", err)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE agent_enrollment_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL`, now.Format(time.RFC3339Nano), enrollmentTokenHash)
+	result, err := tx.ExecContext(ctx, `UPDATE agent_enrollment_tokens SET used_at = ?, bootstrap_secret_id = NULL WHERE token_hash = ? AND used_at IS NULL`, now.Format(time.RFC3339Nano), enrollmentTokenHash)
 	if err != nil {
 		return AgentCredential{}, fmt.Errorf("center: consume agent enrollment: %w", err)
 	}
