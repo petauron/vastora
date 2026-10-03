@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -266,6 +267,22 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 	if err != nil {
 		return ApplicationTaskResult{}, err
 	}
+	if task.PulseRestore != nil {
+		if task.Operation != "install" || task.PulseRestore.Validate() != nil || credentials != nil {
+			return ApplicationTaskResult{}, errors.New("agent: original Pulse credentials require a fresh collector installation")
+		}
+		if info, err := os.Lstat(manager.path(pulseState)); err == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return ApplicationTaskResult{}, errors.New("agent: existing Pulse state requires review")
+			}
+			entries, readErr := os.ReadDir(manager.path(pulseState))
+			if readErr != nil || len(entries) != 0 {
+				return ApplicationTaskResult{}, errors.New("agent: existing Pulse state requires review")
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return ApplicationTaskResult{}, errors.New("agent: existing Pulse state requires review")
+		}
+	}
 	if credentials == nil && task.Operation != "install" {
 		return ApplicationTaskResult{}, errors.New("agent: Pulse identity is missing; reinstall the collector to enroll again")
 	}
@@ -273,7 +290,7 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 		Token string `json:"enrollment_token"`
 	}
 	_ = json.Unmarshal(task.Secrets, &secrets)
-	if credentials == nil && (len(secrets.Token) < 16 || len(secrets.Token) > 512 || strings.ContainsAny(secrets.Token, " \t\r\n")) {
+	if credentials == nil && task.PulseRestore == nil && (len(secrets.Token) < 16 || len(secrets.Token) > 512 || strings.ContainsAny(secrets.Token, " \t\r\n")) {
 		return ApplicationTaskResult{}, errors.New("agent: Pulse enrollment is unavailable; retry installation")
 	}
 	if err := preserveHostFiles(ctx, snapshots); err != nil {
@@ -287,7 +304,7 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 	digest := sha256.Sum256(binary)
 	proof, _ := json.Marshal(pulsePackageProof{task.Manifest.Version, artifact.SHA256, hex.EncodeToString(digest[:])})
 	token := []byte(secrets.Token)
-	if credentials != nil {
+	if credentials != nil || task.PulseRestore != nil {
 		token = []byte{}
 	}
 	// Retain the upstream archive, including its license and third-party notices.
@@ -300,6 +317,9 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 		if err = writeHostFileAtomic(manager.path(path), contents[index], modes[index]); err != nil {
 			break
 		}
+	}
+	if err == nil && task.PulseRestore != nil {
+		err = manager.importPulseCredentials(ctx, config, *task.PulseRestore)
 	}
 	if err == nil {
 		for _, args := range [][]string{{"daemon-reload"}, {"enable", pulseUnitName}, {"restart", pulseUnitName}} {
@@ -328,7 +348,11 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 	if err := removeHostFile(manager.path(pulseRuntimeToken)); err != nil {
 		return ApplicationTaskResult{}, err
 	}
-	return ApplicationTaskResult{}, discardHostFileBackups(ctx, snapshots)
+	result := ApplicationTaskResult{}
+	if task.PulseRestore != nil {
+		result.PulseRestored = &pulse.RestoreResult{NodeID: task.PulseRestore.NodeID}
+	}
+	return result, discardHostFileBackups(ctx, snapshots)
 }
 
 func (manager SystemdHostApplicationManager) pulseCredentials(serviceURL string) ([]byte, error) {
@@ -408,4 +432,54 @@ func (manager SystemdHostApplicationManager) RemovePulse(ctx context.Context, ap
 		return err
 	}
 	return manager.run(ctx, "systemctl", "daemon-reload")
+}
+
+// Use Pulse's supported importer. The credential travels only over stdin and
+// never appears in process arguments, environment, logs or returned errors.
+func (manager SystemdHostApplicationManager) importPulseCredentials(ctx context.Context, config pulse.AgentConfig, credentials pulse.RestoreCredentials) error {
+	state := manager.path(pulseState)
+	if info, err := os.Lstat(state); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("agent: Pulse state directory is not private")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errors.New("agent: Pulse state directory is unavailable")
+	}
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		return errors.New("agent: prepare Pulse state directory failed")
+	}
+	if err := os.Chmod(state, 0o700); err != nil {
+		return errors.New("agent: protect Pulse state directory failed")
+	}
+	if err := manager.run(ctx, "chown", pulseUser+":"+pulseUser, state); err != nil {
+		return errors.New("agent: assign Pulse state directory failed")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	args := []string{"-u", pulseUser, "--", "env", "-i", "PULSE_SERVICE_URL=" + config.ServiceURL, "PULSE_CREDENTIALS_PATH=" + manager.path(pulseCredentialsPath), manager.path(pulseBinary), "credentials", "import", credentials.NodeID}
+	input := strings.NewReader(credentials.Token + "\n")
+	var err error
+	if manager.RunInputCommand != nil {
+		err = manager.RunInputCommand(ctx, input, "runuser", args...)
+	} else {
+		command := exec.CommandContext(ctx, "runuser", args...)
+		command.Stdin = input
+		command.Stdout, command.Stderr = io.Discard, io.Discard
+		err = command.Run()
+	}
+	if err != nil {
+		return errors.New("agent: original Pulse credential import requires inspection")
+	}
+	raw, err := manager.pulseCredentials(config.ServiceURL)
+	if err != nil {
+		return err
+	}
+	var saved struct {
+		NodeID string `json:"node_id"`
+		Token  string `json:"agent_token"`
+	}
+	if json.Unmarshal(raw, &saved) != nil || saved.NodeID != credentials.NodeID || saved.Token != credentials.Token {
+		return errors.New("agent: Pulse importer did not retain the approved monitoring identity")
+	}
+	return nil
 }

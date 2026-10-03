@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -101,80 +102,8 @@ func (s *Store) RecoverMeridianSource(ctx context.Context, endpointID, adminID s
 	if input.PreviousFingerprint != view.PreviousFingerprint || input.CurrentFingerprint != view.CurrentFingerprint || input.EndpointRevision != view.EndpointRevision {
 		return errors.New("center: Meridian replacement identity or configuration changed; inspect it again before confirming")
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT egress_node_id FROM meridian_route_grants
-		WHERE endpoint_id=? AND ((enabled=1 AND status<>'revoked') OR status='revoking') ORDER BY egress_node_id`, endpointID)
+	landingIDs, err := s.replaceMeridianSourceInTx(ctx, tx, endpointID, nodeID, adminID, view, currentJSON)
 	if err != nil {
-		return err
-	}
-	landingIDs := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		landingIDs = append(landingIDs, id)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, id := range append([]string{nodeID}, landingIDs...) {
-		var busy bool
-		if err := tx.QueryRowContext(ctx, `SELECT
-			EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')
-			OR EXISTS(SELECT 1 FROM application_commands WHERE agent_id=? AND (state IN ('pending','running') OR reconciliation_required=1))
-			OR EXISTS(SELECT 1 FROM deployments WHERE agent_id=? AND (state IN ('pending','running') OR reconciliation_required=1))`, id, id, id).Scan(&busy); err != nil {
-			return err
-		}
-		if busy {
-			return errors.New("center: settle active or uncertain executions on the entry and affected landings before identity recovery")
-		}
-	}
-	for _, id := range landingIDs {
-		var desiredJSON, appliedJSON []byte
-		var desiredRevision, appliedRevision int64
-		var status string
-		if err := tx.QueryRowContext(ctx, `SELECT desired_json,applied_json,desired_revision,applied_revision,status FROM landing_server_states WHERE node_id=?`, id).
-			Scan(&desiredJSON, &appliedJSON, &desiredRevision, &appliedRevision, &status); err != nil {
-			return err
-		}
-		var desired, applied landing.ServerState
-		if json.Unmarshal(desiredJSON, &desired) != nil || json.Unmarshal(appliedJSON, &applied) != nil || desired.Validate() != nil || applied.Validate() != nil ||
-			desired.NodeID != id || applied.NodeID != id || desired.Plan == nil || applied.Plan == nil ||
-			status != "ready" || desiredRevision != appliedRevision || desired.Revision != uint64(desiredRevision) || applied.Revision != uint64(appliedRevision) {
-			return errors.New("center: wait for the affected landing services to finish their current authorization update")
-		}
-		// Require the removal receipt even when the replacement reuses the old
-		// address. Adding it back now necessarily needs a new server receipt.
-		for _, raw := range [][]byte{desiredJSON, appliedJSON} {
-			if meridianServerAuthorizesSource(raw, id, view.PreviousAddress) || meridianServerAuthorizesSource(raw, id, view.CurrentAddress) {
-				return errors.New("center: wait for the landing services to confirm withdrawal of the previous entry identity")
-			}
-		}
-	}
-	if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
-		return err
-	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET source_peer_json=?,desired_revision=desired_revision+1,
-		runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE id=?`, currentJSON, now, endpointID); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,health_expires_unix_ms=0,
-		status=CASE WHEN status='revoking' THEN status ELSE 'blocked' END,last_error=?,updated_at=?
-		WHERE endpoint_id=? AND ((enabled=1 AND status<>'revoked') OR status='revoking')`, meridianRouteSourceUnauthorized, now, endpointID); err != nil {
-		return err
-	}
-	for _, id := range landingIDs {
-		if err := s.refreshClientLandingSources(ctx, tx, id); err != nil {
-			return err
-		}
-	}
-	audit, _ := json.Marshal(map[string]any{"adminId": adminID, "previousFingerprint": view.PreviousFingerprint,
-		"currentFingerprint": view.CurrentFingerprint, "observedAt": view.ObservedAt, "executionStopped": true})
-	if err := s.recordTaskEvent(ctx, tx, endpointID, nodeID, "meridian.source.recover", view.EndpointRevision+1, "succeeded", string(audit)); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -184,4 +113,87 @@ func (s *Store) RecoverMeridianSource(ctx context.Context, endpointID, adminID s
 		s.taskChanges.notify("agent:" + id)
 	}
 	return nil
+}
+
+// Both ordinary source repair and reviewed reinstall recovery use the same
+// settled-work, withdrawal-receipt and subscription-preservation checks.
+func (s *Store) replaceMeridianSourceInTx(ctx context.Context, tx *sql.Tx, endpointID, nodeID, adminID string, view MeridianSourceRecoveryView, currentJSON []byte) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT egress_node_id FROM meridian_route_grants
+		WHERE endpoint_id=? AND ((enabled=1 AND status<>'revoked') OR status='revoking') ORDER BY egress_node_id`, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	landingIDs := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		landingIDs = append(landingIDs, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range append([]string{nodeID}, landingIDs...) {
+		var busy bool
+		if err := tx.QueryRowContext(ctx, `SELECT
+			EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')
+			OR EXISTS(SELECT 1 FROM application_commands WHERE agent_id=? AND (state IN ('pending','running') OR reconciliation_required=1))
+			OR EXISTS(SELECT 1 FROM deployments WHERE agent_id=? AND (state IN ('pending','running') OR reconciliation_required=1))`, id, id, id).Scan(&busy); err != nil {
+			return nil, err
+		}
+		if busy {
+			return nil, errors.New("center: settle active or uncertain executions on the entry and affected landings before identity recovery")
+		}
+	}
+	for _, id := range landingIDs {
+		var desiredJSON, appliedJSON []byte
+		var desiredRevision, appliedRevision int64
+		var status string
+		if err := tx.QueryRowContext(ctx, `SELECT desired_json,applied_json,desired_revision,applied_revision,status FROM landing_server_states WHERE node_id=?`, id).
+			Scan(&desiredJSON, &appliedJSON, &desiredRevision, &appliedRevision, &status); err != nil {
+			return nil, err
+		}
+		var desired, applied landing.ServerState
+		if json.Unmarshal(desiredJSON, &desired) != nil || json.Unmarshal(appliedJSON, &applied) != nil || desired.Validate() != nil || applied.Validate() != nil ||
+			desired.NodeID != id || applied.NodeID != id || desired.Plan == nil || applied.Plan == nil ||
+			status != "ready" || desiredRevision != appliedRevision || desired.Revision != uint64(desiredRevision) || applied.Revision != uint64(appliedRevision) {
+			return nil, errors.New("center: wait for the affected landing services to finish their current authorization update")
+		}
+		// Require the removal receipt even when the replacement reuses the old
+		// address. Adding it back now necessarily needs a new server receipt.
+		for _, raw := range [][]byte{desiredJSON, appliedJSON} {
+			if meridianServerAuthorizesSource(raw, id, view.PreviousAddress) || meridianServerAuthorizesSource(raw, id, view.CurrentAddress) {
+				return nil, errors.New("center: wait for the landing services to confirm withdrawal of the previous entry identity")
+			}
+		}
+	}
+	if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
+		return nil, err
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET source_peer_json=?,desired_revision=desired_revision+1,
+		runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE id=?`, currentJSON, now, endpointID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,health_expires_unix_ms=0,
+		status=CASE WHEN status='revoking' THEN status ELSE 'blocked' END,last_error=?,updated_at=?
+		WHERE endpoint_id=? AND ((enabled=1 AND status<>'revoked') OR status='revoking')`, meridianRouteSourceUnauthorized, now, endpointID); err != nil {
+		return nil, err
+	}
+	for _, id := range landingIDs {
+		if err := s.refreshClientLandingSources(ctx, tx, id); err != nil {
+			return nil, err
+		}
+	}
+	audit, _ := json.Marshal(map[string]any{"adminId": adminID, "previousFingerprint": view.PreviousFingerprint,
+		"currentFingerprint": view.CurrentFingerprint, "observedAt": view.ObservedAt, "executionStopped": true})
+	if err := s.recordTaskEvent(ctx, tx, endpointID, nodeID, "meridian.source.recover", view.EndpointRevision+1, "succeeded", string(audit)); err != nil {
+		return nil, err
+	}
+
+	return landingIDs, nil
 }

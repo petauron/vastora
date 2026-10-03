@@ -111,6 +111,11 @@ func taskOutcomeIsUncertain(err error) bool {
 }
 
 type Capabilities struct {
+	PulseRestore          bool `json:"pulseRestore"`
+	MeridianAcceptance    bool `json:"meridianAcceptance"`
+	PulseReporting        bool `json:"pulseReporting"`
+	PulseRotation         bool `json:"pulseRotation"`
+	PulseInspection       bool `json:"pulseInspection"`
 	IPQuality             bool `json:"ipQuality"`
 	NetworkDiagnostics    bool `json:"networkDiagnostics"`
 	ReturnRoute           bool `json:"returnRoute"`
@@ -135,9 +140,14 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
+	PulseRestore              *pulse.RestoreCredentials            `json:"pulseRestore,omitempty"`
+	PulseReporting            *pulse.ReportingTask                 `json:"pulseReporting,omitempty"`
+	PulseRotation             *pulse.RotationTask                  `json:"pulseRotation,omitempty"`
+	PulseInspection           *pulse.InspectionTask                `json:"pulseInspection,omitempty"`
 	PulseEnrollment           *pulse.EnrollmentTask                `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                   `json:"protocolCommand,omitempty"`
 	XrayRecovery              *xrayrecovery.Task                   `json:"xrayRecovery,omitempty"`
@@ -195,8 +205,13 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	MeridianAcceptance   *meridianruntime.AcceptanceResult   `json:"meridianAcceptance,omitempty"`
 	IPQuality            *ipquality.Result                   `json:"ipQuality,omitempty"`
 	NodeDiagnostics      *nodediagnostics.Result             `json:"nodeDiagnostics,omitempty"`
+	PulseRestored        *pulse.RestoreResult                `json:"pulseRestored,omitempty"`
+	PulseReporting       *pulse.ReportingResult              `json:"pulseReporting,omitempty"`
+	PulseRotation        *pulse.RotationResult               `json:"pulseRotation,omitempty"`
+	PulseInspection      *pulse.InspectionResult             `json:"pulseInspection,omitempty"`
 	PulseEnrollment      *pulse.EnrollmentResult             `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand      *nodeprotocol.Result                `json:"protocolCommand,omitempty"`
 	XrayRecovery         *xrayrecovery.Result                `json:"xrayRecovery,omitempty"`

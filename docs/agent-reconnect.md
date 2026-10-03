@@ -25,13 +25,101 @@ rows default to no retirement marker: the migration does not invent which old
 results predate a past reinstall. Existing uncertain historical work still needs
 inspection. Schema downgrade is not supported.
 
-## Remaining recovery work (#759)
+## Reviewed replacement and persistent pause (#759)
 
-This is an execution-isolation repair, not the complete reinstall workflow.
-Private identity withdrawal, approved address migration, a new plan from saved
-application intent, data restore requirements and end-to-end business evidence
-still need the unified recovery flow. In particular, retained successful business
-records do not prove the replacement machine is serving those applications.
+`GET /api/v1/agents/{id}/reinstall-plan` provides an administrator-only,
+non-cacheable review of one node from a consistent database snapshot. It does
+not create a reconnect grant, retire identity, contact a host or run a command.
+The response contains no saved configuration, keys, command payloads or raw results.
+
+The inventory selects the latest deployment **intent**, including a pending or
+failed uninstall, rather than resurrecting the last successful installation.
+It keeps the exact saved version and validates its artifact description without
+fetching or selecting the latest catalog version. Artifact and credential
+verification is still required before any execution. Missing or inconsistent
+saved artifacts require review. Meridian requires validation of its Center-owned
+configuration and credentials; a Pulse collector requires verified original
+monitoring identity and replacement credentials. Stateful and unknown applications
+require data restoration on the replacement, even if a previous backup drill was recorded.
+
+The `monitoring` inventory reads original registration IDs from authenticated,
+encrypted task/result evidence for the same collector application and monitoring
+service. It includes earlier installs after a configure/upgrade and preserves
+expired registration evidence. Names and addresses are never identity matches.
+Its review revision binds the retained evidence, without returning tokens or
+task payloads. Missing, inconsistent or excessive evidence is explicit; partial
+evidence must not select a remaining candidate automatically.
+
+`inspection_required` means these registration IDs still need inspection through
+Pulse's supported `enrollment inspect ID` command. Registration creation does not
+prove that the collector consumed that token; an install may have retained an
+older local credential. The inventory itself does not contact Pulse.
+
+After replacement enrollment and old identity isolation, an administrator can
+explicitly post `operationId`, `planRevision` and `applicationId` to
+`POST /api/v1/agents/{id}/reinstall-monitor/inspect`. This queues a bounded read on
+the original managed Pulse service, pinned to its reviewed deployment. Selection,
+execution authorization and result projection recheck the operation, administrator,
+replacement key and original registration evidence. The replacement's general
+execution fence remains in place. Self-hosted monitoring first requires restoration
+of the service and its data.
+
+The Agent only runs fixed `pulse-service --help` and `enrollment inspect ID`
+commands inside the owned service container. It requires the supported CLI and
+never silently upgrades an older Pulse installation. Each requested record must
+be returned exactly, without tokens or partial results. Consumed records must
+identify the same active monitor node; missing, inactive or ambiguous associations
+require review. Expired enrollment tokens may still identify historical nodes.
+The supported CLI prerequisite is merged in [Pulse PR26](https://github.com/petauron/pulse/pull/26);
+that merge alone does not make the installed service support the command.
+
+The saved receipt survives Center restart. Identical requests return that receipt
+while its binding remains current, and changed evidence invalidates it. The page
+shows pending, failed, review-required and verified identity states. Verification
+does not rotate credentials, create a monitor node, resume tasks or establish
+metric collection. Credential replacement/import and business recovery remain
+unfinished in this draft.
+
+Unclaimed work is listed separately from executions: retiring an execution
+session does not dispose an unclaimed install, uninstall or network change.
+Retired and unretired uncertain results keep their actual phase and state.
+Retained inactive network profiles remain visible as dependencies, never as
+authorization for a new identity. Managed private address preservation cannot be
+promised with the current Headscale API, so explicit address migration remains
+a requirement. No plan item implies completed restoration or working traffic.
+
+The node action opens this review without changing credentials. Confirmation
+posts `operationId`, `planRevision` and `confirmReplacement` to the reconnect
+endpoint. The current administrator and the exact reviewed snapshot are recorded
+before external bootstrap preparation; an outdated review is rejected without
+revoking the node. Schema 105 stores this operation and invalidates unused legacy
+replacement grants that have no review binding. Forward migration uses the normal
+backup and fail-closed path. The unreleased schema also rebuilds the application
+command constraint for the inspection task, preserving historical rows, indexes,
+triggers and delivery evidence; fresh and migrated schemas are equivalent.
+
+The persistent operation fences all task claim and authorization paths, including
+Agent updates and Xray repair exceptions. Heartbeats may report observations, but
+cannot use a runtime-generation increase to reconstruct old applications or replay
+unclaimed work. Enrollment preserves the old network profile under its **old**
+Agent public key; matching addresses on the new machine cannot automatically
+activate that old binding. The new machine must use a fresh key.
+
+An unused, unexpired command can be retrieved with the same operation ID and
+review revision after a lost response or Center restart. Its response is encrypted
+at rest and never included in the read-only plan or node list. Repeated requests
+cannot create another operation or repeat an interrupted external bootstrap call.
+Preparing/failed operations remain paused for inspection. A separately confirmed
+review can replace an unused grant; explicitly stopping node access also revokes
+in-flight preparation, so a late response cannot restore the grant.
+
+The page shows saved progress on both online and offline nodes. A replacement
+reaches `review_required`, not completion. This draft deliberately has no action
+that clears the pause merely because the Agent is online. Keep the PR unmerged
+until private identity withdrawal, explicit address migration, reviewed historical
+effect disposal, new application restoration tasks and real business verification
+are integrated into a resumable flow. Stateful apps still need a verified backup;
+retained successful business records do not prove they exist on the replacement.
 
 The pinned Headscale 0.29.3 [control API](https://github.com/juanfont/headscale/blob/v0.29.3/proto/headscale/v1/headscale.proto)
 does not provide an atomic node-identity replacement or explicit per-node IP

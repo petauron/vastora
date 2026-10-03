@@ -105,7 +105,37 @@ func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request
 }
 
 func (s *Server) handleCreateAgentReconnectEnrollment(writer http.ResponseWriter, request *http.Request) {
-	enrollment, err := s.store.CreateAgentReconnectEnrollment(request.Context(), request.PathValue("id"))
+	var input AgentReinstallInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	adminID, err := s.requestAdminID(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	enrollment, err := s.store.CreateAgentReconnectEnrollment(request.Context(), request.PathValue("id"), adminID, input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusCreated, enrollment)
+}
+
+func (s *Server) handleContinueAgentReinstallIsolation(writer http.ResponseWriter, request *http.Request) {
+	var input AgentReinstallContinueInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	adminID, err := s.requestAdminID(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	enrollment, err := s.store.ContinueAgentReinstallIsolation(request.Context(), request.PathValue("id"), adminID, input)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return

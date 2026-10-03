@@ -571,6 +571,11 @@ func runAgent(arguments []string) error {
 		client.Capabilities.LandingEgressIP = runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.MeridianLinkBandwidth = capabilities.Docker && runtime.GOOS == "linux"
 		client.Capabilities.MeridianLinkRevision = nodediagnostics.LinkBandwidthRevision
+		client.Capabilities.PulseInspection = capabilities.Docker && runtime.GOOS == "linux"
+		client.Capabilities.PulseRotation = client.Capabilities.PulseInspection
+		client.Capabilities.MeridianAcceptance = client.Capabilities.Docker
+		client.Capabilities.PulseReporting = client.Capabilities.PulseInspection
+		client.Capabilities.PulseRestore = runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.HostProfile = runtime.GOOS == "linux"
 		if capabilities.Docker {
 			client.NodeListener = agent.DockerLayer4Provisioner{Image: *haproxyImage}

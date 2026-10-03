@@ -45,7 +45,7 @@ func TestAgentReconnectDoesNotApplyPreviousMachineResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock = clock.Add(time.Minute)
-	enrollment, err := store.CreateAgentReconnectEnrollment(ctx, node.ID)
+	enrollment, err := createReviewedReconnect(t, store, ctx, node.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,14 +89,7 @@ func TestAgentReconnectDoesNotApplyPreviousMachineResult(t *testing.T) {
 			t.Fatal("old receipt offered as proof of completion on replacement machine")
 		}
 	}
-	cookie, _, err := store.CreateFirstAdmin(ctx, "recovery-admin", "test-only-strong-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	adminID, err := store.SessionAdminID(ctx, cookie)
-	if err != nil {
-		t.Fatal(err)
-	}
+	adminID := "reinstall-review-admin"
 	if err := store.ConfirmExecution(ctx, task.Authorization.ID, adminID, controlplane.ExecutionDisposition{Action: "confirm-completed", ExecutionStopped: true, Note: "Previous machine was replaced"}); err == nil {
 		t.Fatal("manual confirmation accepted the previous machine result")
 	}
@@ -133,7 +126,7 @@ func TestAgentReconnectRetiresExecutionAuthorityAtomically(t *testing.T) {
 				}
 			}
 			clock = clock.Add(time.Minute)
-			_, err := store.CreateAgentReconnectEnrollment(ctx, node.ID)
+			_, err := createReviewedReconnect(t, store, ctx, node.ID)
 			if (err != nil) != fail {
 				t.Fatalf("reconnect failure=%t: %v", fail, err)
 			}

@@ -6549,6 +6549,15 @@
               "application/json": {
                 "schema": {}
               }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
             }
           },
           "400": {
@@ -6577,7 +6586,3449 @@
               "minLength": 1
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "confirmReplacement": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Administrator confirmation bound to a reviewed recovery revision and an operation ID. Retires the previous execution identity and persistently pauses task claims. Withdraws and verifies the authenticated old private identity before preparing a one-time command. Retrying the same operation returns the same valid command; interrupted external preparation is never automatically replayed. Enrollment is not business recovery."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-plan": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Plan",
+        "operationId": "agentReinstallPlan_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "revision": {
+                      "type": "string"
+                    },
+                    "recovery": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "planRevision": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string"
+                            },
+                            "privateIsolation": {
+                              "type": "string"
+                            },
+                            "attempt": {
+                              "type": "integer"
+                            },
+                            "authorizedBy": {
+                              "type": "string"
+                            },
+                            "previousFingerprint": {
+                              "type": "string"
+                            },
+                            "replacementFingerprint": {
+                              "type": "string"
+                            },
+                            "lastError": {
+                              "type": "string"
+                            },
+                            "createdAt": {
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "checkedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "identityFingerprint": {
+                      "type": "string"
+                    },
+                    "credentialRevoked": {
+                      "type": "boolean"
+                    },
+                    "networkReview": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "previous": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "serviceAddress": {
+                                      "type": "string"
+                                    },
+                                    "lanAddress": {
+                                      "type": "string"
+                                    },
+                                    "headscaleAddress": {
+                                      "type": "string"
+                                    },
+                                    "publicAddress": {
+                                      "type": "string"
+                                    },
+                                    "publicBindAddress": {
+                                      "type": "string"
+                                    },
+                                    "publicMode": {
+                                      "type": "string"
+                                    },
+                                    "enabledKinds": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "directPublic": {
+                                      "type": "boolean"
+                                    },
+                                    "publicVerifiedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "confirmedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "candidateObservedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "candidates": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "address": {
+                                    "type": "string"
+                                  },
+                                  "interface": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string"
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "publicEgress": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "address": {
+                                      "type": "string"
+                                    },
+                                    "bindAddress": {
+                                      "type": "string"
+                                    },
+                                    "mode": {
+                                      "type": "string"
+                                    },
+                                    "observedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "privatePeer": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "publicKey": {
+                                      "type": "string"
+                                    },
+                                    "address": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "ready": {
+                              "type": "boolean"
+                            },
+                            "approval": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "planRevision": {
+                                      "type": "string"
+                                    },
+                                    "previous": {
+                                      "anyOf": [
+                                        {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "serviceAddress": {
+                                              "type": "string"
+                                            },
+                                            "lanAddress": {
+                                              "type": "string"
+                                            },
+                                            "headscaleAddress": {
+                                              "type": "string"
+                                            },
+                                            "publicAddress": {
+                                              "type": "string"
+                                            },
+                                            "publicBindAddress": {
+                                              "type": "string"
+                                            },
+                                            "publicMode": {
+                                              "type": "string"
+                                            },
+                                            "enabledKinds": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "directPublic": {
+                                              "type": "boolean"
+                                            },
+                                            "publicVerifiedAt": {
+                                              "type": "string",
+                                              "format": "date-time"
+                                            },
+                                            "confirmedAt": {
+                                              "type": "string",
+                                              "format": "date-time"
+                                            },
+                                            "candidateObservedAt": {
+                                              "type": "string",
+                                              "format": "date-time"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "profile": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "serviceAddress": {
+                                          "type": "string"
+                                        },
+                                        "lanAddress": {
+                                          "type": "string"
+                                        },
+                                        "headscaleAddress": {
+                                          "type": "string"
+                                        },
+                                        "publicAddress": {
+                                          "type": "string"
+                                        },
+                                        "publicBindAddress": {
+                                          "type": "string"
+                                        },
+                                        "publicMode": {
+                                          "type": "string"
+                                        },
+                                        "enabledKinds": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "directPublic": {
+                                          "type": "boolean"
+                                        },
+                                        "publicVerifiedAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "confirmedAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "candidateObservedAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      }
+                                    },
+                                    "privatePeer": {
+                                      "anyOf": [
+                                        {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "id": {
+                                              "type": "string"
+                                            },
+                                            "publicKey": {
+                                              "type": "string"
+                                            },
+                                            "address": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "controllerId": {
+                                      "type": "string"
+                                    },
+                                    "controllerEndpoint": {
+                                      "type": "string"
+                                    },
+                                    "authorizedBy": {
+                                      "type": "string"
+                                    },
+                                    "approvedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "profileActive": {
+                              "type": "boolean"
+                            },
+                            "approvalCurrent": {
+                              "type": "boolean"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "privateNetwork": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "ownership": {
+                          "type": "string"
+                        },
+                        "serviceAddress": {
+                          "type": "string"
+                        },
+                        "privateAddress": {
+                          "type": "string"
+                        },
+                        "profileRetained": {
+                          "type": "boolean"
+                        },
+                        "addressRecovery": {
+                          "type": "string"
+                        },
+                        "landingRoutes": {
+                          "type": "integer"
+                        },
+                        "publications": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "applications": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "applicationId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "appKey": {
+                            "type": "string"
+                          },
+                          "deploymentId": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "string"
+                          },
+                          "operation": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "recovery": {
+                            "type": "string"
+                          },
+                          "sharedEntry": {
+                            "type": "boolean"
+                          },
+                          "requirements": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "preparation": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "deploymentId": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  },
+                                  "landing": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "state": {
+                                            "type": "string"
+                                          },
+                                          "identity": {
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "previousFingerprint": {
+                                                "type": "string"
+                                              },
+                                              "currentFingerprint": {
+                                                "type": "string"
+                                              },
+                                              "previousAddress": {
+                                                "type": "string"
+                                              },
+                                              "currentAddress": {
+                                                "type": "string"
+                                              },
+                                              "endpointRevision": {
+                                                "type": "integer"
+                                              },
+                                              "observedAt": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "landings": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "object",
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "nodeId": {
+                                                  "type": "string"
+                                                },
+                                                "revision": {
+                                                  "type": "integer"
+                                                },
+                                                "peerFingerprint": {
+                                                  "type": "string"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "runtime": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "commandId": {
+                                            "type": "string"
+                                          },
+                                          "state": {
+                                            "type": "string"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "listener": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "taskId": {
+                                            "type": "string"
+                                          },
+                                          "state": {
+                                            "type": "string"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "access": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "state": {
+                                            "type": "string"
+                                          },
+                                          "serviceAddress": {
+                                            "type": "string"
+                                          },
+                                          "publicAddress": {
+                                            "type": "string"
+                                          },
+                                          "activatedAt": {
+                                            "type": "string",
+                                            "format": "date-time"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "dns": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "state": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "integer"
+                                          },
+                                          "current": {
+                                            "type": "boolean"
+                                          },
+                                          "canContinue": {
+                                            "type": "boolean"
+                                          },
+                                          "checkedAt": {
+                                            "type": "string",
+                                            "format": "date-time"
+                                          },
+                                          "entries": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "object",
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "publicationId": {
+                                                  "type": "string"
+                                                },
+                                                "hostname": {
+                                                  "type": "string"
+                                                },
+                                                "provider": {
+                                                  "type": "string"
+                                                },
+                                                "previousAddress": {
+                                                  "type": "string"
+                                                },
+                                                "address": {
+                                                  "type": "string"
+                                                },
+                                                "state": {
+                                                  "type": "string"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "entryCheck": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "state": {
+                                            "type": "string"
+                                          },
+                                          "current": {
+                                            "type": "boolean"
+                                          },
+                                          "checkedAt": {
+                                            "type": "string",
+                                            "format": "date-time"
+                                          },
+                                          "entries": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "object",
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "publicationId": {
+                                                  "type": "string"
+                                                },
+                                                "hostname": {
+                                                  "type": "string"
+                                                },
+                                                "publicAddress": {
+                                                  "type": "string"
+                                                },
+                                                "sniHostname": {
+                                                  "type": "string"
+                                                },
+                                                "state": {
+                                                  "type": "string"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "pendingWork": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "agentId": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "unclaimedLocalWork": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "taskId": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "executions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "agentId": {
+                            "type": "string"
+                          },
+                          "taskId": {
+                            "type": "string"
+                          },
+                          "attempt": {
+                            "type": "integer"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "phase": {
+                            "type": "string"
+                          },
+                          "identityRetired": {
+                            "type": "boolean"
+                          },
+                          "resolution": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "localWorkDisposition": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "planRevision": {
+                              "type": "string"
+                            },
+                            "executionIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "unclaimedWork": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "taskId": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "type": "integer"
+                                  }
+                                }
+                              }
+                            },
+                            "authorizedBy": {
+                              "type": "string"
+                            },
+                            "disposedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "monitoring": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "applicationId": {
+                            "type": "string"
+                          },
+                          "serviceApplicationId": {
+                            "type": "string"
+                          },
+                          "serviceAgentId": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "enrollments": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "enrollmentId": {
+                                  "type": "string"
+                                },
+                                "executionId": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "reporting": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "commandId": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  },
+                                  "checkedAt": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "restoration": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "deploymentId": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "rotation": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "commandId": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  },
+                                  "nodeId": {
+                                    "type": "string"
+                                  },
+                                  "rotatedAt": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "inspection": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "commandId": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  },
+                                  "nodeId": {
+                                    "type": "string"
+                                  },
+                                  "error": {
+                                    "type": "string"
+                                  },
+                                  "inspectedAt": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "requirements": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "remaining": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "applicationId": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-isolation/continue": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Continue Agent Reinstall Isolation",
+        "operationId": "continueAgentReinstallIsolation_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "expectedAttempt": {
+                    "type": "integer"
+                  },
+                  "confirmIsolation": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicit continuation by the authorizing administrator, bound to the inspected recovery attempt. Rechecks the exact saved private identity and controller; never rediscovers another owner by address. Stale or duplicate continuations cannot repeat an attempt. This action cannot repeat bootstrap preparation with an uncertain result."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-network/approve": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Approve Agent Reinstall Network",
+        "operationId": "approveAgentReinstallNetwork_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "planRevision": {
+                      "type": "string"
+                    },
+                    "previous": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "serviceAddress": {
+                              "type": "string"
+                            },
+                            "lanAddress": {
+                              "type": "string"
+                            },
+                            "headscaleAddress": {
+                              "type": "string"
+                            },
+                            "publicAddress": {
+                              "type": "string"
+                            },
+                            "publicBindAddress": {
+                              "type": "string"
+                            },
+                            "publicMode": {
+                              "type": "string"
+                            },
+                            "enabledKinds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "directPublic": {
+                              "type": "boolean"
+                            },
+                            "publicVerifiedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "confirmedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "candidateObservedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "profile": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "serviceAddress": {
+                          "type": "string"
+                        },
+                        "lanAddress": {
+                          "type": "string"
+                        },
+                        "headscaleAddress": {
+                          "type": "string"
+                        },
+                        "publicAddress": {
+                          "type": "string"
+                        },
+                        "publicBindAddress": {
+                          "type": "string"
+                        },
+                        "publicMode": {
+                          "type": "string"
+                        },
+                        "enabledKinds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "directPublic": {
+                          "type": "boolean"
+                        },
+                        "publicVerifiedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "confirmedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "candidateObservedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "privatePeer": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "publicKey": {
+                              "type": "string"
+                            },
+                            "address": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "controllerId": {
+                      "type": "string"
+                    },
+                    "controllerEndpoint": {
+                      "type": "string"
+                    },
+                    "authorizedBy": {
+                      "type": "string"
+                    },
+                    "approvedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "confirmMigration": {
+                    "type": "boolean"
+                  },
+                  "profile": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "serviceAddress": {
+                        "type": "string"
+                      },
+                      "lanAddress": {
+                        "type": "string"
+                      },
+                      "headscaleAddress": {
+                        "type": "string"
+                      },
+                      "publicAddress": {
+                        "type": "string"
+                      },
+                      "publicBindAddress": {
+                        "type": "string"
+                      },
+                      "publicMode": {
+                        "type": "string"
+                      },
+                      "enabledKinds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "directPublic": {
+                        "type": "boolean"
+                      },
+                      "publicVerifiedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "confirmedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "candidateObservedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicit address migration approval bound to the replacement identity and reviewed network evidence. Verifies managed private identity through the controller and retains previous/new profiles plus administrator audit. Saves restoration intent only; does not activate addresses, change publications or release task execution."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-work/settle": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Settle Agent Reinstall Local Work",
+        "operationId": "settleAgentReinstallLocalWork_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "planRevision": {
+                      "type": "string"
+                    },
+                    "executionIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "unclaimedWork": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "taskId": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "authorizedBy": {
+                      "type": "string"
+                    },
+                    "disposedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "confirmLocal": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicit administrator settlement of reviewed, retired host-local executions after old identity isolation and replacement enrollment. Preserves historical outcomes and encrypted evidence, atomically abandons exact attempts, cancels reviewed pending attempt-zero local tasks with no historical authorization, and records a durable receipt. Saved application intent and credentials are retained. Remote or unclassified effects require separate review. Does not dispatch restoration or release the recovery fence."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-applications/withdraw-landing": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Landing Source",
+        "operationId": "agentReinstallLandingWithdraw_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "state": {
+                      "type": "string"
+                    },
+                    "identity": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "previousFingerprint": {
+                          "type": "string"
+                        },
+                        "currentFingerprint": {
+                          "type": "string"
+                        },
+                        "previousAddress": {
+                          "type": "string"
+                        },
+                        "currentAddress": {
+                          "type": "string"
+                        },
+                        "endpointRevision": {
+                          "type": "integer"
+                        },
+                        "observedAt": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "landings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "nodeId": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "integer"
+                          },
+                          "peerFingerprint": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicitly withdraw saved landing source permissions, then replace the source identity only after applied withdrawal receipts. Reuses existing landing tasks, preserves independent sources and never establishes runtime or client health. Failed or changed evidence requires inspection; repeated requests do not queue work again."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-applications/authorize-landing": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Landing Source",
+        "operationId": "agentReinstallLandingAuthorize_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "state": {
+                      "type": "string"
+                    },
+                    "identity": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "previousFingerprint": {
+                          "type": "string"
+                        },
+                        "currentFingerprint": {
+                          "type": "string"
+                        },
+                        "previousAddress": {
+                          "type": "string"
+                        },
+                        "currentAddress": {
+                          "type": "string"
+                        },
+                        "endpointRevision": {
+                          "type": "integer"
+                        },
+                        "observedAt": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "landings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "nodeId": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "integer"
+                          },
+                          "peerFingerprint": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicitly withdraw saved landing source permissions, then replace the source identity only after applied withdrawal receipts. Reuses existing landing tasks, preserves independent sources and never establishes runtime or client health. Failed or changed evidence requires inspection; repeated requests do not queue work again."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-applications/restore-runtime": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Runtime",
+        "operationId": "agentReinstallRuntime_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "commandId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Restore one reviewed native Meridian runtime using the saved package and credentials on the approved replacement address. Fixed egress is restored only after reviewed source replacement and applied landing authorization; otherwise it remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-applications/migrate-dns": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall DNS",
+        "operationId": "agentReinstallDNSMigrate_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "attempt": {
+                      "type": "integer"
+                    },
+                    "current": {
+                      "type": "boolean"
+                    },
+                    "canContinue": {
+                      "type": "boolean"
+                    },
+                    "checkedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "publicationId": {
+                            "type": "string"
+                          },
+                          "hostname": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          },
+                          "previousAddress": {
+                            "type": "string"
+                          },
+                          "address": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  },
+                  "expectedAttempt": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicitly migrate owned DNS records, or inspect a saved uncertain attempt without writing external DNS. Bound to the reviewed recovery; never releases its execution fence."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-applications/inspect-dns": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall DNS",
+        "operationId": "agentReinstallDNSInspect_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "attempt": {
+                      "type": "integer"
+                    },
+                    "current": {
+                      "type": "boolean"
+                    },
+                    "canContinue": {
+                      "type": "boolean"
+                    },
+                    "checkedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "publicationId": {
+                            "type": "string"
+                          },
+                          "hostname": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          },
+                          "previousAddress": {
+                            "type": "string"
+                          },
+                          "address": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  },
+                  "expectedAttempt": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicitly migrate owned DNS records, or inspect a saved uncertain attempt without writing external DNS. Bound to the reviewed recovery; never releases its execution fence."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-applications/activate-address": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Access",
+        "operationId": "agentReinstallAccess_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "state": {
+                      "type": "string"
+                    },
+                    "serviceAddress": {
+                      "type": "string"
+                    },
+                    "publicAddress": {
+                      "type": "string"
+                    },
+                    "activatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Activate the reviewed replacement network profile and one restored Meridian service binding after exact runtime and applicable shared-listener receipts. Atomically retain original address approval and activation evidence. Repeated requests return the same receipt; changed bindings require inspection. Does not alter DNS, landing identities, account usage or business readiness, and never releases the recovery fence."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall/complete": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Complete Agent Reinstall",
+        "operationId": "completeAgentReinstall_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-applications/client-checks": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Client Checks",
+        "operationId": "agentReinstallClientChecks_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "requestId": {
+                    "type": "string"
+                  },
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  },
+                  "verifierAgentId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Client Checks",
+        "operationId": "agentReinstallClientChecks_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "requestId": {
+                    "type": "string"
+                  },
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  },
+                  "verifierAgentId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-applications/verify-entry": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Entry Check",
+        "operationId": "agentReinstallEntryCheck_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "current": {
+                      "type": "boolean"
+                    },
+                    "checkedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "publicationId": {
+                            "type": "string"
+                          },
+                          "hostname": {
+                            "type": "string"
+                          },
+                          "publicAddress": {
+                            "type": "string"
+                          },
+                          "sniHostname": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "One explicit read-only DNS and exact-SNI TLS check on the approved replacement public address after native runtime and listener receipts. Revalidates recovery authority before storing evidence, preserves prior checks and never activates profiles or completes authenticated client recovery. A changed review or evidence older than 30 minutes makes the result historical."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-applications/restore-entry": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Listener",
+        "operationId": "agentReinstallListener_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Restore the reviewed saved shared listener after native Meridian runtime restoration. Uses only the approved backend and public bind address; other shared applications or a gateway require restoration first. A listener receipt does not verify public reachability, publish subscriptions or release the recovery fence."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-applications/prepare": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Preparation",
+        "operationId": "agentReinstallPreparation_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "deploymentId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "landing": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "state": {
+                              "type": "string"
+                            },
+                            "identity": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "previousFingerprint": {
+                                  "type": "string"
+                                },
+                                "currentFingerprint": {
+                                  "type": "string"
+                                },
+                                "previousAddress": {
+                                  "type": "string"
+                                },
+                                "currentAddress": {
+                                  "type": "string"
+                                },
+                                "endpointRevision": {
+                                  "type": "integer"
+                                },
+                                "observedAt": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "landings": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "nodeId": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "type": "integer"
+                                  },
+                                  "peerFingerprint": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "runtime": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "commandId": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "listener": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "taskId": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "access": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "state": {
+                              "type": "string"
+                            },
+                            "serviceAddress": {
+                              "type": "string"
+                            },
+                            "publicAddress": {
+                              "type": "string"
+                            },
+                            "activatedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "dns": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string"
+                            },
+                            "attempt": {
+                              "type": "integer"
+                            },
+                            "current": {
+                              "type": "boolean"
+                            },
+                            "canContinue": {
+                              "type": "boolean"
+                            },
+                            "checkedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "entries": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "publicationId": {
+                                    "type": "string"
+                                  },
+                                  "hostname": {
+                                    "type": "string"
+                                  },
+                                  "provider": {
+                                    "type": "string"
+                                  },
+                                  "previousAddress": {
+                                    "type": "string"
+                                  },
+                                  "address": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "entryCheck": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string"
+                            },
+                            "current": {
+                              "type": "boolean"
+                            },
+                            "checkedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "entries": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "publicationId": {
+                                    "type": "string"
+                                  },
+                                  "hostname": {
+                                    "type": "string"
+                                  },
+                                  "publicAddress": {
+                                    "type": "string"
+                                  },
+                                  "sniHostname": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Prepare the reviewed saved Meridian package on its authorized replacement machine. Creates one durable application deployment bound to original intent and approved network, without activating services or releasing the recovery fence. Source changes and uncertain outcomes require review."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-monitor/reporting": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Monitor Reporting",
+        "operationId": "agentReinstallMonitorReporting_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "commandId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "checkedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Restore the reviewed saved Pulse collector package and configuration on the replacement host. Imports the original node's credential from authenticated encrypted rotation evidence using Pulse's fixed stdin CLI. Exact task digest binds approval, claim, sealing and result projection. Does not create another monitoring node, verify metric reporting or release the recovery fence."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-monitor/restore": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Monitor Restore",
+        "operationId": "agentReinstallMonitorRestore_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "deploymentId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Restore the reviewed saved Pulse collector package and configuration on the replacement host. Imports the original node's credential from authenticated encrypted rotation evidence using Pulse's fixed stdin CLI. Exact task digest binds approval, claim, sealing and result projection. Does not create another monitoring node, verify metric reporting or release the recovery fence."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-monitor/rotate": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Monitor Rotation",
+        "operationId": "agentReinstallMonitorRotation_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "commandId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "nodeId": {
+                      "type": "string"
+                    },
+                    "rotatedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicit single rotation of a recently verified original Pulse node credential. Bound to the administrator, replacement identity, original registration evidence and exact managed service deployment at selection, sealing and projection. Retains the original node and history; stores the new credential only in encrypted execution evidence. Repeats return the saved operation, including unknown outcomes, without issuing another rotation. Collector import, reporting verification and recovery completion remain separate."
+      }
+    },
+    "/api/v1/agents/{id}/reinstall-monitor/inspect": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Reinstall Monitor Inspection",
+        "operationId": "agentReinstallMonitorInspection_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "commandId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "nodeId": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "inspectedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "planRevision": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Explicit read-only inspection of reviewed original Pulse enrollment records on their exact managed service deployment. Bound to the administrator, recovery operation, replacement identity and retained source evidence; validated at selection, authorization and projection. Returns a durable receipt without rotating credentials or completing recovery. Requires an inspection-capable service Agent and Pulse CLI."
       }
     },
     "/api/v1/agents/{id}": {
@@ -7269,6 +10720,21 @@
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
+                      "pulseRestore": {
+                        "type": "boolean"
+                      },
+                      "meridianAcceptance": {
+                        "type": "boolean"
+                      },
+                      "pulseReporting": {
+                        "type": "boolean"
+                      },
+                      "pulseRotation": {
+                        "type": "boolean"
+                      },
+                      "pulseInspection": {
+                        "type": "boolean"
+                      },
                       "ipQuality": {
                         "type": "boolean"
                       },

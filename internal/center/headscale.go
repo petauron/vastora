@@ -520,10 +520,11 @@ func (s *Store) reconcileHeadscaleDNSForSystem(ctx context.Context, primaryCente
 	} else if (modeErr != nil && !errors.Is(modeErr, sql.ErrNoRows)) || (endpointErr != nil && !errors.Is(endpointErr, sql.ErrNoRows)) {
 		return errors.Join(modeErr, endpointErr)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT p.hostname, n.headscale_address FROM publications p
-		JOIN agent_network_profiles n ON n.agent_id = p.entry_node_id
-		WHERE p.kind = 'headscale_gateway' AND p.dns_provider = 'headscale' AND p.status <> 'stopped'
-		ORDER BY p.hostname, p.id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT publications.hostname, n.headscale_address FROM publications
+		JOIN agent_network_profiles n ON n.agent_id = publications.entry_node_id
+		WHERE publications.kind = 'headscale_gateway' AND publications.dns_provider = 'headscale' AND publications.status <> 'stopped'
+		AND `+publicationReinstallAllowedSQL+`
+		ORDER BY publications.hostname, publications.id`)
 	if err != nil {
 		return err
 	}

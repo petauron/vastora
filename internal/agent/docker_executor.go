@@ -176,6 +176,10 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 }
 
 func validateApplicationTask(task DeploymentTask) error {
+	if task.PulseRestore != nil && (task.AppKey != pulse.AgentKey || task.Operation != "install" || task.PulseRestore.Validate() != nil) {
+		return errors.New("agent: original Pulse credentials require a collector restoration task")
+	}
+
 	if strings.TrimSpace(task.ID) == "" || strings.TrimSpace(task.ApplicationID) == "" || strings.TrimSpace(task.AppKey) == "" {
 		return errors.New("agent: application task identity is required")
 	}

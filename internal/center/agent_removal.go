@@ -124,6 +124,7 @@ func validateAgentRemovalDependencies(ctx context.Context, tx *sql.Tx, id string
 
 func revokeAgentReconnectGrants(ctx context.Context, tx *sql.Tx, id string) error {
 	for _, query := range []string{
+		`UPDATE agent_reinstall_operations SET state='superseded',sealed_enrollment=NULL,last_error='Recovery command revoked by administrator' WHERE agent_id=? AND state IN ('preparing','awaiting_enrollment')`,
 		`DELETE FROM secrets WHERE id IN (SELECT bootstrap_secret_id FROM agent_enrollment_tokens WHERE target_agent_id=? AND bootstrap_secret_id IS NOT NULL)`,
 		`DELETE FROM agent_enrollment_tokens WHERE target_agent_id=?`,
 		`DELETE FROM agent_enrollment_operations WHERE agent_id=?`,

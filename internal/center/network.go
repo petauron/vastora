@@ -108,6 +108,13 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 		return nil, err
 	}
 	defer tx.Rollback()
+	blocked, err := agentReinstallBlocked(ctx, tx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if blocked {
+		return nil, errors.New("center: review address migration through the active reinstall recovery before confirming network settings")
+	}
 	var lastSeenAtValue string
 	if err := tx.QueryRowContext(ctx, `SELECT last_seen_at FROM agents WHERE id = ? AND status = 'active'`, agentID).Scan(&lastSeenAtValue); errors.Is(err, sql.ErrNoRows) {
 		return nil, errors.New("center: active Agent not found")

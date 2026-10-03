@@ -250,6 +250,35 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 	if err := tx.QueryRowContext(ctx, `SELECT session_id FROM agent_execution_sessions WHERE agent_id=?`, agentID).Scan(&current); err != nil || current != sessionID {
 		return errExecutionAuthorization
 	}
+	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
+		return err
+	} else if blocked {
+		id, err := pendingAgentReinstallTask(ctx, tx, agentID, "")
+		if err != nil {
+			return err
+		}
+		var version string
+		if err = tx.QueryRowContext(ctx, `SELECT version FROM agents WHERE id=?`, agentID).Scan(&version); err != nil {
+			return err
+		}
+		if strings.HasPrefix(id, "node-listener-") {
+			if _, err = s.reinstallListenerTask(ctx, tx, agentID, id, false); err != nil {
+				return err
+			}
+		} else if strings.HasPrefix(id, "reinstall-runtime-") {
+			if _, err = s.reinstallRuntimeTask(ctx, tx, agentID, id, false); err != nil {
+				return err
+			}
+		} else if _, err = s.validateReinstallPreparation(ctx, tx, agentID, id); err != nil {
+			return err
+		}
+		if unresolved, err := unresolvedExecutionBlocksAgentWork(ctx, tx, agentID, version); err != nil {
+			return err
+		} else if unresolved {
+			return errExecutionBlocked
+		}
+		return nil
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `UPDATE task_executions SET state='unknown',last_error='Execution authorization expired; manual verification required',updated_at=?
 		WHERE agent_id=? AND disposition='' AND state IN ('offered','running','helper_running') AND expires_at<=?`, now, agentID, now); err != nil {
@@ -299,6 +328,143 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	if task.ID == "" || task.Attempt <= 0 {
 		return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 	}
+	if task.Kind == "application.command" {
+		if blocked, err := reinstallCommandTargetBlocked(ctx, tx, agentID, task.ID); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		} else if blocked {
+			return controlplane.ExecutionAuthorization{}, errExecutionBlocked
+		}
+	}
+	var acceptance bool
+	if task.Kind == "application.command" {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='meridian.recovery.acceptance')`, task.ID, agentID).Scan(&acceptance); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+	}
+	if acceptance || task.MeridianAcceptance != nil {
+		if !acceptance || task.MeridianAcceptance == nil || task.Attempt != 1 || task.Reconcile {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+		expected, err := s.validateReinstallAcceptance(ctx, tx, agentID, task.ID)
+		if err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		a, _ := json.Marshal(expected)
+		b, _ := json.Marshal(task.MeridianAcceptance)
+		if string(a) != string(b) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
+	var pulseReporting bool
+	if task.Kind == "application.command" {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.node.reporting')`, task.ID, agentID).Scan(&pulseReporting); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+	}
+	if pulseReporting || task.PulseReporting != nil {
+		if !pulseReporting || task.PulseReporting == nil || task.Attempt != 1 || task.Reconcile {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+		_, expectedTask, err := s.validateReinstallMonitorReporting(ctx, tx, agentID, task.ID)
+		if err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		expected, _ := json.Marshal(expectedTask)
+		actual, _ := json.Marshal(task.PulseReporting)
+		if string(expected) != string(actual) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
+	var pulseRotation bool
+	if task.Kind == "application.command" {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.node.rotate')`, task.ID, agentID).Scan(&pulseRotation); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+	}
+	if pulseRotation || task.PulseRotation != nil {
+		if !pulseRotation || task.PulseRotation == nil || task.Attempt != 1 || task.Reconcile {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+		command, err := s.validateReinstallMonitorRotation(ctx, tx, agentID, task.ID)
+		if err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		expected, _ := json.Marshal(command.Task)
+		actual, _ := json.Marshal(task.PulseRotation)
+		if string(expected) != string(actual) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
+	var pulseInspection bool
+	if task.Kind == "application.command" {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.enrollment.inspect')`, task.ID, agentID).Scan(&pulseInspection); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+	}
+	if pulseInspection || task.PulseInspection != nil {
+		if !pulseInspection || task.PulseInspection == nil {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+		command, err := s.validateReinstallInspection(ctx, tx, agentID, task.ID)
+		if err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		expected, _ := json.Marshal(command.Task)
+		actual, _ := json.Marshal(task.PulseInspection)
+		if string(expected) != string(actual) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
+	preparation, err := s.validateReinstallPreparation(ctx, tx, agentID, task.ID)
+	if err != nil {
+		return controlplane.ExecutionAuthorization{}, err
+	}
+	if preparation {
+		var expected []byte
+		if err := tx.QueryRowContext(ctx, `SELECT task_json FROM agent_reinstall_app_preparations WHERE deployment_id=?`, task.ID).Scan(&expected); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		actual, err := json.Marshal(task)
+		if err != nil || string(actual) != string(expected) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
+	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, task.ID, false)
+	if err != nil {
+		return controlplane.ExecutionAuthorization{}, err
+	}
+	if restoredMonitor != nil || task.PulseRestore != nil {
+		if restoredMonitor == nil || task.PulseRestore == nil {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+		expected, _ := json.Marshal(restoredMonitor)
+		actual, _ := json.Marshal(task)
+		if string(actual) != string(expected) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
+	runtime, err := s.reinstallRuntimeTask(ctx, tx, agentID, task.ID, false)
+	if err != nil {
+		return controlplane.ExecutionAuthorization{}, err
+	}
+	if runtime != nil {
+		expected, _ := json.Marshal(runtime)
+		actual, _ := json.Marshal(task)
+		if string(expected) != string(actual) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
+	listener, err := s.reinstallListenerTask(ctx, tx, agentID, task.ID, false)
+	if err != nil {
+		return controlplane.ExecutionAuthorization{}, err
+	}
+	if listener != nil {
+		expected, _ := json.Marshal(listener)
+		actual, _ := json.Marshal(task)
+		if string(expected) != string(actual) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
 	id, err := randomToken(24)
 	if err != nil {
 		return controlplane.ExecutionAuthorization{}, err
@@ -313,6 +479,11 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 		return controlplane.ExecutionAuthorization{}, err
 	}
 	now := s.now().UTC()
+	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
+		return controlplane.ExecutionAuthorization{}, err
+	} else if blocked && !preparation && runtime == nil && listener == nil && restoredMonitor == nil {
+		return controlplane.ExecutionAuthorization{}, errExecutionBlocked
+	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
 		return controlplane.ExecutionAuthorization{}, err
 	} else if paused {
@@ -545,6 +716,9 @@ func (s *Store) finalizeExecution(ctx context.Context, tx *sql.Tx, agentID, sess
 }
 
 func executionFailureCanReleaseFence(task AgentTask) bool {
+	if task.Kind == "application.command" && task.PulseInspection != nil && task.PulseInspection.Validate() == nil {
+		return true
+	}
 	if task.Kind != "application.command" || task.ClientCommand == nil {
 		return false
 	}

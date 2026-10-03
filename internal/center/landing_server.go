@@ -112,11 +112,13 @@ func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID s
 			return nil, errors.New("center: landing Agent does not support explicit egress binding")
 		}
 	}
-	var completed bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state='complete')`).Scan(&completed); err != nil {
+	var refreshRequired bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state='complete')
+ OR EXISTS(SELECT 1 FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id JOIN applications a ON a.id=e.application_id JOIN agent_reinstall_operations op ON op.agent_id=a.node_id WHERE g.egress_node_id=? AND ((g.enabled=1 AND g.status<>'revoked') OR g.status='revoking') AND op.state NOT IN ('completed','superseded'))`, nodeID).Scan(&refreshRequired); err != nil {
 		return nil, err
 	}
-	if completed {
+	if refreshRequired {
+		// Recheck recovery authorization at claim even before legacy cutover.
 		// A pending legacy intent can predate the ownership handoff. Rebuild
 		// its source set from current grants before offering it; merely lifting
 		// the cutover fence must not authorize an obsolete source again.
@@ -222,6 +224,11 @@ func (s *Store) projectLandingServer(ctx context.Context, tx *sql.Tx, commit pro
 		if err := s.markMeridianLandingAuthorizationChanged(ctx, tx, nodeID, previousAppliedJSON, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
+	}
+	// Refresh the existing recovery sheet when its dependent landing receipt
+	// arrives. This does not advance recovery or mark client traffic healthy.
+	if _, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_operations SET updated_at=? WHERE state='review_required' AND id IN (SELECT p.operation_id FROM agent_reinstall_app_preparations p JOIN agent_reinstall_landing_sources r ON r.preparation_id=p.deployment_id, json_each(r.targets_json) target WHERE json_extract(target.value,'$.nodeId')=?)`, s.now().UTC().Format(time.RFC3339Nano), nodeID); err != nil {
+		return err
 	}
 	if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
 		return err

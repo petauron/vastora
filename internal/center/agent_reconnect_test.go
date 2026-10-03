@@ -39,16 +39,16 @@ func TestAgentReconnectEnrollmentReusesOfflineIdentity(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, status, runtime, runtime_generation, created_at, updated_at) VALUES('preserved-app', 'Preserved app', ?, ?, 'test/preserved', 'running', 'docker', 7, ?, ?)`, original.ID, siteID, clock.Format(time.RFC3339Nano), clock.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateAgentReconnectEnrollment(ctx, original.ID); err == nil || !strings.Contains(err.Error(), "disconnect") {
+	if _, err := createReviewedReconnect(t, store, ctx, original.ID); err == nil || !strings.Contains(err.Error(), "disconnect") {
 		t.Fatalf("connected Agent reconnect error = %v", err)
 	}
 
 	clock = clock.Add(time.Minute)
-	stale, err := store.CreateAgentReconnectEnrollment(ctx, original.ID)
+	stale, err := createReviewedReconnect(t, store, ctx, original.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, err := store.CreateAgentReconnectEnrollment(ctx, original.ID)
+	current, err := createReviewedReconnect(t, store, ctx, original.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestAgentReconnectEnrollmentReusesOfflineIdentity(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_gateways WHERE site_id = ? AND agent_id = ?`, siteID, original.ID).Scan(&gateways); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_network_profiles WHERE agent_id = ? AND service_address = '10.0.0.7'`, original.ID).Scan(&profiles); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_network_profile_recovery WHERE agent_id = ? AND json_extract(profile_json,'$.serviceAddress') = '10.0.0.7'`, original.ID).Scan(&profiles); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MAX(runtime_generation), -1) FROM applications WHERE id = 'preserved-app' AND node_id = ?`, original.ID).Scan(&applications, &applicationRuntimeGeneration); err != nil {
@@ -165,7 +165,7 @@ func TestDisabledAgentReconnectRestoresOnlyWithFreshCredential(t *testing.T) {
 	if _, err := store.db.Exec(`UPDATE agents SET status='disabled',credential_revoked_at='2026-01-01T00:00:00Z' WHERE id=?`, original.ID); err != nil {
 		t.Fatal(err)
 	}
-	reconnect, err := store.CreateAgentReconnectEnrollment(ctx, original.ID)
+	reconnect, err := createReviewedReconnect(t, store, ctx, original.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,4 +183,24 @@ func TestDisabledAgentReconnectRestoresOnlyWithFreshCredential(t *testing.T) {
 	if err := store.authenticateAgent(ctx, replacement.ID, replacement.Credential); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func reviewedReconnectInput(t *testing.T, store *Store, id string) AgentReinstallInput {
+	t.Helper()
+	if _, err := store.db.Exec(`INSERT OR IGNORE INTO admins(id,username,password_hash,created_at) VALUES('reinstall-review-admin','reinstall-review-admin','test-hash','')`); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := store.AgentReinstallPlan(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationID, err := randomToken(24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return AgentReinstallInput{OperationID: operationID, PlanRevision: plan.Revision, ConfirmReplacement: true}
+}
+func createReviewedReconnect(t *testing.T, store *Store, ctx context.Context, id string) (AgentEnrollment, error) {
+	t.Helper()
+	return store.CreateAgentReconnectEnrollment(ctx, id, "reinstall-review-admin", reviewedReconnectInput(t, store, id))
 }

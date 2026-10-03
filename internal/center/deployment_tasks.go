@@ -27,9 +27,14 @@ import (
 )
 
 type AgentTask struct {
+	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
+	PulseRestore              *pulse.RestoreCredentials            `json:"pulseRestore,omitempty"`
+	PulseReporting            *pulse.ReportingTask                 `json:"pulseReporting,omitempty"`
+	PulseRotation             *pulse.RotationTask                  `json:"pulseRotation,omitempty"`
+	PulseInspection           *pulse.InspectionTask                `json:"pulseInspection,omitempty"`
 	PulseEnrollment           *pulse.EnrollmentTask                `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                   `json:"protocolCommand,omitempty"`
 	XrayRecovery              *xrayrecovery.Task                   `json:"xrayRecovery,omitempty"`
@@ -92,6 +97,11 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return nil, err
 	}
+	if blocked, err := agentReinstallBlocked(ctx, s.db, agentID); err != nil {
+		return nil, err
+	} else if blocked {
+		return s.claimAgentReinstallTask(ctx, agentID, credential, requiredTaskID, commitTask)
+	}
 	if paused, err := executionClaimsPaused(ctx, s.db); err != nil {
 		return nil, err
 	} else if paused {
@@ -117,6 +127,11 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, fmt.Errorf("center: begin task claim: %w", err)
 	}
 	defer tx.Rollback()
+	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
+		return nil, err
+	} else if blocked {
+		return nil, errExecutionBlocked
+	}
 	var authorized int
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
 		return nil, err
@@ -185,24 +200,10 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if agentVersionBehindTarget(agentVersion, Version) {
 		return nil, nil
 	}
-	var task AgentTask
-	var manifest []byte
-	var config []byte
-	var secretID sql.NullString
-	var registryCredentialID sql.NullString
-	var attempt int64
-	var reconciliationRequested, requiredRuntimeGeneration int
-	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, a.role, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation
-		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending'
-		AND NOT (d.app_key = 'vastora-official/pulse-agent' AND d.operation = 'install' AND d.secret_id IS NULL)`
-	queryArgs := []any{agentID}
-	if requiredTaskID != "" {
-		query += ` AND d.id = ?`
-		queryArgs = append(queryArgs, requiredTaskID)
-	}
-	query += ` ORDER BY d.created_at, d.rowid LIMIT 1`
-	err = tx.QueryRowContext(ctx, query, queryArgs...).Scan(&task.ID, &task.AppKey, &manifest, &config, &secretID, &registryCredentialID, &task.Operation, &task.DeleteData, &task.ApplicationID, &task.ApplicationRole, &task.ServiceAddress, &attempt, &reconciliationRequested, &requiredRuntimeGeneration)
+	pending, err := readPendingApplicationDeployment(ctx, tx, agentID, requiredTaskID)
 	if errors.Is(err, sql.ErrNoRows) {
+		var task AgentTask
+		var attempt int64
 		if requiredTaskID != "" {
 			return nil, nil
 		}
@@ -367,13 +368,53 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if err != nil {
 		return nil, fmt.Errorf("center: read pending task: %w", err)
 	}
+	return s.claimApplicationDeployment(ctx, tx, agentID, agentRuntimeGeneration, pending, commitTask)
+}
+
+type pendingApplicationDeployment struct {
+	task                                               AgentTask
+	manifest, config                                   []byte
+	secretID, registryCredentialID                     sql.NullString
+	attempt                                            int64
+	reconciliationRequested, requiredRuntimeGeneration int
+}
+
+func readPendingApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, requiredTaskID string) (pendingApplicationDeployment, error) {
+	var p pendingApplicationDeployment
+	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, a.role, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation
+		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending'
+		AND NOT (d.app_key = 'vastora-official/pulse-agent' AND d.operation = 'install' AND d.secret_id IS NULL)`
+	queryArgs := []any{agentID}
+	if requiredTaskID != "" {
+		query += ` AND d.id = ?`
+		queryArgs = append(queryArgs, requiredTaskID)
+	}
+	query += ` ORDER BY d.created_at, d.rowid LIMIT 1`
+	err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&p.task.ID, &p.task.AppKey, &p.manifest, &p.config, &p.secretID, &p.registryCredentialID, &p.task.Operation, &p.task.DeleteData, &p.task.ApplicationID, &p.task.ApplicationRole, &p.task.ServiceAddress, &p.attempt, &p.reconciliationRequested, &p.requiredRuntimeGeneration)
+	return p, err
+}
+
+func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID string, agentRuntimeGeneration int, pending pendingApplicationDeployment, commitTask func(*sql.Tx, *AgentTask) error) (*AgentTask, error) {
+	task := pending.task
+	manifest, config := pending.manifest, pending.config
+	secretID, registryCredentialID := pending.secretID, pending.registryCredentialID
+	attempt, reconciliationRequested, requiredRuntimeGeneration := pending.attempt, pending.reconciliationRequested, pending.requiredRuntimeGeneration
+	preparation, err := s.validateReinstallPreparation(ctx, tx, agentID, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, task.ID, false)
+	if err != nil {
+		return nil, err
+	}
+	preparation = preparation || restoredMonitor != nil
 	task.Config = json.RawMessage(config)
 	if err := json.Unmarshal(manifest, &task.Manifest); err != nil {
 		return nil, fmt.Errorf("center: decode pending task: %w", err)
 	}
 	// Recheck only work that has never reached an Agent. Recovery of an
 	// already-issued operation must remain possible without a live catalog.
-	if attempt == 0 && reconciliationRequested == 0 && strings.HasPrefix(task.AppKey, OfficialCatalogSourceID+"/") && (task.Operation == "install" || task.Operation == "upgrade") {
+	if !preparation && attempt == 0 && reconciliationRequested == 0 && strings.HasPrefix(task.AppKey, OfficialCatalogSourceID+"/") && (task.Operation == "install" || task.Operation == "upgrade") {
 		if err := authorizeOfficialManifest(ctx, tx, "stable", task.Manifest, s.now().UTC()); err != nil {
 			now := s.now().UTC().Format(time.RFC3339Nano)
 			const message = "Refresh the app catalog and retry this operation."
@@ -416,6 +457,10 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	} else {
 		task.Secrets = json.RawMessage(`{}`)
 	}
+	if restoredMonitor != nil {
+		task.PulseRestore = restoredMonitor.PulseRestore
+		task.Secrets = json.RawMessage(`{}`)
+	}
 	if registryCredentialID.Valid {
 		var sealed []byte
 		var credential AgentRegistryCredential
@@ -437,8 +482,13 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if changed, _ := claimed.RowsAffected(); changed != 1 {
 		return nil, errors.New("center: application task changed while claiming")
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'deploying', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), task.ApplicationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'deploying', updated_at = ? WHERE id = ? AND NOT ?`, now.Format(time.RFC3339Nano), task.ApplicationID, preparation); err != nil {
 		return nil, fmt.Errorf("center: mark application deploying: %w", err)
+	}
+	if preparation {
+		if err := s.recordReinstallPreparationProgress(ctx, tx, task.ID); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.recordTaskEvent(ctx, tx, task.ID, agentID, task.Kind, task.Revision, "claimed", fmt.Sprintf("attempt %d", task.Attempt)); err != nil {
 		return nil, err
@@ -633,6 +683,18 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 	if executedRuntimeGeneration < 0 || executedRuntimeGeneration < requiredRuntimeGeneration || agentRuntimeGeneration < executedRuntimeGeneration {
 		return "", nil, errors.New("center: Agent task result does not prove the required application runtime generation")
 	}
+	preparation, err := s.validateReinstallPreparation(ctx, tx, agentID, taskID)
+	if err != nil {
+		return "", nil, err
+	}
+	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, taskID, false)
+	if err != nil {
+		return "", nil, err
+	}
+	preparation = preparation || restoredMonitor != nil
+	if preparation && reconciliationRequired {
+		return "", nil, errors.New("center: package preparation requires explicit outcome review")
+	}
 	now := s.now().UTC()
 	publicationCleanups := []publicationCleanup{}
 	var taskResult ApplicationTaskResult
@@ -640,6 +702,12 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 		if len(rawResult) != 0 && string(rawResult) != "null" && json.Unmarshal(rawResult, &taskResult) != nil {
 			return "", nil, errors.New("center: invalid Agent task result")
 		}
+	}
+	if restoredMonitor != nil && succeeded && (taskResult.PulseRestored == nil || taskResult.PulseRestored.NodeID != restoredMonitor.PulseRestore.NodeID || len(taskResult.Services) != 0) {
+		return "", nil, errors.New("center: restored Pulse collector did not confirm the original monitoring identity")
+	}
+	if preparation && len(taskResult.GeneratedSecrets) != 0 {
+		return "", nil, errors.New("center: package preparation cannot change application credentials")
 	}
 	if reconciliationRequired {
 		if err := validateReconciliationGeneratedSecrets(taskResult.GeneratedSecrets); err != nil {
@@ -661,7 +729,7 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 				return "", nil, err
 			}
 		}
-		if succeeded {
+		if !preparation {
 			if err := s.completeApplication(ctx, tx, taskID, applicationID, operation, executedRuntimeGeneration, taskResult, now, &publicationCleanups); err != nil {
 				return "", nil, err
 			}
@@ -705,7 +773,7 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 			}
 		}
 	}
-	if !succeeded {
+	if !succeeded && !preparation {
 		if taskError == "" {
 			taskError = "application task failed"
 		}
@@ -732,6 +800,11 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 	}
 	if changed != 1 {
 		return "", nil, errors.New("center: task is not active")
+	}
+	if preparation {
+		if err := s.recordReinstallPreparationProgress(ctx, tx, taskID); err != nil {
+			return "", nil, err
+		}
 	}
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.apply", applicationTaskRevision, state, taskError); err != nil {
 		return "", nil, err

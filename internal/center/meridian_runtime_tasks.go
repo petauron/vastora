@@ -289,7 +289,20 @@ func (s *Store) discardSupersededMeridianRuntimeCommand(ctx context.Context, tx 
 	return true, errApplicationCommandDiscarded
 }
 
+// A replacement restores on the reviewed address. Fixed egress is included
+// only after its separate identity withdrawal and authorization receipts.
+type meridianRuntimeRestoreTarget struct {
+	RestoreLandings bool
+	Address         string
+	Image           string
+	Revision        uint64
+}
+
 func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpointID, expectedAgentID string) (meridianRuntimeProjection, error) {
+	return s.buildMeridianRuntimeProjection(ctx, tx, endpointID, expectedAgentID, nil)
+}
+
+func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, endpointID, expectedAgentID string, restore *meridianRuntimeRestoreTarget) (meridianRuntimeProjection, error) {
 	var projection meridianRuntimeProjection
 	var endpoint meridian.RealityEndpoint
 	var hysteriaEndpoint meridian.HysteriaEndpoint
@@ -304,9 +317,9 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 		endpoint.vless_enabled,endpoint.hy2_enabled,endpoint.hy2_inbound_tag,endpoint.hy2_server_name,endpoint.hy2_certificate_secret_id,endpoint.hy2_private_key_secret_id,endpoint.hy2_certificate_not_after,
 		endpoint.desired_revision,endpoint.applied_revision,endpoint.runtime_healthy,endpoint.legacy_retired,endpoint.status,COALESCE(deployment.desired_sha256,''),endpoint.source_peer_json
 		FROM meridian_endpoints endpoint
-		JOIN applications application ON application.id=endpoint.application_id AND application.app_key=? AND application.status='running'
+		JOIN applications application ON application.id=endpoint.application_id AND application.app_key=? AND (application.status='running' OR ?)
 		LEFT JOIN meridian_deployments deployment ON deployment.endpoint_id=endpoint.id AND deployment.desired_revision=endpoint.desired_revision
-		WHERE endpoint.id=? AND endpoint.status<>'retired'`, meridianAppKey, endpointID).Scan(
+		WHERE endpoint.id=? AND endpoint.status<>'retired'`, meridianAppKey, restore != nil, endpointID).Scan(
 		&projection.task.ApplicationID, &projection.agentID, &projection.task.ImageReference, &projection.serviceID,
 		&endpoint.InboundTag, &endpoint.ListenAddress, &endpoint.ListenPort, &endpoint.AdvertiseHost, &endpoint.AdvertisePort, &endpoint.Target,
 		&serverNamesJSON, &privateKeySecretID, &endpoint.PublicKey, &shortIDsJSON, &endpoint.Fingerprint,
@@ -322,8 +335,16 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 	if expectedAgentID != "" && projection.agentID != expectedAgentID {
 		return projection, errors.New("center: Meridian endpoint moved to another Agent")
 	}
-	if expectedAgentID != "" && expectedSHA == "" {
+	if restore == nil && expectedAgentID != "" && expectedSHA == "" {
 		return projection, errors.New("center: Meridian deployment digest is unavailable")
+	}
+	if restore != nil {
+		if restore.Revision != uint64(revision) {
+			return projection, errors.New("center: reviewed Meridian runtime revision changed")
+		}
+		endpoint.ListenAddress = restore.Address
+		projection.task.ImageReference = restore.Image
+		expectedSHA = ""
 	}
 	endpoint.ID, endpoint.EntryID = endpointID, projection.task.ApplicationID
 	if revision < 1 || json.Unmarshal(serverNamesJSON, &endpoint.ServerNames) != nil || json.Unmarshal(shortIDsJSON, &endpoint.ShortIDs) != nil {
@@ -373,12 +394,15 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 	if vlessEnabled == 1 {
 		routeInboundTag = endpoint.InboundTag
 	}
-	routes, err := s.meridianRuntimeGrants(ctx, tx, endpointID, routeInboundTag, credentialByID)
-	if err != nil {
-		return projection, err
+	routes := meridianRuntimeRoutes{}
+	if restore == nil || restore.RestoreLandings {
+		routes, err = s.meridianRuntimeGrants(ctx, tx, endpointID, routeInboundTag, credentialByID)
+		if err != nil {
+			return projection, err
+		}
 	}
 	for index := range materials {
-		if routes.disabledCredentialIDs[materials[index].Credential.ID] {
+		if routes.disabledCredentialIDs[materials[index].Credential.ID] || restore != nil && !restore.RestoreLandings && materials[index].Credential.EgressID != "" {
 			materials[index].Credential.Enabled = false
 		}
 	}
@@ -419,7 +443,7 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 			return projection, err
 		}
 	}
-	projection.task.RetireLegacy = retirePhase && legacyRetired == 0 && endpointStatus == "ready" && runtimeHealthy == 1 && appliedRevision == revision && unreadyRoutes == 0
+	projection.task.RetireLegacy = restore == nil && retirePhase && legacyRetired == 0 && endpointStatus == "ready" && runtimeHealthy == 1 && appliedRevision == revision && unreadyRoutes == 0
 	if projection.task.Validate() != nil {
 		return projection, errors.New("center: Meridian runtime task is invalid")
 	}
@@ -728,59 +752,8 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 		}
 	}
 	if succeeded {
-		revision := int64(projection.task.Desired.Revision)
-		legacyRetired := 0
-		if envelope.MeridianRuntime.LegacyRetired {
-			legacyRetired = 1
-		}
-		endpointUpdate, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET applied_revision=?,runtime_healthy=1,legacy_retired=?,quota_applied_enabled=?,status='ready',last_error='',updated_at=? WHERE id=? AND desired_revision=?`, revision, legacyRetired, boolInt(endpointQuotaBefore), now, command.EndpointID, revision)
-		if err != nil {
+		if err := s.projectVerifiedMeridianRuntime(ctx, tx, command.EndpointID, taskID, projection, envelope.MeridianRuntime, endpointQuotaBefore, observedAt); err != nil {
 			return err
-		}
-		if changed, _ := endpointUpdate.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian endpoint changed before its runtime receipt was committed")
-		}
-		serviceUpdate, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,protocol='tcp',container_port=?,host_port=?,
-			app_protocol=?,observed_listen=?,status='ready',last_error='',updated_at=?
-			WHERE id=? AND application_id=? AND status<>'stopped'`, net.JoinHostPort(projection.backendAddress, fmt.Sprint(projection.backendPort)), projection.backendPort, projection.backendPort, meridianEntryProtocol, projection.backendAddress, now, projection.serviceID, projection.task.ApplicationID)
-		if err != nil {
-			return err
-		}
-		if changed, _ := serviceUpdate.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian service changed before its runtime receipt was committed")
-		}
-		deploymentUpdate, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET applied_revision=?,applied_sha256=?,status='ready',last_error='',updated_at=? WHERE endpoint_id=? AND command_id=? AND desired_revision=?`, revision, projection.task.Desired.ConfigSHA256, now, command.EndpointID, taskID, revision)
-		if err != nil {
-			return err
-		}
-		if changed, _ := deploymentUpdate.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian deployment changed before its runtime receipt was committed")
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET applied_revision=desired_revision,
-			runtime_healthy=0,health_expires_unix_ms=0,status=CASE WHEN status='revoking' THEN 'revoked' ELSE status END,
-			last_error=CASE WHEN status='revoking' THEN '' ELSE last_error END,updated_at=? WHERE endpoint_id=? AND status<>'revoked'`, now, command.EndpointID); err != nil {
-			return err
-		}
-		if err := recordMeridianRouteHealth(ctx, tx, command.EndpointID, projection, *envelope.MeridianRuntime, observedAt); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_accounts SET applied_revision=desired_revision,last_error='',updated_at=?
-			WHERE id IN (SELECT account_id FROM meridian_credentials WHERE endpoint_id=?)
-			AND NOT EXISTS (
-			 SELECT 1 FROM meridian_credentials credential JOIN meridian_endpoints endpoint ON endpoint.id=credential.endpoint_id
-			 WHERE credential.account_id=meridian_accounts.id AND credential.enabled=1 AND endpoint.status<>'retired'
-			 AND (endpoint.status<>'ready' OR endpoint.runtime_healthy<>1 OR endpoint.applied_revision<>endpoint.desired_revision)
-			)`, now, command.EndpointID); err != nil {
-			return err
-		}
-		if !projection.task.RetireLegacy {
-			parsedNow, err := time.Parse(time.RFC3339Nano, now)
-			if err != nil {
-				return err
-			}
-			if err := s.reconcileApplicationPublications(ctx, tx, projection.task.ApplicationID, parsedNow); err != nil {
-				return err
-			}
 		}
 	} else {
 		state, event, message = "failed", "failed", taskError
@@ -1236,4 +1209,65 @@ func (s *Store) failUnclaimableMeridianRuntimeCommand(ctx context.Context, tx *s
 		}
 	}
 	return s.discardUnclaimableApplicationCommand(ctx, tx, commandID, agentID, 1, nil, nil, cause)
+}
+
+// Shared by ordinary runtime completion and explicitly verified reinstall
+// finalization. The caller owns the transaction and all authorization gates.
+func (s *Store) projectVerifiedMeridianRuntime(ctx context.Context, tx *sql.Tx, endpointID, taskID string, projection meridianRuntimeProjection, result *meridianruntime.Result, quotaEnabled bool, observedAt time.Time) error {
+	now := observedAt.UTC().Format(time.RFC3339Nano)
+	revision := int64(projection.task.Desired.Revision)
+	legacyRetired := 0
+	if result.LegacyRetired {
+		legacyRetired = 1
+	}
+	endpointUpdate, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET applied_revision=?,runtime_healthy=1,legacy_retired=?,quota_applied_enabled=?,status='ready',last_error='',updated_at=? WHERE id=? AND desired_revision=?`, revision, legacyRetired, boolInt(quotaEnabled), now, endpointID, revision)
+	if err != nil {
+		return err
+	}
+	if changed, _ := endpointUpdate.RowsAffected(); changed != 1 {
+		return errors.New("center: Meridian endpoint changed before its runtime receipt was committed")
+	}
+	serviceUpdate, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,protocol='tcp',container_port=?,host_port=?,
+		app_protocol=?,observed_listen=?,status='ready',last_error='',updated_at=?
+		WHERE id=? AND application_id=? AND status<>'stopped'`, net.JoinHostPort(projection.backendAddress, fmt.Sprint(projection.backendPort)), projection.backendPort, projection.backendPort, meridianEntryProtocol, projection.backendAddress, now, projection.serviceID, projection.task.ApplicationID)
+	if err != nil {
+		return err
+	}
+	if changed, _ := serviceUpdate.RowsAffected(); changed != 1 {
+		return errors.New("center: Meridian service changed before its runtime receipt was committed")
+	}
+	deploymentUpdate, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET applied_revision=?,applied_sha256=?,status='ready',last_error='',updated_at=? WHERE endpoint_id=? AND command_id=? AND desired_revision=?`, revision, projection.task.Desired.ConfigSHA256, now, endpointID, taskID, revision)
+	if err != nil {
+		return err
+	}
+	if changed, _ := deploymentUpdate.RowsAffected(); changed != 1 {
+		return errors.New("center: Meridian deployment changed before its runtime receipt was committed")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET applied_revision=desired_revision,
+		runtime_healthy=0,health_expires_unix_ms=0,status=CASE WHEN status='revoking' THEN 'revoked' ELSE status END,
+		last_error=CASE WHEN status='revoking' THEN '' ELSE last_error END,updated_at=? WHERE endpoint_id=? AND status<>'revoked'`, now, endpointID); err != nil {
+		return err
+	}
+	if err := recordMeridianRouteHealth(ctx, tx, endpointID, projection, *result, observedAt); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_accounts SET applied_revision=desired_revision,last_error='',updated_at=?
+		WHERE id IN (SELECT account_id FROM meridian_credentials WHERE endpoint_id=?)
+		AND NOT EXISTS (
+		 SELECT 1 FROM meridian_credentials credential JOIN meridian_endpoints endpoint ON endpoint.id=credential.endpoint_id
+		 WHERE credential.account_id=meridian_accounts.id AND credential.enabled=1 AND endpoint.status<>'retired'
+		 AND (endpoint.status<>'ready' OR endpoint.runtime_healthy<>1 OR endpoint.applied_revision<>endpoint.desired_revision)
+		)`, now, endpointID); err != nil {
+		return err
+	}
+	if !projection.task.RetireLegacy {
+		parsedNow, err := time.Parse(time.RFC3339Nano, now)
+		if err != nil {
+			return err
+		}
+		if err := s.reconcileApplicationPublications(ctx, tx, projection.task.ApplicationID, parsedNow); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -38,10 +38,11 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var inputJSON []byte
 	var attempt int64
 	var reconciliationRequested int
-	err := tx.QueryRowContext(ctx, `SELECT id, kind, input_json, attempt, reconciliation_requested FROM application_commands
-		WHERE agent_id = ? AND state = 'pending'
+	err := tx.QueryRowContext(ctx, `SELECT c.id, c.kind, c.input_json, c.attempt, c.reconciliation_requested FROM application_commands c
+		WHERE c.agent_id = ? AND state = 'pending'
+		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=c.gateway_node_id AND r.state NOT IN ('superseded','completed') AND NOT (`+reinstallInspectionAuthoritySQL+` OR `+reinstallRotationAuthoritySQL+` OR `+reinstallReportingAuthoritySQL+` OR `+reinstallAcceptanceAuthoritySQL+`))
 		ORDER BY CASE WHEN kind = ? AND COALESCE(json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END, '$.migrationId'), '') = '' THEN 1 ELSE 0 END,
-		created_at, rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt, &reconciliationRequested)
+		created_at, c.rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt, &reconciliationRequested)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -54,11 +55,21 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var node *ThreeXUINodeCommandTask
 	var controller *ThreeXUIControllerCommandTask
 	var protocols *nodeprotocol.Task
+	var pulseReporting *pulse.ReportingTask
+	var pulseRotation *pulse.RotationTask
+	var pulseInspection *pulse.InspectionTask
 	var pulseEnrollment *pulse.EnrollmentTask
 	var meridianTask *meridianruntime.Task
+	var meridianAcceptance *meridianruntime.AcceptanceTask
 	var meridianLegacyExport *meridianruntime.LegacyExportCommand
 	var meridianLegacyRetire *meridianruntime.LegacyRetireTask
 	switch kind {
+	case meridianruntime.AcceptanceKind:
+		task, err := s.validateReinstallAcceptance(ctx, tx, agentID, id)
+		if err != nil {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
+		}
+		meridianAcceptance = &task
 	case meridianruntime.LegacyExportKind:
 		var command meridianruntime.LegacyExportCommand
 		if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
@@ -101,6 +112,24 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: Meridian legacy retirement is outside the authorized controller-only phase"))
 		}
 		meridianLegacyRetire = &command
+	case pulse.ReportingKind:
+		_, task, err := s.validateReinstallMonitorReporting(ctx, tx, agentID, id)
+		if err != nil {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
+		}
+		pulseReporting = &task
+	case pulse.RotationKind:
+		command, err := s.validateReinstallMonitorRotation(ctx, tx, agentID, id)
+		if err != nil {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
+		}
+		pulseRotation = &command.Task
+	case pulse.InspectionKind:
+		command, err := s.validateReinstallInspection(ctx, tx, agentID, id)
+		if err != nil {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
+		}
+		pulseInspection = &command.Task
 	case pulse.EnrollmentKind:
 		var command pulse.EnrollmentTask
 		if json.Unmarshal(inputJSON, &command) != nil || command.ApplicationID == "" || command.DeploymentID == "" {
@@ -277,7 +306,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, err
 		}
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, PulseEnrollment: pulseEnrollment, MeridianRuntime: meridianTask, MeridianLegacyExport: meridianLegacyExport, MeridianLegacyRetire: meridianLegacyRetire, Reconcile: reconciliationRequested == 1}, nil
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, PulseEnrollment: pulseEnrollment, PulseInspection: pulseInspection, PulseReporting: pulseReporting, PulseRotation: pulseRotation, MeridianRuntime: meridianTask, MeridianAcceptance: meridianAcceptance, MeridianLegacyExport: meridianLegacyExport, MeridianLegacyRetire: meridianLegacyRetire, Reconcile: reconciliationRequested == 1}, nil
 }
 
 func (s *Store) failUnclaimableThreeXUIInboundPlanCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command ThreeXUIClientCommandTask, cause error) error {
@@ -375,6 +404,11 @@ func (s *Store) completeApplicationCommand(ctx context.Context, commit projectio
 }
 
 func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commit projectionCommit, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, reconciliationRequired bool) error {
+	if blocked, err := reinstallCommandTargetBlocked(ctx, tx, agentID, taskID); err != nil {
+		return err
+	} else if blocked {
+		return errExecutionBlocked
+	}
 	taskError = strings.TrimSpace(taskError)
 	if len(taskError) > 1024 {
 		taskError = taskError[:1024]
@@ -398,6 +432,12 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 	}
 	if currentState != "running" || expectedAttempt <= 0 || expectedAttempt != attempt {
 		return errors.New("center: stale application operation result")
+	}
+	if strings.HasPrefix(taskID, "reinstall-runtime-") {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeReinstallRuntime(ctx, tx, commit, agentID, taskID, succeeded, taskError, rawResult)
 	}
 	if reconciliationRequired {
 		if succeeded || taskError == "" || appKey != threeXUIAppKey && appKey != meridianAppKey {
@@ -439,6 +479,18 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 	}
 	if kind == subscriptionCommandKind {
 		return s.completeSubscriptionCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind == meridianruntime.AcceptanceKind {
+		return s.completeReinstallAcceptance(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
+	}
+	if kind == pulse.ReportingKind {
+		return s.completeReinstallMonitorReporting(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
+	}
+	if kind == pulse.RotationKind {
+		return s.completeReinstallMonitorRotation(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
+	}
+	if kind == pulse.InspectionKind {
+		return s.completeReinstallInspection(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
 	}
 	if kind == pulse.EnrollmentKind {
 		return s.completePulseEnrollment(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, rawResult)
