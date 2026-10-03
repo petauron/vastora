@@ -20,7 +20,7 @@ func (e ApplicationExecutor) verifyMeridianEgressClient(ctx context.Context, c m
 		var err error
 		exit, err = (landing.Probe{TCPOnly: true}).CheckClientTCP(ctx, endpoint)
 		if err != nil {
-			return errors.New("agent: native egress verification failed; check the runtime's addresses, routes and DNS")
+			return fmt.Errorf("agent: native egress verification failed: %w", err)
 		}
 		if !meridianruntime.MatchesEgress(policy, exit) {
 			return errors.New("agent: native egress returned the wrong address family")

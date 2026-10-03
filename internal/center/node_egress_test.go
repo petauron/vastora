@@ -33,6 +33,10 @@ func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		view, readErr := s.ApplicationCommand(ctx, command)
+		if readErr != nil || view.Kind != meridianruntime.ApplyKind || view.State != "pending" {
+			t.Fatalf("queued command not readable: %#v %v", view, readErr)
+		}
 		if _, err = s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: meridian.EgressAuto}); err == nil {
 			t.Fatal("concurrent policy accepted")
 		}
@@ -50,7 +54,7 @@ func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
 			t.Fatalf("policy projection missing: %#v", p.task.NativeEgress)
 		}
 		c := p.task.EgressClients[0]
-		if c.Reality.AdvertiseHost != "100.64.0.61" || c.Reality.AdvertisePort != 10443 || c.Reality.PrivateKey != "" || c.Material.Credential.Kind != meridian.NativeCredential {
+		if c.Reality.AdvertiseHost != "entry.example.test" || c.Reality.AdvertisePort != 443 || c.Reality.PrivateKey != "" || c.Material.Credential.Kind != meridian.NativeCredential {
 			t.Fatal("probe changed identity or targeted a landing")
 		}
 		if _, err := c.Config(1080); err != nil {
@@ -64,6 +68,10 @@ func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
 			result.Egress = &meridianruntime.EgressObservation{Policy: p.task.NativeEgress, ConfigSHA256: p.task.Desired.ConfigSHA256, Exits: []string{"2001:4860:4860::8888"}, CheckedAt: s.now()}
 		}
 		completeMeridianHealthFixture(t, s, p, command, result)
+		terminal, readErr := s.ApplicationCommand(ctx, command)
+		if readErr != nil || terminal.State == "pending" || terminal.State == "running" {
+			t.Fatalf("terminal command not readable: %#v %v", terminal, readErr)
+		}
 		after, err := s.NodeEgress(ctx, id)
 		if err != nil {
 			t.Fatal(err)
