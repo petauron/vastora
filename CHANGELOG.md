@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.271](https://github.com/petauron/vastora/compare/v0.1.0-alpha.270...v0.1.0-alpha.271) (2026-10-03)
+
+
+### Features
+
+* configure verified native node egress policies ([#783](https://github.com/petauron/vastora/issues/783)) ([ce187a7](https://github.com/petauron/vastora/commit/ce187a71640581855c98ea1ee48ac35348bcbda6))
+
+
+### Bug Fixes
+
+* validate complete Meridian UDP evidence in CI ([#785](https://github.com/petauron/vastora/issues/785)) ([a64c8fd](https://github.com/petauron/vastora/commit/a64c8fd896a56653e37c0569a5f40ecc7c9a3018))
+
 ## [0.1.0-alpha.270](https://github.com/petauron/vastora/compare/v0.1.0-alpha.269...v0.1.0-alpha.270) (2026-10-03)
 
 
