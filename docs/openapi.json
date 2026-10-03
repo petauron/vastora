@@ -2744,6 +2744,272 @@
         "description": "Administrator-only live latency stream. The first event and each reconnect send a reset snapshot; subsequent events contain only changed or expired source/landing pairs. Each sample includes its measurement time. The stream renews periodically to revalidate the session."
       }
     },
+    "/api/v1/nodes/{id}/egress-policy": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Node Egress",
+        "operationId": "nodeEgress_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "policy": {
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "ipv4_only",
+                        "ipv6_only"
+                      ]
+                    },
+                    "appliedPolicy": {
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "ipv4_only",
+                        "ipv6_only"
+                      ]
+                    },
+                    "revision": {
+                      "type": "integer"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "available": {
+                      "type": "boolean"
+                    },
+                    "commandId": {
+                      "type": "string"
+                    },
+                    "verified": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "policy": {
+                              "type": "string",
+                              "enum": [
+                                "auto",
+                                "ipv4_only",
+                                "ipv6_only"
+                              ]
+                            },
+                            "configSha256": {
+                              "type": "string"
+                            },
+                            "exits": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "checkedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Node Egress",
+        "operationId": "nodeEgress_put",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "policy": {
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "ipv4_only",
+                        "ipv6_only"
+                      ]
+                    },
+                    "appliedPolicy": {
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "ipv4_only",
+                        "ipv6_only"
+                      ]
+                    },
+                    "revision": {
+                      "type": "integer"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "available": {
+                      "type": "boolean"
+                    },
+                    "commandId": {
+                      "type": "string"
+                    },
+                    "verified": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "policy": {
+                              "type": "string",
+                              "enum": [
+                                "auto",
+                                "ipv4_only",
+                                "ipv6_only"
+                              ]
+                            },
+                            "configSha256": {
+                              "type": "string"
+                            },
+                            "exits": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "checkedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "policy": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "ipv4_only",
+                      "ipv6_only"
+                    ]
+                  },
+                  "revision": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/meridian/landing/{id}/egress": {
       "put": {
         "tags": [
@@ -10720,6 +10986,9 @@
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
+                      "nativeEgress": {
+                        "type": "boolean"
+                      },
                       "pulseRestore": {
                         "type": "boolean"
                       },
@@ -10872,6 +11141,40 @@
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
+                          "egress": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "policy": {
+                                    "type": "string",
+                                    "enum": [
+                                      "auto",
+                                      "ipv4_only",
+                                      "ipv6_only"
+                                    ]
+                                  },
+                                  "configSha256": {
+                                    "type": "string"
+                                  },
+                                  "exits": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "checkedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "receipt": {
                             "type": "object",
                             "additionalProperties": true

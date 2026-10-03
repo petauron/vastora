@@ -111,6 +111,7 @@ func taskOutcomeIsUncertain(err error) bool {
 }
 
 type Capabilities struct {
+	NativeEgress          bool `json:"nativeEgress"`
 	PulseRestore          bool `json:"pulseRestore"`
 	MeridianAcceptance    bool `json:"meridianAcceptance"`
 	PulseReporting        bool `json:"pulseReporting"`

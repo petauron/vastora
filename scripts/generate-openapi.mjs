@@ -55,6 +55,7 @@ function tagFor(routePath) {
     "agent-binaries": "Agents",
     "agent-decommission-results": "Agents",
     agents: "Agents",
+    nodes: "Agents",
     "agent-enrollments": "Agents",
     "application-commands": "Applications",
     applications: "Applications",
@@ -139,6 +140,8 @@ function schemaForGoType(rawType) {
     schema = type === "[]byte" ? { type: "string", contentEncoding: "base64" } : { type: "array", items: schemaForGoType(type.slice(2)) };
   } else if (type.startsWith("map[")) {
     schema = { type: "object", additionalProperties: true };
+  } else if (type === "meridian.EgressPolicy") {
+    schema = { type: "string", enum: ["auto", "ipv4_only", "ipv6_only"] };
   } else if (type === "string" || type === "time.Time") {
     schema = type === "time.Time" ? { type: "string", format: "date-time" } : { type: "string" };
   } else if (["int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64"].includes(type)) {
@@ -392,6 +395,10 @@ for (const route of routes) {
       description: "Encrypted 3x-ui backup stream. The authenticated Agent and revision identify the restore point.",
       content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
     };
+  }
+  if (route.handler === "handleNodeEgress") {
+    if (route.method === "get") delete operation.requestBody;
+    operation.responses[status].content["application/json"].schema = schemaForGoType("NodeEgressView");
   }
   const noStoreHeaders = {
     "Cache-Control": {

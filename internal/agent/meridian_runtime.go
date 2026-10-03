@@ -112,7 +112,7 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 	if state.Pending == nil {
 		return state, nil
 	}
-	if pendingImageReference != xrayWorkerImageReference {
+	if pendingImageReference != xrayWorkerImageReference && pendingImageReference != meridianruntime.EgressImage {
 		return state, errors.New("agent: Meridian pending image is not the audited Agent runtime")
 	}
 	active, err := os.ReadFile(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory, "config.json"))
@@ -200,14 +200,37 @@ func (e ApplicationExecutor) replaceMeridianPendingState(ctx context.Context, st
 }
 
 func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meridianruntime.Task) (result meridianruntime.Result, resultErr error) {
-	if e.Store == nil || task.Validate() != nil || task.ImageReference != xrayWorkerImageReference {
+	if e.Store == nil || task.Validate() != nil || task.ImageReference != xrayWorkerImageReference && task.ImageReference != meridianruntime.EgressImage {
 		return result, errors.New("agent: invalid Meridian runtime task")
+	}
+	if len(task.EgressClients) != 0 {
+		defer func() {
+			if resultErr != nil {
+				return
+			}
+			evidence := &meridianruntime.EgressObservation{Policy: task.NativeEgress, ConfigSHA256: task.Desired.ConfigSHA256}
+			for _, c := range task.EgressClients {
+				exit, err := e.verifyMeridianEgressClient(ctx, c, task.ImageReference, task.NativeEgress)
+				if err != nil {
+					resultErr = err
+					return
+				}
+				evidence.Exits = append(evidence.Exits, exit)
+			}
+			evidence.CheckedAt = time.Now().UTC()
+			result.Egress = evidence
+		}()
 	}
 	state, err := e.Store.loadMeridianRuntimeState(ctx)
 	if errors.Is(err, errApplicationNotInstalled) {
 		state = meridianRuntimeState{ApplicationID: task.ApplicationID, ImageReference: task.ImageReference}
 	} else if err != nil {
 		return result, err
+	}
+	if len(task.EgressClients) != 0 && task.NativeEgress != meridian.EgressAuto {
+		if err := e.checkNativeEgressNetwork(ctx, task, state); err != nil {
+			return result, err
+		}
 	}
 	gid := state.AppliedGID
 	unchangedConfig := state.Applied != nil && state.Applied.ConfigSHA256 == task.Desired.ConfigSHA256 && state.ImageReference == task.ImageReference && !task.ReplacePendingState

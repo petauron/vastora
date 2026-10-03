@@ -57,6 +57,12 @@ func (e ApplicationExecutor) VerifyMeridianClient(parent context.Context, spec m
 	if parseErr != nil || !landing.PublicIP(address) {
 		return errors.New("agent: invalid recovery exit expectation")
 	}
+	return e.runMeridianClient(parent, spec, xrayWorkerImageReference, func(ctx context.Context, endpoint string) error {
+		return meridianruntime.ProbeAcceptance(ctx, endpoint, expectedExit)
+	})
+}
+
+func (e ApplicationExecutor) runMeridianClient(parent context.Context, spec meridianruntime.AcceptanceClient, image string, probe func(context.Context, string) error) (err error) {
 	encoded, err := spec.Config(1080)
 	if err != nil {
 		return err
@@ -83,11 +89,11 @@ func (e ApplicationExecutor) VerifyMeridianClient(parent context.Context, spec m
 		return errors.New("agent: recovery Docker connection failed")
 	}
 	defer docker.Close()
-	if _, err = docker.ImageInspect(ctx, xrayWorkerImageReference); err != nil {
+	if _, err = docker.ImageInspect(ctx, image); err != nil {
 		if !errdefs.IsNotFound(err) {
 			return errors.New("agent: recovery client image inspection failed")
 		}
-		pull, pullErr := docker.ImagePull(ctx, xrayWorkerImageReference, client.ImagePullOptions{})
+		pull, pullErr := docker.ImagePull(ctx, image, client.ImagePullOptions{})
 		if pullErr != nil {
 			return errors.New("agent: recovery client image unavailable")
 		}
@@ -111,7 +117,9 @@ func (e ApplicationExecutor) VerifyMeridianClient(parent context.Context, spec m
 	if err != nil {
 		return errors.New("agent: recovery client network creation failed")
 	}
-	created, err := docker.ContainerCreate(ctx, meridianAcceptanceOptions(name, createdNetwork.ID))
+	options := meridianAcceptanceOptions(name, createdNetwork.ID)
+	options.Config.Image = image
+	created, err := docker.ContainerCreate(ctx, options)
 	if err != nil {
 		return errors.New("agent: recovery client creation failed")
 	}
@@ -149,7 +157,7 @@ func (e ApplicationExecutor) VerifyMeridianClient(parent context.Context, spec m
 		connection, dialErr := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(ready, "tcp", endpoint)
 		if dialErr == nil {
 			_ = connection.Close()
-			return meridianruntime.ProbeAcceptance(ctx, endpoint, expectedExit)
+			return probe(ctx, endpoint)
 		}
 		select {
 		case <-ready.Done():
