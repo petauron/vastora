@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.276](https://github.com/petauron/vastora/compare/v0.1.0-alpha.275...v0.1.0-alpha.276) (2026-10-03)
+
+
+### Bug Fixes
+
+* retire consumed enrollment secret references safely ([#794](https://github.com/petauron/vastora/issues/794)) ([10f1952](https://github.com/petauron/vastora/commit/10f195200b714c6609895a19799f1bb317f5e9a4))
+
 ## [0.1.0-alpha.275](https://github.com/petauron/vastora/compare/v0.1.0-alpha.274...v0.1.0-alpha.275) (2026-10-03)
 
 
