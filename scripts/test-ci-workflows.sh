@@ -59,7 +59,7 @@ if ! printf '%s\n' "$alpha_job" | grep -Fq 'cache: false' ||
    ! printf '%s\n' "$alpha_job" | grep -Fq 'run: make go-format-check' ||
    printf '%s\n' "$alpha_job" | grep -Fv \
      -e "run: go test ./internal/center -run '^(TestVersion(100|102)|TestOfficialUI|TestMeridianHost)' -count=1" \
-     -e "run: go test ./internal/meridianruntime ./internal/agent ./internal/center -run '^(TestNativeEgress|TestNodeEgress|TestVersion106)' -count=1" \
+     -e "run: go test ./internal/meridianruntime ./internal/agent ./internal/center -run '^(TestNativeEgress|TestNodeEgress|TestVersion106|TestVersion107)' -count=1" \
      -e "run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1" | grep -Eq '(go test|go build|go-static-check|web-check|cache: true|docker build)'; then
   echo 'Alpha CI must not restore the Go build cache or duplicate release builds/full checks.' >&2
   exit 1
