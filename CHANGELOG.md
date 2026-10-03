@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.277](https://github.com/petauron/vastora/compare/v0.1.0-alpha.276...v0.1.0-alpha.277) (2026-10-03)
+
+
+### Bug Fixes
+
+* retain authenticated recovery egress observations ([#796](https://github.com/petauron/vastora/issues/796)) ([86febd6](https://github.com/petauron/vastora/commit/86febd654e60688433b485514afe84dd9a9b886a))
+
 ## [0.1.0-alpha.276](https://github.com/petauron/vastora/compare/v0.1.0-alpha.275...v0.1.0-alpha.276) (2026-10-03)
 
 
