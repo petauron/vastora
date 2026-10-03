@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.283](https://github.com/petauron/vastora/compare/v0.1.0-alpha.282...v0.1.0-alpha.283) (2026-10-03)
+
+
+### Bug Fixes
+
+* **center:** scope recovery evidence and settled work ([#808](https://github.com/petauron/vastora/issues/808)) ([f1ed675](https://github.com/petauron/vastora/commit/f1ed67551cfe8ea068b94c5255b73917e4b8e6ed))
+
 ## [0.1.0-alpha.282](https://github.com/petauron/vastora/compare/v0.1.0-alpha.281...v0.1.0-alpha.282) (2026-10-03)
 
 
