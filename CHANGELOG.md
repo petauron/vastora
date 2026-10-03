@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.270](https://github.com/petauron/vastora/compare/v0.1.0-alpha.269...v0.1.0-alpha.270) (2026-10-03)
+
+
+### Features
+
+* **recovery:** review, verify and finalize node reinstalls ([#781](https://github.com/petauron/vastora/issues/781)) ([111e98d](https://github.com/petauron/vastora/commit/111e98d586b977bb2a0a5f58193f493e774846b6))
+
 ## [0.1.0-alpha.269](https://github.com/petauron/vastora/compare/v0.1.0-alpha.268...v0.1.0-alpha.269) (2026-10-01)
 
 
