@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.279](https://github.com/petauron/vastora/compare/v0.1.0-alpha.278...v0.1.0-alpha.279) (2026-10-03)
+
+
+### Bug Fixes
+
+* **center:** refresh recovery transport readiness from observations ([#800](https://github.com/petauron/vastora/issues/800)) ([dffcf6f](https://github.com/petauron/vastora/commit/dffcf6f1a552e3323c11a87eae7d17ba5ef9acb0)), closes [#759](https://github.com/petauron/vastora/issues/759)
+
 ## [0.1.0-alpha.278](https://github.com/petauron/vastora/compare/v0.1.0-alpha.277...v0.1.0-alpha.278) (2026-10-03)
 
 
