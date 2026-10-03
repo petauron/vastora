@@ -40,8 +40,32 @@ seconds to close while HAProxy exhausts its rejected backend retries.
 
 The capture covers only the fixture peer namespace. Containers/network are
 removed on exit; logs, generated fixtures and the capture remain in the
-provided directory. On failure it waits at most for the 45-second capture
+provided directory. On failure it waits at most for the 120-second capture
 deadline before cleanup. Existing Docker networks and host firewall rules
 are not changed. Image cache entries remain available for subsequent runs.
 
 See [runtime scope and evidence limits](../../docs/meridian-host-runtime.md).
+
+## Evidence validation
+
+The probe validates the SOCKS relay source, STUN success type, magic cookie,
+transaction ID, exact message/attribute lengths and a single IPv4 mapped
+address. Validation remains enabled under Python optimization. Partial TCP
+handshake reads are supported. Timeout, malformed evidence or a changed
+mapping exits nonzero and reports `unconfirmed`, not a restrictive NAT label.
+Successful output is explicitly scoped to `isolated_lab`.
+
+Offline parser regression (only when local verification is authorized):
+
+```sh
+python3 -m unittest discover -s scripts/meridian-fullcone-lab -p 'test_*.py'
+python3 -O -m unittest discover -s scripts/meridian-fullcone-lab -p 'test_*.py'
+```
+
+These parser checks do not replace the two real protocol runs, packet capture
+or separately authorized public-provider acceptance.
+
+The required CI gate runs parser checks with and without optimization, then the
+real isolated two-protocol/restart lab and prints its synthetic packet capture.
+Pinned images are fetched before fixture lifetimes and capture begin. Generated
+credentials and raw fixture directories are not uploaded as artifacts.

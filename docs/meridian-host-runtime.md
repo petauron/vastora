@@ -102,6 +102,20 @@ exists only in the fixture because Xray otherwise blocks private destinations.
 Production outbound policy is unchanged. Fixed landing routes remain TCP-only.
 
 No A1/production migration, public NAT/provider classification, handset/client
-matrix, or before/after CPU and memory comparison was performed. Those parts
-of #394 remain open; an ordinary UDP response or an `Unknown` classifier result
+matrix, or before/after CPU and memory comparison was performed. These production acceptance items are separate from the requested functional
+delivery of #394; an ordinary UDP response or an `Unknown` classifier result
 must not be reported as FullCone.
+
+## Functional delivery follow-up
+
+The follow-up hardens UDP evidence parsing: exact SOCKS relay source, STUN
+cookie/transaction/length checks, duplicate mapped-address rejection and
+complete TCP handshake reads. Checks remain active under Python optimization.
+Malformed data, timeout or destination-dependent mapping reports unconfirmed,
+never a successful FullCone classification. The CI gate exercises parser
+negative cases and the complete isolated VLESS/REALITY + HY2 paths before and
+after restart, including the existing SNI and API boundaries.
+
+Closing the feature after required CI and merge records software delivery.
+It does not certify an arbitrary provider's NAT, a production migration, or
+unmeasured CPU/memory savings. Fixed remote landing routes remain TCP-only.
