@@ -371,3 +371,42 @@ func TestAgentReinstallAddressApprovalPreservesEntryDependenciesWithoutOldProfil
 		})
 	}
 }
+
+func TestAgentReinstallAddressCachedPublicMapping(t *testing.T) {
+	s, node, h := replacementNetworkFixture(t)
+	ctx := context.Background()
+	detected := s.now().UTC()
+	h.PublicEgress = &networking.PublicEgress{Address: "203.0.113.7", BindAddress: "10.0.0.8", Mode: networking.PublicModeNAT, ObservedAt: detected}
+	if err := s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, h); err != nil {
+		t.Fatal(err)
+	}
+	s.now = func() time.Time { return detected.Add(time.Hour) }
+	if err := s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, h); err != nil {
+		t.Fatal(err)
+	}
+	input := networkApprovalInput(t, s, node.ID)
+	input.Profile.DirectPublic = true
+	input.Profile.EnabledKinds = append(input.Profile.EnabledKinds, "public")
+	input.Profile.PublicAddress = h.PublicEgress.Address
+	input.Profile.PublicBindAddress = h.PublicEgress.BindAddress
+	input.Profile.PublicMode = h.PublicEgress.Mode
+	if _, err := s.ApproveAgentReinstallNetwork(ctx, node.ID, "reinstall-review-admin", input); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := s.AgentReinstallPlan(ctx, node.ID)
+	if err != nil || !plan.NetworkReview.ApprovalCurrent {
+		t.Fatalf("live cached mapping rejected: %v", err)
+	}
+	h.Startup = true
+	h.PublicEgress = nil
+	if err := s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, h); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = s.AgentReinstallPlan(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NetworkReview.PublicEgress != nil || plan.NetworkReview.ApprovalCurrent {
+		t.Fatal("restart reused previous process mapping")
+	}
+}
