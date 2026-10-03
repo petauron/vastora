@@ -27,23 +27,19 @@ func (s *Store) recordReinstallRuntimeObservation(ctx context.Context, tx *sql.T
 	if err != nil {
 		return err
 	}
-	// Startup clears cached public mapping before it is observed again. That
-	// invalidates recovery approval temporarily, but must not reject the
-	// heartbeat needed to refresh the network observation in the first place.
-	review, err := s.agentReinstallNetworkReview(ctx, tx, target)
-	if err != nil {
-		return err
-	}
-	if review == nil || !review.ApprovalCurrent {
-		if _, err = tx.ExecContext(ctx, `UPDATE agent_reinstall_app_preparations SET runtime_observation=X'' WHERE runtime_command_id=?`, id); err != nil {
+	invalidate := func() error {
+		if _, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_app_preparations SET runtime_observation=X'' WHERE runtime_command_id=?`, id); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE application_commands SET result_json=json_set(result_json,'$.transportReady',json('false')) WHERE id=?`, id)
+		_, err := tx.ExecContext(ctx, `UPDATE application_commands SET result_json=json_set(result_json,'$.transportReady',json('false')) WHERE id=?`, id)
 		return err
 	}
+	// An obsolete recovery approval cannot authorize this observation. Keep
+	// authenticated management heartbeats working so the operator can review
+	// the current plan; no runtime or access readiness is inferred.
 	task, err := s.reinstallRuntimeTask(ctx, tx, target, id, false)
 	if err != nil || task == nil || task.MeridianRuntime == nil {
-		return errExecutionAuthorization
+		return invalidate()
 	}
 	if result.Validate(task.MeridianRuntime.Desired) != nil {
 		return errors.New("center: recovery runtime observation does not match restored configuration")

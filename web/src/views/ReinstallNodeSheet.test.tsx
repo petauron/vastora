@@ -570,6 +570,17 @@ describe("replacement application preparation", () => {
     expect(document.body.textContent).toContain("业务验证尚未完成");
     expect(button("恢复运行配置")).toBeUndefined();
   });
+  it("requires explicit review before replacing a completed obsolete runtime", async () => {
+    const plan = runtimePlan();
+    plan.applications[0].preparation!.runtime = { commandId: "old-runtime", state: "review_changed" };
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
+    const restore = vi.spyOn(api, "restoreAgentReinstallRuntime").mockResolvedValue({ commandId: "new-runtime", state: "pending" });
+    await show();
+    await act(async () => button("刷新状态")!.click());
+    expect(restore).not.toHaveBeenCalled();
+    await act(async () => button("审核当前配置并继续")!.click());
+    expect(restore).toHaveBeenCalledExactlyOnceWith("agent", { operationId: recovery.id, planRevision: plan.revision, applicationId: "app" });
+  });
   it.each(["network", "old-work"])("keeps runtime disabled for %s prerequisites", async (mode) => {
     const plan = runtimePlan();
     if (mode === "network") plan.networkReview!.approvalCurrent = false;

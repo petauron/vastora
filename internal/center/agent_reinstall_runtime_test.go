@@ -409,3 +409,61 @@ func TestAgentReinstallRuntimeStartupHeartbeatRefreshesNetworkBeforeApproval(t *
 		t.Fatalf("fresh approved runtime unavailable: %v", err)
 	}
 }
+
+func TestAgentReinstallRuntimeReviewedSuccessorPreservesReceipt(t *testing.T) {
+	s, node, input := reinstallRuntimeFixture(t)
+	ctx := context.Background()
+	first, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
+	if err != nil || task == nil {
+		t.Fatal(err)
+	}
+	if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code != http.StatusOK {
+		t.Fatal(response.Body.String())
+	}
+	var originalReceipt []byte
+	if err = s.db.QueryRow(`SELECT sealed_result FROM task_executions WHERE task_id=?`, first.CommandID).Scan(&originalReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`UPDATE meridian_endpoints SET desired_revision=desired_revision+1 WHERE id='restore-endpoint'`); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := s.AgentReinstallPlan(ctx, node.ID)
+	if err != nil || plan.Applications[0].Preparation.Runtime.State != "review_changed" {
+		t.Fatalf("changed review: %v", err)
+	}
+	if _, err = s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err == nil {
+		t.Fatal("accepted stale review")
+	}
+	input.PlanRevision = plan.Revision
+	next, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
+	if err != nil || next.CommandID == first.CommandID {
+		t.Fatalf("successor: %v", err)
+	}
+	repeat, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
+	if err != nil || repeat != next {
+		t.Fatal("duplicate review replayed task", err)
+	}
+	var retainedReceipt []byte
+	var oldState string
+	if err = s.db.QueryRow(`SELECT sealed_result FROM task_executions WHERE task_id=?`, first.CommandID).Scan(&retainedReceipt); err != nil || !bytes.Equal(originalReceipt, retainedReceipt) {
+		t.Fatal("changed old receipt", err)
+	}
+	if err = s.db.QueryRow(`SELECT state FROM application_commands WHERE id=?`, first.CommandID).Scan(&oldState); err != nil || oldState != "succeeded" {
+		t.Fatal("changed old command", err)
+	}
+	task, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
+	if err != nil || task == nil || task.ID != next.CommandID {
+		t.Fatal("claim successor", err)
+	}
+	if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code != http.StatusOK {
+		t.Fatal(response.Body.String())
+	}
+	plan, err = s.AgentReinstallPlan(ctx, node.ID)
+	if err != nil || plan.Recovery.State != "review_required" || plan.Applications[0].Preparation.Runtime.State != "succeeded" {
+		t.Fatal("successor bypassed final acceptance", err)
+	}
+}
