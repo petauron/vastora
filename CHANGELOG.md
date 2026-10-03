@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.274](https://github.com/petauron/vastora/compare/v0.1.0-alpha.273...v0.1.0-alpha.274) (2026-10-03)
+
+
+### Bug Fixes
+
+* allow bounded time for Pulse upgrade backups ([#790](https://github.com/petauron/vastora/issues/790)) ([7a32c1c](https://github.com/petauron/vastora/commit/7a32c1cea1a4b439278da1ff4f621dbbc7939bd5))
+
 ## [0.1.0-alpha.273](https://github.com/petauron/vastora/compare/v0.1.0-alpha.272...v0.1.0-alpha.273) (2026-10-03)
 
 
