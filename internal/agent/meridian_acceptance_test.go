@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -78,6 +80,40 @@ func TestMeridianAcceptanceCleanupRequiresOwnershipAndSuccessfulRemoval(t *testi
 			wantSuccess := mode == "owned" || mode == "missing"
 			if (err == nil) != wantSuccess || removedNetwork != wantSuccess || removedContainer != (mode == "owned" || mode == "remove-failed") {
 				t.Fatalf("cleanup outcome: %v container=%v network=%v", err, removedContainer, removedNetwork)
+			}
+		})
+	}
+}
+
+func TestNativeEgressSOCKSReadiness(t *testing.T) {
+	for _, mode := range []string{"forwarder-only", "wrong-protocol", "ready"} {
+		t.Run(mode, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				if mode == "forwarder-only" {
+					return
+				}
+				var greeting [3]byte
+				if _, err := io.ReadFull(conn, greeting[:]); err != nil || greeting != [3]byte{5, 1, 0} {
+					return
+				}
+				if mode == "ready" {
+					_, _ = conn.Write([]byte{5, 0})
+				} else {
+					_, _ = conn.Write([]byte{5, 255})
+				}
+			}()
+			if got := meridianSOCKSReady(context.Background(), listener.Addr().String()); got != (mode == "ready") {
+				t.Fatalf("readiness=%v for %s", got, mode)
 			}
 		})
 	}

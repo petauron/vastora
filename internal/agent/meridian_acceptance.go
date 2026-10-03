@@ -154,9 +154,7 @@ func (e ApplicationExecutor) runMeridianClient(parent context.Context, spec meri
 			return errors.New("agent: recovery client listener is not isolated")
 		}
 		endpoint := net.JoinHostPort("127.0.0.1", bindings[0].HostPort)
-		connection, dialErr := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(ready, "tcp", endpoint)
-		if dialErr == nil {
-			_ = connection.Close()
+		if meridianSOCKSReady(ready, endpoint) {
 			return probe(ctx, endpoint)
 		}
 		select {
@@ -165,6 +163,28 @@ func (e ApplicationExecutor) runMeridianClient(parent context.Context, spec meri
 		case <-ticker.C:
 		}
 	}
+}
+
+// Docker's port forwarder can accept TCP before Xray has read its stdin
+// configuration. Require SOCKS negotiation, without sending a target request.
+func meridianSOCKSReady(ctx context.Context, endpoint string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancel()
+	connection, err := (&net.Dialer{}).DialContext(ctx, "tcp", endpoint)
+	if err != nil {
+		return false
+	}
+	defer connection.Close()
+	deadline, _ := ctx.Deadline()
+	if connection.SetDeadline(deadline) != nil {
+		return false
+	}
+	if _, err := connection.Write([]byte{5, 1, 0}); err != nil {
+		return false
+	}
+	var reply [2]byte
+	_, err = io.ReadFull(connection, reply[:])
+	return err == nil && reply == [2]byte{5, 0}
 }
 
 func cleanupMeridianAcceptance(ctx context.Context, docker *client.Client, name string) error {
