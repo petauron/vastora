@@ -4,6 +4,16 @@ package center
 // deployment model. Legacy 3x-ui tables are migration input only; once the
 // explicit cutover is complete no Meridian operation reads or writes them.
 const meridianSchema = `
+CREATE TABLE node_egress_policies (
+ node_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+ policy TEXT NOT NULL CHECK(policy IN ('auto','ipv4_only','ipv6_only')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ verified_revision INTEGER NOT NULL DEFAULT 0 CHECK(verified_revision>=0),
+ applied_policy TEXT NOT NULL DEFAULT 'auto' CHECK(applied_policy IN ('auto','ipv4_only','ipv6_only')),
+ verified_json BLOB NOT NULL DEFAULT '{}' CHECK(json_valid(verified_json)),
+ updated_at TEXT NOT NULL
+);
+
 CREATE TABLE meridian_cutover (
  id INTEGER PRIMARY KEY CHECK(id=1),
  state TEXT NOT NULL CHECK(state IN ('not_required','inspect','backup','import','publish','project','verify','retire','complete','failed')),

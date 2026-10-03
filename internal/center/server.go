@@ -155,6 +155,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/meridian/routes/{id}", s.requireAuth(true, s.handleRevokeMeridianRouteGrant))
 	mux.HandleFunc("GET /api/v1/meridian/landing", s.requireAuth(false, s.handleLanding))
 	mux.HandleFunc("GET /api/v1/meridian/landing/latencies/events", s.requireAuth(false, s.handleLandingLatencyEvents))
+	mux.HandleFunc("GET /api/v1/nodes/{id}/egress-policy", s.requireAuth(false, s.handleNodeEgress))
+	mux.HandleFunc("PUT /api/v1/nodes/{id}/egress-policy", s.requireAuth(true, s.handleNodeEgress))
 	mux.HandleFunc("PUT /api/v1/meridian/landing/{id}/egress", s.requireAuth(true, s.handleLandingEgress))
 	mux.HandleFunc("PUT /api/v1/meridian/landing", s.requireAuth(true, s.handleSelectLanding))
 	mux.HandleFunc("POST /api/v1/applications/{id}/credentials/reveal", s.requireAuth(true, s.handleRevealApplicationCredentials))

@@ -406,8 +406,12 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 			materials[index].Credential.Enabled = false
 		}
 	}
+	if err := applyNativeEgressProjection(ctx, tx, &projection, endpoint, hysteriaEndpoint, vlessEnabled, hy2Enabled, materials); err != nil {
+		return projection, err
+	}
 	artifact, err := meridian.BuildDesiredArtifact(meridian.XrayPlan{
-		Revision: uint64(revision), RealityEndpoints: realityEndpoints, HysteriaEndpoints: hysteriaEndpoints, Credentials: materials, Grants: routes.grants, Peers: routes.peers,
+		NativeEgress: projection.task.NativeEgress,
+		Revision:     uint64(revision), RealityEndpoints: realityEndpoints, HysteriaEndpoints: hysteriaEndpoints, Credentials: materials, Grants: routes.grants, Peers: routes.peers,
 	})
 	if err != nil || expectedSHA != "" && artifact.ConfigSHA256 != expectedSHA {
 		return projection, errors.New("center: Meridian desired state changed after it was queued")
@@ -696,7 +700,7 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 	if succeeded {
 		if projectionErr != nil {
 			succeeded, taskError = false, projectionErr.Error()
-		} else if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.MeridianRuntime == nil || envelope.MeridianRuntime.Validate(projection.task.Desired) != nil || projection.task.RetireLegacy && !envelope.MeridianRuntime.LegacyRetired {
+		} else if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.MeridianRuntime == nil || envelope.MeridianRuntime.Validate(projection.task.Desired) != nil || envelope.MeridianRuntime.VerifyEgress(projection.task, observedAt) != nil || projection.task.RetireLegacy && !envelope.MeridianRuntime.LegacyRetired {
 			succeeded, taskError = false, "center: Agent returned an invalid Meridian runtime receipt"
 		} else {
 			health, err := envelope.MeridianRuntime.PeerHealth(projection.task, observedAt)
@@ -752,6 +756,15 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 		}
 	}
 	if succeeded {
+		if len(projection.task.EgressClients) != 0 {
+			evidence, err := json.Marshal(envelope.MeridianRuntime.Egress)
+			if err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE node_egress_policies SET applied_policy=policy,verified_revision=revision,verified_json=? WHERE node_id=?`, evidence, agentID); err != nil {
+				return err
+			}
+		}
 		if err := s.projectVerifiedMeridianRuntime(ctx, tx, command.EndpointID, taskID, projection, envelope.MeridianRuntime, endpointQuotaBefore, observedAt); err != nil {
 			return err
 		}

@@ -31,6 +31,8 @@ func (c Command) Validate() error {
 }
 
 type Task struct {
+	NativeEgress        meridian.EgressPolicy    `json:"nativeEgress,omitempty"`
+	EgressClients       []AcceptanceClient       `json:"egressClients,omitempty"`
 	ApplicationID       string                   `json:"applicationId"`
 	ImageReference      string                   `json:"imageReference"`
 	Desired             meridian.DesiredArtifact `json:"desired"`
@@ -47,10 +49,14 @@ func (t Task) Validate() error {
 	if err := t.Desired.Validate(); err != nil {
 		return err
 	}
+	if err := t.validateEgress(); err != nil {
+		return err
+	}
 	return t.validatePeers()
 }
 
 type Result struct {
+	Egress        *EgressObservation      `json:"egress,omitempty"`
 	Receipt       meridian.AppliedReceipt `json:"receipt"`
 	Stats         json.RawMessage         `json:"stats"`
 	LegacyRetired bool                    `json:"legacyRetired"`

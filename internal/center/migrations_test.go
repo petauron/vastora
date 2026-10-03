@@ -533,6 +533,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TABLE node_egress_policies`,
 		`DROP TABLE meridian_deployments`,
 		`DROP TRIGGER application_commands_block_during_meridian_cutover`,
 		`DROP TRIGGER application_command_updates_block_during_meridian_cutover`,
