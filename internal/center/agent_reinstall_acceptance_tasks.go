@@ -64,6 +64,20 @@ func (s *Store) QueueAgentReinstallClientChecks(ctx context.Context, target, ver
 		return nil, err
 	}
 	defer tx.Rollback()
+	receipts, err := s.queueReinstallClientChecks(ctx, tx, target, verifier, admin, requestID, input)
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	s.taskChanges.notify("agent:" + verifier)
+	return receipts, nil
+}
+
+// Keep the verifier's single-active-command invariant. A successful receipt
+// advances the same request to its next original credential/protocol.
+func (s *Store) queueReinstallClientChecks(ctx context.Context, tx *sql.Tx, target, verifier, admin, requestID string, input AgentReinstallApplicationInput) ([]AgentReinstallClientCheck, error) {
 	tasks, err := s.reinstallAcceptanceTasks(ctx, tx, target, verifier, admin, input)
 	if err != nil {
 		return nil, err
@@ -93,6 +107,9 @@ func (s *Store) QueueAgentReinstallClientChecks(ctx context.Context, target, ver
 		err = tx.QueryRowContext(ctx, `SELECT c.id,c.state FROM application_commands c JOIN agent_reinstall_client_checks a ON a.command_id=c.id WHERE a.operation_id=? AND c.agent_id=? AND a.input_json=? ORDER BY c.rowid DESC LIMIT 1`, input.OperationID, verifier, raw).Scan(&previous.CommandID, &previous.State)
 		if err == nil {
 			receipts = append(receipts, previous)
+			if previous.State != "succeeded" {
+				break
+			}
 			continue
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -116,11 +133,8 @@ func (s *Store) QueueAgentReinstallClientChecks(ctx context.Context, target, ver
 			return nil, err
 		}
 		receipts = append(receipts, AgentReinstallClientCheck{CommandID: id, State: "pending"})
+		break
 	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-	s.taskChanges.notify("agent:" + verifier)
 	return receipts, nil
 }
 
@@ -149,6 +163,20 @@ func (s *Store) completeReinstallAcceptance(ctx context.Context, commit projecti
 	}
 	if err = s.recordTaskEvent(ctx, tx, id, verifier, "application.command", 1, receipt.State, "Recovery client request finished; remaining recovery requirements still apply"); err != nil {
 		return err
+	}
+	if succeeded {
+		var rawInput []byte
+		var admin string
+		if err = tx.QueryRowContext(ctx, `SELECT c.input_json,op.authorized_by FROM application_commands c JOIN agent_reinstall_client_checks a ON a.command_id=c.id JOIN agent_reinstall_operations op ON op.id=a.operation_id WHERE c.id=?`, id).Scan(&rawInput, &admin); err != nil {
+			return err
+		}
+		var command reinstallAcceptanceCommand
+		if err = json.Unmarshal(rawInput, &command); err != nil {
+			return err
+		}
+		if _, err = s.queueReinstallClientChecks(ctx, tx, task.TargetAgentID, verifier, admin, command.RequestID, AgentReinstallApplicationInput{OperationID: command.OperationID, PlanRevision: command.PlanRevision, ApplicationID: command.ApplicationID}); err != nil {
+			return err
+		}
 	}
 	return commit(tx)
 }
