@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.280](https://github.com/petauron/vastora/compare/v0.1.0-alpha.279...v0.1.0-alpha.280) (2026-10-03)
+
+
+### Bug Fixes
+
+* **center:** accept recovery startup before network refresh ([#802](https://github.com/petauron/vastora/issues/802)) ([c0933c1](https://github.com/petauron/vastora/commit/c0933c14640ca6ec9cb6562c65ab1d7df8175b22))
+
 ## [0.1.0-alpha.279](https://github.com/petauron/vastora/compare/v0.1.0-alpha.278...v0.1.0-alpha.279) (2026-10-03)
 
 
