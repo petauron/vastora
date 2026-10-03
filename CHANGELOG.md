@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.273](https://github.com/petauron/vastora/compare/v0.1.0-alpha.272...v0.1.0-alpha.273) (2026-10-03)
+
+
+### Bug Fixes
+
+* wait for SOCKS readiness before egress verification ([299853e](https://github.com/petauron/vastora/commit/299853ec4966482fce0b6d08b8c7960b78440e6e))
+
 ## [0.1.0-alpha.272](https://github.com/petauron/vastora/compare/v0.1.0-alpha.271...v0.1.0-alpha.272) (2026-10-03)
 
 
