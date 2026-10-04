@@ -14,6 +14,9 @@ func (s *Store) claimExecutionTask(ctx context.Context, agentID, credential, ses
 	}
 	commit := func(tx *sql.Tx, task *AgentTask) error {
 		if task != nil {
+			if err := s.attachPackageRecovery(ctx, tx, agentID, task); err != nil {
+				return err
+			}
 			auth, err := s.persistExecutionAuthorization(ctx, tx, agentID, sessionID, *task)
 			if err != nil {
 				return err

@@ -22,6 +22,7 @@ import (
 	"github.com/moby/moby/api/types/jsonstream"
 	"github.com/moby/moby/client"
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/platform"
 )
 
@@ -492,5 +493,71 @@ func TestPackageReceiptRejectsSymlinkParent(t *testing.T) {
 	backend := &fakePackageBackend{}
 	if _, err := (PackageExecutor{StateDirectory: directory, Backend: backend}).Deploy(context.Background(), packageTestTask(t)); err == nil || len(backend.calls) != 0 {
 		t.Fatal("symlink escaped package state root")
+	}
+}
+
+func TestPackageReviewedRecoveryKeepsLockUntilResourcesMatch(t *testing.T) {
+	for _, mode := range []string{"reviewed", "missing-decision", "wrong-task", "wrong-attempt", "wrong-application", "no-authorization", "resource-drift", "prepare-failure"} {
+		t.Run(mode, func(t *testing.T) {
+			task := packageTestTask(t)
+			task.Kind = "application.apply"
+			backend := &fakePackageBackend{}
+			executor := PackageExecutor{StateDirectory: packageTestDirectory(t), Backend: backend}
+			installed, err := executor.Deploy(context.Background(), task)
+			if err != nil {
+				t.Fatal(err)
+			}
+			task.ID, task.Operation, task.Attempt = "failed-upgrade", "upgrade", 2
+			task.Manifest.Version = "1.1.0"
+			packageTaskDigest(t, &task)
+			installed.Resources.State, installed.Resources.TaskID = "review-required", task.ID
+			if err := executor.save(installed.Resources); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(executor.receiptPath(task.ApplicationID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			task.Authorization = controlplane.ExecutionAuthorization{ID: "new-execution", Protocol: controlplane.ExecutionProtocol, Digest: strings.Repeat("a", 64)}
+			task.PackageRecovery = &controlplane.PackageRecovery{ExecutionID: "reviewed-execution", TaskID: task.ID, Attempt: 1}
+			switch mode {
+			case "missing-decision":
+				task.PackageRecovery = nil
+			case "wrong-task":
+				task.PackageRecovery.TaskID = "different-task"
+			case "wrong-attempt":
+				task.PackageRecovery.Attempt = 2
+			case "wrong-application":
+				installed.Resources.AppKey = "different/app"
+				if err := executor.save(installed.Resources); err != nil {
+					t.Fatal(err)
+				}
+				before, err = os.ReadFile(executor.receiptPath(task.ApplicationID))
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "no-authorization":
+				task.Authorization = controlplane.ExecutionAuthorization{}
+			case "resource-drift":
+				backend.fail = "inspect"
+			case "prepare-failure":
+				backend.fail = "prepare"
+			}
+			backend.calls = nil
+			result, err := executor.Deploy(context.Background(), task)
+			if mode == "reviewed" {
+				if err != nil || result.Resources.State != "ready" || result.Resources.PackageVersion != "1.1.0" || !slices.Equal(backend.calls, []string{"inspect", "prepare", "apply", "healthy"}) {
+					t.Fatalf("reviewed recovery failed: %v %v", backend.calls, err)
+				}
+				return
+			}
+			if err == nil || slices.Contains(backend.calls, "apply") {
+				t.Fatalf("unverified recovery applied: %v %v", backend.calls, err)
+			}
+			after, readErr := os.ReadFile(executor.receiptPath(task.ApplicationID))
+			if readErr != nil || !bytes.Equal(before, after) {
+				t.Fatal("rejected recovery changed the durable receipt")
+			}
+		})
 	}
 }

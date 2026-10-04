@@ -28,6 +28,7 @@ import (
 )
 
 type AgentTask struct {
+	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
 	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
