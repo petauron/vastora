@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // Opt-in rehearsal uses an online-backup snapshot, never a running database.
@@ -47,7 +48,7 @@ func TestCatalogV4MigrationSnapshot(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM applications`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	store := &Store{db: db, dataDir: directory}
+	store := &Store{db: db, dataDir: directory, now: time.Now}
 	if err := store.initializeSchema(ctx, true); err != nil {
 		t.Fatal(err)
 	}

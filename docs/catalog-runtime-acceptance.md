@@ -23,9 +23,13 @@ changed digests, revisions, and capability grants. This is local recovery
 coverage, not live deployment or adoption evidence. Focused package lifecycle, catalog admission, and Pulse restore tests pass; the
 command entry point compiles. Migration fixtures cover both schema 100 and the
 released schema 108, retain backups/trust/application identity, and reject
-unfinished or uncertain work without advancing the source schema. These fixture
-results do not replace a production database copy rehearsal. Current CI, the
-schema 109 production-copy rehearsal, and A1 rollout remain pending.
+unfinished or uncertain work without advancing the source schema. An online-backup copy of the released schema 108 database also passed
+`TestCatalogV4MigrationSnapshot` using the ARM64 test binary in a private temporary
+directory: migration 109 and database integrity checks completed, all 32
+application records were retained pending explicit adoption, and the migration
+created its pre-upgrade backup. The test copies its input again before migration;
+it does not start Center or contact Agents. Current CI and A1 rollout remain
+pending; this is not evidence of live adoption or application restart behavior.
 
 ## Earlier local checkpoint
 
