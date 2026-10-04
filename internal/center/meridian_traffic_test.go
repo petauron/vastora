@@ -13,8 +13,7 @@ import (
 
 func TestVersion108PreservesTotalsWithoutInventingDirectionalHistory(t *testing.T) {
 	dir := t.TempDir()
-	old := legacyMigrationStore(t, dir, 107)
-	seedMeridianVersion88HealthFixture(t, old.db)
+	old := meridianTrafficVersion107Fixture(t, dir)
 	before := meridianVersion88PreservedState(t, old.db)
 	if err := old.db.Close(); err != nil {
 		t.Fatal(err)
@@ -39,8 +38,7 @@ func TestVersion108PreservesTotalsWithoutInventingDirectionalHistory(t *testing.
 
 func TestMeridianTrafficAggregatesDirectionsWithoutRecountingOrQuotaMutation(t *testing.T) {
 	dir := t.TempDir()
-	old := legacyMigrationStore(t, dir, 107)
-	seedMeridianVersion88HealthFixture(t, old.db)
+	old := meridianTrafficVersion107Fixture(t, dir)
 	if err := old.db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -152,4 +150,18 @@ func TestMeridianTrafficAggregatesDirectionsWithoutRecountingOrQuotaMutation(t *
 	if view.Lines[0].State != "partial" {
 		t.Fatalf("missing credential hidden: %+v", view)
 	}
+}
+
+func meridianTrafficVersion107Fixture(t *testing.T, dir string) *Store {
+	t.Helper()
+	old := legacyMigrationStore(t, dir, 94)
+	seedMeridianVersion88HealthFixture(t, old.db)
+	provider, err := newMigrationProvider(old.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(context.Background(), 107); err != nil {
+		t.Fatal(err)
+	}
+	return old
 }

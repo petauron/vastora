@@ -2,6 +2,7 @@ package center
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -44,7 +45,7 @@ func TestVersion107ConsumedEnrollmentReference(t *testing.T) {
 				}
 				reopened.Close()
 			}
-			backups, err := filepath.Glob(filepath.Join(dir, "migration-backups", "center-v106-before-v107-*.db"))
+			backups, err := filepath.Glob(filepath.Join(dir, "migration-backups", fmt.Sprintf("center-v106-before-v%d-*.db", centerSchemaVersion)))
 			if err != nil || len(backups) != 1 {
 				t.Fatalf("missing backup: %v", err)
 			}
