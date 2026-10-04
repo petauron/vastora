@@ -113,7 +113,7 @@ func TestPulseRotationPinsContainerAndRechecksOriginalNode(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			executor := ApplicationExecutor{DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}
+			executor := ApplicationExecutor{PackageStateDirectory: pulseReviewedTestPackage(t, task.ApplicationID, task.DeploymentID), DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}
 			rotation := pulse.RotationTask{Inspection: task, NodeID: "original-node"}
 			result, err := executor.RotatePulse(context.Background(), rotation)
 			mu.Lock()

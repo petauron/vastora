@@ -111,23 +111,7 @@ func TestOpenRejectsIncompleteReleasedVersion80Migration(t *testing.T) {
 func TestVersion81MigrationAddsHostProfileDiagnostics(t *testing.T) {
 	directory := t.TempDir()
 	ctx := context.Background()
-	store, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	removePostVersion85TablesForFixture(t, store)
-	if _, err := store.db.ExecContext(ctx, `DROP TABLE node_diagnostic_checks`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.db.ExecContext(ctx, nodeDiagnosticsSchema80SQL); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.db.ExecContext(ctx, `PRAGMA user_version = 80`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.db.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id >= 81`); err != nil {
-		t.Fatal(err)
-	}
+	store := legacyMigrationStore(t, directory, 80)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -149,20 +133,9 @@ func TestVersion81MigrationAddsHostProfileDiagnostics(t *testing.T) {
 func TestVersion83MigrationMovesManagedRealityToLocalDockerAlias(t *testing.T) {
 	directory := t.TempDir()
 	ctx := context.Background()
-	store, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	removePostVersion85TablesForFixture(t, store)
-	siteID := testSiteID(t, store)
-	enrollment, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{SiteID: siteID, Name: "Worker", CenterURL: "https://center.example.test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64", testAgentPublicKey(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := legacyMigrationStore(t, directory, 82)
+	siteID := "site-v3"
+	node := AgentCredential{ID: "agent-v3"}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,runtime_generation,created_at,updated_at) VALUES('worker-app','Proxy',?,?,'vastora-official/3x-ui','','running','docker','worker',2,?,?)`, node.ID, siteID, now, now); err != nil {
 		t.Fatal(err)
