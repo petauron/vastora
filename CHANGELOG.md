@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.287](https://github.com/petauron/vastora/compare/v0.1.0-alpha.286...v0.1.0-alpha.287) (2026-10-04)
+
+
+### Bug Fixes
+
+* **agent:** remove mandatory volume backups from application updates ([#814](https://github.com/petauron/vastora/issues/814)) ([631fa65](https://github.com/petauron/vastora/commit/631fa65f8e4ca359983f2ccc1fc56e463390d014))
+
 ## [0.1.0-alpha.286](https://github.com/petauron/vastora/compare/v0.1.0-alpha.285...v0.1.0-alpha.286) (2026-10-04)
 
 
