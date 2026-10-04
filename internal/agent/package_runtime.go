@@ -315,15 +315,6 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 		}
 		return result, e.save(receipt)
 	}
-	if task.Operation != "install" {
-		receipt.State = "backing-up"
-		if err = e.save(receipt); err != nil {
-			return result, err
-		}
-		if err = e.Backend.Backup(ctx, task, receipt); err != nil {
-			return result, err
-		}
-	}
 	receipt.State = "applying"
 	if err = e.save(receipt); err != nil {
 		return result, err

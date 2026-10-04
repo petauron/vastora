@@ -92,6 +92,13 @@ func (b *meridianPackageBackend) Prepare(ctx context.Context, task DeploymentTas
 }
 
 func (b *meridianPackageBackend) Backup(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
+	if err := b.prepareHandover(ctx); err != nil {
+		return err
+	}
+	return b.DockerPackageBackend.Backup(ctx, task, receipt)
+}
+
+func (b *meridianPackageBackend) prepareHandover(ctx context.Context) error {
 	if b.state != nil {
 		b.state.HandoverPending = true
 		if err := b.Executor.Store.saveMeridianRuntimeState(ctx, *b.state); err != nil {
@@ -104,10 +111,13 @@ func (b *meridianPackageBackend) Backup(ctx context.Context, task DeploymentTask
 			return err
 		}
 	}
-	return b.DockerPackageBackend.Backup(ctx, task, receipt)
+	return nil
 }
 
 func (b *meridianPackageBackend) Apply(ctx context.Context, task DeploymentTask, receipt *InstanceResources, persist func() error) error {
+	if err := b.prepareHandover(ctx); err != nil {
+		return err
+	}
 	if b.state != nil {
 		if err := b.DockerPackageBackend.Apply(ctx, task, receipt, persist); err != nil {
 			return err

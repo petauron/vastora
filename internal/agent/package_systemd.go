@@ -455,6 +455,12 @@ func archivePackageDirectory(ctx context.Context, writer *tar.Writer, directory 
 }
 
 func (b *SystemdPackageBackend) Apply(ctx context.Context, task DeploymentTask, receipt *InstanceResources, persist func() error) error {
+	// Replacing service files must stop the old process, independently of backups.
+	if unit := resourceNamed(receipt, "unit", "service"); unit != nil {
+		if err := b.Manager.run(ctx, "systemctl", "stop", unit.Name); err != nil {
+			return errors.New("agent: systemd service could not stop for update")
+		}
+	}
 	if b.createUser != "" {
 		if err := b.Manager.run(ctx, "useradd", "--system", "--user-group", "--no-create-home", "--home-dir", "/nonexistent", "--shell", "/usr/sbin/nologin", b.createUser); err != nil {
 			return errors.New("agent: package service account could not be created")

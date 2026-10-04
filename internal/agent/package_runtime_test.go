@@ -113,7 +113,7 @@ func TestPackageLifecycleUnknownApplicationAndNoAutomaticRollback(t *testing.T) 
 	if err == nil || !taskOutcomeIsUncertain(err) || result.Resources.State != "review-required" {
 		t.Fatalf("failure state: %+v %v", result.Resources, err)
 	}
-	if !slices.Equal(backend.calls, []string{"inspect", "prepare", "backup", "apply", "healthy"}) {
+	if !slices.Equal(backend.calls, []string{"inspect", "prepare", "apply", "healthy"}) {
 		t.Fatalf("rollback or misordered operation: %v", backend.calls)
 	}
 	backend.calls = nil
@@ -339,12 +339,11 @@ func TestPackageDockerCompleteLifecycleAndDataRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Resources.Backups) != 1 {
-		t.Fatal("no upgrade backup")
+	if len(result.Resources.Backups) != 0 || slices.Contains(engine.calls, "backup") {
+		t.Fatal("upgrade unexpectedly backed up application data")
 	}
-	snapshot, err := os.ReadFile(result.Resources.Backups[0].Path)
-	if err != nil || string(snapshot) != "original data" {
-		t.Fatal("incorrect backup")
+	if string(engine.data[volume]) != "original data" {
+		t.Fatal("upgrade changed application data")
 	}
 	if resourceNamed(result.Resources, "volume", "data").Name != volume {
 		t.Fatal("storage name changed")
@@ -447,8 +446,12 @@ func TestPackageSystemdCompleteLifecycleBothArchitectures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(result.Resources.Backups) == 0 {
-				t.Fatal("native backup missing")
+			if len(result.Resources.Backups) != 0 {
+				t.Fatal("native upgrade unexpectedly created a backup")
+			}
+			data, err := os.ReadFile(filepath.Join(dataPath, "database"))
+			if err != nil || string(data) != "version-one" {
+				t.Fatal("native upgrade changed application data")
 			}
 			task.ID = "remove"
 			task.Operation = "uninstall"

@@ -127,3 +127,12 @@ Vastora source with each runtime/architecture; privilege rejection, secret-safe
 output, ownership/path defenses, duplicate/old manual requests, interrupted upload,
 exact pending retries, expiry/rollback, no-restart adoption, and a complete
 release-to-visible-version flow without a Vastora code change.
+
+### Application upgrades and backups
+
+Ordinary application upgrades and configuration changes retain application storage
+and do not automatically snapshot entire volumes or data directories. Explicit
+backup/restore maintenance remains separate. Applications remain responsible for
+their schema migration backups; Center still uses forward-only migrations with
+backup-before-migration and fails closed on migration errors. Updates never
+automatically downgrade an executable after it has touched application data.
