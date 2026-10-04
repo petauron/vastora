@@ -60,10 +60,6 @@ func (s *Store) withPulseHostDefaults(ctx context.Context, agentID, operation st
 	return encoded, generated, err
 }
 
-func nativeApplication(appKey string) bool {
-	return appKey == komariAppKey || appKey == pulseAgentAppKey
-}
-
 // Called under deploymentCreateMu. A Pulse controller is global, not one per
 // Site. Failed first installs may be retried; retained successful installs count.
 func (s *Store) validatePulseDeployment(ctx context.Context, request DeploymentRequest) error {

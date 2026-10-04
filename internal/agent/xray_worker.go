@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -150,17 +149,6 @@ func validXrayWorkerHostGroup(group threeXUIHostGroup, inboundIDs map[int]bool) 
 		return false
 	}
 	return true
-}
-
-func xrayWorkerHY2Enabled(state xrayWorkerState) bool {
-	return slices.ContainsFunc(state.Inbounds, func(raw json.RawMessage) bool {
-		var inbound struct {
-			Enable   bool   `json:"enable"`
-			Protocol string `json:"protocol"`
-			Port     int    `json:"port"`
-		}
-		return json.Unmarshal(raw, &inbound) == nil && inbound.Enable && inbound.Protocol == "hysteria" && inbound.Port == threeXUIRealityPort
-	})
 }
 
 func validXrayWorkerImageReference(value string) bool {

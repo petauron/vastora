@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/secret"
 )

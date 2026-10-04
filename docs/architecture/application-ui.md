@@ -26,7 +26,7 @@ The Meridian UI produces a JS module and stylesheet named
 `ui-meridian-<application-version>.js` and `.css`. Its reviewed source commit is
 an input to the protected official catalog publication workflow. That workflow
 builds it against the pinned Center platform UI source, checks the resulting
-bytes before and after protected approval, and signs both files as TUF targets
+bytes before loading publication credentials, and signs both files as TUF targets
 beside `stable.json`. An application version cannot be reused with different UI
 bytes. To change the UI, release a new Meridian application version.
 
@@ -56,15 +56,15 @@ policy. Do not add third-party script URLs to this path.
    commit SHA. Its CI must type-check against the pinned Center UI contract and
    build the matching JS/CSS pair.
 2. Review and merge the Center schema, trusted asset cache, API, and frontend
-   host. Rehearse the schema 101 migration against a copy of the released
-   Center database; a migration failure stops startup and does not downgrade
+   host. Rehearse the forward schema 108→109 migration against a copy of the
+   released Center database; a migration failure stops startup and does not downgrade
    automatically.
 3. Publish a new official catalog revision with the reviewed Meridian commit.
    The protected workflow rebuilds the UI and signs the exact bytes. A plain
    catalog refresh or Center release without these targets does not make the
    Meridian workspace available.
 4. Back up A1's released Center database, publish the Center release, and use
-   the managed update path. Center migrates to schema 101 on startup; stop the
+   the managed update path. Center migrates to schema 109 on startup; stop the
    rollout if migration or health checks fail.
 5. Refresh the trusted official catalog in the updated Center, then inspect
    Meridian and Pulse through an authenticated session.

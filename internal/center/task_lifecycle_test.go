@@ -23,7 +23,7 @@ func TestOfficialCatalogExpiryRejectsUnissuedDeployment(t *testing.T) {
 	node := enrollOrchestrationNode(t, store, "expired-catalog", NodeCapabilities{Docker: true}, []networking.Candidate{
 		{Address: "10.0.0.14", Interface: "eth0", Kind: networking.KindLAN},
 	}, networking.Profile{ServiceAddress: "10.0.0.14", LANAddress: "10.0.0.14", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestPendingDeploymentClaimsJSONStoredAsText(t *testing.T) {
 	node := enrollOrchestrationNode(t, store, "text-json-deployment", NodeCapabilities{Docker: true}, []networking.Candidate{
 		{Address: "10.0.0.14", Interface: "eth0", Kind: networking.KindLAN},
 	}, networking.Profile{ServiceAddress: "10.0.0.14", LANAddress: "10.0.0.14", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{}`)})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T) {
 		{Address: "10.0.0.14", Interface: "eth0", Kind: networking.KindLAN},
 		{Address: "10.0.0.24", Interface: "eth1", Kind: networking.KindLAN},
 	}, networking.Profile{ServiceAddress: "10.0.0.14", LANAddress: "10.0.0.14", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T) {
 	if secretErr != nil || json.Unmarshal(encodedSecrets, &recoveredSecrets) != nil || recoveredSecrets["api_token"] != "recovered-local-api-token" {
 		t.Fatalf("generated API token was not retained: err=%v", secretErr)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)}); err == nil || !strings.Contains(err.Error(), "active deployment task") {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")}); err == nil || !strings.Contains(err.Error(), "active deployment task") {
 		t.Fatalf("quarantined deployment did not keep the task lock: %v", err)
 	}
 	if _, err := store.ConfirmNetworkProfile(ctx, node.ID, networking.Profile{ServiceAddress: "10.0.0.24", LANAddress: "10.0.0.24", EnabledKinds: []string{networking.KindLAN}}); err == nil || !strings.Contains(err.Error(), "recover deployment tasks") {
@@ -127,7 +127,7 @@ func TestTaskEncryptionFailureReleasesTheCommittedLease(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "encryption-race", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.18", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.18", LANAddress: "10.0.0.18", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestNonThreeXUIDeploymentCanBeQuarantinedAndRetried(t *testing.T) {
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "invalid-reconciliation", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.16", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.16", LANAddress: "10.0.0.16", EnabledKinds: []string{networking.KindLAN}})
 	config := json.RawMessage(`{"debug":false}`)
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config, AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestExpiredTaskRequiresVerificationAndRejectsLateResult(t *testing.T) {
 	store.now = func() time.Time { return clock }
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
 	config := json.RawMessage(`{"debug":false}`)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: config}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: config, AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 		t.Fatal(err)
 	}
 	first := claimTask(t, store, node)
@@ -386,7 +386,7 @@ func TestTaskLeaseRenewalKeepsAttemptActiveAndNeverResurrectsExpiredLease(t *tes
 	store.now = func() time.Time { return clock }
 	node := enrollOrchestrationNode(t, store, "lease-renewal", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
 	config := json.RawMessage(`{"debug":false}`)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config, AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 		t.Fatal(err)
 	}
 	first := claimTask(t, store, node)
@@ -423,7 +423,7 @@ func TestAgentStartupFencesPreviousProcessTaskWithoutReplay(t *testing.T) {
 	clock := store.now().UTC()
 	store.now = func() time.Time { return clock }
 	node := enrollOrchestrationNode(t, store, "startup-lease-recovery", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.12", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.12", LANAddress: "10.0.0.12", EnabledKinds: []string{networking.KindLAN}})
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 		t.Fatal(err)
 	}
 	first := claimTask(t, store, node)
@@ -453,7 +453,7 @@ func TestDeploymentCompletionUsesCapturedServiceAddress(t *testing.T) {
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "address-snapshot", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.11", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.11", LANAddress: "10.0.0.11", EnabledKinds: []string{networking.KindLAN}})
 	config := json.RawMessage(`{"debug":false}`)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config, AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
@@ -464,7 +464,7 @@ func TestDeploymentCompletionUsesCapturedServiceAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := cpaApplicationResult("10.0.0.11")
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", mockPackageResult(t, task, result), task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	var deploymentState, applicationStatus, endpoint string
@@ -503,7 +503,7 @@ func TestNetworkProfileChangeAndDeploymentCreationRemainConsistent(t *testing.T)
 	go func() {
 		ready.Done()
 		<-start
-		view, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+		view, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 		deploymentResults <- deploymentResult{view: view, err: err}
 	}()
 	ready.Wait()
@@ -591,20 +591,20 @@ func TestDeploymentLifecyclePreventsDuplicateInstallAndControlsDataDeletion(t *t
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.20", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.20", LANAddress: "10.0.0.20", EnabledKinds: []string{networking.KindLAN}})
 	config := json.RawMessage(`{"debug":false}`)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "uninstall"}); err == nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "uninstall", AuthorizedCapabilities: testCapabilityGrant("root")}); err == nil {
 		t.Fatal("uninstall was accepted before installation")
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: config}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: config, AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: config}); err == nil || !strings.Contains(err.Error(), "active deployment task") {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: config, AuthorizedCapabilities: testCapabilityGrant("root")}); err == nil || !strings.Contains(err.Error(), "active deployment task") {
 		t.Fatalf("parallel install was not rejected: %v", err)
 	}
 	completeNextTask(t, store, node, "application.apply", cpaApplicationResult("10.0.0.20"))
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: config}); err == nil || !strings.Contains(err.Error(), "use upgrade") {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: config, AuthorizedCapabilities: testCapabilityGrant("root")}); err == nil || !strings.Contains(err.Error(), "use upgrade") {
 		t.Fatalf("duplicate install was not rejected: %v", err)
 	}
-	uninstall, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "uninstall", DeleteData: false})
+	uninstall, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "uninstall", DeleteData: false, AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -612,7 +612,7 @@ func TestDeploymentLifecyclePreventsDuplicateInstallAndControlsDataDeletion(t *t
 		t.Fatal("uninstall deleted data without explicit selection")
 	}
 	completeNextTask(t, store, node, "application.apply", nil)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "upgrade"}); err == nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "upgrade", AuthorizedCapabilities: testCapabilityGrant("root")}); err == nil {
 		t.Fatal("upgrade was accepted after uninstall")
 	}
 }
@@ -626,7 +626,7 @@ func TestConfigureReusesInstalledVersionAndEncryptedValues(t *testing.T) {
 	}
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.30", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.30", LANAddress: "10.0.0.30", EnabledKinds: []string{networking.KindLAN}})
 	initial := json.RawMessage(`{"debug":false}`)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: initial}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: initial, AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 		t.Fatal(err)
 	}
 	completeNextTask(t, store, node, "application.apply", cpaApplicationResult("10.0.0.30"))
@@ -634,7 +634,7 @@ func TestConfigureReusesInstalledVersionAndEncryptedValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configured, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "configure", Config: json.RawMessage(`{"debug":true}`)})
+	configured, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "configure", Config: json.RawMessage(`{"debug":true}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -658,18 +658,18 @@ func TestUpgradeRequiresANewerCatalogVersionAndRejectsDowngrade(t *testing.T) {
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "versioned", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.31", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.31", LANAddress: "10.0.0.31", EnabledKinds: []string{networking.KindLAN}})
 	initial := json.RawMessage(`{"debug":false}`)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial, AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 		t.Fatal(err)
 	}
 	result := cpaApplicationResult("10.0.0.31")
 	completeNextTask(t, store, node, "application.apply", result)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"}); err == nil || !strings.Contains(err.Error(), "already at version") {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade", AuthorizedCapabilities: testCapabilityGrant("root")}); err == nil || !strings.Contains(err.Error(), "already at version") {
 		t.Fatalf("same-version upgrade was accepted: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET app_version = '7.2.127' WHERE app_key = ? AND state = 'succeeded'`, cpaAppKey); err != nil {
 		t.Fatal(err)
 	}
-	upgrade, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"})
+	upgrade, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade", AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil || upgrade.AppVersion != "7.2.130" {
 		t.Fatalf("newer version was not accepted: %#v err=%v", upgrade, err)
 	}
@@ -677,7 +677,7 @@ func TestUpgradeRequiresANewerCatalogVersionAndRejectsDowngrade(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET app_version = '7.2.131' WHERE app_key = ? AND state = 'succeeded'`, cpaAppKey); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"}); err == nil || !strings.Contains(err.Error(), "downgrade is not allowed") {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade", AuthorizedCapabilities: testCapabilityGrant("root")}); err == nil || !strings.Contains(err.Error(), "downgrade is not allowed") {
 		t.Fatalf("downgrade was accepted: %v", err)
 	}
 }
@@ -688,12 +688,12 @@ func TestFailedChangeRemainsAnInstalledApplication(t *testing.T) {
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "degraded", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.32", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.32", LANAddress: "10.0.0.32", EnabledKinds: []string{networking.KindLAN}})
 	initial := json.RawMessage(`{"debug":false}`)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial, AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 		t.Fatal(err)
 	}
 	result := cpaApplicationResult("10.0.0.32")
 	completeNextTask(t, store, node, "application.apply", result)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", Config: json.RawMessage(`{"debug":true}`)}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", Config: json.RawMessage(`{"debug":true}`), AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
@@ -712,14 +712,14 @@ func TestInstalledAppCanBeUninstalledAfterCatalogRemoval(t *testing.T) {
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "catalog-removed", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.33", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.33", LANAddress: "10.0.0.33", EnabledKinds: []string{networking.KindLAN}})
 	initial := json.RawMessage(`{"debug":false}`)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial, AuthorizedCapabilities: testCapabilityGrant("root")}); err != nil {
 		t.Fatal(err)
 	}
 	completeNextTask(t, store, node, "application.apply", cpaApplicationResult("10.0.0.33"))
 	if _, err := store.db.ExecContext(ctx, `UPDATE catalog_sources SET enabled = 0`); err != nil {
 		t.Fatal(err)
 	}
-	uninstall, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "uninstall"})
+	uninstall, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "uninstall", AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil || uninstall.AppVersion != "7.2.130" {
 		t.Fatalf("installed app became unmanageable after catalog removal: %#v err=%v", uninstall, err)
 	}
@@ -755,7 +755,7 @@ func TestPulseCredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 		t.Fatal("Agent task did not receive the matching encrypted setup token")
 	}
 	result := json.RawMessage(`{"services":[{"name":"dashboard","protocol":"http","containerPort":8080,"hostPort":18080,"address":"10.0.0.40"}]}`)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", mockPackageResult(t, task, result), task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	listed, err := store.ListDeployments(ctx)
@@ -774,6 +774,14 @@ func TestThreeXUIDeploymentsAndDataPlaneCommandsAreMutuallyExclusive(t *testing.
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "serialized-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.42", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.42", LANAddress: "10.0.0.42", EnabledKinds: []string{networking.KindLAN}})
 	created := seedLegacyDeployment(t, store, node, "10.0.0.42", "local-api-token", threeXUIRoleMaster)
+	// Model the maintenance-window adoption before testing command exclusion.
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_resources(application_id,package_revision,manifest_sha256,authorized_capabilities_json,resources_json,adoption_state,updated_at) VALUES(?,0,'','[]','{}','pending',?)`, created.ApplicationID, store.now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.QueueApplicationAdoption(ctx, created.ApplicationID); err != nil {
+		t.Fatal(err)
+	}
+	confirmIndependentTask(t, store, node, claimTask(t, store, node))
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
 		VALUES('active-reality-command', ?, ?, ?, ?, '{}', 'running', ?, ?)`, created.ApplicationID, node.ID, node.ID, realityCommandKind, now, now); err != nil {

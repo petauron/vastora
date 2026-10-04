@@ -10,11 +10,29 @@ import (
 
 func TestVersion88PreservesSubscriptionGraphAndAddsSystemOwnership(t *testing.T) {
 	directory := t.TempDir()
-	store, err := Open(directory)
-	if err != nil {
+	store := legacyMigrationStore(t, directory, 87)
+	// The baseline fixture shares the current services DDL; restore the v87
+	// ownership constraint before exercising migration 88.
+	var schema string
+	if err := store.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='services'`).Scan(&schema); err != nil {
 		t.Fatal(err)
 	}
-	_, publicationID := seedFailedMeridianSubscriptionPublication(t, store, "schema-88")
+	schema = strings.Replace(schema, "services (", "services_v87_fixture (", 1)
+	schema = strings.Replace(schema, "'catalog', 'observed', 'system'", "'catalog', 'observed'", 1)
+	for _, statement := range []string{
+		`PRAGMA foreign_keys=OFF`, `PRAGMA legacy_alter_table=ON`, `BEGIN IMMEDIATE`, schema,
+		`INSERT INTO services_v87_fixture SELECT * FROM services`, `DROP TABLE services`,
+		`ALTER TABLE services_v87_fixture RENAME TO services`, `COMMIT`,
+		`PRAGMA legacy_alter_table=OFF`, `PRAGMA foreign_keys=ON`,
+	} {
+		if _, err := store.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publicationID := "publication-v3"
+	if _, err := store.db.Exec(`UPDATE applications SET app_key='vastora-official/meridian' WHERE id='application-v3'; UPDATE services SET name='subscription', endpoint='10.0.0.2:8080', source='catalog' WHERE id='service-v3'`); err != nil {
+		t.Fatal(err)
+	}
 	const graphQuery = `SELECT json_object('serviceId',s.id,'applicationId',s.application_id,'endpoint',s.endpoint,
 		'publicationId',p.id,'hostname',p.hostname,'routeId',r.id,'upstreams',CAST(r.upstreams_json AS TEXT))
 		FROM services s JOIN publications p ON p.service_id=s.id JOIN routes r ON r.publication_id=p.id WHERE p.id=?`
@@ -22,50 +40,11 @@ func TestVersion88PreservesSubscriptionGraphAndAddsSystemOwnership(t *testing.T)
 	if err := store.db.QueryRow(graphQuery, publicationID).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	// Reconstruct the actual released v87 constraint, including child records.
-	var schema string
-	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='services'`).Scan(&schema); err != nil {
-		t.Fatal(err)
-	}
-	schema = strings.Replace(schema, "services (", "services_v87_fixture (", 1)
-	schema = strings.Replace(schema, "'catalog', 'observed', 'system'", "'catalog', 'observed'", 1)
-	for _, statement := range []string{
-		`PRAGMA foreign_keys=OFF`, `PRAGMA legacy_alter_table=ON`, `BEGIN IMMEDIATE`,
-		`DROP TABLE official_app_ui_assets`, `DROP TABLE official_app_ui_history`,
-		`UPDATE services SET source='catalog' WHERE source='system'`, schema,
-		`INSERT INTO services_v87_fixture SELECT * FROM services`, `DROP TABLE services`,
-		`ALTER TABLE services_v87_fixture RENAME TO services`, `DROP TABLE goose_db_version`,
-		`ALTER TABLE meridian_route_grants DROP COLUMN health_expires_unix_ms`,
-		`ALTER TABLE meridian_endpoints DROP COLUMN source_peer_json`,
-		`ALTER TABLE meridian_endpoints DROP COLUMN listen_address`,
-		`DROP INDEX meridian_endpoints_reset`,
-		`ALTER TABLE meridian_endpoints DROP COLUMN total_bytes`,
-		`ALTER TABLE meridian_endpoints DROP COLUMN used_bytes`,
-		`ALTER TABLE meridian_endpoints DROP COLUMN quota_applied_enabled`,
-		`ALTER TABLE meridian_endpoints DROP COLUMN reset_day`,
-		`ALTER TABLE meridian_endpoints DROP COLUMN next_reset_at`,
-		`ALTER TABLE meridian_endpoints DROP COLUMN last_reset_at`,
-		`ALTER TABLE landing_server_states DROP COLUMN applied_json`,
-		`ALTER TABLE agents DROP COLUMN landing_egress_addresses_json`,
-		`ALTER TABLE agent_private_peer_capabilities RENAME TO landing_client_capabilities`,
-		`PRAGMA user_version=87`, `COMMIT`, `PRAGMA legacy_alter_table=OFF`, `PRAGMA foreign_keys=ON`,
-	} {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := db.Exec(`UPDATE services SET source='system'`); err == nil {
+	// A real v87 schema rejects system ownership before the forward migration.
+	if _, err := store.db.Exec(`UPDATE services SET source='system'`); err == nil {
 		t.Fatal("version 87 fixture unexpectedly accepts system-owned services")
 	}
-	if err := db.Close(); err != nil {
+	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
 	migrated, err := Open(directory)

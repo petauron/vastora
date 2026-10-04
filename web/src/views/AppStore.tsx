@@ -60,7 +60,7 @@ export function AppStoreCard({ app, language, installedCount, canInstall: nodeAv
   const catalogBlocked = catalogInstallBlocked(app);
   const canInstall = nodeAvailable && !catalogBlocked;
   const blocker = catalogBlocked
-    ? copy(language, "请先在设置中刷新应用目录，再安装或升级。已安装应用不受影响。", "Refresh the app catalog in Settings before installing or upgrading. Installed apps are unaffected.")
+    ? app.installBlockedReason || copy(language, "请先在设置中刷新应用目录，再安装或升级。已安装应用不受影响。", "Refresh the app catalog in Settings before installing or upgrading. Installed apps are unaffected.")
     : nodeBlocker;
   return <Card aria-labelledby={`${id}-name`} className="min-w-0" role="article">
     <CardHeader className="gap-2">
@@ -72,7 +72,7 @@ export function AppStoreCard({ app, language, installedCount, canInstall: nodeAv
     </CardHeader>
     <CardContent className="flex flex-col gap-2">
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <span className="break-all">v{app.app.version}</span>
+        <span className="break-all">v{app.app.version} · r{app.app.packageRevision ?? 0}</span>
         <span aria-hidden="true">·</span>
         <span>{app.app.hostAccess ? copy(language, "主机应用", "Host app") : copy(language, "容器应用", "Container app")}</span>
       </p>

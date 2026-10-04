@@ -100,7 +100,7 @@ func TestPulseReportingPinsServiceAndUsesSecretStdin(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			result, err := (ApplicationExecutor{DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}).InspectPulseReporting(context.Background(), task)
+			result, err := (ApplicationExecutor{PackageStateDirectory: pulseReviewedTestPackage(t, task.ApplicationID, task.DeploymentID), DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}).InspectPulseReporting(context.Background(), task)
 			mu.Lock()
 			defer mu.Unlock()
 			if mode == "fresh" || mode == "retained" {

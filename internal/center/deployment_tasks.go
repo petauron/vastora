@@ -8,11 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/ipquality"
@@ -43,6 +44,13 @@ type AgentTask struct {
 	Attempt                   int64                                `json:"attempt"`
 	AppKey                    string                               `json:"appKey"`
 	Manifest                  catalog.AppManifest                  `json:"manifest"`
+	PackageRevision           int                                  `json:"packageRevision"`
+	ManifestSHA256            string                               `json:"manifestSha256"`
+	AuthorizedCapabilities    []string                             `json:"authorizedCapabilities"`
+	Resources                 json.RawMessage                      `json:"resources,omitempty"`
+	HistoricalManifest        json.RawMessage                      `json:"historicalManifest,omitempty"`
+	DormantRuntime            bool                                 `json:"dormantRuntime,omitempty"`
+	PackageMaintenance        *PackageMaintenanceTask              `json:"packageMaintenance,omitempty"`
 	Config                    json.RawMessage                      `json:"config"`
 	Secrets                   json.RawMessage                      `json:"secrets"`
 	Operation                 string                               `json:"operation"`
@@ -199,6 +207,26 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	// queues an update, the update remains the first claim above.
 	if agentVersionBehindTarget(agentVersion, Version) {
 		return nil, nil
+	}
+	adoptionTask, adoptionErr := s.claimApplicationAdoption(ctx, tx, agentID, requiredTaskID)
+	if adoptionErr != nil {
+		return nil, adoptionErr
+	}
+	if adoptionTask != nil {
+		if err := commitTask(tx, adoptionTask); err != nil {
+			return nil, err
+		}
+		return adoptionTask, nil
+	}
+	maintenanceTask, maintenanceErr := s.claimApplicationMaintenance(ctx, tx, agentID, requiredTaskID)
+	if maintenanceErr != nil {
+		return nil, maintenanceErr
+	}
+	if maintenanceTask != nil {
+		if err := commitTask(tx, maintenanceTask); err != nil {
+			return nil, err
+		}
+		return maintenanceTask, nil
 	}
 	pending, err := readPendingApplicationDeployment(ctx, tx, agentID, requiredTaskID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -373,7 +401,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 
 type pendingApplicationDeployment struct {
 	task                                               AgentTask
-	manifest, config                                   []byte
+	manifest, config, authorizedCapabilitiesJSON       []byte
 	secretID, registryCredentialID                     sql.NullString
 	attempt                                            int64
 	reconciliationRequested, requiredRuntimeGeneration int
@@ -381,7 +409,7 @@ type pendingApplicationDeployment struct {
 
 func readPendingApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, requiredTaskID string) (pendingApplicationDeployment, error) {
 	var p pendingApplicationDeployment
-	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, a.role, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation
+	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, a.role, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation, d.package_revision, d.manifest_sha256, d.authorized_capabilities_json
 		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending'
 		AND NOT (d.app_key = 'vastora-official/pulse-agent' AND d.operation = 'install' AND d.secret_id IS NULL)`
 	queryArgs := []any{agentID}
@@ -390,7 +418,7 @@ func readPendingApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, 
 		queryArgs = append(queryArgs, requiredTaskID)
 	}
 	query += ` ORDER BY d.created_at, d.rowid LIMIT 1`
-	err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&p.task.ID, &p.task.AppKey, &p.manifest, &p.config, &p.secretID, &p.registryCredentialID, &p.task.Operation, &p.task.DeleteData, &p.task.ApplicationID, &p.task.ApplicationRole, &p.task.ServiceAddress, &p.attempt, &p.reconciliationRequested, &p.requiredRuntimeGeneration)
+	err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&p.task.ID, &p.task.AppKey, &p.manifest, &p.config, &p.secretID, &p.registryCredentialID, &p.task.Operation, &p.task.DeleteData, &p.task.ApplicationID, &p.task.ApplicationRole, &p.task.ServiceAddress, &p.attempt, &p.reconciliationRequested, &p.requiredRuntimeGeneration, &p.task.PackageRevision, &p.task.ManifestSHA256, &p.authorizedCapabilitiesJSON)
 	return p, err
 }
 
@@ -411,6 +439,38 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	task.Config = json.RawMessage(config)
 	if err := json.Unmarshal(manifest, &task.Manifest); err != nil {
 		return nil, fmt.Errorf("center: decode pending task: %w", err)
+	}
+	if json.Unmarshal(pending.authorizedCapabilitiesJSON, &task.AuthorizedCapabilities) != nil {
+		return nil, errors.New("center: invalid deployment permission record")
+	}
+	if task.Operation == "uninstall" && task.PackageRevision == 0 && task.Manifest.Runtime == nil {
+		grants, err := legacyRemovalAuthorization(ctx, tx, agentID, task.AppKey, manifest)
+		if err != nil {
+			return nil, err
+		}
+		if rawManifestDigest(manifest) != task.ManifestSHA256 || !slices.Equal(grants, slices.Sorted(slices.Values(task.AuthorizedCapabilities))) {
+			return nil, errors.New("center: historical removal package identity mismatch")
+		}
+		task.HistoricalManifest = json.RawMessage(manifest)
+	} else {
+		if err := requireNodeRuntime(ctx, tx, agentID, task.Manifest); err != nil {
+			return nil, err
+		}
+		if err := catalog.ValidateAuthorizedCapabilities(task.Manifest, task.AuthorizedCapabilities); err != nil {
+			return nil, err
+		}
+		_, _, digest, err := canonicalPackage(task.Manifest)
+		if err != nil || digest != task.ManifestSHA256 || task.PackageRevision != task.Manifest.PackageRevision {
+			return nil, errors.New("center: deployment package identity mismatch")
+		}
+	}
+	var adoptionState string
+	adoptionErr := tx.QueryRowContext(ctx, `SELECT adoption_state FROM application_resources WHERE application_id=?`, task.ApplicationID).Scan(&adoptionState)
+	if adoptionErr != nil && !errors.Is(adoptionErr, sql.ErrNoRows) {
+		return nil, adoptionErr
+	}
+	if adoptionErr == nil && adoptionState != "ready" {
+		return nil, errors.New("center: existing application resources require maintenance adoption")
 	}
 	// Recheck only work that has never reached an Agent. Recovery of an
 	// already-issued operation must remain possible without a live catalog.
@@ -537,6 +597,23 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 	taskError = controlplane.SafeError(taskError)
 	if reconciliationRequired && (succeeded || strings.TrimSpace(taskError) == "") {
 		return errInvalidReconciliationDisposition
+	}
+	var maintenance bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_maintenance WHERE id=? AND agent_id=?)`, taskID, agentID).Scan(&maintenance); err != nil {
+		return err
+	}
+	if maintenance {
+		return s.completeApplicationMaintenance(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
+	}
+	var adoption bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_adoptions WHERE id=? AND agent_id=?)`, taskID, agentID).Scan(&adoption); err != nil {
+		return err
+	}
+	if adoption {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeApplicationAdoption(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
 	}
 	// Application commands are identified by their persisted task kind, not by
 	// an ID prefix. Meridian commands use opaque IDs and must take the same

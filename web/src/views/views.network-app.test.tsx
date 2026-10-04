@@ -291,7 +291,7 @@ describe("network and app views", () => {
   it("keeps CPA installation one-click and protects reveal and rotation", async () => {
     const data = dashboard();
     const reauthentication = ["test", "reauth"].join("-");
-    data.apps = [{ key: "vastora-official/cpa", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "cpa", version: "7.2.130", name: { en: "CPA", "zh-CN": "CPA" }, description: { en: "Proxy API", "zh-CN": "代理 API" }, config: [{ key: "debug", label: { en: "Debug logging", "zh-CN": "调试日志" }, description: { en: "Extra logs", "zh-CN": "额外日志" }, type: "boolean", required: false, secret: false, default: false }] } }];
+    data.apps = [{ key: "vastora-official/cpa", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "cpa", version: "7.2.130", packageRevision: 1, runtime: { kind: "docker", version: 1 }, name: { en: "CPA", "zh-CN": "CPA" }, description: { en: "Proxy API", "zh-CN": "代理 API" }, config: [{ key: "debug", label: { en: "Debug logging", "zh-CN": "调试日志" }, description: { en: "Extra logs", "zh-CN": "额外日志" }, type: "boolean", required: false, secret: false, default: false }] } }];
     data.applications = [];
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "安装")?.click());
@@ -459,7 +459,7 @@ describe("network and app views", () => {
     const submit = document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]');
     expect(submit?.disabled).toBe(false);
     await act(async () => submit?.click());
-    expect(create).toHaveBeenCalledWith("agent", data.apps[0].key, { endpoint: "https://monitor.example" }, "configure", false, undefined, undefined, undefined);
+    expect(create).toHaveBeenCalledWith("agent", data.apps[0].key, { endpoint: "https://monitor.example" }, "configure", false, undefined, undefined, undefined, [], undefined);
   });
 
   it.each(["zh-CN", "en"] as const)("separates version status from aligned controller actions: %s", (language) => {
@@ -639,7 +639,7 @@ describe("network and app views", () => {
 
   it("opens the CPA client API through a dedicated Tunnel flow without requiring Center Access", async () => {
     const data = dashboard();
-    data.apps = [{ key: "vastora-official/cpa", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "cpa", version: "7.2.130", name: { en: "CPA", "zh-CN": "CPA" }, description: { en: "Proxy API", "zh-CN": "代理 API" }, config: [] } }];
+    data.apps = [{ key: "vastora-official/cpa", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "cpa", version: "7.2.130", packageRevision: 1, runtime: { kind: "docker", version: 1 }, name: { en: "CPA", "zh-CN": "CPA" }, description: { en: "Proxy API", "zh-CN": "代理 API" }, config: [] } }];
     data.applications = [{ ...data.applications[0], id: "cpa-application", name: "CPA", appKey: "vastora-official/cpa", image: "cpa", runtime: "docker", installedVersion: "7.2.130", availableVersion: "7.2.130" }];
     data.services = [
       { id: "cpa-api", applicationId: "cpa-application", siteId: "site", name: "api", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" },

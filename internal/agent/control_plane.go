@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/ipquality"
@@ -111,25 +111,27 @@ func taskOutcomeIsUncertain(err error) bool {
 }
 
 type Capabilities struct {
-	NativeEgress          bool `json:"nativeEgress"`
-	PulseRestore          bool `json:"pulseRestore"`
-	MeridianAcceptance    bool `json:"meridianAcceptance"`
-	PulseReporting        bool `json:"pulseReporting"`
-	PulseRotation         bool `json:"pulseRotation"`
-	PulseInspection       bool `json:"pulseInspection"`
-	IPQuality             bool `json:"ipQuality"`
-	NetworkDiagnostics    bool `json:"networkDiagnostics"`
-	ReturnRoute           bool `json:"returnRoute"`
-	BandwidthDiagnostics  bool `json:"bandwidthDiagnostics"`
-	LandingEgressIP       bool `json:"landingEgressIP"`
-	MeridianLinkBandwidth bool `json:"meridianLinkBandwidth"`
-	MeridianLinkRevision  int  `json:"meridianLinkRevision"`
-	HostProfile           bool `json:"hostProfile"`
-	Docker                bool `json:"docker"`
-	Gateway               bool `json:"gateway"`
-	Tunnel                bool `json:"tunnel"`
-	Metrics               bool `json:"metrics"`
-	Logs                  bool `json:"logs"`
+	ExecutorVersions      map[string]int `json:"executorVersions,omitempty"`
+	RuntimeCapabilities   []string       `json:"runtimeCapabilities,omitempty"`
+	NativeEgress          bool           `json:"nativeEgress"`
+	PulseRestore          bool           `json:"pulseRestore"`
+	MeridianAcceptance    bool           `json:"meridianAcceptance"`
+	PulseReporting        bool           `json:"pulseReporting"`
+	PulseRotation         bool           `json:"pulseRotation"`
+	PulseInspection       bool           `json:"pulseInspection"`
+	IPQuality             bool           `json:"ipQuality"`
+	NetworkDiagnostics    bool           `json:"networkDiagnostics"`
+	ReturnRoute           bool           `json:"returnRoute"`
+	BandwidthDiagnostics  bool           `json:"bandwidthDiagnostics"`
+	LandingEgressIP       bool           `json:"landingEgressIP"`
+	MeridianLinkBandwidth bool           `json:"meridianLinkBandwidth"`
+	MeridianLinkRevision  int            `json:"meridianLinkRevision"`
+	HostProfile           bool           `json:"hostProfile"`
+	Docker                bool           `json:"docker"`
+	Gateway               bool           `json:"gateway"`
+	Tunnel                bool           `json:"tunnel"`
+	Metrics               bool           `json:"metrics"`
+	Logs                  bool           `json:"logs"`
 }
 
 type Enrollment struct {
@@ -141,6 +143,13 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	PackageMaintenance        *PackageMaintenanceTask              `json:"packageMaintenance,omitempty"`
+	HistoricalManifest        json.RawMessage                      `json:"historicalManifest,omitempty"`
+	DormantRuntime            bool                                 `json:"dormantRuntime,omitempty"`
+	PackageRevision           int                                  `json:"packageRevision,omitempty"`
+	ManifestSHA256            string                               `json:"manifestSha256,omitempty"`
+	AuthorizedCapabilities    []string                             `json:"authorizedCapabilities,omitempty"`
+	Resources                 *InstanceResources                   `json:"resources,omitempty"`
 	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
@@ -206,6 +215,8 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
+	Resources            *InstanceResources                  `json:"resources,omitempty"`
 	MeridianAcceptance   *meridianruntime.AcceptanceResult   `json:"meridianAcceptance,omitempty"`
 	IPQuality            *ipquality.Result                   `json:"ipQuality,omitempty"`
 	NodeDiagnostics      *nodediagnostics.Result             `json:"nodeDiagnostics,omitempty"`

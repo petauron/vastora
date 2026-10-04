@@ -21,7 +21,7 @@ func TestAgentReconnectDoesNotApplyPreviousMachineResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := enrollAccessTestNode(t, store, "reinstalled-node", "10.0.0.80")
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -24,7 +24,7 @@ func TestStopOfflineAgentAccessPreservesApplicationsAndGateway(t *testing.T) {
 	store.now = func() time.Time { return clock }
 	node := enrollAccessTestNode(t, store, "offline-node", "10.0.0.80")
 	other := enrollAccessTestNode(t, store, "other-node", "10.0.0.81")
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
 	}

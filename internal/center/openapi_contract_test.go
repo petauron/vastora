@@ -183,7 +183,7 @@ func TestOpenAPIRepresentativeHandlerCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	catalogPayload, err := os.ReadFile(filepath.Join("..", "..", "catalog", "catalog.json"))
+	catalogPayload, err := os.ReadFile(filepath.Join("testdata", "reviewed-catalog-v4.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

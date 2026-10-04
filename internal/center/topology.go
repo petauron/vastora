@@ -28,25 +28,27 @@ var (
 )
 
 type NodeCapabilities struct {
-	NativeEgress          bool `json:"nativeEgress"`
-	PulseRestore          bool `json:"pulseRestore"`
-	MeridianAcceptance    bool `json:"meridianAcceptance"`
-	PulseReporting        bool `json:"pulseReporting"`
-	PulseRotation         bool `json:"pulseRotation"`
-	PulseInspection       bool `json:"pulseInspection"`
-	IPQuality             bool `json:"ipQuality"`
-	NetworkDiagnostics    bool `json:"networkDiagnostics"`
-	ReturnRoute           bool `json:"returnRoute"`
-	BandwidthDiagnostics  bool `json:"bandwidthDiagnostics"`
-	LandingEgressIP       bool `json:"landingEgressIP"`
-	MeridianLinkBandwidth bool `json:"meridianLinkBandwidth"`
-	MeridianLinkRevision  int  `json:"meridianLinkRevision"`
-	HostProfile           bool `json:"hostProfile"`
-	Docker                bool `json:"docker"`
-	Gateway               bool `json:"gateway"`
-	Tunnel                bool `json:"tunnel"`
-	Metrics               bool `json:"metrics"`
-	Logs                  bool `json:"logs"`
+	ExecutorVersions      map[string]int `json:"executorVersions,omitempty"`
+	RuntimeCapabilities   []string       `json:"runtimeCapabilities,omitempty"`
+	NativeEgress          bool           `json:"nativeEgress"`
+	PulseRestore          bool           `json:"pulseRestore"`
+	MeridianAcceptance    bool           `json:"meridianAcceptance"`
+	PulseReporting        bool           `json:"pulseReporting"`
+	PulseRotation         bool           `json:"pulseRotation"`
+	PulseInspection       bool           `json:"pulseInspection"`
+	IPQuality             bool           `json:"ipQuality"`
+	NetworkDiagnostics    bool           `json:"networkDiagnostics"`
+	ReturnRoute           bool           `json:"returnRoute"`
+	BandwidthDiagnostics  bool           `json:"bandwidthDiagnostics"`
+	LandingEgressIP       bool           `json:"landingEgressIP"`
+	MeridianLinkBandwidth bool           `json:"meridianLinkBandwidth"`
+	MeridianLinkRevision  int            `json:"meridianLinkRevision"`
+	HostProfile           bool           `json:"hostProfile"`
+	Docker                bool           `json:"docker"`
+	Gateway               bool           `json:"gateway"`
+	Tunnel                bool           `json:"tunnel"`
+	Metrics               bool           `json:"metrics"`
+	Logs                  bool           `json:"logs"`
 }
 
 type NodeHeartbeat struct {
@@ -123,25 +125,29 @@ type SiteView struct {
 }
 
 type ApplicationView struct {
-	ID                string     `json:"id"`
-	Name              string     `json:"name"`
-	NodeID            string     `json:"nodeId"`
-	SiteID            string     `json:"siteId"`
-	AppKey            string     `json:"appKey"`
-	Image             string     `json:"image"`
-	Status            string     `json:"status"`
-	Runtime           string     `json:"runtime"`
-	Role              string     `json:"role,omitempty"`
-	ControllerID      string     `json:"controllerApplicationId,omitempty"`
-	NodeSyncStatus    string     `json:"nodeSyncStatus,omitempty"`
-	NodeSyncError     string     `json:"nodeSyncError,omitempty"`
-	RestorePointState string     `json:"restorePointState,omitempty"`
-	RestorePointAt    *time.Time `json:"restorePointAt,omitempty"`
-	InstalledVersion  string     `json:"installedVersion,omitempty"`
-	AvailableVersion  string     `json:"availableVersion,omitempty"`
-	UpdateAvailable   bool       `json:"updateAvailable"`
-	CreatedAt         time.Time  `json:"createdAt"`
-	UpdatedAt         time.Time  `json:"updatedAt"`
+	ID                       string     `json:"id"`
+	Name                     string     `json:"name"`
+	NodeID                   string     `json:"nodeId"`
+	SiteID                   string     `json:"siteId"`
+	AppKey                   string     `json:"appKey"`
+	Image                    string     `json:"image"`
+	Status                   string     `json:"status"`
+	Runtime                  string     `json:"runtime"`
+	Role                     string     `json:"role,omitempty"`
+	ControllerID             string     `json:"controllerApplicationId,omitempty"`
+	NodeSyncStatus           string     `json:"nodeSyncStatus,omitempty"`
+	NodeSyncError            string     `json:"nodeSyncError,omitempty"`
+	RestorePointState        string     `json:"restorePointState,omitempty"`
+	RestorePointAt           *time.Time `json:"restorePointAt,omitempty"`
+	InstalledVersion         string     `json:"installedVersion,omitempty"`
+	InstalledPackageRevision int        `json:"installedPackageRevision"`
+	AdoptionState            string     `json:"adoptionState,omitempty"`
+	AdoptionError            string     `json:"adoptionError,omitempty"`
+	AvailablePackageRevision int        `json:"availablePackageRevision"`
+	AvailableVersion         string     `json:"availableVersion,omitempty"`
+	UpdateAvailable          bool       `json:"updateAvailable"`
+	CreatedAt                time.Time  `json:"createdAt"`
+	UpdatedAt                time.Time  `json:"updatedAt"`
 }
 
 type ServiceView struct {

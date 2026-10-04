@@ -55,7 +55,7 @@ func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 			if task.Operation != "uninstall" || task.AppKey != cpaAppKey || task.DeleteData != deleteData {
 				t.Fatalf("unexpected decommission task: %#v", task)
 			}
-			if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, task.RequiredRuntimeGeneration); err != nil {
+			if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", mockPackageResult(t, task, nil), task.RequiredRuntimeGeneration); err != nil {
 				t.Fatal(err)
 			}
 			hostTask := waitForDecommissionTask(t, store, node)

@@ -11,8 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/recovery"
 )
 
 // This inventory is a read-only review of saved intent, not permission to replay
@@ -269,7 +270,7 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 				app.Requirements = append(app.Requirements, "saved_artifact_invalid")
 			} else {
 				app.Requirements = append(app.Requirements, "verify_saved_artifact_and_credentials")
-				policy, reconstructible := catalog.OfficialRecoveryPolicy(app.AppKey, app.Version)
+				policy, reconstructible := recovery.OfficialRecoveryPolicy(app.AppKey, app.Version)
 				switch {
 				case app.AppKey == meridianAppKey:
 					app.Recovery = "rebuild_configuration"

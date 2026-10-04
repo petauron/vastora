@@ -1,93 +1,669 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { KeyRoundIcon, RadioTowerIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon } from "lucide-react";
+import {
+  KeyRoundIcon,
+  RadioTowerIcon,
+  ShieldAlertIcon,
+  ShieldCheckIcon,
+  UsersIcon,
+} from "lucide-react";
 import { api } from "../../api";
 import type { AppData } from "../../App";
-import type { AgentView, AppView, CreatePublicationInput, PublicationIngressInput, PublicationKind, Service, ThreeXUIRole } from "../../types";
+import type {
+  AgentView,
+  AppView,
+  CreatePublicationInput,
+  PublicationIngressInput,
+  PublicationKind,
+  Service,
+  ThreeXUIRole,
+} from "../../types";
 import type { Language } from "../../translations";
 import { normalizeHostname, validHostname } from "../../lib/network";
-import { defaultPublicationHostname, eligibleAppNodes, gatewaysForKind, isActiveApplication, localized, publicationIntentOptions, publicationKindLabel, publicationKindsForIntent, publicationOptions, type PublicationIntent } from "../appAccess";
+import {
+  defaultPublicationHostname,
+  eligibleAppNodes,
+  gatewaysForKind,
+  isActiveApplication,
+  localized,
+  publicationIntentOptions,
+  publicationKindLabel,
+  publicationKindsForIntent,
+  publicationOptions,
+  type PublicationIntent,
+} from "../appAccess";
 import { AppHostAccessNote, AppIdentityBadge } from "../AppIdentity";
 import { catalogInstallBlocked, copy, userError } from "../shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { SelectControl } from "@/components/SelectControl";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { packageNodeBlocker } from "../appAccess";
 
-export type DeploymentEditor = { app: AppView; agent?: AgentView; operation: "install" | "upgrade" | "configure" } | null;
+export type DeploymentEditor = {
+  app: AppView;
+  agent?: AgentView;
+  operation: "install" | "upgrade" | "configure";
+} | null;
 
-export function DeploymentSheet({ data, editor, language, onClose, onSubmit }: { data: AppData; editor: DeploymentEditor; language: Language; onClose: () => void; onSubmit: (agent: AgentView, app: AppView, config: Record<string, string | boolean | number>, operation: "install" | "upgrade" | "configure", role?: ThreeXUIRole, registryCredentialId?: string) => Promise<void> }) {
+function capabilityLabel(capability: string, language: Language) {
+  const labels: Record<string, [string, string]> = {
+    root: ["以 root 用户运行", "Run as root"],
+    "host-network": ["使用宿主机网络", "Use host networking"],
+    "host-path": ["挂载声明的宿主机路径", "Mount declared host paths"],
+    devices: ["访问声明的宿主机设备", "Access declared host devices"],
+  };
+  const label = labels[capability];
+  return label ? copy(language, ...label) : capability;
+}
+
+export function DeploymentSheet({
+  data,
+  editor,
+  language,
+  onClose,
+  onSubmit,
+}: {
+  data: AppData;
+  editor: DeploymentEditor;
+  language: Language;
+  onClose: () => void;
+  onSubmit: (
+    agent: AgentView,
+    app: AppView,
+    config: Record<string, string | boolean | number>,
+    operation: "install" | "upgrade" | "configure",
+    role?: ThreeXUIRole,
+    registryCredentialId?: string,
+    authorizedCapabilities?: string[],
+  ) => Promise<void>;
+}) {
   const [agentID, setAgentID] = useState("");
-  const [config, setConfig] = useState<Record<string, string | boolean | number>>({});
+  const [config, setConfig] = useState<
+    Record<string, string | boolean | number>
+  >({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [registryCredentialID, setRegistryCredentialID] = useState("");
-  const currentCatalogApp = editor ? data.apps.find((app) => app.key === editor.app.key) : undefined;
+  const [approvedCapabilities, setApprovedCapabilities] = useState<string[]>([]);
+  const requiredCapabilities = editor?.app.app.runtime?.requiredCapabilities ?? [];
+  const permissionsApproved = requiredCapabilities.every((capability) => approvedCapabilities.includes(capability));
+  const currentCatalogApp = editor
+    ? data.apps.find((app) => app.key === editor.app.key)
+    : undefined;
   const requiresCatalog = Boolean(editor && editor.operation !== "configure");
-  const catalogChanged = requiresCatalog && currentCatalogApp?.app.version !== editor?.app.app.version;
-  const catalogBlocked = requiresCatalog && catalogInstallBlocked(currentCatalogApp);
+  const catalogChanged =
+    requiresCatalog &&
+    (currentCatalogApp?.app.version !== editor?.app.app.version || currentCatalogApp?.app.packageRevision !== editor?.app.app.packageRevision || currentCatalogApp?.manifestSha256 !== editor?.app.manifestSha256);
+  const catalogBlocked =
+    requiresCatalog && catalogInstallBlocked(currentCatalogApp);
   const catalogMessage = catalogBlocked
-    ? copy(language, "请先在设置中刷新应用目录，再安装或升级。已安装应用不受影响。", "Refresh the app catalog in Settings before installing or upgrading. Installed apps are unaffected.")
-    : catalogChanged ? copy(language, "目录中的版本已更新，请关闭并重新打开此窗口，确认新版本后继续。", "The catalog version changed. Reopen this window to review the new version before continuing.") : "";
-  const candidates = editor ? editor.operation === "install" ? eligibleAppNodes(data, editor.app.key) : data.agents.filter((agent) => agent.id === editor.agent?.id) : [];
+    ? currentCatalogApp?.installBlockedReason || copy(
+        language,
+        "请先在设置中刷新应用目录，再安装或升级。已安装应用不受影响。",
+        "Refresh the app catalog in Settings before installing or upgrading. Installed apps are unaffected.",
+      )
+    : catalogChanged
+      ? copy(
+          language,
+          "目录中的版本已更新，请关闭并重新打开此窗口，确认新版本后继续。",
+          "The catalog version changed. Reopen this window to review the new version before continuing.",
+        )
+      : "";
+  const candidates = editor
+    ? editor.operation === "install"
+      ? eligibleAppNodes(data, editor.app.key)
+      : data.agents.filter((agent) => agent.id === editor.agent?.id)
+    : [];
   const selectedAgent = candidates.find((agent) => agent.id === agentID);
+  const installed = data.applications.find((application) => application.nodeId === agentID && application.appKey === editor?.app.key);
+  const adoptionBlocked = installed?.adoptionState === "pending" || installed?.adoptionState === "blocked";
+  const runtimeBlocker = selectedAgent && editor ? packageNodeBlocker(selectedAgent, editor.app, language) : "";
   const retryInstall = editor?.operation === "install" && Boolean(editor.agent);
   const nodeUnavailable = Boolean(agentID) && !selectedAgent;
   const nodeUnavailableMessage = retryInstall
-    ? copy(language, "原节点暂时无法安装，请确认节点在线且满足安装条件后重试。", "The original node cannot install this app right now. Check that it is online and meets the installation requirements, then retry.")
-    : copy(language, "所选节点暂时不可用，请重新选择。", "The selected node is unavailable. Select a node again.");
-  const nodeOptions = [{ value: "", label: copy(language, "选择节点", "Select a node"), disabled: true },
-    ...(retryInstall && editor?.agent && nodeUnavailable ? [{ value: editor.agent.id, label: editor.agent.name, disabled: true }] : []),
+    ? copy(
+        language,
+        "原节点暂时无法安装，请确认节点在线且满足安装条件后重试。",
+        "The original node cannot install this app right now. Check that it is online and meets the installation requirements, then retry.",
+      )
+    : copy(
+        language,
+        "所选节点暂时不可用，请重新选择。",
+        "The selected node is unavailable. Select a node again.",
+      );
+  const nodeOptions = [
+    {
+      value: "",
+      label: copy(language, "选择节点", "Select a node"),
+      disabled: true,
+    },
+    ...(retryInstall && editor?.agent && nodeUnavailable
+      ? [{ value: editor.agent.id, label: editor.agent.name, disabled: true }]
+      : []),
     ...candidates.map((agent) => ({ value: agent.id, label: agent.name })),
   ];
-  const isThreeXUIInstall = editor?.operation === "install" && editor.app.key === "vastora-official/3x-ui";
+  const isThreeXUIInstall =
+    editor?.operation === "install" &&
+    editor.app.key === "vastora-official/3x-ui";
   const isPulseHost = editor?.app.key === "vastora-official/pulse";
-  const globalController = isThreeXUIInstall ? data.applications.find((application) => application.appKey === "vastora-official/3x-ui" && application.role === "master" && application.id === application.controllerApplicationId && isActiveApplication(application.status)) : undefined;
-  const role: ThreeXUIRole | undefined = isThreeXUIInstall ? globalController ? "worker" : "master" : undefined;
-  const controllerReady = !globalController || globalController.status === "running";
-  const controllerNode = globalController ? data.agents.find((agent) => agent.id === globalController.nodeId) : undefined;
+  const globalController = isThreeXUIInstall
+    ? data.applications.find(
+        (application) =>
+          application.appKey === "vastora-official/3x-ui" &&
+          application.role === "master" &&
+          application.id === application.controllerApplicationId &&
+          isActiveApplication(application.status),
+      )
+    : undefined;
+  const role: ThreeXUIRole | undefined = isThreeXUIInstall
+    ? globalController
+      ? "worker"
+      : "master"
+    : undefined;
+  const controllerReady =
+    !globalController || globalController.status === "running";
+  const controllerNode = globalController
+    ? data.agents.find((agent) => agent.id === globalController.nodeId)
+    : undefined;
   useEffect(() => {
     if (!editor) return;
     const defaults: Record<string, string | boolean | number> = {};
     for (const field of editor.app.app.config) {
-      if (field.key === "timezone") defaults[field.key] = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      if (editor.app.managedConfigFields?.includes(field.key)) continue;
+      if (field.key === "timezone")
+        defaults[field.key] =
+          Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
       else if (field.default !== undefined) defaults[field.key] = field.default;
       else defaults[field.key] = field.type === "boolean" ? false : "";
     }
     setAgentID(editor.agent?.id ?? candidates[0]?.id ?? "");
     setConfig(editor.operation === "install" ? defaults : {});
-    setRegistryCredentialID(editor.operation === "install" ? "" : "__preserve__");
+    setRegistryCredentialID(
+      editor.operation === "install" ? "" : "__preserve__",
+    );
     setError("");
+    setApprovedCapabilities([]);
   }, [editor]);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!editor || busy) return;
-    if (requiresCatalog && (catalogInstallBlocked(currentCatalogApp) || catalogChanged)) {
-      setError(catalogMessage || copy(language, "目录需要重新验证，请先刷新应用目录。", "Refresh the app catalog to verify it again."));
+    if (!permissionsApproved || runtimeBlocker || adoptionBlocked) {
+      setError(runtimeBlocker || copy(language, "请先完成资源接管，并确认此配方需要的每项权限。", "Complete resource adoption and approve each permission required by this recipe."));
+      return;
+    }
+    if (
+      requiresCatalog &&
+      (catalogInstallBlocked(currentCatalogApp) || catalogChanged)
+    ) {
+      setError(
+        catalogMessage ||
+          copy(
+            language,
+            "目录需要重新验证，请先刷新应用目录。",
+            "Refresh the app catalog to verify it again.",
+          ),
+      );
       return;
     }
     const agent = selectedAgent;
-    if (!agent) { setError(agentID ? nodeUnavailableMessage : copy(language, "请选择节点。", "Select a node.")); return; }
-    if (!controllerReady) { setError(copy(language, "请等待全局订阅主机启动完成。", "Wait for the global subscription controller to finish starting.")); return; }
-    setBusy(true); setError("");
+    if (!agent) {
+      setError(
+        agentID
+          ? nodeUnavailableMessage
+          : copy(language, "请选择节点。", "Select a node."),
+      );
+      return;
+    }
+    if (!controllerReady) {
+      setError(
+        copy(
+          language,
+          "请等待全局订阅主机启动完成。",
+          "Wait for the global subscription controller to finish starting.",
+        ),
+      );
+      return;
+    }
+    setBusy(true);
+    setError("");
     try {
-      await onSubmit(agent, requiresCatalog && currentCatalogApp ? currentCatalogApp : editor.app, config, editor.operation, role, registryCredentialID === "__preserve__" ? undefined : registryCredentialID);
-    } catch (submitError) { setError(userError(language, submitError)); }
-    finally { setBusy(false); }
+      await onSubmit(
+        agent,
+        requiresCatalog && currentCatalogApp ? currentCatalogApp : editor.app,
+        config,
+        editor.operation,
+        role,
+        registryCredentialID === "__preserve__"
+          ? undefined
+          : registryCredentialID,
+        approvedCapabilities,
+      );
+    } catch (submitError) {
+      setError(userError(language, submitError));
+    } finally {
+      setBusy(false);
+    }
   };
-  const verbs = editor?.operation === "install" ? ["安装", "Install"] : editor?.operation === "upgrade" ? ["升级", "Upgrade"] : ["修改配置", "Change settings"];
-  return <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(editor)}><SheetContent className="sm:max-w-lg"><SheetHeader><SheetTitle className="flex flex-wrap items-center gap-2">{editor ? `${copy(language, verbs[0], verbs[1])} ${localized(editor.app, language, "name")}` : ""}{editor ? <AppIdentityBadge app={editor.app} language={language} /> : null}</SheetTitle><SheetDescription>{editor?.operation === "install" && editor.app.app.hostAccess ? localized(editor.app, language, "description") : editor?.operation === "install" ? copy(language, "应用先作为私有源站启动；访问入口稍后单独添加。", "The app starts as a private origin. Add access points separately afterward.") : editor?.operation === "upgrade" ? copy(language, `版本：${data.applications.find((application) => application.nodeId === editor.agent?.id && application.appKey === editor.app.key)?.installedVersion ?? "—"} → ${editor.app.app.version}。确认后更新，可保留现有配置。`, `Version: ${data.applications.find((application) => application.nodeId === editor.agent?.id && application.appKey === editor.app.key)?.installedVersion ?? "—"} → ${editor.app.app.version}. Confirm to update; existing settings can be kept.`) : copy(language, "只填写至少一项要修改的配置；留空项保持原值。", "Enter at least one setting to change; omitted values keep their previous value.")}</SheetDescription></SheetHeader><form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}><div className="flex-1 overflow-y-auto px-4"><FieldGroup>{catalogMessage ? <Alert role="status" id="deployment-catalog-error"><AlertTitle>{copy(language, "暂不能继续", "Cannot continue yet")}</AlertTitle><AlertDescription>{catalogMessage}</AlertDescription></Alert> : null}{editor ? <AppHostAccessNote app={editor.app} language={language} /> : null}<Field data-invalid={nodeUnavailable}><FieldLabel htmlFor="deployment-agent">{copy(language, "节点", "Node")}</FieldLabel><SelectControl aria-describedby={nodeUnavailable ? "deployment-agent-error" : "deployment-agent-help"} aria-invalid={nodeUnavailable} disabled={editor?.operation !== "install" || retryInstall} id="deployment-agent" onValueChange={setAgentID} options={nodeOptions} required value={agentID} /><FieldDescription id="deployment-agent-help">{retryInstall ? copy(language, "重试将在原节点上安装。", "Retry installs on the original node.") : candidates.length === 0 ? copy(language, "没有可用节点。请先确认节点网络。", "No eligible node. Confirm node networking first.") : editor?.operation === "install" ? copy(language, "同一应用在同一节点只能安装一次。", "An app can be installed only once on the same node.") : copy(language, "现有安装会在原节点上更新。", "The existing installation is changed on its current node.")}</FieldDescription>{nodeUnavailable ? <FieldError id="deployment-agent-error" role="alert">{nodeUnavailableMessage}</FieldError> : null}</Field>{isThreeXUIInstall && role === "master" ? <Alert><UsersIcon /><AlertTitle>{copy(language, "将作为全局订阅主机", "This will be the global subscription controller")}</AlertTitle><AlertDescription>{copy(language, "这是 Center 中第一台 Vastora Proxy。它提供唯一的过渡管理面板和 Vastora 订阅地址，所有地区后续添加的 Xray 节点都会自动接入。", "This is the first Vastora Proxy in this Center. It provides the transitional admin panel and the single Vastora subscription URL; later Xray nodes connect automatically.")}</AlertDescription></Alert> : null}{isThreeXUIInstall && role === "worker" ? <Alert><RadioTowerIcon /><AlertTitle>{copy(language, "将作为 Xray 节点", "This will be an Xray node")}</AlertTitle><AlertDescription>{copy(language, `安装后自动接入 ${controllerNode?.name ?? "全局订阅主机"}；只运行 Xray，不创建面板或独立订阅地址。`, `After installation it connects to ${controllerNode?.name ?? "the global subscription controller"}; it runs Xray only, without a panel or separate subscription URL.`)}</AlertDescription></Alert> : null}{isThreeXUIInstall && !controllerReady ? <FieldError role="alert">{copy(language, "全局订阅主机尚未就绪，请稍后再安装节点。", "The global subscription controller is not ready yet. Install the node after it is running.")}</FieldError> : null}{isPulseHost && editor?.operation === "upgrade" ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "Pulse 设置自动补齐", "Pulse settings are filled automatically")}</AlertTitle><AlertDescription>{copy(language, "面板地址取自当前就绪的 HTTPS 入口；旧版本没有初始化令牌时，Center 会安全生成并一次性显示。已有设置保持不变。", "The dashboard address comes from its ready HTTPS access point. If the old version has no setup token, Center generates one and shows it once. Existing settings stay unchanged.")}</AlertDescription></Alert> : null}{editor?.app.app.config.filter((field) => !(isPulseHost && editor.operation !== "configure" && (field.key === "setup_token" || editor.operation === "upgrade" && field.key === "public_url"))).map((field) => <ConfigField config={config} field={field} key={field.key} language={language} operation={editor.operation} setConfig={setConfig} />)}{editor && !editor.app.app.hostAccess ? <Field><FieldLabel htmlFor="deployment-registry">{copy(language, "镜像仓库凭据", "Image Registry credential")}</FieldLabel><SelectControl id="deployment-registry" onValueChange={setRegistryCredentialID} options={[...(editor?.operation === "install" ? [{ value: "", label: copy(language, "不使用凭据（公开镜像）", "No credential (public image)") }] : [{ value: "__preserve__", label: copy(language, "保持当前凭据", "Keep current credential") }, { value: "", label: copy(language, "清除凭据，改用公开镜像", "Clear credential and use public image") }]), ...data.registryCredentials.map((credential) => ({ value: credential.id, label: `${credential.host} — ${credential.username}` }))]} value={registryCredentialID} /><FieldDescription>{copy(language, "令牌不会显示或写入节点 Docker 配置；仅在本次拉取时使用。", "Tokens are never displayed or written to the node Docker config; they are used only for this pull.")}</FieldDescription></Field> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</FieldGroup></div><SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button aria-describedby={catalogMessage ? "deployment-catalog-error" : undefined} disabled={busy || catalogBlocked || catalogChanged || !selectedAgent || !controllerReady || editor?.operation === "configure" && Object.keys(config).length === 0} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{editor?.operation === "install" ? copy(language, "开始安装", "Install") : editor?.operation === "upgrade" ? copy(language, "开始升级", "Upgrade") : copy(language, "应用修改", "Apply changes")}</Button></SheetFooter></form></SheetContent></Sheet>;
+  const verbs =
+    editor?.operation === "install"
+      ? ["安装", "Install"]
+      : editor?.operation === "upgrade"
+        ? ["升级", "Upgrade"]
+        : ["修改配置", "Change settings"];
+  return (
+    <Sheet
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      open={Boolean(editor)}
+    >
+      <SheetContent className="sm:max-w-lg">
+        <SheetHeader>
+          <SheetTitle className="flex flex-wrap items-center gap-2">
+            {editor
+              ? `${copy(language, verbs[0], verbs[1])} ${localized(editor.app, language, "name")}`
+              : ""}
+            {editor ? (
+              <AppIdentityBadge app={editor.app} language={language} />
+            ) : null}
+          </SheetTitle>
+          <SheetDescription>
+            {editor?.operation === "install" && editor.app.app.hostAccess
+              ? localized(editor.app, language, "description")
+              : editor?.operation === "install"
+                ? copy(
+                    language,
+                    "应用先作为私有源站启动；访问入口稍后单独添加。",
+                    "The app starts as a private origin. Add access points separately afterward.",
+                  )
+                : editor?.operation === "upgrade"
+                  ? copy(
+                      language,
+                      `版本：${data.applications.find((application) => application.nodeId === editor.agent?.id && application.appKey === editor.app.key)?.installedVersion ?? "—"} → ${editor.app.app.version}。确认后更新，可保留现有配置。`,
+                      `Version: ${data.applications.find((application) => application.nodeId === editor.agent?.id && application.appKey === editor.app.key)?.installedVersion ?? "—"} → ${editor.app.app.version}. Confirm to update; existing settings can be kept.`,
+                    )
+                  : copy(
+                      language,
+                      "只填写至少一项要修改的配置；留空项保持原值。",
+                      "Enter at least one setting to change; omitted values keep their previous value.",
+                    )}
+          </SheetDescription>
+        </SheetHeader>
+        <form
+          className="flex min-h-0 flex-1 flex-col"
+          onSubmit={(event) => void submit(event)}
+        >
+          <div className="flex-1 overflow-y-auto px-4">
+            <FieldGroup>
+              {adoptionBlocked || runtimeBlocker ? <Alert role="status"><AlertTitle>{copy(language, "暂不能修改此应用", "Application changes are blocked")}</AlertTitle><AlertDescription>{runtimeBlocker || installed?.adoptionError || copy(language, "维护窗口内核实并接管现有资源后才能修改。接管不会重装或重启应用。", "Verify and adopt existing resources during maintenance before changing them. Adoption does not reinstall or restart the application.")}</AlertDescription></Alert> : null}
+              {editor ? <FieldDescription>{copy(language, `配方修订：${installed?.installedPackageRevision ?? 0} → ${editor.app.app.packageRevision ?? 0}`, `Recipe revision: ${installed?.installedPackageRevision ?? 0} → ${editor.app.app.packageRevision ?? 0}`)}</FieldDescription> : null}
+              {requiredCapabilities.length > 0 ? <FieldSet><FieldLegend>{copy(language, "此配方需要管理员授权", "This recipe requires administrator approval")}</FieldLegend><FieldDescription>{copy(language, "逐项确认。升级不会自动批准新增权限。", "Approve each permission. Upgrades never automatically approve new privileges.")}</FieldDescription><FieldGroup>{requiredCapabilities.map((capability) => <Field orientation="horizontal" key={capability}><Checkbox id={`package-capability-${capability}`} checked={approvedCapabilities.includes(capability)} onCheckedChange={(checked) => setApprovedCapabilities((current) => checked ? [...current, capability] : current.filter((value) => value !== capability))} /><FieldLabel htmlFor={`package-capability-${capability}`}>{capabilityLabel(capability, language)}</FieldLabel></Field>)}</FieldGroup></FieldSet> : null}
+              {editor?.app.permissionDetails?.length ? <FieldDescription>{editor.app.permissionDetails.map((detail) => <span className="block break-all font-mono text-xs" key={detail}>{detail}</span>)}</FieldDescription> : null}
+              {catalogMessage ? (
+                <Alert role="status" id="deployment-catalog-error">
+                  <AlertTitle>
+                    {copy(language, "暂不能继续", "Cannot continue yet")}
+                  </AlertTitle>
+                  <AlertDescription>{catalogMessage}</AlertDescription>
+                </Alert>
+              ) : null}
+              {editor ? (
+                <AppHostAccessNote app={editor.app} language={language} />
+              ) : null}
+              <Field data-invalid={nodeUnavailable}>
+                <FieldLabel htmlFor="deployment-agent">
+                  {copy(language, "节点", "Node")}
+                </FieldLabel>
+                <SelectControl
+                  aria-describedby={
+                    nodeUnavailable
+                      ? "deployment-agent-error"
+                      : "deployment-agent-help"
+                  }
+                  aria-invalid={nodeUnavailable}
+                  disabled={editor?.operation !== "install" || retryInstall}
+                  id="deployment-agent"
+                  onValueChange={setAgentID}
+                  options={nodeOptions}
+                  required
+                  value={agentID}
+                />
+                <FieldDescription id="deployment-agent-help">
+                  {retryInstall
+                    ? copy(
+                        language,
+                        "重试将在原节点上安装。",
+                        "Retry installs on the original node.",
+                      )
+                    : candidates.length === 0
+                      ? copy(
+                          language,
+                          "没有可用节点。请先确认节点网络。",
+                          "No eligible node. Confirm node networking first.",
+                        )
+                      : editor?.operation === "install"
+                        ? copy(
+                            language,
+                            "同一应用在同一节点只能安装一次。",
+                            "An app can be installed only once on the same node.",
+                          )
+                        : copy(
+                            language,
+                            "现有安装会在原节点上更新。",
+                            "The existing installation is changed on its current node.",
+                          )}
+                </FieldDescription>
+                {nodeUnavailable ? (
+                  <FieldError id="deployment-agent-error" role="alert">
+                    {nodeUnavailableMessage}
+                  </FieldError>
+                ) : null}
+              </Field>
+              {isThreeXUIInstall && role === "master" ? (
+                <Alert>
+                  <UsersIcon />
+                  <AlertTitle>
+                    {copy(
+                      language,
+                      "将作为全局订阅主机",
+                      "This will be the global subscription controller",
+                    )}
+                  </AlertTitle>
+                  <AlertDescription>
+                    {copy(
+                      language,
+                      "这是 Center 中第一台 Vastora Proxy。它提供唯一的过渡管理面板和 Vastora 订阅地址，所有地区后续添加的 Xray 节点都会自动接入。",
+                      "This is the first Vastora Proxy in this Center. It provides the transitional admin panel and the single Vastora subscription URL; later Xray nodes connect automatically.",
+                    )}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              {isThreeXUIInstall && role === "worker" ? (
+                <Alert>
+                  <RadioTowerIcon />
+                  <AlertTitle>
+                    {copy(
+                      language,
+                      "将作为 Xray 节点",
+                      "This will be an Xray node",
+                    )}
+                  </AlertTitle>
+                  <AlertDescription>
+                    {copy(
+                      language,
+                      `安装后自动接入 ${controllerNode?.name ?? "全局订阅主机"}；只运行 Xray，不创建面板或独立订阅地址。`,
+                      `After installation it connects to ${controllerNode?.name ?? "the global subscription controller"}; it runs Xray only, without a panel or separate subscription URL.`,
+                    )}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              {isThreeXUIInstall && !controllerReady ? (
+                <FieldError role="alert">
+                  {copy(
+                    language,
+                    "全局订阅主机尚未就绪，请稍后再安装节点。",
+                    "The global subscription controller is not ready yet. Install the node after it is running.",
+                  )}
+                </FieldError>
+              ) : null}
+              {isPulseHost && editor?.operation === "upgrade" ? (
+                <Alert>
+                  <KeyRoundIcon />
+                  <AlertTitle>
+                    {copy(
+                      language,
+                      "Pulse 设置自动补齐",
+                      "Pulse settings are filled automatically",
+                    )}
+                  </AlertTitle>
+                  <AlertDescription>
+                    {copy(
+                      language,
+                      "面板地址取自当前就绪的 HTTPS 入口；旧版本没有初始化令牌时，Center 会安全生成并一次性显示。已有设置保持不变。",
+                      "The dashboard address comes from its ready HTTPS access point. If the old version has no setup token, Center generates one and shows it once. Existing settings stay unchanged.",
+                    )}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              {editor?.app.app.config
+                .filter(
+                  (field) =>
+                    !editor.app.managedConfigFields?.includes(field.key) &&
+                    !(
+                      isPulseHost &&
+                      editor.operation !== "configure" &&
+                      (field.key === "setup_token" ||
+                        (editor.operation === "upgrade" &&
+                          field.key === "public_url"))
+                    ),
+                )
+                .map((field) => (
+                  <ConfigField
+                    config={config}
+                    field={field}
+                    key={field.key}
+                    language={language}
+                    operation={editor.operation}
+                    setConfig={setConfig}
+                  />
+                ))}
+              {editor && !editor.app.app.hostAccess ? (
+                <Field>
+                  <FieldLabel htmlFor="deployment-registry">
+                    {copy(
+                      language,
+                      "镜像仓库凭据",
+                      "Image Registry credential",
+                    )}
+                  </FieldLabel>
+                  <SelectControl
+                    id="deployment-registry"
+                    onValueChange={setRegistryCredentialID}
+                    options={[
+                      ...(editor?.operation === "install"
+                        ? [
+                            {
+                              value: "",
+                              label: copy(
+                                language,
+                                "不使用凭据（公开镜像）",
+                                "No credential (public image)",
+                              ),
+                            },
+                          ]
+                        : [
+                            {
+                              value: "__preserve__",
+                              label: copy(
+                                language,
+                                "保持当前凭据",
+                                "Keep current credential",
+                              ),
+                            },
+                            {
+                              value: "",
+                              label: copy(
+                                language,
+                                "清除凭据，改用公开镜像",
+                                "Clear credential and use public image",
+                              ),
+                            },
+                          ]),
+                      ...data.registryCredentials.map((credential) => ({
+                        value: credential.id,
+                        label: `${credential.host} — ${credential.username}`,
+                      })),
+                    ]}
+                    value={registryCredentialID}
+                  />
+                  <FieldDescription>
+                    {copy(
+                      language,
+                      "令牌不会显示或写入节点 Docker 配置；仅在本次拉取时使用。",
+                      "Tokens are never displayed or written to the node Docker config; they are used only for this pull.",
+                    )}
+                  </FieldDescription>
+                </Field>
+              ) : null}
+              {error ? <FieldError role="alert">{error}</FieldError> : null}
+            </FieldGroup>
+          </div>
+          <SheetFooter>
+            <Button onClick={onClose} type="button" variant="outline">
+              {copy(language, "取消", "Cancel")}
+            </Button>
+            <Button
+              aria-describedby={
+                catalogMessage ? "deployment-catalog-error" : undefined
+              }
+              disabled={
+                !permissionsApproved || adoptionBlocked || Boolean(runtimeBlocker) ||
+                busy ||
+                catalogBlocked ||
+                catalogChanged ||
+                !selectedAgent ||
+                !controllerReady ||
+                (editor?.operation === "configure" &&
+                  Object.keys(config).length === 0)
+              }
+              type="submit"
+            >
+              {busy ? <Spinner data-icon="inline-start" /> : null}
+              {editor?.operation === "install"
+                ? copy(language, "开始安装", "Install")
+                : editor?.operation === "upgrade"
+                  ? copy(language, "开始升级", "Upgrade")
+                  : copy(language, "应用修改", "Apply changes")}
+            </Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
 }
 
-function ConfigField({ config, field, language, operation, setConfig }: { config: Record<string, string | boolean | number>; field: AppView["app"]["config"][number]; language: Language; operation: "install" | "upgrade" | "configure"; setConfig: React.Dispatch<React.SetStateAction<Record<string, string | boolean | number>>> }) {
+function ConfigField({
+  config,
+  field,
+  language,
+  operation,
+  setConfig,
+}: {
+  config: Record<string, string | boolean | number>;
+  field: AppView["app"]["config"][number];
+  language: Language;
+  operation: "install" | "upgrade" | "configure";
+  setConfig: React.Dispatch<
+    React.SetStateAction<Record<string, string | boolean | number>>
+  >;
+}) {
   const label = field.label[language] || field.label.en;
   const description = field.description[language] || field.description.en;
-  if (field.type === "boolean" && operation !== "install") return <Field><FieldLabel htmlFor={`config-${field.key}`}>{label}</FieldLabel><SelectControl id={"config-" + field.key} onValueChange={(value) => setConfig((current) => { const next = { ...current }; if (!value) delete next[field.key]; else next[field.key] = value === "true"; return next; })} options={[{ value: "", label: copy(language, "保持当前设置", "Keep current setting") }, { value: "true", label: copy(language, "开启", "On") }, { value: "false", label: copy(language, "关闭", "Off") }]} value={config[field.key] === undefined ? "" : String(config[field.key])} /><FieldDescription>{description}</FieldDescription></Field>;
-  if (field.type === "boolean") return <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor={`config-${field.key}`}>{label}</FieldLabel><FieldDescription>{description}</FieldDescription></div><Switch checked={Boolean(config[field.key])} id={`config-${field.key}`} onCheckedChange={(value) => setConfig((current) => ({ ...current, [field.key]: value }))} /></Field>;
-  return <Field><FieldLabel htmlFor={`config-${field.key}`}>{label}</FieldLabel><Input id={`config-${field.key}`} min={field.type === "integer" ? 1 : undefined} onChange={(event) => setConfig((current) => { const next = { ...current }; if (event.target.value === "") delete next[field.key]; else next[field.key] = field.type === "integer" ? Number(event.target.value) : event.target.value; return next; })} placeholder={operation !== "install" ? copy(language, "留空以保持原值", "Leave blank to keep the current value") : undefined} required={operation === "install" && field.required} type={field.secret ? "password" : field.type === "integer" ? "number" : "text"} value={config[field.key] === undefined ? "" : String(config[field.key])} /><FieldDescription>{description}</FieldDescription></Field>;
+  if (field.type === "boolean" && operation !== "install")
+    return (
+      <Field>
+        <FieldLabel htmlFor={`config-${field.key}`}>{label}</FieldLabel>
+        <SelectControl
+          id={"config-" + field.key}
+          onValueChange={(value) =>
+            setConfig((current) => {
+              const next = { ...current };
+              if (!value) delete next[field.key];
+              else next[field.key] = value === "true";
+              return next;
+            })
+          }
+          options={[
+            {
+              value: "",
+              label: copy(language, "保持当前设置", "Keep current setting"),
+            },
+            { value: "true", label: copy(language, "开启", "On") },
+            { value: "false", label: copy(language, "关闭", "Off") },
+          ]}
+          value={
+            config[field.key] === undefined ? "" : String(config[field.key])
+          }
+        />
+        <FieldDescription>{description}</FieldDescription>
+      </Field>
+    );
+  if (field.type === "boolean")
+    return (
+      <Field orientation="horizontal">
+        <div className="flex flex-1 flex-col gap-1">
+          <FieldLabel htmlFor={`config-${field.key}`}>{label}</FieldLabel>
+          <FieldDescription>{description}</FieldDescription>
+        </div>
+        <Switch
+          checked={Boolean(config[field.key])}
+          id={`config-${field.key}`}
+          onCheckedChange={(value) =>
+            setConfig((current) => ({ ...current, [field.key]: value }))
+          }
+        />
+      </Field>
+    );
+  return (
+    <Field>
+      <FieldLabel htmlFor={`config-${field.key}`}>{label}</FieldLabel>
+      <Input
+        id={`config-${field.key}`}
+        min={field.type === "integer" ? 1 : undefined}
+        onChange={(event) =>
+          setConfig((current) => {
+            const next = { ...current };
+            if (event.target.value === "") delete next[field.key];
+            else
+              next[field.key] =
+                field.type === "integer"
+                  ? Number(event.target.value)
+                  : event.target.value;
+            return next;
+          })
+        }
+        placeholder={
+          operation !== "install"
+            ? copy(
+                language,
+                "留空以保持原值",
+                "Leave blank to keep the current value",
+              )
+            : undefined
+        }
+        required={operation === "install" && field.required}
+        type={
+          field.secret
+            ? "password"
+            : field.type === "integer"
+              ? "number"
+              : "text"
+        }
+        value={config[field.key] === undefined ? "" : String(config[field.key])}
+      />
+      <FieldDescription>{description}</FieldDescription>
+    </Field>
+  );
 }
 
 export function PublicationSheet({ data, language, onClose, onSubmit, service }: { data: AppData; language: Language; onClose: () => void; onSubmit: (input: CreatePublicationInput) => Promise<void>; service: Service | null }) {

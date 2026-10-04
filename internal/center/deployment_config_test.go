@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 func TestNormalizeDeploymentConfigCanonicalizesPortableIntegerDefaults(t *testing.T) {

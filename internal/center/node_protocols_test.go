@@ -173,10 +173,7 @@ func TestNodeProtocolMigrationPreservesPendingWork(t *testing.T) {
 	if err := legacy.Close(); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openBeforeCatalogMaintenanceForTest(t, dir)
 	defer store.Close()
 	var rowid, attempt int
 	var input, state string
@@ -208,4 +205,5 @@ func TestNodeProtocolMigrationPreservesPendingWork(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT name FROM sqlite_master WHERE name='node_protocols_delete_certificate'`).Scan(&trigger); err != nil {
 		t.Fatal("certificate cleanup missing")
 	}
+	finishCatalogMaintenanceFixture(t, store, dir)
 }

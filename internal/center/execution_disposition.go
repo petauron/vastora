@@ -134,6 +134,10 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 		return `UPDATE xray_configuration_recoveries SET state='failed',lease_expires_at='',error='abandoned',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.apply":
 		return `UPDATE deployments SET state='failed',reconciliation_required=0,reconciliation_requested=0,lease_expires_at='',error='Abandoned by operator',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
+	case "application.adopt":
+		return `UPDATE application_adoptions SET state='failed',lease_expires_at='',error='Abandoned by operator',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
+	case "application.maintenance":
+		return `UPDATE application_maintenance SET state='failed',reconciliation_required=0,lease_expires_at='',error='Abandoned by operator; retained instance evidence requires verification',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.command":
 		return `UPDATE application_commands SET state='failed',reconciliation_required=0,reconciliation_requested=0,lease_expires_at='',error='Abandoned by operator',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "landing.proxy.apply":
@@ -156,6 +160,9 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 // These statements only reset the exact task revision observed by the operator.
 // They never increment attempt; claiming after the decision does that once.
 func executionRequeueStatement(task AgentTask, agentID, now string) (string, []any, error) {
+	if task.Kind == "application.maintenance" {
+		return "", nil, errors.New("center: uncertain package maintenance cannot be replayed; inspect retained resource and backup evidence")
+	}
 	identity := []any{now, task.ID, agentID, task.Attempt}
 	revision := []any{now, agentID, task.Revision, task.Attempt}
 	switch task.Kind {
@@ -167,6 +174,8 @@ func executionRequeueStatement(task AgentTask, agentID, now string) (string, []a
 		return `UPDATE xray_configuration_recoveries SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.apply":
 		return `UPDATE deployments SET state='pending',reconciliation_required=0,reconciliation_requested=0,lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
+	case "application.adopt":
+		return `UPDATE application_adoptions SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.command":
 		return `UPDATE application_commands SET state='pending',reconciliation_required=0,reconciliation_requested=0,lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "agent.update":

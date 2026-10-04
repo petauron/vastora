@@ -15,7 +15,7 @@ import (
 
 	"github.com/moby/moby/api/pkg/authconfig"
 	"github.com/moby/moby/client"
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/landing"
 )
 
@@ -79,13 +79,13 @@ func TestPullDeclaredImageReportsRegistryStreamErrorWithoutSecret(t *testing.T) 
 func TestApplicationExecutorRejectsManifestBeforeDocker(t *testing.T) {
 	executor := ApplicationExecutor{DockerSocket: "not-a-docker-socket"}
 	_, err := executor.Deploy(context.Background(), DeploymentTask{ID: "invalid-task", ApplicationID: "application-1", AppKey: cpaKey, Operation: "install"})
-	if err == nil || !strings.Contains(err.Error(), "invalid signed application manifest") {
+	if err == nil || !strings.Contains(err.Error(), "invalid package") {
 		t.Fatalf("invalid task reached Docker validation: %v", err)
 	}
 }
 
 func TestApplicationExecutorRejectsTypedConfigurationBeforeDocker(t *testing.T) {
-	payload, err := os.ReadFile("../../catalog/catalog.json")
+	payload, err := os.ReadFile("../center/testdata/reviewed-catalog-v4.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,15 +100,18 @@ func TestApplicationExecutorRejectsTypedConfigurationBeforeDocker(t *testing.T) 
 		}
 	}
 	executor := ApplicationExecutor{DockerSocket: "not-a-docker-socket"}
-	_, err = executor.Deploy(context.Background(), DeploymentTask{
+	task := DeploymentTask{
 		ID: "invalid-config", ApplicationID: "application-1", AppKey: cpaKey, Operation: "install", Manifest: manifest,
 		Config: json.RawMessage(`[]`), Secrets: json.RawMessage(`{"management_key":"management","api_key":"api"}`),
-	})
-	if err == nil || !strings.Contains(err.Error(), "invalid CPA configuration") {
+		AuthorizedCapabilities: manifest.Runtime.RequiredCapabilities,
+	}
+	packageTaskDigest(t, &task)
+	_, err = executor.Deploy(context.Background(), task)
+	if err == nil || !strings.Contains(err.Error(), "invalid package configuration") {
 		t.Fatalf("invalid typed configuration reached Docker: %v", err)
 	}
 	_, err = executor.Deploy(context.Background(), DeploymentTask{ID: "invalid-operation", ApplicationID: "application-1", AppKey: cpaKey, Operation: "replace", Manifest: manifest})
-	if err == nil || !strings.Contains(err.Error(), "unsupported application operation") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported package operation") {
 		t.Fatalf("unknown operation reached Docker: %v", err)
 	}
 }

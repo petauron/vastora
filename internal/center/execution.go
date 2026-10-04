@@ -716,6 +716,9 @@ func (s *Store) finalizeExecution(ctx context.Context, tx *sql.Tx, agentID, sess
 }
 
 func executionFailureCanReleaseFence(task AgentTask) bool {
+	if task.Kind == "application.maintenance" && task.PackageMaintenance != nil && task.PackageMaintenance.Action == "logs" {
+		return true
+	}
 	if task.Kind == "application.command" && task.PulseInspection != nil && task.PulseInspection.Validate() == nil {
 		return true
 	}

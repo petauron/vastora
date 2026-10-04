@@ -32,7 +32,7 @@ func monitorRestoreFixture(t *testing.T) (*Store, AgentCredential, AgentCredenti
 	if err = s.db.QueryRow(`SELECT x25519_public_key FROM agents WHERE id=?`, node.ID).Scan(&key); err != nil {
 		t.Fatal(err)
 	}
-	heartbeat := NodeHeartbeat{Version: Version, PublicKey: key, Capabilities: NodeCapabilities{PulseRestore: true}, Roles: []string{"worker"}, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, NetworkCandidates: []networking.Candidate{{Address: "10.0.0.8", Interface: "eth0", Kind: "lan"}}}
+	heartbeat := NodeHeartbeat{Version: Version, PublicKey: key, Capabilities: testRuntimeCapabilities(NodeCapabilities{PulseRestore: true}), Roles: []string{"worker"}, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, NetworkCandidates: []networking.Candidate{{Address: "10.0.0.8", Interface: "eth0", Kind: "lan"}}}
 	if err = s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
 		t.Fatal(err)
 	}

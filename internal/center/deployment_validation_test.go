@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 )
 
 func TestValidateApplicationResultUsesThreeXUIWorkerServices(t *testing.T) {

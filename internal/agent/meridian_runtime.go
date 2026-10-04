@@ -112,7 +112,8 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 	if state.Pending == nil {
 		return state, nil
 	}
-	if pendingImageReference != xrayWorkerImageReference && pendingImageReference != meridianruntime.EgressImage {
+	receipt, receiptErr := e.ApplicationResources(state.ApplicationID)
+	if receiptErr != nil || !receiptAuthorizesImage(receipt, pendingImageReference) {
 		return state, errors.New("agent: Meridian pending image is not the audited Agent runtime")
 	}
 	active, err := os.ReadFile(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory, "config.json"))
@@ -200,8 +201,12 @@ func (e ApplicationExecutor) replaceMeridianPendingState(ctx context.Context, st
 }
 
 func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meridianruntime.Task) (result meridianruntime.Result, resultErr error) {
-	if e.Store == nil || task.Validate() != nil || task.ImageReference != xrayWorkerImageReference && task.ImageReference != meridianruntime.EgressImage {
+	if e.Store == nil || task.Validate() != nil {
 		return result, errors.New("agent: invalid Meridian runtime task")
+	}
+	receipt, receiptErr := e.ApplicationResources(task.ApplicationID)
+	if receiptErr != nil || !receiptAuthorizesImage(receipt, task.ImageReference) {
+		return result, errors.New("agent: Meridian runtime image is not authorized by the installed package receipt")
 	}
 	if len(task.EgressClients) != 0 {
 		defer func() {
@@ -393,7 +398,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	}
 	deployment := DeploymentTask{ID: "meridian-runtime-r" + fmt.Sprint(task.Desired.Revision), AppKey: meridianKey, ApplicationID: task.ApplicationID}
 	options := meridianHostContainerOptions(deployment, task.ImageReference, active, hy2Enabled, gid)
-	sha, err := replaceXrayWorkerContainer(ctx, docker, options, func() error {
+	sha, err := e.applyMeridianContainer(ctx, docker, options, func() error {
 		if err := e.beginMeridianLandingHandover(ctx, docker, &state, task, gid); err != nil {
 			return err
 		}

@@ -29,6 +29,7 @@ func reinstallPreparationNetworkFixture(t *testing.T, public bool, publicExit ..
 	}
 	ctx := context.Background()
 	heartbeat.ApplicationRuntimeGeneration = platform.ApplicationRuntimeGeneration
+	heartbeat.Capabilities = testRuntimeCapabilities(heartbeat.Capabilities)
 	if public {
 		if _, err := s.db.Exec(`UPDATE agent_network_profile_recovery SET profile_json=json_set(profile_json,'$.publicAddress','198.51.100.7','$.publicBindAddress','10.0.0.7','$.publicMode','nat','$.directPublic',json('true')) WHERE agent_id=?`, node.ID); err != nil {
 			t.Fatal(err)
@@ -39,9 +40,10 @@ func reinstallPreparationNetworkFixture(t *testing.T, public bool, publicExit ..
 		t.Fatal(err)
 	}
 	addReinstallApplication(t, s, node, "retained-meridian", meridianAppKey, "0.1.0-alpha.12", "install", "succeeded")
-	if _, err := s.db.Exec(`UPDATE deployments SET config_json='{}',manifest_json=json_set(manifest_json,'$.images[0].name','xray-core') WHERE application_id='retained-meridian'`); err != nil {
+	if _, err := s.db.Exec(`UPDATE deployments SET config_json='{}',manifest_json=json_set(manifest_json,'$.images[0].name','xray-core','$.runtime.docker.containers[0].image','xray-core') WHERE application_id='retained-meridian'`); err != nil {
 		t.Fatal(err)
 	}
+	authorizeReinstallTestPackage(t, s, "retained-meridian-deployment")
 	networkInput := networkApprovalInput(t, s, node.ID)
 	if public {
 		networkInput.Profile.DirectPublic = true
@@ -182,7 +184,7 @@ func TestAgentReinstallPreparationRejectsUnreviewedQueue(t *testing.T) {
 
 func TestAgentReinstallPreparationRechecksBeforeClaimAndProjection(t *testing.T) {
 	for _, stage := range []string{"claim", "projection"} {
-		for _, mode := range []string{"key", "source", "payload", "approval", "administrator", "receipt"} {
+		for _, mode := range []string{"key", "source", "payload", "approval", "administrator", "receipt", "package-digest", "package-revision", "package-permissions"} {
 			t.Run(stage+"/"+mode, func(t *testing.T) {
 				s, node, input := reinstallPreparationFixture(t)
 				ctx := context.Background()
@@ -205,6 +207,15 @@ func TestAgentReinstallPreparationRechecksBeforeClaimAndProjection(t *testing.T)
 					args = []any{testAgentPublicKey(t), node.ID}
 				case "source":
 					query = `UPDATE deployments SET operation='uninstall' WHERE id='retained-meridian-deployment'`
+				case "package-digest":
+					query = `UPDATE deployments SET manifest_sha256=? WHERE id=?`
+					args = []any{strings.Repeat("f", 64), receipt.DeploymentID}
+				case "package-revision":
+					query = `UPDATE deployments SET package_revision=999 WHERE id=?`
+					args = []any{receipt.DeploymentID}
+				case "package-permissions":
+					query = `UPDATE deployments SET authorized_capabilities_json='["devices"]' WHERE id=?`
+					args = []any{receipt.DeploymentID}
 				case "payload":
 					query = `UPDATE deployments SET service_address='10.0.0.99' WHERE id=?`
 					args = []any{receipt.DeploymentID}

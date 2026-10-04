@@ -8,11 +8,12 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/distribution/reference"
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/pulse"
 	"golang.org/x/mod/semver"
@@ -25,6 +26,10 @@ type DeploymentRequest struct {
 	Config     json.RawMessage `json:"config"`
 	Operation  string          `json:"operation"`
 	DeleteData bool            `json:"deleteData"`
+	// Omission preserves existing grants but can never authorize an expansion.
+	AuthorizedCapabilities *[]string `json:"authorizedCapabilities,omitempty"`
+	PackageRevision        *int      `json:"packageRevision,omitempty"`
+	ManifestSHA256         string    `json:"manifestSha256,omitempty"`
 	// RegistryCredentialID is tri-state: omitted preserves an installed binding,
 	// an empty string clears it, and a non-empty value replaces it.
 	RegistryCredentialID *string              `json:"registryCredentialId,omitempty"`
@@ -43,6 +48,7 @@ type DeploymentView struct {
 	AgentID                     string              `json:"agentId"`
 	AppKey                      string              `json:"appKey"`
 	AppVersion                  string              `json:"appVersion"`
+	PackageRevision             int                 `json:"packageRevision"`
 	State                       string              `json:"state"`
 	ReconciliationRequired      bool                `json:"reconciliationRequired"`
 	Operation                   string              `json:"operation"`
@@ -278,17 +284,43 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		if !found {
 			return DeploymentView{}, errors.New("center: app not found in a verified catalog")
 		}
-	} else if len(active.Manifest) == 0 || json.Unmarshal(active.Manifest, &manifest) != nil || catalog.ValidateApp(manifest) != nil {
+	} else if len(active.Manifest) == 0 || json.Unmarshal(active.Manifest, &manifest) != nil {
 		return DeploymentView{}, errors.New("center: installed application manifest is invalid")
+	}
+	legacyRemoval := request.Operation == "uninstall" && active.PackageRevision == 0 && manifest.Runtime == nil && manifest.PackageRevision == 0
+	if !legacyRemoval && catalog.ValidateApp(manifest) != nil {
+		return DeploymentView{}, errors.New("center: installed package requires an explicit upgrade to a reviewed schema 4 recipe before configuration")
 	}
 	if request.Operation == "upgrade" {
 		comparison := semver.Compare(canonicalAppVersion(manifest.Version), canonicalAppVersion(active.Version))
-		if comparison == 0 {
+		if comparison == 0 && manifest.PackageRevision == active.PackageRevision {
 			return DeploymentView{}, fmt.Errorf("center: app is already at version %s", active.Version)
 		}
-		if comparison < 0 {
+		if comparison < 0 || comparison == 0 && manifest.PackageRevision < active.PackageRevision {
 			return DeploymentView{}, fmt.Errorf("center: catalog version %s is older than installed version %s; downgrade is not allowed", manifest.Version, active.Version)
 		}
+	}
+	var grants []string
+	if legacyRemoval {
+		grants, err = legacyRemovalAuthorization(ctx, s.db, request.AgentID, request.AppKey, active.Manifest)
+		if request.AuthorizedCapabilities != nil {
+			requested := slices.Sorted(slices.Values(*request.AuthorizedCapabilities))
+			if !slices.Equal(requested, grants) {
+				return DeploymentView{}, errors.New("center: uninstall cannot change historical permissions")
+			}
+		}
+	} else {
+		if err := requireNodeRuntime(ctx, s.db, request.AgentID, manifest); err != nil {
+			return DeploymentView{}, err
+		}
+		grants, err = deploymentPermissions(ctx, s.db, request, manifest)
+	}
+	if err != nil {
+		return DeploymentView{}, err
+	}
+	grantsJSON, err := json.Marshal(grants)
+	if err != nil {
+		return DeploymentView{}, err
 	}
 	if registryCredentialID != "" && request.Operation != "uninstall" {
 		if err := validateRegistryCredentialBinding(ctx, s.db, registryCredentialID, manifest); err != nil {
@@ -325,7 +357,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				}
 			}
 			if request.AppKey == "vastora-official/keeper" {
-				deploymentConfig, err = removeJSONObjectKeys(deploymentConfig, "cpa_management_key")
+				deploymentConfig, err = removeJSONObjectKeys(deploymentConfig, "cpa_base_url", "cpa_management_key")
 				if err != nil {
 					return DeploymentView{}, err
 				}
@@ -334,7 +366,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		if request.AppKey == pulseAgentAppKey {
 			// Collector identity and endpoint are managed by Center, never form
 			// fields. Upgrades keep the established endpoint and node identity.
-			options, _, normalizeErr := normalizeDeploymentConfig(manifest, request.Config)
+			options, _, normalizeErr := normalizeDeploymentConfig(userInputManifest(manifest, request.AppKey), request.Config)
 			if normalizeErr != nil {
 				return DeploymentView{}, normalizeErr
 			}
@@ -366,7 +398,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 					oneTimePulseToken = generatedToken
 				}
 			}
-			config, secrets, err = normalizeDeploymentConfig(manifest, deploymentConfig)
+			config, secrets, err = normalizeDeploymentConfig(userInputManifest(manifest, request.AppKey), deploymentConfig)
 		}
 		if err != nil {
 			return DeploymentView{}, err
@@ -388,6 +420,10 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	}
 	if request.AppKey == "vastora-official/keeper" && request.Operation != "uninstall" {
+		config, err = s.withCPAEndpoint(ctx, request.AgentID, config)
+		if err != nil {
+			return DeploymentView{}, err
+		}
 		secrets, err = s.withCPASecret(ctx, request.AgentID, secrets, request.CPAManagementKey)
 		if err != nil {
 			return DeploymentView{}, err
@@ -412,9 +448,18 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			oneTimeCredentials = nil
 		}
 	}
-	serializedManifest, err := json.Marshal(manifest)
-	if err != nil {
-		return DeploymentView{}, fmt.Errorf("center: encode deployment manifest: %w", err)
+	var serializedManifest []byte
+	var manifestDigest string
+	if legacyRemoval {
+		serializedManifest, manifestDigest = active.Manifest, rawManifestDigest(active.Manifest)
+	} else {
+		manifest, serializedManifest, manifestDigest, err = canonicalPackage(manifest)
+		if err != nil {
+			return DeploymentView{}, fmt.Errorf("center: encode deployment manifest: %w", err)
+		}
+	}
+	if request.PackageRevision != nil && *request.PackageRevision != manifest.PackageRevision || request.ManifestSHA256 != "" && request.ManifestSHA256 != manifestDigest {
+		return DeploymentView{}, errors.New("center: selected package changed; review its revision and permissions again")
 	}
 	id := request.InternalDeploymentID
 	if id == "" {
@@ -424,7 +469,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	}
 	now := s.now().UTC()
-	deployment := DeploymentView{ID: id, AgentID: request.AgentID, AppKey: request.AppKey, AppVersion: manifest.Version, Operation: request.Operation, DeleteData: request.DeleteData, State: "pending", CreatedAt: now, UpdatedAt: now, OneTimeCredentials: oneTimeCredentials, OneTimeCredentialsAvailable: producesCredentials}
+	deployment := DeploymentView{ID: id, AgentID: request.AgentID, AppKey: request.AppKey, AppVersion: manifest.Version, PackageRevision: manifest.PackageRevision, Operation: request.Operation, DeleteData: request.DeleteData, State: "pending", CreatedAt: now, UpdatedAt: now, OneTimeCredentials: oneTimeCredentials, OneTimeCredentialsAvailable: producesCredentials}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
@@ -455,6 +500,23 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, errors.New("center: confirm the existing application state before upgrading")
 		}
 	}
+	if legacyRemoval {
+		currentGrants, err := legacyRemovalAuthorization(ctx, tx, request.AgentID, request.AppKey, active.Manifest)
+		if err != nil {
+			return DeploymentView{}, err
+		}
+		if !slices.Equal(currentGrants, grants) {
+			return DeploymentView{}, errors.New("center: historical permissions changed while queuing removal")
+		}
+	} else {
+		currentGrants, err := deploymentPermissions(ctx, tx, request, manifest)
+		if err != nil {
+			return DeploymentView{}, err
+		}
+		if !slices.Equal(currentGrants, grants) {
+			return DeploymentView{}, errors.New("center: package permissions changed while queuing deployment")
+		}
+	}
 	applicationID, err := s.prepareApplication(ctx, tx, request, manifest, now)
 	if err != nil {
 		return DeploymentView{}, err
@@ -483,12 +545,16 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	if producesCredentials {
+		// Package authorization is persisted below in the same transaction.
 		if oneTimeCredentials == nil {
 			return DeploymentView{}, errors.New("center: generated deployment credentials are unavailable")
 		}
 		if err := insertSecretDelivery(ctx, tx, deploymentCredentialsDelivery, secretOwner, operationKeyHash, secretRequestHash, deployment.ID, now); err != nil {
 			return DeploymentView{}, err
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET package_revision=?,manifest_sha256=?,authorized_capabilities_json=? WHERE id=?`, manifest.PackageRevision, manifestDigest, grantsJSON, deployment.ID); err != nil {
+		return DeploymentView{}, err
 	}
 	if request.AppKey == pulseAgentAppKey && request.Operation == "install" {
 		if err := s.queuePulseEnrollment(ctx, tx, deployment, config, now); err != nil {

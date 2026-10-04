@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/secret"
@@ -138,7 +138,7 @@ func (s *Store) QueueAgentReinstallMonitorRestore(ctx context.Context, agentID, 
 		return result, err
 	}
 	var pulseConfig pulse.AgentConfig
-	if json.Unmarshal(manifest, &source.Manifest) != nil || source.Manifest.ID != "pulse-agent" || source.Manifest.Version != version || agent.ValidateOfficialContract(source.Manifest) != nil || registry.Valid || json.Unmarshal(config, &pulseConfig) != nil || pulseConfig.Validate() != nil || pulseConfig.ServiceApplicationID != rotation.Task.Inspection.ApplicationID {
+	if json.Unmarshal(manifest, &source.Manifest) != nil || source.Manifest.ID != "pulse-agent" || source.Manifest.Version != version || catalog.ValidateApp(source.Manifest) != nil || registry.Valid || json.Unmarshal(config, &pulseConfig) != nil || pulseConfig.Validate() != nil || pulseConfig.ServiceApplicationID != rotation.Task.Inspection.ApplicationID {
 		return result, errors.New("center: saved Pulse package or service configuration requires review")
 	}
 	credentials, err := s.reinstallRotatedCredentials(ctx, tx, serviceAgentID, rotationID, rotation.Task)
@@ -159,6 +159,9 @@ func (s *Store) QueueAgentReinstallMonitorRestore(ctx context.Context, agentID, 
 	_, err = tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,secret_id,operation,state,created_at,updated_at,application_id,service_address,runtime_generation,pre_dispatch_application_status)
  VALUES(?,?,?,?,?,?,?,'install','pending',?,?,?,'',?,(SELECT status FROM applications WHERE id=?))`, id, agentID, source.AppKey, version, manifest, config, secretID, now, now, input.ApplicationID, platform.ApplicationRuntimeGeneration, input.ApplicationID)
 	if err != nil {
+		return result, err
+	}
+	if err := copyReinstallPackageAuthorization(ctx, tx, plan.Applications[index].DeploymentID, id); err != nil {
 		return result, err
 	}
 	approval, _ := json.Marshal(plan.NetworkReview.Approval)
@@ -232,8 +235,11 @@ func (s *Store) reinstallMonitorRestoreTask(ctx context.Context, tx *sql.Tx, age
 	if string(current) != string(approval) {
 		return nil, errExecutionAuthorization
 	}
-	if json.Unmarshal(manifest, &task.Manifest) != nil || task.Manifest.ID != "pulse-agent" || task.Manifest.Version != version || agent.ValidateOfficialContract(task.Manifest) != nil {
+	if json.Unmarshal(manifest, &task.Manifest) != nil || task.Manifest.ID != "pulse-agent" || task.Manifest.Version != version || catalog.ValidateApp(task.Manifest) != nil {
 		return nil, errExecutionAuthorization
+	}
+	if err := readReinstallPackageAuthorization(ctx, tx, taskID, &task); err != nil {
+		return nil, err
 	}
 	task.Kind = "application.apply"
 	task.ID = taskID

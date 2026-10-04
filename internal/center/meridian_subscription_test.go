@@ -723,6 +723,7 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := ApplicationTaskResult{MeridianRuntime: &meridianruntime.Result{Receipt: meridian.AppliedReceipt{Revision: 2, ConfigSHA256: completionSHA, RuntimeReady: true}, Stats: json.RawMessage(`{}`)}}
+	result.Resources = mockIntegratedResources(t, store, "superseded-completion-command")
 	raw, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)

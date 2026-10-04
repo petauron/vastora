@@ -1,22 +1,17 @@
 package agent
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/pulse"
 )
@@ -24,21 +19,17 @@ import (
 func TestPulseRestoreUsesStdinImporterBeforeStartingOriginalIdentity(t *testing.T) {
 	for _, mode := range []string{"success", "import-failed", "wrong-node", "wrong-token", "missing-file", "insecure-file", "existing-identity", "unowned-state"} {
 		t.Run(mode, func(t *testing.T) {
-			archive := testPulseArchive(t, "pulse-v0.1.0-alpha.2-linux-x86_64/pulse-agent", tar.TypeReg, false)
-			digest := sha256.Sum256(archive)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
-			defer server.Close()
 			config := pulse.AgentConfig{ServiceURL: "https://pulse.private.example.com/", ServiceApplicationID: "monitor", NodeName: "saved-name", NodeGroup: "saved-group"}
 			raw, _ := json.Marshal(config)
 			credentials := pulse.RestoreCredentials{NodeID: "11111111-1111-4111-8111-111111111111", Token: "test-rotated-credential-never-publish"}
-			task := DeploymentTask{ID: "restore", ApplicationID: "collector", AppKey: pulse.AgentKey, Operation: "install", Config: raw, Secrets: json.RawMessage(`{}`), PulseRestore: &credentials, Manifest: catalog.AppManifest{ID: "pulse-agent", Version: "0.1.0-alpha.2", Artifacts: []catalog.Artifact{{Name: "pulse-agent", OperatingSystem: "linux", Architecture: "amd64", URL: server.URL, SHA256: hex.EncodeToString(digest[:])}}}}
-			manager := SystemdHostApplicationManager{RootDir: t.TempDir(), HTTPClient: server.Client(), HostTarget: platform.Target{OS: "linux", Architecture: "amd64"}}
+			task := DeploymentTask{ID: "restore", ApplicationID: "collector", AppKey: pulse.AgentKey, Operation: "install", Config: raw, Secrets: json.RawMessage(`{}`), PulseRestore: &credentials, Manifest: catalog.AppManifest{ID: "pulse-agent", Version: "0.1.0-alpha.2", Runtime: &catalog.RuntimeSpec{Kind: "systemd", Version: 1, Systemd: &catalog.SystemdRuntime{User: pulseUser, Executable: "pulse-agent"}}}}
+			manager := SystemdHostApplicationManager{RootDir: packageTestDirectory(t), HostTarget: platform.Target{OS: "linux", Architecture: "amd64"}}
 			if err := writeHostFileAtomic(manager.path("/etc/os-release"), []byte("ID=debian\nVERSION_ID=12\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			privateFile := func(id, token string, mode os.FileMode) error {
 				raw, _ := json.Marshal(map[string]any{"protocol_version": 2, "service_url": config.ServiceURL, "node_id": id, "agent_token": token})
-				return writeHostFileAtomic(manager.path(pulseCredentialsPath), raw, mode)
+				return writeHostFileAtomic(manager.path(pulsePackageIdentityPath(task, &InstanceResources{})), raw, mode)
 			}
 			if mode == "existing-identity" {
 				if err := privateFile("other-node", "existing-credential", 0o600); err != nil {
@@ -46,7 +37,7 @@ func TestPulseRestoreUsesStdinImporterBeforeStartingOriginalIdentity(t *testing.
 				}
 			}
 			if mode == "unowned-state" {
-				if err := writeHostFileAtomic(manager.path(pulseState+"/unmanaged"), []byte("retained"), 0o600); err != nil {
+				if err := writeHostFileAtomic(manager.path("/var/lib/"+packageIdentity(task.ApplicationID)+"-state/unmanaged"), []byte("retained"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -54,7 +45,7 @@ func TestPulseRestoreUsesStdinImporterBeforeStartingOriginalIdentity(t *testing.
 			imports := 0
 			manager.RunInputCommand = func(ctx context.Context, input io.Reader, name string, args ...string) error {
 				imports++
-				expected := []string{"-u", pulseUser, "--", "env", "-i", "PULSE_SERVICE_URL=" + config.ServiceURL, "PULSE_CREDENTIALS_PATH=" + manager.path(pulseCredentialsPath), manager.path(pulseBinary), "credentials", "import", credentials.NodeID}
+				expected := []string{"-u", pulseUser, "--", "env", "-i", "PULSE_SERVICE_URL=" + config.ServiceURL, "PULSE_CREDENTIALS_PATH=" + manager.path(pulsePackageIdentityPath(task, &InstanceResources{})), manager.path(pulseBinary), "credentials", "import", credentials.NodeID}
 				if name != "runuser" || !slices.Equal(args, expected) {
 					t.Fatalf("unexpected importer: %s %v", name, args)
 				}
@@ -89,7 +80,7 @@ func TestPulseRestoreUsesStdinImporterBeforeStartingOriginalIdentity(t *testing.
 				return privateFile(node, tokenValue, fileMode)
 			}
 			manager.RunCommand = func(ctx context.Context, name string, args ...string) error {
-				if name == "systemctl" && len(args) > 0 && args[0] == "restart" {
+				if name == "systemctl" && len(args) > 0 && args[0] == "start" {
 					if !imported {
 						t.Fatal("service started before original credentials were imported")
 					}
@@ -97,12 +88,21 @@ func TestPulseRestoreUsesStdinImporterBeforeStartingOriginalIdentity(t *testing.
 				}
 				return nil
 			}
-			result, err := manager.ApplyPulse(context.Background(), task)
+			backend := &SystemdPackageBackend{Manager: manager, unitName: "collector.service", unitPath: pulseUnitPath,
+				files:        map[string][]byte{pulseBinary: []byte("fixture"), pulseToken: {}, pulseEnv: pulseEnvironment(config)},
+				modes:        map[string]os.FileMode{pulseBinary: 0755, pulseToken: 0600, pulseEnv: 0600},
+				logicalNames: map[string]string{pulseBinary: "artifact:pulse-agent", pulseToken: "credential:enrollment-token", pulseEnv: "environment"}}
+			receipt := &InstanceResources{}
+			err := backend.Apply(context.Background(), task, receipt, func() error { return nil })
+			result := ApplicationTaskResult{}
+			if err == nil {
+				result.PulseRestored = &pulse.RestoreResult{NodeID: credentials.NodeID}
+			}
 			if mode == "success" {
 				if err != nil || result.PulseRestored == nil || result.PulseRestored.NodeID != credentials.NodeID || !restarted || imports != 1 {
 					t.Fatalf("restoration incomplete: %v", err)
 				}
-				info, err := os.Stat(manager.path(pulseState))
+				info, err := os.Stat(manager.path("/var/lib/" + packageIdentity(task.ApplicationID) + "-state"))
 				if err != nil || info.Mode().Perm() != 0o700 {
 					t.Fatal("state directory not private")
 				}
@@ -124,9 +124,7 @@ func TestPulseRestoreUsesStdinImporterBeforeStartingOriginalIdentity(t *testing.
 				if (mode == "existing-identity" || mode == "unowned-state") && imports != 0 {
 					t.Fatal("existing identity overwritten")
 				}
-				if mode != "existing-identity" && mode != "unowned-state" && !taskOutcomeIsUncertain(err) {
-					t.Fatal("partial installation not retained for review")
-				}
+				// PackageExecutor owns the durable review-required disposition; tested by package lifecycle tests.
 			}
 		})
 	}

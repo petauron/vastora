@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -36,7 +36,7 @@ func addReinstallApplication(t *testing.T, store *Store, node AgentCredential, i
 	t.Helper()
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	_, manifestID, _ := strings.Cut(appKey, "/")
-	manifest, err := json.Marshal(catalog.AppManifest{ID: manifestID, Version: version, Name: catalog.LocalizedText{English: "App", SimplifiedChinese: "应用"},
+	manifest, err := json.Marshal(catalog.AppManifest{ID: manifestID, Version: version, PackageRevision: 1, Runtime: &catalog.RuntimeSpec{Kind: "docker", Version: 1, Docker: &catalog.DockerRuntime{Containers: []catalog.Container{{Name: "runtime", Image: "runtime"}}}}, Name: catalog.LocalizedText{English: "App", SimplifiedChinese: "应用"},
 		Description: catalog.LocalizedText{English: "Recovery fixture", SimplifiedChinese: "恢复夹具"}, License: "MIT",
 		Images: []catalog.Image{{Name: "runtime", Reference: "ghcr.io/example/app@sha256:" + strings.Repeat("a", 64)}}})
 	if err != nil {
@@ -48,6 +48,31 @@ func addReinstallApplication(t *testing.T, store *Store, node AgentCredential, i
 	}
 	if _, err := store.db.Exec(`INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,operation,state,created_at,updated_at,application_id)
 		VALUES(?,?,?,?,?,? ,?,?,?,?,?)`, id+"-deployment", node.ID, appKey, version, manifest, []byte(`{"sensitive":"do-not-return-config"}`), operation, state, stamp, stamp, id); err != nil {
+		t.Fatal(err)
+	}
+	authorizeReinstallTestPackage(t, store, id+"-deployment")
+}
+
+// Persist the exact reviewed package identity used by recovery fixtures.
+func authorizeReinstallTestPackage(t *testing.T, store *Store, deploymentID string) {
+	t.Helper()
+	var raw []byte
+	if err := store.db.QueryRow(`SELECT manifest_json FROM deployments WHERE id=?`, deploymentID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var manifest catalog.AppManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	canonical, raw, digest, err := canonicalPackage(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants, err := json.Marshal(canonical.Runtime.RequiredCapabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE deployments SET manifest_json=?,package_revision=?,manifest_sha256=?,authorized_capabilities_json=? WHERE id=?`, raw, canonical.PackageRevision, digest, grants, deploymentID); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -24,7 +24,7 @@ services:
       - --official-catalog-origin
       - ${VASTORA_OFFICIAL_CATALOG_ORIGIN:-https://downloads.petauron.com/vastora/catalog/}
       - --official-catalog-root
-      - ${VASTORA_OFFICIAL_CATALOG_ROOT:-/app/catalog-trust/1.root.json}
+      - ${VASTORA_OFFICIAL_CATALOG_ROOT:-/app/catalog-trust/2.root.json}
       - --deployer-socket
       - /run/vastora-deployer/deployer.sock
       - --release-metadata-url

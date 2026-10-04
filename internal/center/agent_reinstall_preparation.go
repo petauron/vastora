@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 )
@@ -129,8 +129,11 @@ func (s *Store) QueueAgentReinstallPreparation(ctx context.Context, agentID, adm
 	if err != nil {
 		return result, err
 	}
-	if json.Unmarshal(manifest, &sourceTask.Manifest) != nil || agent.ValidateOfficialContract(sourceTask.Manifest) != nil || sourceTask.Manifest.ID != "meridian" || sourceTask.Manifest.Version != version || secretID.Valid || registryID.Valid || string(config) != "{}" {
+	if json.Unmarshal(manifest, &sourceTask.Manifest) != nil || catalog.ValidateApp(sourceTask.Manifest) != nil || sourceTask.Manifest.ID != "meridian" || sourceTask.Manifest.Version != version || secretID.Valid || registryID.Valid || string(config) != "{}" {
 		return result, errors.New("center: saved Meridian package or configuration requires review")
+	}
+	if err := readReinstallPackageAuthorization(ctx, tx, source.DeploymentID, &sourceTask); err != nil {
+		return result, err
 	}
 	address := plan.NetworkReview.Approval.Profile.ServiceAddress
 	if !networking.IsPrivateServiceAddress(address) {
@@ -168,6 +171,9 @@ func (s *Store) QueueAgentReinstallPreparation(ctx context.Context, agentID, adm
 	_, err = tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,operation,state,created_at,updated_at,application_id,service_address,runtime_generation,pre_dispatch_application_status)
  VALUES(?,?,?,?,?,?,'install','pending',?,?,?,?,?,(SELECT status FROM applications WHERE id=?))`, id, agentID, meridianAppKey, version, manifest, config, now, now, input.ApplicationID, address, platform.ApplicationRuntimeGeneration, input.ApplicationID)
 	if err != nil {
+		return result, err
+	}
+	if err := copyReinstallPackageAuthorization(ctx, tx, source.DeploymentID, id); err != nil {
 		return result, err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO agent_reinstall_app_preparations(deployment_id,source_deployment_id,operation_id,application_id,plan_revision,source_revision,replacement_key,approval_json,task_json) VALUES(?,?,?,?,?,?,?,?,?)`, id, source.DeploymentID, op.ID, input.ApplicationID, input.PlanRevision, sourceRevision, key, approvalJSON, taskJSON)
@@ -230,8 +236,11 @@ func (s *Store) validateReinstallPreparation(ctx context.Context, tx *sql.Tx, ag
 	if err != nil {
 		return true, errExecutionAuthorization
 	}
-	if json.Unmarshal(manifest, &task.Manifest) != nil || agent.ValidateOfficialContract(task.Manifest) != nil || task.Manifest.Version != version || secretID.Valid || registryID.Valid || attempt > 1 || reconciliation {
+	if json.Unmarshal(manifest, &task.Manifest) != nil || catalog.ValidateApp(task.Manifest) != nil || task.Manifest.Version != version || secretID.Valid || registryID.Valid || attempt > 1 || reconciliation {
 		return true, errExecutionAuthorization
+	}
+	if err := readReinstallPackageAuthorization(ctx, tx, taskID, &task); err != nil {
+		return true, err
 	}
 	task.Kind = "application.apply"
 	task.Attempt = 1

@@ -167,17 +167,3 @@ func (e ApplicationExecutor) ConfigureHY2Port(ctx context.Context, store *Store,
 	}
 	return nil
 }
-
-// Application upgrades keep the explicitly configured UDP binding. Fresh
-// installations do not expose UDP until the administrator enables HY2.
-func preserveThreeXUIHY2Port(ctx context.Context, docker threeXUIContainerEngine, exposed dockernetwork.PortSet, bindings dockernetwork.PortMap) error {
-	current, exists, err := inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
-	if err != nil {
-		return err
-	}
-	if exists && current.Container.HostConfig != nil && len(current.Container.HostConfig.PortBindings[hy2DockerPort]) > 0 {
-		exposed[hy2DockerPort] = struct{}{}
-		bindings[hy2DockerPort] = current.Container.HostConfig.PortBindings[hy2DockerPort]
-	}
-	return nil
-}

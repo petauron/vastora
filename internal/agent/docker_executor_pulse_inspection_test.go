@@ -102,7 +102,7 @@ func TestPulseInspectionUsesReviewedContainerAndFixedCLI(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			executor := ApplicationExecutor{DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}
+			executor := ApplicationExecutor{PackageStateDirectory: pulseReviewedTestPackage(t, task.ApplicationID, task.DeploymentID), DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}
 			result, err := executor.InspectPulse(context.Background(), task)
 			mu.Lock()
 			defer mu.Unlock()
@@ -127,4 +127,14 @@ func TestPulseInspectionUsesReviewedContainerAndFixedCLI(t *testing.T) {
 			}
 		})
 	}
+}
+
+func pulseReviewedTestPackage(t *testing.T, applicationID, deploymentID string) string {
+	t.Helper()
+	directory := packageTestDirectory(t)
+	receipt := &InstanceResources{Version: 1, ApplicationID: applicationID, AppKey: pulse.ServiceKey, TaskID: deploymentID, Runtime: "docker", State: "ready", Resources: []RuntimeResource{{Kind: "container", LogicalName: "pulse", Name: pulseContainer, ID: "fixed-pulse", Component: "pulse"}}}
+	if err := (PackageExecutor{StateDirectory: directory}).save(receipt); err != nil {
+		t.Fatal(err)
+	}
+	return directory
 }
