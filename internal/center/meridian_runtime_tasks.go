@@ -916,6 +916,9 @@ func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, endpoi
 			if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,baseline_bytes,observed_bytes,raw_up_bytes,raw_down_bytes,observed_at) VALUES(?,0,?,?,?,?)`, snapshot.CredentialID, observed, snapshot.UpBytes, snapshot.DownBytes, observedAt); err != nil {
 				return err
 			}
+			if err := observeMeridianLineUsage(ctx, tx, snapshot.CredentialID, 0, 0, observedAt); err != nil {
+				return err
+			}
 			endpointDelta = saturatingAdd(endpointDelta, observed)
 			continue
 		}
@@ -929,6 +932,9 @@ func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, endpoi
 		downDelta := snapshot.DownBytes
 		if snapshot.DownBytes >= rawDown {
 			downDelta = snapshot.DownBytes - rawDown
+		}
+		if err := observeMeridianLineUsage(ctx, tx, snapshot.CredentialID, upDelta, downDelta, observedAt); err != nil {
+			return err
 		}
 		nextObserved := saturatingAdd(observed, saturatingAdd(upDelta, downDelta))
 		if nextObserved < baseline {

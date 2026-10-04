@@ -1820,6 +1820,112 @@
         }
       }
     },
+    "/api/v1/meridian/traffic": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Meridian Traffic",
+        "operationId": "meridianTraffic_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "entryNodeId": {
+                            "type": "string"
+                          },
+                          "entryName": {
+                            "type": "string"
+                          },
+                          "egressNodeId": {
+                            "type": "string"
+                          },
+                          "egressName": {
+                            "type": "string"
+                          },
+                          "uploadBytes": {
+                            "type": "integer"
+                          },
+                          "downloadBytes": {
+                            "type": "integer"
+                          },
+                          "totalBytes": {
+                            "type": "integer"
+                          },
+                          "credentialCount": {
+                            "type": "integer"
+                          },
+                          "trackedCredentials": {
+                            "type": "integer"
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "observedAt": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "period": {
+                      "type": "string"
+                    },
+                    "checkedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "description": "Read directional traffic grouped by entry node and egress. Totals start at the first authenticated tracking sample, never infer historical direction, never reset or enforce quotas, and are not provider billing. Stale means no current active credential sample within 15 minutes."
+      }
+    },
     "/api/v1/meridian": {
       "get": {
         "tags": [

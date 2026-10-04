@@ -6,7 +6,7 @@ import type { LandingView } from "./landing-types";
 import type { IPQualityPreferences, IPQualityResponse } from "./ip-quality-types";
 import type { NodeDiagnosticCheck } from "./node-diagnostics-types";
 import type { NodeProtocols } from "./types";
-import type { MeridianAccountCreated, MeridianAccountInput, MeridianAccount, MeridianEndpoint, MeridianInventory, MeridianRouteGrant, MeridianSourceRecovery } from "./meridian-types";
+import type { MeridianTraffic, MeridianAccountCreated, MeridianAccountInput, MeridianAccount, MeridianEndpoint, MeridianInventory, MeridianRouteGrant, MeridianSourceRecovery } from "./meridian-types";
 import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type LegacyReceiptView } from "./execution-types";
 
 export class APIError extends Error {
@@ -173,6 +173,7 @@ export const api = {
 	removeOfflineAgent: (agentId: string, confirmation: string) => request<{ removing: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}/remove`, { method: "POST", body: JSON.stringify({ confirmation }) }),
 	deleteAgent: (agentId: string) => request<{ deleted: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "DELETE", body: "{}" }),
 	applications: (signal?: AbortSignal) => request<{ applications: Application[] }>("/api/v1/applications", { signal }),
+	meridianTraffic: (signal?: AbortSignal) => request<MeridianTraffic>("/api/v1/meridian/traffic", { signal }),
 	meridian: (signal?: AbortSignal) => request<MeridianInventory>("/api/v1/meridian", { signal }),
 	startMeridianCutover: () => request<MeridianInventory["cutover"]>("/api/v1/meridian/cutover", { method: "POST", body: "{}" }),
 	createMeridianEndpoint: (input: { applicationId: string; verificationId: string; targetIp: string; advertiseHost?: string; targetHost: string; serverName: string; fingerprint?: string; regionCode: string; name: string }) => request<MeridianEndpoint>("/api/v1/meridian/endpoints", { method: "POST", body: JSON.stringify(input) }),
