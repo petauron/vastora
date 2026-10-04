@@ -143,6 +143,7 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
 	PackageMaintenance        *PackageMaintenanceTask              `json:"packageMaintenance,omitempty"`
 	HistoricalManifest        json.RawMessage                      `json:"historicalManifest,omitempty"`
 	DormantRuntime            bool                                 `json:"dormantRuntime,omitempty"`

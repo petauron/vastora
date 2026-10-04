@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -237,8 +238,21 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if err != nil {
 		return result, err
 	}
-	if receipt != nil && (receipt.AppKey != task.AppKey || receipt.State != "ready" && receipt.State != "retained") {
-		return result, errors.New("agent: package ownership conflict or unfinished execution requires review")
+	if receipt != nil && (receipt.ApplicationID != task.ApplicationID || receipt.AppKey != task.AppKey) {
+		return result, errors.New("agent: package ownership conflict")
+	}
+	if receipt != nil && receipt.State != "ready" && receipt.State != "retained" {
+		result.Resources = receipt
+		if !reviewedPackageRecovery(task, receipt) {
+			return result, uncertainTaskOutcome(errors.New("agent: unfinished package execution requires an operator-reviewed retry"))
+		}
+		// Preserve the receipt if inspection or preparation rejects the retry.
+		// Do not clear the lock before all existing resources are verified.
+		defer func() {
+			if err != nil {
+				err = uncertainTaskOutcome(err)
+			}
+		}()
 	}
 	if task.Operation == "adopt" {
 		if receipt != nil {
@@ -364,4 +378,13 @@ func validateHistoricalPackageTask(task DeploymentTask) error {
 		return errors.New("agent: historical package body mismatch")
 	}
 	return nil
+}
+
+func reviewedPackageRecovery(task DeploymentTask, receipt *InstanceResources) bool {
+	recovery := task.PackageRecovery
+	return receipt.State == "review-required" && len(receipt.Resources) > 0 &&
+		task.Kind == "application.apply" && (task.Operation == "upgrade" || task.Operation == "configure") &&
+		task.Authorization.ID != "" && task.Authorization.Protocol == controlplane.ExecutionProtocol && len(task.Authorization.Digest) == 64 &&
+		recovery != nil && recovery.ExecutionID != "" && recovery.ExecutionID != task.Authorization.ID &&
+		recovery.TaskID == task.ID && receipt.TaskID == task.ID && recovery.Attempt > 0 && recovery.Attempt == task.Attempt-1
 }

@@ -32,3 +32,11 @@ type ExecutionDisposition struct {
 	ExecutionStopped bool   `json:"executionStopped"`
 	Note             string `json:"note"`
 }
+
+// PackageRecovery binds a reviewed failed attempt to the next one-use task.
+// It is included in the encrypted task payload and its execution digest.
+type PackageRecovery struct {
+	ExecutionID string `json:"executionId"`
+	TaskID      string `json:"taskId"`
+	Attempt     int64  `json:"attempt"`
+}
