@@ -31,6 +31,13 @@ created its pre-upgrade backup. The test copies its input again before migration
 it does not start Center or contact Agents. Current CI and A1 rollout remain
 pending; this is not evidence of live adoption or application restart behavior.
 
+The historical Pulse Docker adoption rehearsal also passed against a private
+Agent database/key snapshot and the existing runtime. A read-only HTTP proxy
+rejected Docker write methods, and the package receipt was written only into
+a temporary directory. Container ID, StartedAt, mounts, container configuration
+and host configuration were unchanged. This proves the sampled Pulse service
+adoption path; it does not claim fleet-wide or systemd historical adoption.
+
 ## Earlier local checkpoint
 
 - All Go packages pass `GOWORK=off go test ./... -count=1 -timeout=180s`
