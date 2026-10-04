@@ -286,6 +286,7 @@ export type Diagnostics = {
 };
 
 export type AgentView = {
+  reinstall?: AgentReinstallOperation;
   id: string;
   name: string;
   version: string;
@@ -299,7 +300,7 @@ export type AgentView = {
   credentialRevoked: boolean;
   siteId: string;
   roles: string[];
-  capabilities: { docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean };
+  capabilities: { meridianAcceptance?: boolean; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean };
   networkCandidates: NetworkCandidate[];
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;
@@ -346,6 +347,67 @@ export type XrayConfigurationRecovery = {
     appliedSource?: "runtime" | "agent_state";
   };
 };
+
+export type AgentReinstallOperation = {
+  id: string; planRevision: string; state: "preparing" | "awaiting_enrollment" | "review_required" | "failed";
+  privateIsolation: "pending" | "not_required" | "withdrawn";
+  attempt: number;
+  authorizedBy: string; previousFingerprint: string; replacementFingerprint: string;
+  lastError: string; createdAt: string; updatedAt: string;
+};
+export type AgentReinstallInput = { operationId: string; planRevision: string; confirmReplacement: boolean };
+export type AgentReinstallLocalWorkInput = { operationId: string; planRevision: string; confirmLocal: boolean };
+export type AgentReinstallUnclaimedWork = { taskId: string; kind: string; revision: number };
+export type AgentReinstallLocalDisposition = { planRevision: string; executionIds: string[]; unclaimedWork: AgentReinstallUnclaimedWork[]; authorizedBy: string; disposedAt: string };
+export type AgentReinstallApplicationInput = { operationId: string; planRevision: string; applicationId: string };
+export type AgentReinstallRuntime = { commandId: string; state: string };
+export type AgentReinstallListener = { taskId: string; state: string };
+export type AgentReinstallDNS = {
+  id: string; state: string; attempt: number; current: boolean; canContinue: boolean; checkedAt: string;
+  entries: { publicationId: string; hostname: string; provider: string; previousAddress: string; address: string; state: string }[];
+};
+export type AgentReinstallDNSInput = AgentReinstallApplicationInput & { expectedAttempt: number };
+export type AgentReinstallAccess = { state: "applied" | "needs_review"; serviceAddress: string; publicAddress: string; activatedAt: string };
+export type AgentReinstallEntryCheck = {
+  id: string; state: "passed" | "pending"; current: boolean; checkedAt: string;
+  entries: Array<{ publicationId: string; hostname: string; publicAddress: string; sniHostname: string; state: "passed" | "dns_pending" | "tls_pending" | "not_checked" }>;
+};
+export type AgentReinstallLandingSource = {
+  state: string;
+  identity: { previousFingerprint: string; currentFingerprint: string; previousAddress: string; currentAddress: string; endpointRevision: number; observedAt: string };
+  landings: Array<{ nodeId: string; revision: number; peerFingerprint: string }>;
+};
+export type AgentReinstallPreparation = { landing?: AgentReinstallLandingSource; deploymentId: string; state: string; runtime?: AgentReinstallRuntime; listener?: AgentReinstallListener; entryCheck?: AgentReinstallEntryCheck; access?: AgentReinstallAccess; dns?: AgentReinstallDNS };
+export type AgentReinstallMonitorInput = { operationId: string; planRevision: string; applicationId: string };
+export type AgentReinstallMonitorReporting = { commandId: string; state: string; checkedAt?: string };
+export type AgentReinstallMonitorRestore = { deploymentId: string; state: string };
+export type AgentReinstallMonitorRotation = { commandId: string; state: string; nodeId: string; rotatedAt?: string };
+export type AgentReinstallMonitorInspection = { commandId: string; state: string; nodeId?: string; error?: string; inspectedAt?: string };
+export type AgentReinstallPlan = {
+  agentId: string; revision: string; checkedAt: string; identityFingerprint: string; credentialRevoked: boolean;
+  remaining?: Array<{ code: string; applicationId?: string }>;
+  recovery?: AgentReinstallOperation;
+  networkReview?: AgentReinstallNetworkReview;
+  privateNetwork: { ownership: string; serviceAddress: string; privateAddress: string; profileRetained: boolean; addressRecovery: string; landingRoutes: number; publications: number };
+  applications: Array<{ applicationId: string; name: string; appKey: string; deploymentId: string; version: string; operation: string; state: string; recovery: string; sharedEntry: boolean; requirements: string[]; preparation?: AgentReinstallPreparation }>;
+  pendingWork: Array<{ agentId: string; kind: string; count: number }>;
+  executions: Array<{ id: string; agentId: string; taskId: string; attempt: number; kind: string; state: string; phase: string; identityRetired: boolean; resolution: "local_after_isolation" | "manual_review" }>;
+  unclaimedLocalWork: AgentReinstallUnclaimedWork[];
+  localWorkDisposition?: AgentReinstallLocalDisposition;
+  monitoring: Array<{ applicationId: string; serviceApplicationId: string; serviceAgentId: string; state: string; enrollments: Array<{ enrollmentId: string; executionId: string }>; inspection?: AgentReinstallMonitorInspection; rotation?: AgentReinstallMonitorRotation; reporting?: AgentReinstallMonitorReporting; restoration?: AgentReinstallMonitorRestore }>;
+  requirements: string[];
+};
+
+export type ReinstallPrivatePeer = { id: string; publicKey: string; address: string };
+export type AgentReinstallNetworkApproval = {
+  planRevision: string; previous?: NetworkProfile; profile: NetworkProfile; privatePeer?: ReinstallPrivatePeer;
+  controllerId?: string; controllerEndpoint?: string; authorizedBy: string; approvedAt: string;
+};
+export type AgentReinstallNetworkReview = {
+  previous?: NetworkProfile; candidates: NetworkCandidate[]; publicEgress?: PublicEgress;
+  privatePeer?: ReinstallPrivatePeer; ready: boolean; approvalCurrent: boolean; profileActive: boolean; approval?: AgentReinstallNetworkApproval;
+};
+export type AgentReinstallNetworkInput = { operationId: string; planRevision: string; confirmMigration: boolean; profile: NetworkProfile };
 
 export type AgentEnrollment = { token: string; siteId: string; centerUrl?: string; installerUrl: string; caCertificatePem?: string; expiresAt: string };
 

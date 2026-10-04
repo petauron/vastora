@@ -20,7 +20,7 @@ export function InstalledApps({ groups, ...props }: InstalledAppsProps) {
   }, [props.managerApplication]);
   const selected = groups.find((group) => group.id === selectedID) ?? groups[0];
   const showSite = new Set(groups.flatMap((group) => group.instances.map((instance) => instance.application.siteId))).size > 1;
-  return <Tabs value={selected?.id ?? ""} onValueChange={(value) => { if (typeof value === "string") setSelectedID(value); }} className="apps-chooser min-w-0 gap-4">
+  return <Tabs value={selected?.id ?? ""} onValueChange={(value) => { if (typeof value === "string") setSelectedID(value); }} className="apps-chooser gap-4">
     <div className="max-w-full overflow-x-auto pb-1"><TabsList variant="line" aria-label={copy(props.language, "已安装的应用", "Installed applications")}>
       {groups.map((group) => <TabsTrigger value={group.id} key={group.id}><AppWindowIcon aria-hidden="true" />{group.app ? localized(group.app, props.language, "name") : group.instances[0].application.name}<span className="text-xs text-muted-foreground tabular-nums">{group.instances.length}</span></TabsTrigger>)}
     </TabsList></div>

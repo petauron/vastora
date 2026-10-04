@@ -15,7 +15,7 @@ import (
 )
 
 func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
-	for _, mode := range []string{"handoff", "lease-conflict", "expired", "abandon", "confirm-completed"} {
+	for _, mode := range []string{"handoff", "scheduler-failed", "late-scheduler-error", "helper-failed", "helper-recovery", "lease-conflict", "expired", "abandon", "confirm-completed"} {
 		t.Run(mode, func(t *testing.T) {
 			store := openOrchestrationStore(t)
 			defer store.Close()
@@ -81,8 +81,23 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 					t.Fatalf("helper request %s: %d want %d: %s", path, w.Code, want, w.Body.String())
 				}
 			}
+			resultPath := "/api/v1/agents/" + node.ID + "/tasks/" + task.ID + "/result"
+			result := map[string]any{"attempt": task.Attempt, "executionId": auth.ID, "sessionId": session, "hostUpdateHelper": true, "succeeded": true, "result": map[string]any{}}
+			// Selecting the helper channel cannot claim an execution it does not own.
+			post(resultPath, result, http.StatusConflict)
+			if mode == "scheduler-failed" {
+				post(resultPath, map[string]any{
+					"attempt": task.Attempt, "executionId": auth.ID, "sessionId": session,
+					"succeeded": false, "error": "helper could not be scheduled", "result": map[string]any{},
+				}, http.StatusOK)
+				if err := begin(auth.ID, session); !errors.Is(err, errExecutionAuthorization) {
+					t.Fatalf("helper took ownership after scheduler failure: %v", err)
+				}
+				post(resultPath, result, http.StatusConflict)
+				return
+			}
 			post("/api/v1/agents/"+node.ID+"/updates/"+task.ID+"/start", map[string]any{"attempt": task.Attempt, "executionId": auth.ID, "sessionId": session}, http.StatusOK)
-			if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), true, false, "", nil); !errors.Is(err, errExecutionAuthorization) {
+			if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), true, false, "", nil, true); !errors.Is(err, errExecutionAuthorization) {
 				t.Fatalf("helper succeeded without authorized start: %v", err)
 			}
 			stepPath := "/api/v1/agents/" + node.ID + "/executions/" + auth.ID
@@ -91,6 +106,14 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 				step := controlplane.ExecutionTransitionRequest{SessionID: session, Action: "helper-step", Phase: phase}
 				post(stepPath, step, http.StatusOK)
 				post(stepPath, step, http.StatusConflict)
+			}
+			if mode == "late-scheduler-error" {
+				// systemd may start the helper successfully before its scheduling
+				// caller is interrupted. That caller no longer owns the outcome.
+				post("/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", map[string]any{
+					"attempt": task.Attempt, "executionId": auth.ID, "sessionId": session,
+					"succeeded": false, "error": "schedule result interrupted", "result": map[string]any{},
+				}, http.StatusConflict)
 			}
 			if err := begin(auth.ID, session); !errors.Is(err, errExecutionAuthorization) {
 				t.Fatalf("double consumption: %v", err)
@@ -116,13 +139,22 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 			}
 			// Only the successful handoff has installed-version evidence. The
 			// expiry/disposition cases must keep the old version until recovery.
-			if mode == "handoff" {
+			if mode == "handoff" || mode == "late-scheduler-error" {
 				heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.124", true)
 				if ready, err := store.UpdateHelperObserved(ctx, node.ID, session, auth.ID); err != nil || !ready {
 					t.Fatalf("target heartbeat not observed: ready=%v err=%v", ready, err)
 				}
 			}
-			result := map[string]any{"attempt": task.Attempt, "executionId": auth.ID, "sessionId": session, "succeeded": true, "result": map[string]any{}}
+			wantState := "succeeded"
+			if mode == "helper-failed" || mode == "helper-recovery" {
+				result["succeeded"] = false
+				result["error"] = "helper requires operator verification"
+				result["reconciliationRequired"] = mode == "helper-recovery"
+				wantState = "failed"
+				if mode == "helper-recovery" {
+					wantState = "unknown"
+				}
+			}
 			if mode == "abandon" || mode == "confirm-completed" {
 				expired := store.now().Add(31 * time.Minute)
 				store.now = func() time.Time { return expired }
@@ -198,7 +230,7 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 			}
 			post("/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", result, http.StatusOK)
 			views, err = executionViewsForTest(ctx, store)
-			if err != nil || len(views) != 1 || views[0].State != "succeeded" {
+			if err != nil || len(views) != 1 || views[0].State != wantState {
 				t.Fatalf("helper result after Agent restart: %v %v", views, err)
 			}
 			post("/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", result, http.StatusConflict)

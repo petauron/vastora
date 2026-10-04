@@ -4,14 +4,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { AppWorkspaceProps } from "@/app-workspaces/types";
 import { ApplicationStatus } from "./apps/InstalledApplicationPrimitives";
-import { pulseDashboardURL } from "./appAccess";
+import { pulsePrivateAccess, secureDashboardURL } from "./appAccess";
 import { copy } from "./shared";
 
 // Pulse serves and owns its dashboard. Center only shows installation state,
 // access publication, and a link to the dashboard's authenticated origin.
 export function PulseWorkspace({ group, data, language, onManage, onUpgrade }: AppWorkspaceProps) {
   const instance = group.instances[0];
-  const accessURL = pulseDashboardURL(data);
+  const publication = pulsePrivateAccess(data);
+  const accessURL = publication && !publication.actionRequired && !publication.lastError ? secureDashboardURL(publication.accessUrl) : undefined;
 
   return <Card aria-label="Pulse" data-app-workspace="vastora-official/pulse">
     <CardHeader className="flex flex-row items-center justify-between gap-3">

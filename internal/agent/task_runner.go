@@ -288,6 +288,18 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			defer store.landingMutationMu.Unlock()
 		}
 		commands := 0
+		if task.MeridianAcceptance != nil {
+			commands++
+		}
+		if task.PulseReporting != nil {
+			commands++
+		}
+		if task.PulseRotation != nil {
+			commands++
+		}
+		if task.PulseInspection != nil {
+			commands++
+		}
 		if task.PulseEnrollment != nil {
 			commands++
 		}
@@ -320,6 +332,22 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		}
 		if !c.Capabilities.Docker || commands != 1 {
 			err = errors.New("agent: application command received without Docker capability")
+		} else if task.MeridianAcceptance != nil {
+			executor, ok := c.Executor.(interface {
+				VerifyMeridianAcceptance(context.Context, meridianruntime.AcceptanceTask) (meridianruntime.AcceptanceResult, error)
+			})
+			connection, connectionErr := store.Connection(ctx)
+			if connectionErr != nil || task.MeridianAcceptance.VerifierAgentID != connection.AgentID {
+				err = errors.New("agent: recovery verifier identity mismatch")
+			} else if !ok || !c.Capabilities.MeridianAcceptance {
+				err = errors.New("agent: recovery client capability is not configured")
+			} else {
+				var acceptance meridianruntime.AcceptanceResult
+				acceptance, err = executor.VerifyMeridianAcceptance(ctx, *task.MeridianAcceptance)
+				if err == nil {
+					result.MeridianAcceptance = &acceptance
+				}
+			}
 		} else if task.MeridianLegacyExport != nil {
 			var exportResult meridianruntime.LegacyExportResult
 			exportResult, err = exportLegacyMeridianState(ctx, store, *task.MeridianLegacyExport)
@@ -350,6 +378,45 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				retireResult, err = executor.RetireLegacyMeridianInstallation(ctx, *task.MeridianLegacyRetire)
 				if err == nil {
 					result.MeridianLegacyRetire = &retireResult
+				}
+			}
+		} else if task.PulseReporting != nil {
+			executor, ok := c.Executor.(interface {
+				InspectPulseReporting(context.Context, pulse.ReportingTask) (pulse.ReportingResult, error)
+			})
+			if !ok {
+				err = errors.New("agent: Pulse reporting capability is not configured")
+			} else {
+				var reporting pulse.ReportingResult
+				reporting, err = executor.InspectPulseReporting(ctx, *task.PulseReporting)
+				if err == nil {
+					result.PulseReporting = &reporting
+				}
+			}
+		} else if task.PulseRotation != nil {
+			executor, ok := c.Executor.(interface {
+				RotatePulse(context.Context, pulse.RotationTask) (pulse.RotationResult, error)
+			})
+			if !ok {
+				err = errors.New("agent: Pulse rotation capability is not configured")
+			} else {
+				var rotation pulse.RotationResult
+				rotation, err = executor.RotatePulse(ctx, *task.PulseRotation)
+				if err == nil {
+					result.PulseRotation = &rotation
+				}
+			}
+		} else if task.PulseInspection != nil {
+			executor, ok := c.Executor.(interface {
+				InspectPulse(context.Context, pulse.InspectionTask) (pulse.InspectionResult, error)
+			})
+			if !ok {
+				err = errors.New("agent: Pulse inspection capability is not configured")
+			} else {
+				var inspection pulse.InspectionResult
+				inspection, err = executor.InspectPulse(ctx, *task.PulseInspection)
+				if err == nil {
+					result.PulseInspection = &inspection
 				}
 			}
 		} else if task.PulseEnrollment != nil {
@@ -512,7 +579,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		return nil
 	}
 	if updateHandedOff {
-		// The persistent updater owns binary replacement, rollback, restart, and
+		// The persistent updater owns binary replacement, protected recovery, restart, and
 		// terminal reporting. A successful schedule is not an update result.
 		return nil
 	}

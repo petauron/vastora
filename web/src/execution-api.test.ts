@@ -40,3 +40,10 @@ it("routes retained completion and archive disposition without enabling legacy r
   ]);
   expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ ...input, action: "abandon" });
 });
+
+it("keeps the selected task filter while paging", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ executions: [], nextCursor: 0 })));
+  vi.stubGlobal("fetch", fetchMock);
+  await api.executions(25, undefined, "attention");
+  expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/executions?filter=attention&before=25");
+});

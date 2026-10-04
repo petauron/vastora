@@ -32,10 +32,11 @@ const (
 )
 
 type SystemdHostApplicationManager struct {
-	RootDir    string
-	HTTPClient *http.Client
-	RunCommand func(context.Context, string, ...string) error
-	HostTarget platform.Target
+	RootDir         string
+	HTTPClient      *http.Client
+	RunCommand      func(context.Context, string, ...string) error
+	RunInputCommand func(context.Context, io.Reader, string, ...string) error
+	HostTarget      platform.Target
 }
 
 type komariConfig struct {

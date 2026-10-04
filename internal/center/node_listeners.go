@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/meridian"
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/networking"
 )
 
 const nodeListenerMigrationSetting = "migration_56_node_local_listener"
@@ -33,9 +35,9 @@ func validateCenterNodeListenerState(state gateway.NodeListenerState) error {
 			}
 			continue
 		}
-		upstreamOK := len(route.Upstreams) == 1 && route.Upstreams[0].Port == centerThreeXUIRealityPort && (route.Upstreams[0].Address == dockerruntime.MeridianAlias || route.Upstreams[0].Address == dockerruntime.LegacyXrayAlias || route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias)
+		upstreamOK := (len(route.Upstreams) == 1 && route.Upstreams[0].Port == centerThreeXUIRealityPort && (route.Upstreams[0].Address == dockerruntime.MeridianAlias || route.Upstreams[0].Address == dockerruntime.LegacyXrayAlias || route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias)) || len(route.Upstreams) == 1 && route.Upstreams[0].Port == meridian.RealityBackendPort && networking.IsPrivateServiceAddress(route.Upstreams[0].Address)
 		if route.ProxyProtocol != gateway.ProxyProtocolV2 || !upstreamOK {
-			return errors.New("center: managed REALITY listener must target the local managed proxy port 443 with Proxy Protocol v2")
+			return errors.New("center: managed REALITY listener must target the approved managed backend with Proxy Protocol v2")
 		}
 	}
 	return nil
@@ -102,8 +104,18 @@ func (s *Store) claimNodeListenerTask(ctx context.Context, tx *sql.Tx, nodeID st
 }
 
 func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID string, revision int64) (gateway.NodeListenerState, error) {
+	return s.buildNodeListenerState(ctx, tx, nodeID, revision, nil)
+}
+
+// A recovering host has no active profile or published service binding yet.
+// Only the reviewed, restored Meridian backend may enter its fresh listener.
+type nodeListenerRestoreTarget struct {
+	ApplicationID, BackendAddress, BindAddress string
+}
+
+func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID string, revision int64, restore *nodeListenerRestoreTarget) (gateway.NodeListenerState, error) {
 	routes := []gateway.Layer4Route{}
-	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, a.node_id, a.runtime, a.role, a.app_key, a.runtime_generation, s.container_port,
+	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, a.id, a.node_id, a.runtime, a.role, a.app_key, a.runtime_generation, s.container_port,p.action_required OR p.cleanup_pending,
 		CASE WHEN (a.app_key = 'vastora-official/3x-ui' AND s.app_protocol = 'vless/tcp/reality') OR (a.app_key = 'vastora-official/meridian' AND s.app_protocol = 'meridian/entry') THEN 1 ELSE 0 END,
 		CASE WHEN a.app_key = 'vastora-official/meridian' AND s.app_protocol = 'meridian/entry' THEN 'v2'
 		     WHEN a.app_key = 'vastora-official/3x-ui' AND s.app_protocol = 'vless/tcp/reality' AND g.status = 'ready' THEN 'v2' ELSE '' END,
@@ -117,16 +129,17 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 		LEFT JOIN meridian_endpoints meridian ON meridian.service_id = s.id
 		LEFT JOIN meridian_cutover cutover ON cutover.id = 1
 		WHERE p.ingress_owner = 'application_node' AND p.entry_node_id = ? AND p.kind = 'public_shared_443' AND a.node_id = ?
-		AND p.status <> 'stopped' AND s.status <> 'stopped' ORDER BY p.id`, nodeID, nodeID)
+		AND p.status <> 'stopped' AND s.status <> 'stopped'
+		AND (meridian.id IS NULL OR meridian.vless_enabled=1) ORDER BY p.id`, nodeID, nodeID)
 	if err != nil {
 		return gateway.NodeListenerState{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var route gateway.Layer4Route
-		var endpoint, applicationNodeID, runtime, role, appKey, cutoverLegacyRuntime string
-		var containerPort, managedReality, runtimeGeneration int
-		if err := rows.Scan(&route.ID, &route.Hostname, &endpoint, &applicationNodeID, &runtime, &role, &appKey, &runtimeGeneration, &containerPort, &managedReality, &route.ProxyProtocol, &cutoverLegacyRuntime); err != nil {
+		var endpoint, applicationID, applicationNodeID, runtime, role, appKey, cutoverLegacyRuntime string
+		var containerPort, managedReality, runtimeGeneration, actionRequired int
+		if err := rows.Scan(&route.ID, &route.Hostname, &endpoint, &applicationID, &applicationNodeID, &runtime, &role, &appKey, &runtimeGeneration, &containerPort, &actionRequired, &managedReality, &route.ProxyProtocol, &cutoverLegacyRuntime); err != nil {
 			return gateway.NodeListenerState{}, err
 		}
 		route.ManagedReality = managedReality != 0
@@ -134,7 +147,17 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 			return gateway.NodeListenerState{}, errors.New("center: node-direct listener upstream belongs to another Agent")
 		}
 		route.ApplicationNodeID = applicationNodeID
-		if route.ManagedReality {
+		if restore != nil {
+			if actionRequired != 0 {
+				return gateway.NodeListenerState{}, errors.New("center: resolve pending entry changes before restoring its listener")
+			}
+			if applicationID != restore.ApplicationID || appKey != meridianAppKey || !route.ManagedReality {
+				return gateway.NodeListenerState{}, errors.New("center: restore other shared-listener applications before restoring this entry")
+			}
+			cutoverLegacyRuntime = ""
+			endpoint = net.JoinHostPort(restore.BackendAddress, strconv.Itoa(meridian.RealityBackendPort))
+		}
+		if route.ManagedReality && (appKey != meridianAppKey || cutoverLegacyRuntime != "") {
 			alias := dockerruntime.ThreeXUIAlias
 			if appKey == meridianAppKey {
 				alias = dockerruntime.MeridianAlias
@@ -147,7 +170,7 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 				alias = dockerruntime.LegacyXrayAlias
 			}
 			endpoint = net.JoinHostPort(alias, strconv.Itoa(centerThreeXUIRealityPort))
-		} else {
+		} else if !route.ManagedReality {
 			endpoint = canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, nodeID, "", containerPort, endpoint)
 		}
 		host, portValue, err := net.SplitHostPort(endpoint)
@@ -166,8 +189,9 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 		} else if role == threeXUIRoleWorker && runtimeGeneration >= 2 {
 			expectedAlias = dockerruntime.LegacyXrayAlias
 		}
-		if route.ManagedReality && (runtime != "docker" || host != expectedAlias || port != centerThreeXUIRealityPort || route.ProxyProtocol != gateway.ProxyProtocolV2) {
-			return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("managed REALITY listener requires its local managed Xray port 443 with Proxy Protocol v2")}
+		hostBackend := appKey == meridianAppKey && cutoverLegacyRuntime == "" && networking.IsPrivateServiceAddress(host) && port == meridian.RealityBackendPort
+		if route.ManagedReality && (runtime != "docker" || (!hostBackend && (host != expectedAlias || port != centerThreeXUIRealityPort)) || route.ProxyProtocol != gateway.ProxyProtocolV2) {
+			return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("managed REALITY listener requires its approved local Xray backend with Proxy Protocol v2")}
 		}
 		route.Upstreams = []gateway.Upstream{{Address: host, Port: port}}
 		routes = append(routes, route)
@@ -176,6 +200,9 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 		return gateway.NodeListenerState{}, err
 	}
 	if len(routes) == 0 {
+		if restore != nil {
+			return gateway.NodeListenerState{}, errors.New("center: no saved Meridian shared entry to restore")
+		}
 		return gateway.NodeListenerState{
 			Revision: revision,
 			NodeID:   nodeID,
@@ -189,20 +216,28 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 	if activeDocker != 1 {
 		return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("node-direct listener requires an active Docker Agent")}
 	}
-	_, bindAddress, err := validateNodeDirectPublicIngress(ctx, tx, nodeID)
-	if err != nil {
-		return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: err}
+	bindAddress := ""
+	if restore != nil {
+		bindAddress = restore.BindAddress
+	} else {
+		_, bindAddress, err = validateNodeDirectPublicIngress(ctx, tx, nodeID)
+		if err != nil {
+			return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: err}
+		}
 	}
 	var siteGateway int
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM site_gateways membership
 		JOIN gateway_components component ON component.gateway_node_id = membership.agent_id
-		WHERE membership.agent_id = ? AND component.desired_status = 'running' AND component.status = 'ready'
-	)`, nodeID).Scan(&siteGateway); err != nil {
+		WHERE membership.agent_id = ? AND component.desired_status = 'running' AND (component.status = 'ready' OR ?)
+	)`, nodeID, restore != nil).Scan(&siteGateway); err != nil {
 		return gateway.NodeListenerState{}, err
 	}
 	listener := gateway.SharedHTTPS{Address: bindAddress, Port: 443, RejectUnmatched: siteGateway == 0, Routes: routes}
 	if siteGateway != 0 {
+		if restore != nil {
+			return gateway.NodeListenerState{}, errors.New("center: restore the shared gateway before restoring this entry")
+		}
 		listener.CaddyAddress, listener.CaddyPort = dockerruntime.CaddyAlias, 443
 	}
 	state := gateway.NodeListenerState{Revision: revision, NodeID: nodeID, Listener: listener}
@@ -420,6 +455,15 @@ func (s *Store) projectNodeListenerState(ctx context.Context, tx *sql.Tx, commit
 	taskError = strings.TrimSpace(taskError)
 	if len(taskError) > 1024 {
 		taskError = taskError[:1024]
+	}
+	var recoveryTask bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agent_reinstall_app_preparations WHERE listener_task_id=?)`, nodeListenerTaskID(agentID, revision)).Scan(&recoveryTask); err != nil {
+		return err
+	}
+	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
+		return err
+	} else if blocked || recoveryTask {
+		return s.completeReinstallListener(ctx, tx, commit, agentID, revision, expectedAttempt, succeeded, taskError)
 	}
 	var err error
 	var desired, applied, attempt int64

@@ -1,5 +1,171 @@
 # Changelog
 
+## [0.1.0-alpha.284](https://github.com/petauron/vastora/compare/v0.1.0-alpha.283...v0.1.0-alpha.284) (2026-10-04)
+
+
+### Features
+
+* **meridian:** track directional traffic per route ([#810](https://github.com/petauron/vastora/issues/810)) ([cacfbe9](https://github.com/petauron/vastora/commit/cacfbe913f3ea307b6c2959fb4c3aae97524a73c)), closes [#505](https://github.com/petauron/vastora/issues/505)
+
+## [0.1.0-alpha.283](https://github.com/petauron/vastora/compare/v0.1.0-alpha.282...v0.1.0-alpha.283) (2026-10-03)
+
+
+### Bug Fixes
+
+* **center:** scope recovery evidence and settled work ([#808](https://github.com/petauron/vastora/issues/808)) ([f1ed675](https://github.com/petauron/vastora/commit/f1ed67551cfe8ea068b94c5255b73917e4b8e6ed))
+
+## [0.1.0-alpha.282](https://github.com/petauron/vastora/compare/v0.1.0-alpha.281...v0.1.0-alpha.282) (2026-10-03)
+
+
+### Bug Fixes
+
+* **center:** sequence recovery client verification tasks ([#806](https://github.com/petauron/vastora/issues/806)) ([e7b13f3](https://github.com/petauron/vastora/commit/e7b13f3f17ff208453df993e6123854518f52e0a))
+
+## [0.1.0-alpha.281](https://github.com/petauron/vastora/compare/v0.1.0-alpha.280...v0.1.0-alpha.281) (2026-10-03)
+
+
+### Bug Fixes
+
+* **center:** preserve recovery grants and review runtime successors ([#804](https://github.com/petauron/vastora/issues/804)) ([70d7e44](https://github.com/petauron/vastora/commit/70d7e44c904572bb8a6d553a38de2ffc4bcb8256))
+
+## [0.1.0-alpha.280](https://github.com/petauron/vastora/compare/v0.1.0-alpha.279...v0.1.0-alpha.280) (2026-10-03)
+
+
+### Bug Fixes
+
+* **center:** accept recovery startup before network refresh ([#802](https://github.com/petauron/vastora/issues/802)) ([c0933c1](https://github.com/petauron/vastora/commit/c0933c14640ca6ec9cb6562c65ab1d7df8175b22))
+
+## [0.1.0-alpha.279](https://github.com/petauron/vastora/compare/v0.1.0-alpha.278...v0.1.0-alpha.279) (2026-10-03)
+
+
+### Bug Fixes
+
+* **center:** refresh recovery transport readiness from observations ([#800](https://github.com/petauron/vastora/issues/800)) ([dffcf6f](https://github.com/petauron/vastora/commit/dffcf6f1a552e3323c11a87eae7d17ba5ef9acb0)), closes [#759](https://github.com/petauron/vastora/issues/759)
+
+## [0.1.0-alpha.278](https://github.com/petauron/vastora/compare/v0.1.0-alpha.277...v0.1.0-alpha.278) (2026-10-03)
+
+
+### Bug Fixes
+
+* accept fresh-machine runtime restoration receipts ([#798](https://github.com/petauron/vastora/issues/798)) ([7b21838](https://github.com/petauron/vastora/commit/7b218383d0b6dbdd1d7cae80ed57533af9c5efeb))
+
+## [0.1.0-alpha.277](https://github.com/petauron/vastora/compare/v0.1.0-alpha.276...v0.1.0-alpha.277) (2026-10-03)
+
+
+### Bug Fixes
+
+* retain authenticated recovery egress observations ([#796](https://github.com/petauron/vastora/issues/796)) ([86febd6](https://github.com/petauron/vastora/commit/86febd654e60688433b485514afe84dd9a9b886a))
+
+## [0.1.0-alpha.276](https://github.com/petauron/vastora/compare/v0.1.0-alpha.275...v0.1.0-alpha.276) (2026-10-03)
+
+
+### Bug Fixes
+
+* retire consumed enrollment secret references safely ([#794](https://github.com/petauron/vastora/issues/794)) ([10f1952](https://github.com/petauron/vastora/commit/10f195200b714c6609895a19799f1bb317f5e9a4))
+
+## [0.1.0-alpha.275](https://github.com/petauron/vastora/compare/v0.1.0-alpha.274...v0.1.0-alpha.275) (2026-10-03)
+
+
+### Bug Fixes
+
+* observe replacement network identity before restoring apps ([#792](https://github.com/petauron/vastora/issues/792)) ([db878ca](https://github.com/petauron/vastora/commit/db878cacffced474f4a88ab83bfa3a78f1d0a325))
+
+## [0.1.0-alpha.274](https://github.com/petauron/vastora/compare/v0.1.0-alpha.273...v0.1.0-alpha.274) (2026-10-03)
+
+
+### Bug Fixes
+
+* allow bounded time for Pulse upgrade backups ([#790](https://github.com/petauron/vastora/issues/790)) ([7a32c1c](https://github.com/petauron/vastora/commit/7a32c1cea1a4b439278da1ff4f621dbbc7939bd5))
+
+## [0.1.0-alpha.273](https://github.com/petauron/vastora/compare/v0.1.0-alpha.272...v0.1.0-alpha.273) (2026-10-03)
+
+
+### Bug Fixes
+
+* wait for SOCKS readiness before egress verification ([299853e](https://github.com/petauron/vastora/commit/299853ec4966482fce0b6d08b8c7960b78440e6e))
+
+## [0.1.0-alpha.272](https://github.com/petauron/vastora/compare/v0.1.0-alpha.271...v0.1.0-alpha.272) (2026-10-03)
+
+
+### Bug Fixes
+
+* verify native egress through the managed entry ([3222be4](https://github.com/petauron/vastora/commit/3222be4fbe87d20383623e9ae165d0c6e71b6f95))
+
+## [0.1.0-alpha.271](https://github.com/petauron/vastora/compare/v0.1.0-alpha.270...v0.1.0-alpha.271) (2026-10-03)
+
+
+### Features
+
+* configure verified native node egress policies ([#783](https://github.com/petauron/vastora/issues/783)) ([ce187a7](https://github.com/petauron/vastora/commit/ce187a71640581855c98ea1ee48ac35348bcbda6))
+
+
+### Bug Fixes
+
+* validate complete Meridian UDP evidence in CI ([#785](https://github.com/petauron/vastora/issues/785)) ([a64c8fd](https://github.com/petauron/vastora/commit/a64c8fd896a56653e37c0569a5f40ecc7c9a3018))
+
+## [0.1.0-alpha.270](https://github.com/petauron/vastora/compare/v0.1.0-alpha.269...v0.1.0-alpha.270) (2026-10-03)
+
+
+### Features
+
+* **recovery:** review, verify and finalize node reinstalls ([#781](https://github.com/petauron/vastora/issues/781)) ([111e98d](https://github.com/petauron/vastora/commit/111e98d586b977bb2a0a5f58193f493e774846b6))
+
+## [0.1.0-alpha.269](https://github.com/petauron/vastora/compare/v0.1.0-alpha.268...v0.1.0-alpha.269) (2026-10-01)
+
+
+### Bug Fixes
+
+* **recovery:** fence execution evidence across Agent replacement ([#779](https://github.com/petauron/vastora/issues/779)) ([f9a8fb1](https://github.com/petauron/vastora/commit/f9a8fb159bb427252816e25c5ab5bc2921a11d3b))
+
+## [0.1.0-alpha.268](https://github.com/petauron/vastora/compare/v0.1.0-alpha.267...v0.1.0-alpha.268) (2026-10-01)
+
+
+### Bug Fixes
+
+* **meridian:** retain link failure evidence and bound probe lifetime ([#777](https://github.com/petauron/vastora/issues/777)) ([d37e3c3](https://github.com/petauron/vastora/commit/d37e3c346db895577315648ba7031c3b43ca0de6))
+
+## [0.1.0-alpha.267](https://github.com/petauron/vastora/compare/v0.1.0-alpha.266...v0.1.0-alpha.267) (2026-10-01)
+
+
+### Bug Fixes
+
+* **meridian:** authenticate and verify link bandwidth probes ([#775](https://github.com/petauron/vastora/issues/775)) ([2ab1042](https://github.com/petauron/vastora/commit/2ab10420b552f40e5a67f405db6e57b627428145))
+
+## [0.1.0-alpha.266](https://github.com/petauron/vastora/compare/v0.1.0-alpha.265...v0.1.0-alpha.266) (2026-10-01)
+
+
+### Bug Fixes
+
+* stop proxy replacement after execution failure ([#773](https://github.com/petauron/vastora/issues/773)) ([e6b55a3](https://github.com/petauron/vastora/commit/e6b55a353ea404619e43ac12f3aa4dc063b2b3b1))
+
+## [0.1.0-alpha.265](https://github.com/petauron/vastora/compare/v0.1.0-alpha.264...v0.1.0-alpha.265) (2026-10-01)
+
+
+### Bug Fixes
+
+* fence update helper results from late scheduler failures ([#770](https://github.com/petauron/vastora/issues/770)) ([1e12f8d](https://github.com/petauron/vastora/commit/1e12f8d9101f6f5057d2cde280fc87da3046a6f6))
+
+## [0.1.0-alpha.264](https://github.com/petauron/vastora/compare/v0.1.0-alpha.263...v0.1.0-alpha.264) (2026-10-01)
+
+
+### Bug Fixes
+
+* explicitly recover reinstalled Meridian entry identities ([#768](https://github.com/petauron/vastora/issues/768)) ([583e2f2](https://github.com/petauron/vastora/commit/583e2f23ae3fbc91671ed6633b8776dbce4f9b95))
+
+## [0.1.0-alpha.263](https://github.com/petauron/vastora/compare/v0.1.0-alpha.262...v0.1.0-alpha.263) (2026-10-01)
+
+
+### Bug Fixes
+
+* **agent:** use canonical Docker capability for Meridian HY2 ([#765](https://github.com/petauron/vastora/issues/765)) ([6e8ca58](https://github.com/petauron/vastora/commit/6e8ca58a2d4d186c082f516129966e90bc651b32))
+
+## [0.1.0-alpha.262](https://github.com/petauron/vastora/compare/v0.1.0-alpha.261...v0.1.0-alpha.262) (2026-10-01)
+
+
+### Features
+
+* **meridian:** move managed Xray runtime to host networking ([#761](https://github.com/petauron/vastora/issues/761)) ([671579e](https://github.com/petauron/vastora/commit/671579ebb38884af739036532d55d476741f17f5))
+
 ## [0.1.0-alpha.261](https://github.com/petauron/vastora/compare/v0.1.0-alpha.260...v0.1.0-alpha.261) (2026-09-30)
 
 

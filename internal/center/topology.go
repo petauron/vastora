@@ -28,12 +28,19 @@ var (
 )
 
 type NodeCapabilities struct {
+	NativeEgress          bool `json:"nativeEgress"`
+	PulseRestore          bool `json:"pulseRestore"`
+	MeridianAcceptance    bool `json:"meridianAcceptance"`
+	PulseReporting        bool `json:"pulseReporting"`
+	PulseRotation         bool `json:"pulseRotation"`
+	PulseInspection       bool `json:"pulseInspection"`
 	IPQuality             bool `json:"ipQuality"`
 	NetworkDiagnostics    bool `json:"networkDiagnostics"`
 	ReturnRoute           bool `json:"returnRoute"`
 	BandwidthDiagnostics  bool `json:"bandwidthDiagnostics"`
 	LandingEgressIP       bool `json:"landingEgressIP"`
 	MeridianLinkBandwidth bool `json:"meridianLinkBandwidth"`
+	MeridianLinkRevision  int  `json:"meridianLinkRevision"`
 	HostProfile           bool `json:"hostProfile"`
 	Docker                bool `json:"docker"`
 	Gateway               bool `json:"gateway"`
@@ -44,6 +51,7 @@ type NodeCapabilities struct {
 
 type NodeHeartbeat struct {
 	LandingEgressAddresses       []landing.EgressAddress
+	PrivateNetworkPeer           *landing.PeerIdentity
 	LandingClientRuntime         *landing.ClientRuntime
 	LandingHealth                *landing.Health
 	PublicKey                    []byte

@@ -173,7 +173,7 @@ export function publicationKindLabel(language: Language, kind: PublicationKind) 
   return copy(language, ...labels[kind]);
 }
 
-function secureDashboardURL(value?: string) {
+export function secureDashboardURL(value?: string) {
   if (!value) return undefined;
   try {
     const url = new URL(value);
@@ -182,7 +182,3 @@ function secureDashboardURL(value?: string) {
   return undefined;
 }
 
-export function pulseDashboardURL(data: AppData) {
-  const publication = pulsePrivateAccess(data);
-  return publication && !publication.actionRequired && !publication.lastError ? secureDashboardURL(publication.accessUrl) : undefined;
-}

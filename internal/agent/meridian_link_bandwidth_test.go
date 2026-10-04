@@ -17,6 +17,9 @@ func TestMeridianLinkContainerIsPrivateAndBounded(t *testing.T) {
 		if strings.Contains(strings.Join(options.Config.Cmd, " "), "203.0.113") || options.Config.Labels["io.vastora.application"] != "meridian" {
 			t.Fatal("unexpected diagnostic target")
 		}
+		if len(options.Config.Entrypoint) != 5 || options.Config.Entrypoint[0] != "/bin/sh" || options.Config.Entrypoint[2] != meridianIperfDeadlineScript || !strings.Contains(meridianIperfDeadlineScript, "; result=$?; exit") {
+			t.Fatal("probe can outlive the Agent process without an independent deadline")
+		}
 		if server && strings.Join(options.Config.Cmd, " ") != "100.64.0.9 34567" {
 			t.Fatalf("server did not bind to landing private address: %v", options.Config.Cmd)
 		}

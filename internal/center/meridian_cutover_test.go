@@ -303,8 +303,8 @@ func TestMeridianCutoverKeepsLegacyListenerAliasesUntilRuntimeReceipt(t *testing
 			_ = tx.Rollback()
 			t.Fatal(err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
-			VALUES(?,?,?,?,443,?,443,'www.example.com:443','203.0.113.80','["www.example.com"]',?,'test-public-key','["abcd"]','chrome',1,0,0,'pending',?,?)`, value.endpointID, value.applicationID, value.serviceID, "meridian-"+value.name, value.name+".example.test", secretID, stamp, stamp); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
+			VALUES(?,?,?,?,'100.64.0.61',10443,?,443,'www.example.com:443','203.0.113.80','["www.example.com"]',?,'test-public-key','["abcd"]','chrome',1,0,0,'pending',?,?)`, value.endpointID, value.applicationID, value.serviceID, "meridian-"+value.name, value.name+".example.test", secretID, stamp, stamp); err != nil {
 			_ = tx.Rollback()
 			t.Fatal(err)
 		}
@@ -338,11 +338,14 @@ func TestMeridianCutoverKeepsLegacyListenerAliasesUntilRuntimeReceipt(t *testing
 		if len(state.Listener.Routes) != 1 || len(state.Listener.Routes[0].Upstreams) != 1 || state.Listener.Routes[0].Upstreams[0].Address != value.expectedAlias {
 			t.Fatalf("%s pre-receipt listener=%#v", value.name, state.Listener)
 		}
-		if !projection.task.PreserveLegacyAliases {
-			t.Fatalf("%s project-state runtime did not preserve the live legacy aliases", value.name)
+		if projection.task.RetireLegacy {
+			t.Fatalf("%s project-state runtime prematurely retired migration evidence", value.name)
 		}
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET applied_revision=desired_revision,runtime_healthy=1,status='ready',updated_at=?`, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE services SET endpoint=(SELECT listen_address || ':10443' FROM meridian_endpoints WHERE service_id=services.id),container_port=10443,host_port=10443 WHERE id IN (SELECT service_id FROM meridian_endpoints)`); err != nil {
 		t.Fatal(err)
 	}
 	for _, value := range targets {
@@ -355,7 +358,7 @@ func TestMeridianCutoverKeepsLegacyListenerAliasesUntilRuntimeReceipt(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(state.Listener.Routes) != 1 || len(state.Listener.Routes[0].Upstreams) != 1 || state.Listener.Routes[0].Upstreams[0].Address != dockerruntime.MeridianAlias {
+		if len(state.Listener.Routes) != 1 || len(state.Listener.Routes[0].Upstreams) != 1 || state.Listener.Routes[0].Upstreams[0].Port != 10443 || !networking.IsPrivateServiceAddress(state.Listener.Routes[0].Upstreams[0].Address) {
 			t.Fatalf("%s post-receipt listener=%#v", value.name, state.Listener)
 		}
 	}
@@ -393,8 +396,8 @@ func TestMeridianRuntimeProjectionAllowsEndpointWithoutAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,status,created_at,updated_at)
-		VALUES(?,?,?,?,443,'entry.example.test',443,'www.example.com:443','203.0.113.41','["www.example.com"]',?,'test-public-key','["abcd"]','chrome','pending',?,?)`, endpointID, applicationID, serviceID, "meridian-empty", privateKeySecretID, stamp, stamp); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,status,created_at,updated_at)
+		VALUES(?,?,?,?,'100.64.0.61',10443,'entry.example.test',443,'www.example.com:443','203.0.113.41','["www.example.com"]',?,'test-public-key','["abcd"]','chrome','pending',?,?)`, endpointID, applicationID, serviceID, "meridian-empty", privateKeySecretID, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	projection, err := store.buildMeridianRuntimeTask(ctx, tx, endpointID, "")
@@ -690,7 +693,7 @@ func TestLegacyRetirementTaskNeverRemovesVerifiedEndpointFromSubscriptions(t *te
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
-	if recovery.task.RetireLegacy || !recovery.task.PreserveLegacyAliases {
+	if recovery.task.RetireLegacy {
 		_ = tx.Rollback()
 		t.Fatalf("retirement-phase recovery task=%#v", recovery.task)
 	}

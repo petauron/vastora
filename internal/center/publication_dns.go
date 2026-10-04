@@ -18,6 +18,13 @@ func (s *Store) reconcilePublicationDNS(ctx context.Context, id, gatewayID, prov
 	// until this operation either records or compensates every remote resource.
 	s.publicationCleanupMu.Lock()
 	defer s.publicationCleanupMu.Unlock()
+	var allowed bool
+	if err := s.db.QueryRowContext(ctx, `SELECT `+publicationReinstallAllowedSQL+` FROM publications WHERE id=?`, id).Scan(&allowed); err != nil {
+		return false, err
+	}
+	if !allowed {
+		return false, errors.New("center: review DNS migration through the active reinstall recovery")
+	}
 	var operationErr error
 	successMessage := ""
 	switch provider {

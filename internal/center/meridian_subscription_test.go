@@ -60,7 +60,7 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at) VALUES(?,?,?,?,443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'test-public-key','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "meridian-entry-alpha", endpointSecretID, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at) VALUES(?,?,?,?,'100.64.0.61',10443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'test-public-key','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "meridian-entry-alpha", endpointSecretID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,desired_revision,applied_revision,status,created_at,updated_at)
@@ -290,8 +290,8 @@ func TestUnavailableMeridianLandingBlocksOnlyItsFixedRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
-		VALUES(?,?,?,?,443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'route-filter-public-key','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "route-filter-inbound", endpointSecretID, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
+		VALUES(?,?,?,?,'100.64.0.61',10443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'route-filter-public-key','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "route-filter-inbound", endpointSecretID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	tokenSecretID, err := store.putSecret(ctx, tx, []byte("route-filter-token"), meridianAccountSecretContext(accountID))
@@ -410,8 +410,8 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
-			VALUES(?,?,?,?,443,?,443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'public','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "inbound-"+endpointID, endpointID+".example.test", endpointSecretID, now, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
+			VALUES(?,?,?,?,'100.64.0.61',10443,?,443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'public','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "inbound-"+endpointID, endpointID+".example.test", endpointSecretID, now, now); err != nil {
 			t.Fatal(err)
 		}
 		baseID, routeID := "base-"+endpointID, "route-"+endpointID
@@ -625,8 +625,8 @@ func TestInvalidMeridianRuntimeDoesNotBlockAgentClaims(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
-		VALUES('blocked-endpoint','blocked-application','blocked-service','blocked-tag',443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'blocked-public-key','["abcd"]','chrome',1,0,0,'pending',?,?)`, secretID, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
+		VALUES('blocked-endpoint','blocked-application','blocked-service','blocked-tag','100.64.0.61',10443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'blocked-public-key','["abcd"]','chrome',1,0,0,'pending',?,?)`, secretID, now, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -673,8 +673,8 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
-		VALUES('superseded-endpoint','superseded-application','superseded-service','superseded-tag',443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'superseded-public-key','["abcd"]','chrome',2,0,0,'pending',?,?)`, secretID, now, now); err != nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
+		VALUES('superseded-endpoint','superseded-application','superseded-service','superseded-tag','100.64.0.61',10443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'superseded-public-key','["abcd"]','chrome',2,0,0,'pending',?,?)`, secretID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,site_id,display_name,agent_id,gateway_node_id,kind,input_json,state,attempt,created_at,updated_at)

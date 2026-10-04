@@ -41,7 +41,7 @@ type MonitorStatus struct {
 // Runtime health failure is peer-scoped: closing that peer's gate blocks both
 // existing and new traffic without restarting the shared proxy process.
 type Monitor struct {
-	Gate          *BridgeGate
+	Gate          *TrafficGate
 	Links         *LinkChecker
 	CheckBusiness func(context.Context, PeerIdentity, uint64) (BusinessResult, error)
 	Report        func(MonitorStatus)
@@ -132,7 +132,7 @@ func (m *Monitor) close() error {
 	return m.Gate.Block(ctx)
 }
 
-func leaseDeadline(gate *BridgeGate, before LinkResult, business BusinessResult, after LinkResult, now time.Time) (time.Time, bool) {
+func leaseDeadline(gate *TrafficGate, before LinkResult, business BusinessResult, after LinkResult, now time.Time) (time.Time, bool) {
 	return leaseDeadlineForTransport(gate, before, business, after, now, false)
 }
 
@@ -143,7 +143,7 @@ func businessCheckTimeout(tcpOnly bool) time.Duration {
 	return CheckTimeout
 }
 
-func leaseDeadlineForTransport(gate *BridgeGate, before LinkResult, business BusinessResult, after LinkResult, now time.Time, tcpOnly bool) (time.Time, bool) {
+func leaseDeadlineForTransport(gate *TrafficGate, before LinkResult, business BusinessResult, after LinkResult, now time.Time, tcpOnly bool) (time.Time, bool) {
 	validLink := func(result LinkResult) bool {
 		return result.State == "direct" && result.Reason == "fresh_disco_direct_response" && !result.StartedAt.IsZero() &&
 			!result.CheckedAt.Before(result.StartedAt) && result.CheckedAt.Sub(result.StartedAt) <= CheckTimeout && !result.CheckedAt.After(now)

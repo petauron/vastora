@@ -189,11 +189,15 @@ func (s *Store) reconcileObservedMeridianApplication(ctx context.Context, tx *sq
 	stamp := now.Format(time.RFC3339Nano)
 	reconcilePublications := false
 	for _, value := range observations {
-		var serviceID, previousProtocol, previousEndpoint, previousStatus string
-		err := tx.QueryRowContext(ctx, `SELECT service.id,service.app_protocol,service.endpoint,service.status
+		var serviceID, previousProtocol, previousEndpoint, previousStatus, listenAddress, inboundTag, hy2Tag string
+		var listenPort, vlessEnabled, hy2Enabled int
+		var desiredRevision, appliedRevision int64
+		err := tx.QueryRowContext(ctx, `SELECT service.id,service.app_protocol,service.endpoint,service.status,
+			endpoint.listen_address,endpoint.listen_port,endpoint.inbound_tag,endpoint.hy2_inbound_tag,
+			endpoint.vless_enabled,endpoint.hy2_enabled,endpoint.desired_revision,endpoint.applied_revision
 			FROM meridian_endpoints endpoint JOIN services service ON service.id=endpoint.service_id
 			WHERE endpoint.application_id=? AND service.application_id=? AND service.source='observed'
-			AND endpoint.status<>'retired' AND (endpoint.inbound_tag=? OR endpoint.hy2_inbound_tag=?)`, applicationID, applicationID, value.InboundTag, value.InboundTag).Scan(&serviceID, &previousProtocol, &previousEndpoint, &previousStatus)
+			AND endpoint.status<>'retired' AND (endpoint.inbound_tag=? OR endpoint.hy2_inbound_tag=?)`, applicationID, applicationID, value.InboundTag, value.InboundTag).Scan(&serviceID, &previousProtocol, &previousEndpoint, &previousStatus, &listenAddress, &listenPort, &inboundTag, &hy2Tag, &vlessEnabled, &hy2Enabled, &desiredRevision, &appliedRevision)
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("center: observed Meridian endpoint does not match desired state")
 		}
@@ -203,12 +207,28 @@ func (s *Store) reconcileObservedMeridianApplication(ctx context.Context, tx *sq
 		if !existing[serviceID] {
 			return errors.New("center: observed Meridian endpoint is duplicated")
 		}
+		delete(existing, serviceID)
+		// A queued artifact owns the next topology. Old heartbeats cannot
+		// publish it early or rewrite the currently applied backend.
+		if desiredRevision != appliedRevision {
+			continue
+		}
+		matches := vlessEnabled == 1 && value.InboundTag == inboundTag && value.Listen == listenAddress && value.Port == listenPort
+		if vlessEnabled == 0 && hy2Enabled == 1 {
+			matches = value.InboundTag == hy2Tag && value.Listen == "0.0.0.0" && value.Port == 443
+		}
+		if !matches || serviceAddress != listenAddress {
+			if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=0,status='failed',last_error='Runtime listener does not match its applied configuration',updated_at=? WHERE service_id=?`, stamp, serviceID); err != nil {
+				return err
+			}
+			continue
+		}
 		status := "stopped"
 		if value.Enabled {
 			status = "ready"
 		}
-		endpoint := net.JoinHostPort(serviceAddress, strconv.Itoa(value.Port))
-		if _, err := tx.ExecContext(ctx, `UPDATE services SET protocol=?,container_port=?,host_port=?,endpoint=?,app_protocol=?,observed_listen=?,status=?,last_error='',updated_at=? WHERE id=?`, value.Protocol, value.Port, value.Port, endpoint, value.AppProtocol, value.Listen, status, stamp, serviceID); err != nil {
+		endpoint := net.JoinHostPort(listenAddress, strconv.Itoa(listenPort))
+		if _, err := tx.ExecContext(ctx, `UPDATE services SET protocol=?,container_port=?,host_port=?,endpoint=?,app_protocol=?,observed_listen=?,status=?,last_error='',updated_at=? WHERE id=?`, value.Protocol, listenPort, listenPort, endpoint, value.AppProtocol, listenAddress, status, stamp, serviceID); err != nil {
 			return err
 		}
 		if value.Enabled && (previousProtocol != value.AppProtocol || previousEndpoint != endpoint || previousStatus != status) {

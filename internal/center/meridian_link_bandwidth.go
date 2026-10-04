@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"math/big"
@@ -16,6 +17,10 @@ import (
 func (s *Store) StartMeridianLinkBandwidth(ctx context.Context, sourceID, landingID string) error {
 	if sourceID == "" || landingID == "" || sourceID == landingID {
 		return errors.New("meridian_link_invalid_pair")
+	}
+	// Unclaimed listeners must not start after the paired client has expired.
+	if _, err := s.db.ExecContext(ctx, `UPDATE node_diagnostic_checks SET state='failed',error='expired' WHERE kind IN ('meridian.link-bandwidth','meridian.link-bandwidth-server') AND state='pending' AND attempt=0 AND created_at<?`, s.now().Add(-4*time.Minute).UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -51,7 +56,7 @@ func (s *Store) StartMeridianLinkBandwidth(ctx context.Context, sourceID, landin
 			return errors.New("meridian_link_node_offline")
 		}
 		var caps NodeCapabilities
-		if json.Unmarshal([]byte(capsJSON), &caps) != nil || !caps.Docker || !caps.MeridianLinkBandwidth {
+		if json.Unmarshal([]byte(capsJSON), &caps) != nil || !caps.Docker || !caps.MeridianLinkBandwidth || caps.MeridianLinkRevision != nodediagnostics.LinkBandwidthRevision {
 			return errors.New("meridian_link_docker_required")
 		}
 		var busy bool
@@ -77,11 +82,11 @@ func (s *Store) StartMeridianLinkBandwidth(ctx context.Context, sourceID, landin
 	if err != nil {
 		return err
 	}
-	link := nodediagnostics.LinkBandwidthTask{SourceNodeID: sourceID, LandingNodeID: landingID, SourceIP: source.Address, LandingIP: destination.Address, Port: 20000 + int(n.Int64())}
-	if (nodediagnostics.Task{Link: &link}).ValidateLinkBandwidth(nodediagnostics.LinkBandwidthKind) != nil {
+	link := nodediagnostics.LinkBandwidthTask{SourceNodeID: sourceID, LandingNodeID: landingID, SourceIP: source.Address, LandingIP: destination.Address, SourcePeer: source, LandingPeer: destination, Port: 20000 + int(n.Int64())}
+	if (nodediagnostics.Task{Link: &link}).ValidateLinkIdentity(nodediagnostics.LinkBandwidthKind) != nil {
 		return errors.New("meridian_link_private_peer_unavailable")
 	}
-	targetsJSON, err := json.Marshal(link)
+	clientAuth, serverAuth, err := newMeridianLinkAuth()
 	if err != nil {
 		return err
 	}
@@ -92,12 +97,20 @@ func (s *Store) StartMeridianLinkBandwidth(ctx context.Context, sourceID, landin
 			return err
 		}
 		id := "node-diagnostic-" + token
-		_, err = tx.ExecContext(ctx, `INSERT INTO node_diagnostic_checks(agent_id,kind,pair_key,id,bind_address,target_revision,targets_json,state,created_at,updated_at) VALUES(?,?,?,?,'',1,?,'pending',?,?)
- ON CONFLICT(agent_id,kind,pair_key) DO UPDATE SET id=excluded.id,bind_address='',target_revision=1,targets_json=excluded.targets_json,state='pending',attempt=0,lease_expires_at='',error='',result_json='null',checked_at='',created_at=excluded.created_at,updated_at=excluded.updated_at`, side.id, side.kind, side.peer, id, string(targetsJSON), now, now)
+		auth := clientAuth
+		if side.kind == nodediagnostics.LinkServerKind {
+			auth = serverAuth
+		}
+		targetsJSON, err := s.sealMeridianLink(id, link, auth)
 		if err != nil {
 			return err
 		}
-		if err := s.recordTaskEvent(ctx, tx, id, side.id, side.kind, 1, "queued", ""); err != nil {
+		_, err = tx.ExecContext(ctx, `INSERT INTO node_diagnostic_checks(agent_id,kind,pair_key,id,bind_address,target_revision,targets_json,state,created_at,updated_at) VALUES(?,?,?,?,'',?,?,'pending',?,?)
+ ON CONFLICT(agent_id,kind,pair_key) DO UPDATE SET id=excluded.id,bind_address='',target_revision=excluded.target_revision,targets_json=excluded.targets_json,state='pending',attempt=0,lease_expires_at='',error='',result_json='null',checked_at='',created_at=excluded.created_at,updated_at=excluded.updated_at`, side.id, side.kind, side.peer, id, nodediagnostics.LinkBandwidthRevision, string(targetsJSON), now, now)
+		if err != nil {
+			return err
+		}
+		if err := s.recordTaskEvent(ctx, tx, id, side.id, side.kind, nodediagnostics.LinkBandwidthRevision, "queued", ""); err != nil {
 			return err
 		}
 	}
@@ -118,4 +131,17 @@ func (s *Server) handleStartMeridianLinkBandwidth(w http.ResponseWriter, r *http
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
+}
+
+// A task receipt cannot validate measurements against a replaced private peer.
+func currentMeridianLinkPeers(ctx context.Context, tx *sql.Tx, link nodediagnostics.LinkBandwidthTask) bool {
+	if (nodediagnostics.Task{Link: &link}).ValidateLinkIdentity(nodediagnostics.LinkBandwidthKind) != nil {
+		return false
+	}
+	var sourceJSON, landingJSON []byte
+	if tx.QueryRowContext(ctx, `SELECT peer_json FROM agent_private_peer_capabilities WHERE node_id=?`, link.SourceNodeID).Scan(&sourceJSON) != nil || tx.QueryRowContext(ctx, `SELECT peer_json FROM landing_server_states WHERE node_id=? AND status='ready' AND desired_revision=applied_revision`, link.LandingNodeID).Scan(&landingJSON) != nil {
+		return false
+	}
+	var source, destination landing.PeerIdentity
+	return json.Unmarshal(sourceJSON, &source) == nil && json.Unmarshal(landingJSON, &destination) == nil && source == link.SourcePeer && destination == link.LandingPeer
 }

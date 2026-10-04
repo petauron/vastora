@@ -23,6 +23,15 @@ export type MeridianCutover = {
   complete: boolean;
 };
 
+export type MeridianSourceRecovery = {
+  previousFingerprint: string;
+  currentFingerprint: string;
+  previousAddress: string;
+  currentAddress: string;
+  endpointRevision: number;
+  observedAt: string;
+};
+
 export type MeridianEndpoint = {
   id: string;
   applicationId: string;
@@ -107,3 +116,10 @@ export type MeridianAccountCreated = {
   subscriptionToken: string;
   subscriptionPath: string;
 };
+
+export type MeridianLineUsage = {
+ entryNodeId: string; entryName: string; egressNodeId?: string; egressName?: string;
+ uploadBytes: number; downloadBytes: number; totalBytes: number; credentialCount: number; trackedCredentials: number;
+ startedAt?: string; observedAt?: string; state: "current" | "missing" | "partial" | "stale";
+};
+export type MeridianTraffic = { lines: MeridianLineUsage[]; period: "since_tracking_started"; checkedAt: string };
