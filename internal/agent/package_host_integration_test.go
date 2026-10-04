@@ -127,8 +127,8 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(installed.Resources.Backups) == 0 {
-				t.Fatal("upgrade did not preserve a backup")
+			if len(installed.Resources.Backups) != 0 {
+				t.Fatal("upgrade unexpectedly created a backup")
 			}
 			task.ID, task.PackageMaintenance = "snapshot", &PackageMaintenanceTask{Action: "backup"}
 			backed, err := maintainPackage(ctx, executor, backend, task)
