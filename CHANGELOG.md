@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.289](https://github.com/petauron/vastora/compare/v0.1.0-alpha.288...v0.1.0-alpha.289) (2026-10-04)
+
+
+### Bug Fixes
+
+* **agent:** preserve Docker image entrypoint defaults ([#818](https://github.com/petauron/vastora/issues/818)) ([0b533ee](https://github.com/petauron/vastora/commit/0b533ee8ade7e175149994b4138678fcbfd5f783))
+
 ## [0.1.0-alpha.288](https://github.com/petauron/vastora/compare/v0.1.0-alpha.287...v0.1.0-alpha.288) (2026-10-04)
 
 
