@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.286](https://github.com/petauron/vastora/compare/v0.1.0-alpha.285...v0.1.0-alpha.286) (2026-10-04)
+
+
+### Features
+
+* independent catalog v4 and generic package runtimes ([#716](https://github.com/petauron/vastora/issues/716)) ([4232641](https://github.com/petauron/vastora/commit/42326414cf787fb3031aa8334317e974e14941ae))
+
 ## [0.1.0-alpha.285](https://github.com/petauron/vastora/compare/v0.1.0-alpha.284...v0.1.0-alpha.285) (2026-10-04)
 
 
