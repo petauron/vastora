@@ -79,7 +79,7 @@ export const api = {
   xrayConfigurationRecovery: (id: string, signal?: AbortSignal) => request<{ recovery: XrayConfigurationRecovery | null }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery`, { signal }),
   inspectXrayConfiguration: (id: string, signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery/inspect`, { method: "POST", body: "{}", signal }),
   applyXrayConfigurationRecovery: (id: string, source: "runtime" | "agent_state", signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery/apply`, { method: "POST", body: JSON.stringify({ source }), signal }),
-  executions: (before = 0, signal?: AbortSignal) => request<ExecutionPage>(`/api/v1/executions${before ? `?before=${before}` : ""}`, { signal }),
+  executions: (before = 0, signal?: AbortSignal, filter: "all" | "attention" | "running" = "all") => request<ExecutionPage>(`/api/v1/executions?filter=${filter}${before ? `&before=${before}` : ""}`, { signal }),
   executionClaimControl: (signal?: AbortSignal) => request<ExecutionClaimControl>("/api/v1/execution-claim-control", { signal }),
   setExecutionClaimControl: (paused: boolean) => request<{ recorded: boolean }>("/api/v1/execution-claim-control", { method: "PUT", body: JSON.stringify({ paused }) }),
   inspectLegacyReceipt: (id: string, signal?: AbortSignal) => request<LegacyReceiptView>(`/api/v1/executions/${encodeURIComponent(id)}/legacy-receipt`, { signal }),

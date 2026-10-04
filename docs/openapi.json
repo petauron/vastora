@@ -11973,6 +11973,21 @@
         "description": "Administrator-only execution history. Reports persisted phases, errors and dispositions, never sealed task or result evidence. A successful heartbeat does not imply execution success.",
         "parameters": [
           {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "attention",
+                "running"
+              ],
+              "default": "all"
+            },
+            "description": "Filter before pagination. attention includes unresolved failed or unknown executions; running includes undisposed offered, running and helper_running executions."
+          },
+          {
             "name": "before",
             "in": "query",
             "required": false,

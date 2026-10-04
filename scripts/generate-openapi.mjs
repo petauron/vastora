@@ -520,6 +520,7 @@ for (const route of routes) {
     } else if (route.handler === "handleListExecutions") {
       operation.description = "Administrator-only execution history. Reports persisted phases, errors and dispositions, never sealed task or result evidence. A successful heartbeat does not imply execution success.";
       operation.parameters ||= [];
+      operation.parameters.push({name:"filter",in:"query",required:false,schema:{type:"string",enum:["all","attention","running"],default:"all"},description:"Filter before pagination. attention includes unresolved failed or unknown executions; running includes undisposed offered, running and helper_running executions."});
       operation.parameters.push({name:"before",in:"query",required:false,schema:{type:"integer",minimum:1},description:"Exclusive insertion cursor from nextCursor. Omit for the newest page; each page contains at most 100 records."});
       operation.responses[status].content["application/json"].schema = schemaForGoType("ExecutionPage");
     } else {

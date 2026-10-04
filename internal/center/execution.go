@@ -730,14 +730,24 @@ type ExecutionPage struct {
 	NextCursor int64           `json:"nextCursor"`
 }
 
-func (s *Store) ListExecutions(ctx context.Context, before int64) (ExecutionPage, error) {
+func (s *Store) ListExecutions(ctx context.Context, before int64, filter string) (ExecutionPage, error) {
 	if before < 0 {
 		return ExecutionPage{}, errors.New("center: invalid execution cursor")
 	}
-	query := `SELECT rowid,id,agent_id,task_id,kind,attempt,state,phase,last_error,updated_at,disposition,sealed_result,identity_retired_at FROM task_executions`
+	condition := "1=1"
+	switch filter {
+	case "all":
+	case "attention":
+		condition = "disposition='' AND state IN ('failed','unknown')"
+	case "running":
+		condition = "disposition='' AND state IN ('offered','running','helper_running')"
+	default:
+		return ExecutionPage{}, errors.New("center: invalid execution filter")
+	}
+	query := `SELECT rowid,id,agent_id,task_id,kind,attempt,state,phase,last_error,updated_at,disposition,sealed_result,identity_retired_at FROM task_executions WHERE ` + condition
 	var args []any
 	if before > 0 {
-		query += ` WHERE rowid<?`
+		query += ` AND rowid<?`
 		args = append(args, before)
 	}
 	rows, err := s.db.QueryContext(ctx, query+` ORDER BY rowid DESC LIMIT 101`, args...)

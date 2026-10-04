@@ -80,7 +80,7 @@ func TestAgentReconnectDoesNotApplyPreviousMachineResult(t *testing.T) {
 	if err := store.RegisterExecutionSession(ctx, node.ID, replacement.Credential, session, controlplane.ExecutionProtocol); !errors.Is(err, errExecutionAuthorization) {
 		t.Fatalf("old execution session revived: %v", err)
 	}
-	page, err := store.ListExecutions(ctx, 0)
+	page, err := store.ListExecutions(ctx, 0, "all")
 	if err != nil {
 		t.Fatal(err)
 	}

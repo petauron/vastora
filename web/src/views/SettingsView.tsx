@@ -16,6 +16,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { CenterUpdateCard } from "./CenterUpdateCard";
+import { isInstalledApplication } from "./appAccess";
 import { SystemDomainSettings } from "./SystemDomainSettings";
 
 export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onLogout, onNavigate, onRefresh }: { data: AppData; language: Language; mutate: Mutate; onCenterUpdateStatus: (status: CenterUpdateStatus) => void; onLogout: () => Promise<void>; onNavigate?: (screen: Screen) => void; onRefresh: () => Promise<void> }) {
@@ -24,18 +25,19 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
   const [diagnosticsError, setDiagnosticsError] = useState("");
+  useEffect(() => {
+    if (window.location.hash === "#assistant") document.getElementById("assistant")?.scrollIntoView({ block: "start" });
+  }, []);
   const downloadDiagnostics = async () => { setDiagnosticsBusy(true); setDiagnosticsError(""); try { await api.downloadDiagnostics(); } catch (error) { setDiagnosticsError(userError(language, error)); } finally { setDiagnosticsBusy(false); } };
   return (
     <section className="flex flex-col gap-7">
-      <PageHeading title={copy(language, "设置", "Settings")} description={copy(language, "管理 Center、数据保护、应用目录和登录会话。网络集成位于“网络”页面。", "Manage Center, data protection, app catalogs, and your session. Network integrations live on the Network page.")} action={<SignOutButton language={language} onLogout={onLogout} />} />
+      <PageHeading title={copy(language, "设置", "Settings")} description={copy(language, "管理系统更新、备份和登录安全。", "Manage system updates, backups, and sign-in security.")} action={<SignOutButton language={language} onLogout={onLogout} />} />
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><SettingsIcon />Center</CardTitle><CardDescription>{copy(language, "当前运行信息", "Current runtime information")}</CardDescription></CardHeader>
-        <CardContent><dl className="grid gap-4 text-sm sm:grid-cols-3"><div><dt className="text-muted-foreground">{copy(language, "版本", "Version")}</dt><dd className="mt-1 font-medium">{data.centerUpdate.currentVersion}</dd></div><div><dt className="text-muted-foreground">{copy(language, "节点", "Nodes")}</dt><dd className="mt-1 font-medium">{data.agents.filter((agent) => agent.status === "active").length}</dd></div><div><dt className="text-muted-foreground">{copy(language, "应用", "Apps")}</dt><dd className="mt-1 font-medium">{data.applications.length}</dd></div></dl></CardContent>
+        <CardHeader><CardTitle className="flex items-center gap-2"><SettingsIcon />{copy(language,"管理中心","Management center")}</CardTitle><CardDescription>{copy(language, "当前运行信息", "Current runtime information")}</CardDescription></CardHeader>
+        <CardContent><dl className="grid gap-4 text-sm sm:grid-cols-3"><div><dt className="text-muted-foreground">{copy(language, "版本", "Version")}</dt><dd className="mt-1 font-medium">{data.centerUpdate.currentVersion}</dd></div><div><dt className="text-muted-foreground">{copy(language, "节点", "Nodes")}</dt><dd className="mt-1 font-medium">{data.agents.filter((agent) => agent.status === "active").length}</dd></div><div><dt className="text-muted-foreground">{copy(language, "应用", "Apps")}</dt><dd className="mt-1 font-medium">{data.applications.filter(isInstalledApplication).length}</dd></div></dl></CardContent>
         <CardFooter className="justify-end"><Button onClick={() => setPasswordOpen(true)} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "修改管理员密码", "Change administrator password")}</Button></CardFooter>
       </Card>
-      <SystemDomainSettings domain={data.systemDomain} language={language} />
       <CenterUpdateCard language={language} onRefresh={onRefresh} onStatusChange={onCenterUpdateStatus} onViewActivity={onNavigate ? () => onNavigate("activity") : undefined} status={data.centerUpdate} />
-      <AssistantProviderSettings language={language} />
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheckIcon />{copy(language, "数据与故障排查", "Data & troubleshooting")}</CardTitle><CardDescription>{copy(language, "备份 Center 配置，或下载不含密钥的诊断信息。", "Back up Center configuration or download diagnostics that contain no secret values.")}</CardDescription></CardHeader>
         <CardContent>
@@ -44,6 +46,8 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
           <p className="mt-4 text-xs leading-5 text-muted-foreground">{copy(language, "恢复时先停止 Center，再使用 vastora center restore 将备份恢复到新的空数据目录。", "To restore, stop Center and use vastora center restore with a new empty data directory.")}</p>
         </CardContent>
       </Card>
+      <details className="scroll-mt-20 rounded-xl border bg-card" id="assistant" open={window.location.hash === "#assistant" || undefined}><summary className="cursor-pointer p-4 text-sm font-medium">{copy(language,"AI 助手配置","AI assistant setup")}</summary><div className="border-t p-4"><AssistantProviderSettings language={language} /></div></details>
+      <details className="rounded-xl border bg-card"><summary className="cursor-pointer p-4 text-sm font-medium">{copy(language,"高级：域名设置","Advanced: domain settings")}</summary><div className="border-t p-4"><SystemDomainSettings domain={data.systemDomain} language={language} /></div></details>
       <CatalogSettings data={data} language={language} mutate={mutate} onAdd={() => setAdding(true)} />
       {adding ? <SourceSheet language={language} onClose={() => setAdding(false)} onSubmit={async (source) => { await mutate(() => api.createSource(source), copy(language, "应用目录已添加。", "App catalog added.")); setAdding(false); }} open /> : null}
       {backupOpen ? <BackupSheet language={language} onClose={() => setBackupOpen(false)} open /> : null}
@@ -97,7 +101,7 @@ function AssistantProviderSettings({ language }: { language: Language }) {
     && allowPrivate === provider?.allowPrivate;
 
   return <Card>
-    <CardHeader><CardTitle className="flex items-center gap-2"><BotIcon />{copy(language, "集群助手模型", "Cluster assistant model")}</CardTitle><CardDescription>{copy(language, "连接 OpenAI 兼容服务。密钥加密保存且之后只显示是否已设置。", "Connect an OpenAI-compatible provider. The key is encrypted and only its configured state is returned later.")}</CardDescription><CardAction>{provider ? <StateBadge language={language} value={provider.status} /> : <Spinner />}</CardAction></CardHeader>
+    <CardHeader><CardTitle className="flex items-center gap-2"><BotIcon />{copy(language, "连接 AI 服务", "Connect an AI service")}</CardTitle><CardDescription>{copy(language, "填写支持 OpenAI 接口的服务地址、模型名称和密钥。保存后测试连接即可使用助手。", "Enter an OpenAI-compatible service address, model name, and key. Save and test the connection to use the assistant.")}</CardDescription><CardAction>{provider ? <StateBadge language={language} value={provider.status} /> : <Spinner />}</CardAction></CardHeader>
     <form onSubmit={(event) => void save(event)}>
       <CardContent><FieldGroup><Field><FieldLabel htmlFor="assistant-api-url">API URL</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="assistant-api-url" onChange={(event) => setAPIURL(event.target.value)} placeholder="https://api.example.com/v1" required spellCheck={false} type="url" value={apiUrl} /><FieldDescription>{copy(language, "必须是无凭据的固定 HTTP(S) 地址；公网服务必须使用 HTTPS。", "Use an exact credential-free HTTP(S) URL. Public providers require HTTPS.")}</FieldDescription></Field><Field><FieldLabel htmlFor="assistant-model">{copy(language, "模型标识", "Model identifier")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="assistant-model" onChange={(event) => setModel(event.target.value)} placeholder="gpt-5.4-mini" required spellCheck={false} value={model} /></Field><Field><FieldLabel htmlFor="assistant-api-key">API Key</FieldLabel><Input autoComplete="new-password" id="assistant-api-key" onChange={(event) => setAPIKey(event.target.value)} placeholder={provider?.apiKeySet ? copy(language, "留空以保留已保存的密钥", "Leave blank to keep the saved key") : copy(language, "输入 API Key", "Enter an API key")} required={!provider?.apiKeySet} type="password" value={apiKey} /><FieldDescription>{provider?.apiKeySet ? copy(language, "已保存密钥；浏览器和诊断报告无法读取。", "A key is stored; browsers and diagnostics cannot read it.") : copy(language, "密钥只发送给 Center，不会进入模型消息或工具参数。", "The key is sent only to Center and never enters model messages or tool arguments.")}</FieldDescription></Field><Field orientation="horizontal"><div className="flex-1"><FieldLabel htmlFor="assistant-private-provider">{copy(language, "信任私有模型地址", "Trust a private model endpoint")}</FieldLabel><FieldDescription>{copy(language, "仅为自己控制的内网或本机模型开启。开启后允许私有 IP 和私有 HTTP。", "Enable only for a private or local model gateway you control. This permits private IPs and private HTTP.")}</FieldDescription></div><Switch checked={allowPrivate} id="assistant-private-provider" onCheckedChange={setAllowPrivate} /></Field>{provider?.lastError ? <TechnicalError error={provider.lastError} language={language} /> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</FieldGroup></CardContent>
       <CardFooter className="flex-wrap justify-end gap-2"><Button disabled={busy || !savedProviderSelected} onClick={() => void validate()} title={savedProviderSelected ? undefined : copy(language, "先保存当前配置，再测试连接", "Save the current configuration before testing it")} type="button" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "测试连接", "Test connection")}</Button><Button disabled={busy || !apiUrl.trim() || !model.trim() || !provider?.apiKeySet && !apiKey} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "保存模型配置", "Save model settings")}</Button></CardFooter>

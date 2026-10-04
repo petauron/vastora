@@ -84,7 +84,7 @@ func TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically(t *testi
 				t.Fatal(err)
 			}
 			if mode == "success" {
-				page, err := store.ListExecutions(ctx, 0)
+				page, err := store.ListExecutions(ctx, 0, "all")
 				if err != nil {
 					t.Fatal(err)
 				}

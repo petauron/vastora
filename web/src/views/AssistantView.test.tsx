@@ -171,7 +171,9 @@ it("keeps assistant input disabled until a provider is configured", async () => 
   vi.spyOn(api, "assistantConversations").mockResolvedValue({ conversations: [conversation] });
   vi.spyOn(api, "assistantConversation").mockResolvedValue(conversation);
   const container = await renderAssistant();
-  await vi.waitFor(() => expect(container.textContent).toContain("尚未配置模型服务"));
+  await vi.waitFor(() => expect(container.textContent).toContain("先连接 AI 服务，再使用助手"));
+  expect(container.querySelector('a[href="/settings#assistant"]')?.textContent).toBe("配置助手");
+  expect([...container.querySelectorAll('button')].some((button) => button.textContent === "新对话")).toBe(false);
   expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="发送给集群助手的消息"]')?.disabled).toBe(true);
   expect(container.textContent).toContain("系统保管的凭据不会作为聊天内容或工具数据提供给模型");
   const input = container.querySelector("textarea");
