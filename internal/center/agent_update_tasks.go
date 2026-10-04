@@ -221,11 +221,19 @@ func (s *Store) queueAgentUpdate(ctx context.Context, agentID, targetVersion str
 	if err := tx.QueryRowContext(ctx, `SELECT runtime_recovery<>'' FROM agents WHERE id=?`, agentID).Scan(&runtimeRecovery); err != nil {
 		return AgentUpdateView{}, err
 	}
+	if runtimeRecovery {
+		return AgentUpdateView{}, errors.New("center: resolve outstanding runtime recovery before updating")
+	}
+	if recovery != nil {
+		if err := s.authorizeAgentUpdateRecovery(ctx, tx, agentID, targetVersion, recovery); err != nil {
+			return AgentUpdateView{}, err
+		}
+	}
 	executionBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, currentVersion)
 	if err != nil {
 		return AgentUpdateView{}, err
 	}
-	if runtimeRecovery || executionBlocked {
+	if executionBlocked {
 		return AgentUpdateView{}, errors.New("center: resolve outstanding execution and runtime recovery before updating")
 	}
 	if paused, err := agentUpdateRolloutPaused(ctx, tx); err != nil {
@@ -233,24 +241,10 @@ func (s *Store) queueAgentUpdate(ctx context.Context, agentID, targetVersion str
 	} else if paused {
 		return AgentUpdateView{}, errExecutionBlocked
 	}
-	var lastState, lastID, lastTarget string
-	err = tx.QueryRowContext(ctx, `SELECT state,id,target_version FROM agent_updates WHERE agent_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1`, agentID).Scan(&lastState, &lastID, &lastTarget)
+	var lastState, lastTarget string
+	err = tx.QueryRowContext(ctx, `SELECT state,target_version FROM agent_updates WHERE agent_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1`, agentID).Scan(&lastState, &lastTarget)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return AgentUpdateView{}, err
-	}
-	if recovery != nil {
-		if lastState != "failed" || recovery.FailedUpdateID != lastID || !recovery.ExecutionStopped || strings.TrimSpace(recovery.Note) == "" || len(recovery.Note) > 1024 {
-			return AgentUpdateView{}, errors.New("center: confirm the exact failed update is stopped and record recovery verification")
-		}
-		var admin bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admins WHERE id=?)`, recovery.adminID).Scan(&admin); err != nil || !admin {
-			return AgentUpdateView{}, errors.New("center: administrator authorization required")
-		}
-		// Keep the original failure immutable. Recovery authorizes a new task,
-		// never replay or a fabricated success for the old attempt.
-		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,json_object('actor',?,'note',?,'targetVersion',?,'recoveredAt',?))`, "agent-update-recovery:"+lastID, recovery.adminID, recovery.Note, targetVersion, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
-			return AgentUpdateView{}, err
-		}
 	}
 	if lastState == "failed" && recovery == nil && !agentUpdateFailureSuperseded(currentVersion, lastTarget) {
 		var abandoned bool

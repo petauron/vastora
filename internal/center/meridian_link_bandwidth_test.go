@@ -15,7 +15,7 @@ func TestMeridianLinkBandwidthQueuesBothPrivatePeers(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
-	capabilities := NodeCapabilities{Docker: true, MeridianLinkBandwidth: true}
+	capabilities := NodeCapabilities{Docker: true, MeridianLinkBandwidth: true, MeridianLinkRevision: nodediagnostics.LinkBandwidthRevision}
 	newNode := func(name, address string) AgentCredential {
 		return enrollOrchestrationNode(t, store, name, capabilities,
 			[]networking.Candidate{{Address: address, Interface: "tailscale0", Kind: networking.KindHeadscale}},
@@ -43,7 +43,41 @@ func TestMeridianLinkBandwidthQueuesBothPrivatePeers(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at) VALUES('link-app','Meridian entry',?,?,'vastora-official/meridian','running','docker','',?,?)`, source.ID, testSiteID(t, store), stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
+	// Old Agents must not receive the new execution contract during rollout.
+	if _, err := store.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.meridianLinkRevision',0) WHERE id=?`, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartMeridianLinkBandwidth(ctx, source.ID, egress.ID); err == nil {
+		t.Fatal("old link contract accepted")
+	}
+	if _, err := store.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.meridianLinkRevision',?) WHERE id=?`, nodediagnostics.LinkBandwidthRevision, source.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.StartMeridianLinkBandwidth(ctx, source.ID, egress.ID); err != nil {
+		t.Fatal(err)
+	}
+	var rawTarget []byte
+	if err := store.db.QueryRow(`SELECT targets_json FROM node_diagnostic_checks WHERE agent_id=? AND kind=?`, source.ID, nodediagnostics.LinkBandwidthKind).Scan(&rawTarget); err != nil {
+		t.Fatal(err)
+	}
+	var link nodediagnostics.LinkBandwidthTask
+	if json.Unmarshal(rawTarget, &link) != nil || (nodediagnostics.Task{Link: &link}).ValidateLinkIdentity(nodediagnostics.LinkBandwidthKind) != nil {
+		t.Fatal("task lost authenticated peer identities")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !currentMeridianLinkPeers(ctx, tx, link) {
+		t.Fatal("valid peer identities rejected")
+	}
+	if _, err := tx.Exec(`UPDATE agent_private_peer_capabilities SET peer_json=json_set(peer_json,'$.publicKey','nodekey:replacement') WHERE node_id=?`, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if currentMeridianLinkPeers(ctx, tx, link) {
+		t.Fatal("reinstalled peer accepted for old measurement")
+	}
+	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)
 	}
 	checks, err := store.ListNodeDiagnostics(ctx)
@@ -56,7 +90,7 @@ func TestMeridianLinkBandwidthQueuesBothPrivatePeers(t *testing.T) {
 			continue
 		}
 		paired++
-		if check.State != "pending" || check.ID == "" {
+		if check.State != "pending" || check.ID == "" || check.TargetRevision != nodediagnostics.LinkBandwidthRevision {
 			t.Fatalf("unready link task: %+v", check)
 		}
 	}
@@ -65,6 +99,31 @@ func TestMeridianLinkBandwidthQueuesBothPrivatePeers(t *testing.T) {
 	}
 	if err := store.StartMeridianLinkBandwidth(ctx, source.ID, egress.ID); err == nil {
 		t.Fatal("concurrent link check accepted")
+	}
+	// The paired listener must not hide an actionable client or server cause.
+	for _, sourceError := range []string{"transport_not_direct", "probe_failed"} {
+		if _, err := store.db.Exec(`UPDATE node_diagnostic_checks SET state='succeeded',error=CASE kind WHEN 'meridian.link-bandwidth' THEN ? ELSE 'peer_identity_changed' END`, sourceError); err != nil {
+			t.Fatal(err)
+		}
+		failed, err := store.ListNodeDiagnostics(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, check := range failed {
+			if check.Kind != nodediagnostics.LinkBandwidthKind {
+				continue
+			}
+			want := sourceError
+			if sourceError == "probe_failed" {
+				want = "peer_identity_changed"
+			}
+			if check.Error != want || check.State != "failed" {
+				t.Fatalf("paired error hidden: %+v", check)
+			}
+		}
+	}
+	if _, err := store.db.Exec(`UPDATE node_diagnostic_checks SET error=''`); err != nil {
+		t.Fatal(err)
 	}
 	// A later test to another landing must not erase the first pair or its peer.
 	if _, err := store.db.Exec(`UPDATE node_diagnostic_checks SET state='succeeded'`); err != nil {

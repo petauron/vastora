@@ -259,7 +259,7 @@ func TestApplicationMaintenanceExecutionProjectionAndRetainedConfirmation(t *tes
 				t.Fatal(err)
 			}
 			raw := maintenanceTestResult(t, task, "ready", &PackageMaintenanceResult{Logs: []RuntimeLog{{Resource: "test-instance", Content: "healthy"}}}, nil)
-			if err := store.StoreExecutionResult(ctx, node.ID, session, task.Authorization.ID, raw, true, false, "", nil); err != nil {
+			if err := store.StoreExecutionResult(ctx, node.ID, session, task.Authorization.ID, raw, true, false, "", nil, false); err != nil {
 				t.Fatal(err)
 			}
 			if retained {

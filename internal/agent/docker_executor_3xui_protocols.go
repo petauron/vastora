@@ -88,12 +88,15 @@ func (e ApplicationExecutor) ConfigureHY2Port(ctx context.Context, store *Store,
 			return store.stopXrayWorkerAPI(ctx, false)
 		}, func(containerID string) (string, error) {
 			return state.APIToken, waitForXrayWorkerRuntime(ctx, docker, containerID)
-		}, func(string, string) error { return nil }, nil)
-		recoveryContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		resumeErr := store.ResumeXrayWorker(recoveryContext, socket)
-		if replaceErr != nil || resumeErr != nil {
-			return uncertainTaskOutcome(errors.Join(replaceErr, resumeErr))
+		}, func(string, string) error { return nil })
+		if replaceErr != nil {
+			return replaceErr
+		}
+		if err := ctx.Err(); err != nil {
+			return uncertainTaskOutcome(err)
+		}
+		if err := store.ResumeXrayWorker(ctx, socket); err != nil {
+			return uncertainTaskOutcome(err)
 		}
 		return nil
 	}

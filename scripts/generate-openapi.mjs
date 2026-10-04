@@ -73,6 +73,7 @@ function tagFor(routePath) {
     "agent-binaries": "Agents",
     "agent-decommission-results": "Agents",
     agents: "Agents",
+    nodes: "Agents",
     "agent-enrollments": "Agents",
     "application-commands": "Applications",
     applications: "Applications",
@@ -158,6 +159,8 @@ function schemaForGoType(rawType, scope) {
   } else if (type.startsWith("map[")) {
     const valueType = /^map\[string\](.+)$/.exec(type)?.[1];
     schema = { type: "object", additionalProperties: valueType ? schemaForGoType(valueType, scope) : true };
+  } else if (type === "meridian.EgressPolicy") {
+    schema = { type: "string", enum: ["auto", "ipv4_only", "ipv6_only"] };
   } else if (type === "string" || type === "time.Time") {
     schema = type === "time.Time" ? { type: "string", format: "date-time" } : { type: "string" };
   } else if (["int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64"].includes(type)) {
@@ -420,12 +423,111 @@ for (const route of routes) {
       content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
     };
   }
+  if (route.handler === "handleNodeEgress") {
+    if (route.method === "get") delete operation.requestBody;
+    operation.responses[status].content["application/json"].schema = schemaForGoType("NodeEgressView");
+  }
   const noStoreHeaders = {
     "Cache-Control": {
       description: "Prevents storage of the security-sensitive response.",
       schema: { type: "string", const: "no-store" },
     },
   };
+  if (route.handler === "handleCreateAgentReconnectEnrollment") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallInput");
+    operation.description = "Administrator confirmation bound to a reviewed recovery revision and an operation ID. Retires the previous execution identity and persistently pauses task claims. Withdraws and verifies the authenticated old private identity before preparing a one-time command. Retrying the same operation returns the same valid command; interrupted external preparation is never automatically replayed. Enrollment is not business recovery.";
+  }
+  if (route.handler === "handleContinueAgentReinstallIsolation") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallContinueInput");
+    operation.description = "Explicit continuation by the authorizing administrator, bound to the inspected recovery attempt. Rechecks the exact saved private identity and controller; never rediscovers another owner by address. Stale or duplicate continuations cannot repeat an attempt. This action cannot repeat bootstrap preparation with an uncertain result.";
+  }
+  if (route.handler === "handleApproveAgentReinstallNetwork") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallNetworkInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallNetworkApproval");
+    operation.description = "Explicit address migration approval bound to the replacement identity and reviewed network evidence. Verifies managed private identity through the controller and retains previous/new profiles plus administrator audit. Saves restoration intent only; does not activate addresses, change publications or release task execution.";
+  }
+  if (route.handler === "handleAgentReinstallPlan") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.description = "Administrator-only read of one node's saved recovery requirements from a consistent database snapshot. Reports saved versions, retained network dependencies, unclaimed work and unresolved execution metadata. It never returns credentials, creates enrollment grants, claims work or establishes recovery success. It is not executable authorization.";
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallPlan");
+  }
+  if (route.handler === "handleAgentReinstallLandingSource") {
+    operation.operationId = route.path.endsWith("/authorize-landing") ? "agentReinstallLandingAuthorize_post" : "agentReinstallLandingWithdraw_post";
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallLandingSource");
+    operation.description = "Explicitly withdraw saved landing source permissions, then replace the source identity only after applied withdrawal receipts. Reuses existing landing tasks, preserves independent sources and never establishes runtime or client health. Failed or changed evidence requires inspection; repeated requests do not queue work again.";
+  }
+  if (route.handler === "handleAgentReinstallDNS") {
+    operation.operationId = route.path.endsWith("/inspect-dns") ? "agentReinstallDNSInspect_post" : "agentReinstallDNSMigrate_post";
+    operation.responses[status].headers = noStoreHeaders;
+    operation.description = "Explicitly migrate owned DNS records, or inspect a saved uncertain attempt without writing external DNS. Bound to the reviewed recovery; never releases its execution fence.";
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallDNSInput");
+    operation.responses["200"].content["application/json"].schema = schemaForGoType("AgentReinstallDNS");
+  }
+  if (route.handler === "handleAgentReinstallAccess") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallAccess");
+    operation.description = "Activate the reviewed replacement network profile and one restored Meridian service binding after exact runtime and applicable shared-listener receipts. Atomically retain original address approval and activation evidence. Repeated requests return the same receipt; changed bindings require inspection. Does not alter DNS, landing identities, account usage or business readiness, and never releases the recovery fence.";
+  }
+  if (route.handler === "handleAgentReinstallEntryCheck") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallEntryCheck");
+    operation.description = "One explicit read-only DNS and exact-SNI TLS check on the approved replacement public address after native runtime and listener receipts. Revalidates recovery authority before storing evidence, preserves prior checks and never activates profiles or completes authenticated client recovery. A changed review or evidence older than 30 minutes makes the result historical.";
+  }
+  if (route.handler === "handleAgentReinstallListener") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallListener");
+    operation.description = "Restore the reviewed saved shared listener after native Meridian runtime restoration. Uses only the approved backend and public bind address; other shared applications or a gateway require restoration first. A listener receipt does not verify public reachability, publish subscriptions or release the recovery fence.";
+  }
+  if (route.handler === "handleAgentReinstallRuntime") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallRuntime");
+    operation.description = "Restore one reviewed native Meridian runtime using the saved package and credentials on the approved replacement address. Fixed egress is restored only after reviewed source replacement and applied landing authorization; otherwise it remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery.";
+  }
+  if (route.handler === "handleAgentReinstallPreparation") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallPreparation");
+    operation.description = "Prepare the reviewed saved Meridian package on its authorized replacement machine. Creates one durable application deployment bound to original intent and approved network, without activating services or releasing the recovery fence. Source changes and uncertain outcomes require review.";
+  }
+  if (route.handler === "handleAgentReinstallMonitorReporting") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallMonitorInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallMonitorReporting");
+    operation.description = "Restore the reviewed saved Pulse collector package and configuration on the replacement host. Imports the original node's credential from authenticated encrypted rotation evidence using Pulse's fixed stdin CLI. Exact task digest binds approval, claim, sealing and result projection. Does not create another monitoring node, verify metric reporting or release the recovery fence.";
+  }
+  if (route.handler === "handleAgentReinstallMonitorRestore") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallMonitorInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallMonitorRestore");
+    operation.description = "Restore the reviewed saved Pulse collector package and configuration on the replacement host. Imports the original node's credential from authenticated encrypted rotation evidence using Pulse's fixed stdin CLI. Exact task digest binds approval, claim, sealing and result projection. Does not create another monitoring node, verify metric reporting or release the recovery fence.";
+  }
+  if (route.handler === "handleAgentReinstallMonitorRotation") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallMonitorInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallMonitorRotation");
+    operation.description = "Explicit single rotation of a recently verified original Pulse node credential. Bound to the administrator, replacement identity, original registration evidence and exact managed service deployment at selection, sealing and projection. Retains the original node and history; stores the new credential only in encrypted execution evidence. Repeats return the saved operation, including unknown outcomes, without issuing another rotation. Collector import, reporting verification and recovery completion remain separate.";
+  }
+  if (route.handler === "handleAgentReinstallMonitorInspection") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallMonitorInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallMonitorInspection");
+    operation.description = "Explicit read-only inspection of reviewed original Pulse enrollment records on their exact managed service deployment. Bound to the administrator, recovery operation, replacement identity and retained source evidence; validated at selection, authorization and projection. Returns a durable receipt without rotating credentials or completing recovery. Requires an inspection-capable service Agent and Pulse CLI.";
+  }
+  if (route.handler === "handleSettleAgentReinstallLocalWork") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallLocalWorkInput");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallLocalDisposition");
+    operation.description = "Explicit administrator settlement of reviewed, retired host-local executions after old identity isolation and replacement enrollment. Preserves historical outcomes and encrypted evidence, atomically abandons exact attempts, cancels reviewed pending attempt-zero local tasks with no historical authorization, and records a durable receipt. Saved application intent and credentials are retained. Remote or unclassified effects require separate review. Does not dispatch restoration or release the recovery fence.";
+  }
   if (["handleGetExecutionClaimControl", "handleSetExecutionClaimControl"].includes(route.handler)) {
     operation.responses[status].headers = noStoreHeaders;
     operation.description = "Administrator-only persisted control of new task claims and authorization issuance. Pausing does not cancel previously authorized executions or stop heartbeats, session registration or read-only observation. Resuming does not dispose unresolved executions or replay failed tasks.";
@@ -445,6 +547,7 @@ for (const route of routes) {
     } else if (route.handler === "handleListExecutions") {
       operation.description = "Administrator-only execution history. Reports persisted phases, errors and dispositions, never sealed task or result evidence. A successful heartbeat does not imply execution success.";
       operation.parameters ||= [];
+      operation.parameters.push({name:"filter",in:"query",required:false,schema:{type:"string",enum:["all","attention","running"],default:"all"},description:"Filter before pagination. attention includes unresolved failed or unknown executions; running includes undisposed offered, running and helper_running executions."});
       operation.parameters.push({name:"before",in:"query",required:false,schema:{type:"integer",minimum:1},description:"Exclusive insertion cursor from nextCursor. Omit for the newest page; each page contains at most 100 records."});
       operation.responses[status].content["application/json"].schema = schemaForGoType("ExecutionPage");
     } else {
@@ -583,6 +686,10 @@ for (const route of routes) {
       "applicationId", "regionCode", "name",
       "dnsProvider", "targetHost", "serverName", "verificationId", "targetIp",
     ];
+  } else if (route.handler === "handleMeridianTraffic") {
+    operation.description = "Read directional traffic grouped by entry node and egress. Totals start at the first authenticated tracking sample, never infer historical direction, never reset or enforce quotas, and are not provider billing. Stale means no current active credential sample within 15 minutes.";
+    operation.responses["200"].headers = noStoreHeaders;
+    operation.responses["200"].content["application/json"].schema = schemaForGoType("MeridianTrafficView");
   } else if (route.handler === "handleCreateMeridianEndpoint") {
     operation.requestBody.content["application/json"].schema.required = [
       "applicationId", "verificationId", "targetIp", "targetHost", "serverName", "regionCode", "name",

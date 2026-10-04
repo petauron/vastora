@@ -35,6 +35,13 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 	if expectedRevision > 0 && publication.DesiredRevision != expectedRevision {
 		return publication, nil
 	}
+	var recovery bool
+	if err := s.db.QueryRowContext(ctx, `SELECT NOT (`+publicationReinstallAllowedSQL+`) FROM publications WHERE id=?`, id).Scan(&recovery); err != nil {
+		return PublicationView{}, err
+	}
+	if recovery {
+		return publication, errors.New("center: use the reviewed recovery flow to verify this entry")
+	}
 	if publication.Status == "stopped" {
 		return PublicationView{}, errors.New("center: stopped publication cannot be verified")
 	}
@@ -156,18 +163,9 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 			return s.recordPublicationVerification(ctx, id, expectedRevision, "UDP reachability cannot be proven automatically; verify it from an external client")
 		}
 		if publication.Kind == publicationShared443 {
-			connection, dialErr := (&tls.Dialer{
-				NetDialer: &net.Dialer{Timeout: 8 * time.Second},
-				Config: &tls.Config{
-					MinVersion: tls.VersionTLS13,
-					ServerName: publication.SNIHostname,
-					NextProtos: []string{"h2", "http/1.1"},
-				},
-			}).DialContext(ctx, "tcp", net.JoinHostPort(verificationAddress, "443"))
-			if dialErr != nil {
+			if err := verifyShared443TLS(ctx, verificationAddress, publication.SNIHostname); err != nil {
 				return s.recordPublicationVerification(ctx, id, expectedRevision, "exact-SNI TLS 1.3 health check did not pass")
 			}
-			_ = connection.Close()
 			return s.markPublicationReady(ctx, id, expectedRevision)
 		}
 		connection, dialErr := (&net.Dialer{Timeout: 8 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(verificationAddress, port))
@@ -301,7 +299,7 @@ func (s *Store) recordPublicationVerification(ctx context.Context, id string, ex
 	if len(message) > 1024 {
 		message = message[:1024]
 	}
-	query := `UPDATE publications SET status = 'pending', last_error = ?, updated_at = ? WHERE id = ? AND status <> 'stopped'`
+	query := `UPDATE publications SET status = 'pending', last_error = ?, updated_at = ? WHERE id = ? AND status <> 'stopped' AND ` + publicationReinstallAllowedSQL
 	arguments := []any{message, s.now().UTC().Format(time.RFC3339Nano), id}
 	if expectedRevision > 0 {
 		query += ` AND desired_revision = ?`
@@ -326,7 +324,7 @@ func (s *Store) markPublicationReady(ctx context.Context, id string, expectedRev
 			WHERE s.id = publications.service_id AND s.status IN ('ready', 'publishing') AND a.status = 'running'
 			AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND (d.state IN ('pending', 'running') OR d.reconciliation_required = 1))
 			AND NOT EXISTS (SELECT 1 FROM application_commands c WHERE c.application_id = a.id AND (c.state IN ('pending', 'running') OR c.reconciliation_required = 1))
-		)`
+		) AND ` + publicationReinstallAllowedSQL
 	arguments := []any{readyAt.Format(time.RFC3339Nano), id}
 	if expectedRevision > 0 {
 		query += ` AND desired_revision = ?`
@@ -352,3 +350,22 @@ func (s *Store) markPublicationReady(ctx context.Context, id string, expectedRev
 	}
 	return s.Publication(ctx, id)
 }
+
+// Dial the selected literal address with the saved SNI, TLS 1.3 and ordinary
+// certificate verification. DNS is checked separately; there is no proxy or
+// alternate-address fallback.
+func verifyShared443TLS(ctx context.Context, address, hostname string) error {
+	connection, err := (&tls.Dialer{NetDialer: &net.Dialer{Timeout: 8 * time.Second}, Config: &tls.Config{MinVersion: tls.VersionTLS13, ServerName: hostname, NextProtos: []string{"h2", "http/1.1"}}}).DialContext(ctx, "tcp", net.JoinHostPort(address, "443"))
+	if err != nil {
+		return err
+	}
+	_ = connection.Close()
+	return nil
+}
+
+// Checked again in the result UPDATE to fence a background probe that started
+// just before recovery. Both the application node and a separate entry matter.
+const publicationReinstallAllowedSQL = `NOT EXISTS (
+ SELECT 1 FROM agent_reinstall_operations op WHERE op.state NOT IN ('completed','superseded')
+ AND (op.agent_id=publications.entry_node_id OR op.agent_id=(SELECT a.node_id FROM services s JOIN applications a ON a.id=s.application_id WHERE s.id=publications.service_id))
+)`

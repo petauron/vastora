@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/petauron/meridian"
 	"github.com/petauron/vastora/internal/dockerruntime"
@@ -28,7 +27,8 @@ import (
 // It is not a second routing authority: only the Meridian artifact owns routes.
 type meridianGateIdentity struct {
 	Peer     landing.PeerIdentity `json:"peer"`
-	Bridge   string               `json:"bridge"`
+	Bridge   string               `json:"bridge,omitempty"`
+	GID      uint32               `json:"gid,omitempty"`
 	Revision uint64               `json:"revision"`
 }
 
@@ -37,8 +37,18 @@ type meridianTrafficGate interface {
 	Remove(context.Context) error
 }
 
-func newMeridianTrafficGate(identity meridianGateIdentity) (meridianTrafficGate, error) {
+func newMeridianTrafficGate(identity meridianGateIdentity) (*landing.TrafficGate, error) {
+	if identity.GID != 0 {
+		if identity.Bridge != "" {
+			return nil, errors.New("agent: ambiguous Meridian gate scope")
+		}
+		return landing.NewHostGate(identity.Peer, identity.GID, identity.Revision)
+	}
 	return landing.NewBridgeGate(identity.Peer, identity.Bridge, identity.Revision)
+}
+
+func meridianTrafficGateFactory(identity meridianGateIdentity) (meridianTrafficGate, error) {
+	return newMeridianTrafficGate(identity)
 }
 
 func (state meridianRuntimeState) validateLanding() error {
@@ -47,9 +57,10 @@ func (state meridianRuntimeState) validateLanding() error {
 		peers        []meridianruntime.Peer
 		source       *landing.PeerIdentity
 		gateRevision uint64
-	}{{state.Applied, state.AppliedPeers, state.AppliedSource, state.appliedGateRevision()}, {state.Pending, state.PendingPeers, state.PendingSource, 0}} {
+		gid          uint32
+	}{{state.Applied, state.AppliedPeers, state.AppliedSource, state.appliedGateRevision(), state.AppliedGID}, {state.Pending, state.PendingPeers, state.PendingSource, 0, state.PendingGID}} {
 		if plan.artifact == nil {
-			if len(plan.peers) != 0 || plan.source != nil {
+			if len(plan.peers) != 0 || plan.source != nil || plan.gid != 0 {
 				return errors.New("agent: Meridian peers have no owning artifact")
 			}
 			continue
@@ -62,7 +73,7 @@ func (state meridianRuntimeState) validateLanding() error {
 		if plan.gateRevision != 0 {
 			gateRevision = plan.gateRevision
 		}
-		for _, identity := range meridianPlanGates(plan.peers, state.Bridge, gateRevision) {
+		for _, identity := range meridianPlanGates(plan.peers, state.Bridge, plan.gid, gateRevision) {
 			if _, err := newMeridianTrafficGate(identity); err != nil {
 				return err
 			}
@@ -76,10 +87,13 @@ func (state meridianRuntimeState) validateLanding() error {
 	return nil
 }
 
-func meridianPlanGates(peers []meridianruntime.Peer, bridge string, revision uint64) []meridianGateIdentity {
+func meridianPlanGates(peers []meridianruntime.Peer, bridge string, gid uint32, revision uint64) []meridianGateIdentity {
+	if gid != 0 {
+		bridge = ""
+	}
 	gates := make([]meridianGateIdentity, 0, len(peers))
 	for _, peer := range peers {
-		gates = append(gates, meridianGateIdentity{Peer: peer.Identity, Bridge: bridge, Revision: revision})
+		gates = append(gates, meridianGateIdentity{Peer: peer.Identity, Bridge: bridge, GID: gid, Revision: revision})
 	}
 	return gates
 }
@@ -120,10 +134,10 @@ func appendMeridianGates(destination []meridianGateIdentity, additions ...meridi
 func (state meridianRuntimeState) knownLandingGates() []meridianGateIdentity {
 	gates := appendMeridianGates(nil, state.RetiringGates...)
 	if state.Applied != nil {
-		gates = appendMeridianGates(gates, meridianPlanGates(state.AppliedPeers, state.Bridge, state.appliedGateRevision())...)
+		gates = appendMeridianGates(gates, meridianPlanGates(state.AppliedPeers, state.Bridge, state.AppliedGID, state.appliedGateRevision())...)
 	}
 	if state.Pending != nil {
-		gates = appendMeridianGates(gates, meridianPlanGates(state.PendingPeers, state.Bridge, state.Pending.Revision)...)
+		gates = appendMeridianGates(gates, meridianPlanGates(state.PendingPeers, state.Bridge, state.PendingGID, state.Pending.Revision)...)
 	}
 	return gates
 }
@@ -270,7 +284,7 @@ func (s *Store) requireLegacyLandingAuthority(ctx context.Context) error {
 // Called by the replacement's beforeStop hook under landingMutationMu. All
 // expensive preparation has already succeeded; from this journal onward no
 // restart may restore the legacy writer or its monitor.
-func (e ApplicationExecutor) beginMeridianLandingHandover(ctx context.Context, docker *client.Client, state *meridianRuntimeState, task meridianruntime.Task) error {
+func (e ApplicationExecutor) beginMeridianLandingHandover(ctx context.Context, docker *client.Client, state *meridianRuntimeState, task meridianruntime.Task, gid uint32) error {
 	if task.Source != nil {
 		checker := landing.NewLinkChecker()
 		actual, err := checker.SelfIdentity(ctx, task.Source.Address)
@@ -279,12 +293,14 @@ func (e ApplicationExecutor) beginMeridianLandingHandover(ctx context.Context, d
 			return errors.New("agent: Meridian entry private identity changed before handover")
 		}
 	}
-	bridge, _, err := meridianRuntimeBridge(ctx, docker)
-	if err != nil {
-		return err
-	}
-	if state.Applied != nil && len(state.AppliedPeers) != 0 && state.Bridge != bridge {
-		return errors.New("agent: Meridian applied bridge changed before handover")
+	// Only retained bridge leases need the old Docker network during migration.
+	// A host runtime must not depend on a bridge existing on its next replay.
+	bridge := state.Bridge
+	if state.Applied != nil && state.AppliedGID == 0 && len(state.AppliedPeers) != 0 {
+		actual, _, err := meridianRuntimeBridge(ctx, docker)
+		if err != nil || bridge != actual {
+			return errors.New("agent: Meridian applied bridge changed before handover")
+		}
 	}
 	retiring := state.knownLandingGates()
 	if state.Applied == nil && state.LegacyRuntimeSHA256 == "" {
@@ -310,6 +326,11 @@ func (e ApplicationExecutor) beginMeridianLandingHandover(ctx context.Context, d
 		state.LegacyLandingSealed = sealed
 		retiring = appendMeridianGates(retiring, gates...)
 		if len(gates) != 0 {
+			actual, _, err := meridianRuntimeBridge(ctx, docker)
+			if err != nil {
+				return err
+			}
+			bridge = actual
 			legacy, err := e.Store.landingRuntime(ctx)
 			if err != nil || legacy == nil || legacy.Bridge != bridge {
 				return errors.New("agent: legacy landing bridge changed before Meridian handover")
@@ -333,6 +354,7 @@ func (e ApplicationExecutor) beginMeridianLandingHandover(ctx context.Context, d
 	state.Bridge = bridge
 	state.Pending, state.PendingPeers = &task.Desired, slices.Clone(task.Peers)
 	state.PendingSource = cloneMeridianSource(task.Source)
+	state.PendingGID = gid
 	state.HandoverPending = true
 	if err := e.Store.saveMeridianRuntimeState(ctx, *state); err != nil {
 		return err
@@ -340,7 +362,7 @@ func (e ApplicationExecutor) beginMeridianLandingHandover(ctx context.Context, d
 	if err := e.Store.stopLandingMonitor(ctx); err != nil {
 		return uncertainTaskOutcome(err)
 	}
-	if err := closeMeridianGates(ctx, state.knownLandingGates(), newMeridianTrafficGate); err != nil {
+	if err := closeMeridianGates(ctx, state.knownLandingGates(), meridianTrafficGateFactory); err != nil {
 		return uncertainTaskOutcome(err)
 	}
 	if err := e.Store.stopXrayWorkerAPI(ctx, false); err != nil {
@@ -378,9 +400,9 @@ func (e ApplicationExecutor) finishMeridianLandingHandover(ctx context.Context, 
 	if _, err := e.observeAppliedMeridianRuntime(ctx, *state); err != nil {
 		return err
 	}
-	current := meridianPlanGates(state.AppliedPeers, state.Bridge, state.Applied.Revision)
-	previous := appendMeridianGates(slices.Clone(state.RetiringGates), meridianPlanGates(state.AppliedPeers, state.Bridge, state.appliedGateRevision())...)
-	if err := removeSupersededMeridianGates(ctx, previous, current, newMeridianTrafficGate); err != nil {
+	current := meridianPlanGates(state.AppliedPeers, state.Bridge, state.AppliedGID, state.Applied.Revision)
+	previous := appendMeridianGates(slices.Clone(state.RetiringGates), meridianPlanGates(state.AppliedPeers, state.Bridge, state.AppliedGID, state.appliedGateRevision())...)
+	if err := removeSupersededMeridianGates(ctx, previous, current, meridianTrafficGateFactory); err != nil {
 		return err
 	}
 	state.GateRevision = 0
@@ -399,7 +421,7 @@ func removeClosedMeridianGateConflicts(ctx context.Context, state meridianRuntim
 		return errors.New("agent: Meridian gate cleanup requires an applied runtime")
 	}
 	for _, peer := range state.AppliedPeers {
-		gate, err := landing.NewBridgeGate(peer.Identity, state.Bridge, state.appliedGateRevision())
+		gate, err := newMeridianTrafficGate(meridianPlanGates([]meridianruntime.Peer{peer}, state.Bridge, state.AppliedGID, state.appliedGateRevision())[0])
 		if err != nil {
 			return err
 		}
@@ -413,7 +435,7 @@ func removeClosedMeridianGateConflicts(ctx context.Context, state meridianRuntim
 // A peer-bearing runtime cannot auto-start after reboot before nft gates exist.
 // Only an exact, journaled Meridian container may be started behind closed gates.
 func (e ApplicationExecutor) prepareMeridianRuntimeStart(ctx context.Context, docker *client.Client, state meridianRuntimeState, artifact meridian.DesiredArtifact, peers []meridianruntime.Peer) error {
-	if err := closeMeridianGates(ctx, state.knownLandingGates(), newMeridianTrafficGate); err != nil {
+	if err := closeMeridianGates(ctx, state.knownLandingGates(), meridianTrafficGateFactory); err != nil {
 		return err
 	}
 	current, exists, err := inspectXrayWorkerContainer(ctx, docker, meridianXrayContainer)
@@ -461,6 +483,13 @@ func (e ApplicationExecutor) verifyMeridianRuntimeAttachment(ctx context.Context
 	if matches != 1 {
 		return errors.New("agent: Meridian configuration mount is unavailable or ambiguous")
 	}
+	gid, artifact := state.AppliedGID, state.Applied
+	if state.Pending != nil {
+		gid, artifact = state.PendingGID, state.Pending
+	}
+	if gid != 0 {
+		return verifyMeridianHostContainer(inspected, gid, artifact)
+	}
 	if len(peers) == 0 {
 		return nil
 	}
@@ -473,12 +502,6 @@ func (e ApplicationExecutor) verifyMeridianRuntimeAttachment(ctx context.Context
 		return errors.New("agent: Meridian landing network identity changed")
 	}
 	return nil
-}
-
-func meridianContainerLandingPolicy(options *client.ContainerCreateOptions, peers []meridianruntime.Peer) {
-	if len(peers) != 0 {
-		options.HostConfig.RestartPolicy = container.RestartPolicy{Name: "no"}
-	}
 }
 
 func (e ApplicationExecutor) startMeridianLandingMonitor(ctx context.Context, state meridianRuntimeState) error {
@@ -508,7 +531,7 @@ func (e ApplicationExecutor) startMeridianLandingMonitor(ctx context.Context, st
 			monitors.Add(1)
 			go func() {
 				defer monitors.Done()
-				gate, err := landing.NewBridgeGate(peer.Identity, state.Bridge, state.appliedGateRevision())
+				gate, err := newMeridianTrafficGate(meridianPlanGates([]meridianruntime.Peer{peer}, state.Bridge, state.AppliedGID, state.appliedGateRevision())[0])
 				if err != nil {
 					return
 				}

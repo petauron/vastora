@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { executionActions, type ExecutionAction, type ExecutionClaimControl, type ExecutionPage, type ExecutionView, type LegacyReceiptView } from "../execution-types";
+import type { Screen } from "../types";
+import { SelectControl } from "@/components/SelectControl";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
 import type { Language } from "../translations";
-import { copy, formatDate, TechnicalError, userError } from "./shared";
+import { copy, formatDate, taskError, userError } from "./shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
@@ -44,7 +48,9 @@ function stateLabel(language: Language, value: ExecutionView) {
   return label ? copy(language, ...label) : copy(language, "待核对", "Needs review");
 }
 
-export function ExecutionSettings({ language, agents }: { language: Language; agents: { id: string; name: string }[] }) {
+export function ExecutionSettings({ language, agents, onNavigate }: { language: Language; agents: { id: string; name: string }[]; onNavigate?: (screen: Screen) => void }) {
+  const [filter, setFilter] = useState<"all" | "attention" | "running">("attention");
+  const [query, setQuery] = useState("");
   const [page, setPage] = useState<ExecutionPage | null>(null);
   const [control, setControl] = useState<ExecutionClaimControl | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,9 +63,9 @@ export function ExecutionSettings({ language, agents }: { language: Language; ag
     pending.current?.abort();
     const request = new AbortController();
     pending.current = request;
-    setBusy(true); setError("");
+    setBusy(true); setPage(null); setError("");
     try {
-      const [nextPage, nextControl] = await Promise.all([api.executions(before, request.signal), api.executionClaimControl(request.signal)]);
+      const [nextPage, nextControl] = await Promise.all([api.executions(before, request.signal, filter), api.executionClaimControl(request.signal)]);
       if (request.signal.aborted) return;
       setPage(nextPage); setControl(nextControl);
     } catch (cause) {
@@ -67,34 +73,38 @@ export function ExecutionSettings({ language, agents }: { language: Language; ag
     } finally {
       if (!request.signal.aborted) setBusy(false);
     }
-  }, [language]);
+  }, [language, filter]);
   useEffect(() => { void load(); return () => pending.current?.abort(); }, [load]);
   const names = new Map(agents.map((agent) => [agent.id, agent.name]));
+  const visible = page?.executions.filter((execution) => !query.trim() || (names.get(execution.agentId) ?? "").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return <Card>
-    <CardHeader><CardTitle>{copy(language, "任务执行", "Task execution")}</CardTitle><CardDescription>{copy(language, "查看执行记录，核对失败或结果不明的任务。不会自动重试失败任务。", "Review task history and uncertain outcomes. Failed tasks are not automatically retried.")}</CardDescription></CardHeader>
+    <CardHeader><CardTitle>{copy(language, "任务处理", "Tasks")}</CardTitle><CardDescription>{copy(language, "先查看需要处理的任务；失败任务会保留，核对前不会自动重试。", "Review tasks needing attention first. Failed tasks are retained and never retried automatically.")}</CardDescription></CardHeader>
     <CardContent className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <span role="status">{control ? control.paused ? copy(language, "紧急维护：已暂停所有新任务", "Emergency maintenance: all new task claims paused") : copy(language, "任务领取正常", "Task claims enabled") : copy(language, "正在读取", "Loading")}</span>
-        <Button className="min-h-11" disabled={busy || !control} variant="outline" onClick={() => setConfirmControl(true)}>{control?.paused ? copy(language, "结束紧急维护", "End emergency maintenance") : copy(language, "进入紧急维护", "Start emergency maintenance")}</Button>
+      {control?.paused ? <Alert><AlertTitle>{copy(language, "紧急维护：已暂停所有新任务", "Emergency maintenance: all new task claims paused")}</AlertTitle><AlertDescription><Button disabled={busy} variant="outline" onClick={() => setConfirmControl(true)}>{copy(language, "结束紧急维护", "End emergency maintenance")}</Button></AlertDescription></Alert> : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <SelectControl aria-label={copy(language, "任务状态", "Task status")} value={filter} onValueChange={(value) => setFilter(value as typeof filter)} options={[{value:"attention", label:copy(language,"需要处理","Needs attention")},{value:"running",label:copy(language,"进行中","In progress")},{value:"all",label:copy(language,"全部记录","All records")}]} />
+        <Input className="w-full sm:w-60" aria-label={copy(language,"搜索本页节点","Search nodes on this page")} placeholder={copy(language,"搜索本页节点…","Search nodes on this page…")} value={query} onChange={(event)=>setQuery(event.target.value)} />
+        {page ? <span className="text-xs text-muted-foreground">{copy(language, `本页 ${visible?.length ?? 0} 项`, `${visible?.length ?? 0} on this page`)}</span> : null}
       </div>
       {error ? <FieldError role="alert">{error}</FieldError> : null}
       {notice ? <p role="status" className="text-sm text-muted-foreground">{notice}</p> : null}
       {busy ? <p role="status" className="flex items-center gap-2"><Spinner />{copy(language, "正在读取", "Loading")}</p> : null}
-      {page && !page.executions.length ? <Empty><EmptyHeader><EmptyTitle>{copy(language, "暂无执行记录", "No executions yet")}</EmptyTitle></EmptyHeader></Empty> : null}
+      {page && !visible?.length ? <Empty><EmptyHeader><EmptyTitle>{query ? copy(language,"本页没有匹配的节点","No matching nodes on this page") : filter === "attention" ? copy(language,"没有待处理任务","No tasks need attention") : copy(language,"暂无任务记录","No tasks found")}</EmptyTitle></EmptyHeader></Empty> : null}
       <ul className="flex flex-col gap-2" aria-label={copy(language, "执行记录", "Execution history")}>
-        {page?.executions.map((execution) => <li key={execution.id}>
+        {visible?.map((execution) => <li key={execution.id}>
           <Button className="h-auto min-h-11 w-full flex-col items-start justify-between gap-3 py-3 sm:flex-row sm:items-center" variant="outline" disabled={busy} onClick={() => setSelected(execution)}>
-            <span className="flex min-w-0 flex-col items-start gap-1 text-left"><span className="max-w-full truncate">{names.get(execution.agentId) ?? copy(language, "已移除节点", "Removed node")}</span><span className="max-w-full whitespace-normal break-words text-xs text-muted-foreground">{kindLabel(language, execution.kind)} · {formatDate(language, execution.updatedAt)}</span></span>
+            <span className="flex min-w-0 flex-col items-start gap-1 text-left"><span className="max-w-full truncate">{names.get(execution.agentId) ?? copy(language, "未知节点", "Unknown node")}</span><span className="max-w-full whitespace-normal break-words text-xs text-muted-foreground">{kindLabel(language, execution.kind)} · {formatDate(language, execution.updatedAt)}</span></span>
             <Badge variant={!execution.disposition && ["failed", "unknown"].includes(execution.state) ? "destructive" : "secondary"}>{stateLabel(language, execution)}</Badge>
           </Button>
         </li>)}
       </ul>
+      {control && !control.paused ? <details className="border-t pt-3 text-xs text-muted-foreground"><summary className="cursor-pointer">{copy(language,"高级：紧急维护","Advanced: emergency maintenance")}</summary><p className="my-3">{copy(language,"暂停所有节点接收新任务，仅用于系统维护。正在运行的应用不会因此停止。","Pause new tasks on every node for maintenance. This does not stop running applications.")}</p><Button disabled={busy} variant="outline" onClick={() => setConfirmControl(true)}>{copy(language,"进入紧急维护","Start emergency maintenance")}</Button></details> : null}
     </CardContent>
     <CardFooter className="flex-wrap justify-end gap-2">
       <Button className="min-h-11" disabled={busy} variant="outline" onClick={() => void load()}>{copy(language, "刷新最新记录", "Refresh latest")}</Button>
       {page?.nextCursor ? <Button className="min-h-11" disabled={busy} variant="outline" onClick={() => void load(page.nextCursor)}>{copy(language, "更早记录", "Older records")}</Button> : null}
     </CardFooter>
-    {selected ? <ExecutionDetail key={selected.id} execution={selected} language={language} name={names.get(selected.agentId) ?? selected.agentId} onClose={() => setSelected(null)} onSaved={() => { setSelected(null); setNotice(copy(language, "处置已记录。", "Disposition recorded.")); void load(); }} /> : null}
+    {selected ? <ExecutionDetail key={selected.id} execution={selected} language={language} onNavigate={onNavigate} name={names.get(selected.agentId) ?? selected.agentId} onClose={() => setSelected(null)} onSaved={() => { setSelected(null); setNotice(copy(language, "处置已记录。", "Disposition recorded.")); void load(); }} /> : null}
     {confirmControl && control ? <ClaimControlConfirmation paused={control.paused} language={language} onClose={() => setConfirmControl(false)} onSaved={() => { setConfirmControl(false); setNotice(copy(language, "领取设置已保存。", "Claim settings saved.")); void load(); }} /> : null}
   </Card>;
 }
@@ -115,7 +125,7 @@ function ClaimControlConfirmation({ paused, language, onClose, onSaved }: { paus
   </SheetContent></Sheet>;
 }
 
-function ExecutionDetail({ execution, name, language, onClose, onSaved }: { execution: ExecutionView; name: string; language: Language; onClose: () => void; onSaved: () => void }) {
+function ExecutionDetail({ execution, name, language, onClose, onSaved, onNavigate }: { execution: ExecutionView; name: string; language: Language; onClose: () => void; onSaved: () => void; onNavigate?: (screen: Screen) => void }) {
   const [action, setAction] = useState<ExecutionAction | null>(null);
   const [stopped, setStopped] = useState(false);
   const [note, setNote] = useState("");
@@ -138,8 +148,8 @@ function ExecutionDetail({ execution, name, language, onClose, onSaved }: { exec
   return <Sheet open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><SheetContent showCloseButton={!busy} className="data-[side=right]:w-[calc(100%-1rem)] data-[side=right]:sm:max-w-lg">
     <SheetHeader><SheetTitle>{name}</SheetTitle><SheetDescription>{stateLabel(language, execution)} · {kindLabel(language, execution.kind)}</SheetDescription></SheetHeader>
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4">
-      <dl className="grid gap-3 text-sm"><div><dt>{copy(language, "任务", "Task")}</dt><dd className="break-all text-muted-foreground">{legacy?.taskId ?? execution.taskId}</dd></div><div><dt>{copy(language, "执行阶段", "Phase")}</dt><dd className="break-all text-muted-foreground">{execution.phase}</dd></div><div><dt>{copy(language, "执行次数", "Attempt")}</dt><dd>{execution.attempt}</dd></div></dl>
-      {execution.lastError ? <TechnicalError language={language} error={execution.lastError} /> : null}
+      {!execution.disposition && ["failed", "unknown"].includes(execution.state) ? <Alert><AlertTitle>{copy(language,"先核对实际状态","Check the actual state first")}</AlertTitle><AlertDescription><p>{taskError(language, execution.lastError)}</p><p>{copy(language,"如果不确定是否已完成，请保留任务，交由维护人员核对。放弃任务不会撤销服务器上已经发生的修改。","If the outcome is unclear, leave the task for an administrator to review. Abandoning it does not undo changes on the server.")}</p>{onNavigate ? <Button variant="outline" size="sm" onClick={() => onNavigate(execution.kind.startsWith("agent.") ? "nodes" : "apps")}>{execution.kind.startsWith("agent.") ? copy(language,"查看节点","View nodes") : copy(language,"查看应用","View apps")}</Button> : null}</AlertDescription></Alert> : null}
+      <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer">{copy(language,"技术详情","Technical details")}</summary><dl className="mt-3 grid gap-3"><div><dt>{copy(language,"任务编号","Task ID")}</dt><dd className="break-all text-muted-foreground">{legacy?.taskId ?? execution.taskId}</dd></div><div><dt>{copy(language,"执行阶段","Phase")}</dt><dd>{execution.phase}</dd></div><div><dt>{copy(language,"执行次数","Attempt")}</dt><dd>{execution.attempt}</dd></div></dl>{execution.lastError ? <code className="mt-3 block break-all text-xs">{execution.lastError}</code> : null}</details>
       {execution.kind === "legacy.receipt" ? <p className="text-sm text-muted-foreground">{legacy ? legacy.hasCompletion ? copy(language, "旧执行结果已安全保存，需要核对后处置。这里不会显示其中的凭据。", "Old result securely retained for review. Credentials are not displayed here.") : copy(language, "旧执行没有完成结果，需要核对实际资源。", "No completion result was retained; inspect actual resources.") : copy(language, "正在读取旧执行记录", "Loading legacy evidence")}</p> : null}
       {!action ? <div className="flex flex-wrap gap-2">{executionActions(execution).map((option) => <Button className="min-h-11" key={option} variant="outline" onClick={() => setAction(option)}>{actionLabel(language, option)}</Button>)}</div> : <FieldGroup>
         <p className="text-sm">{action === "reexecute" ? copy(language, "将创建一次新的执行。请确认旧操作已停止，并核对现有资源，避免重复变更。", "A new attempt will be created. Verify the old operation has stopped and inspect resources to avoid duplicate changes.") : action === "abandon" ? copy(language, "只放弃此任务，不撤销已经发生的变更，也不删除历史证据。", "Abandons this task without undoing changes or deleting evidence.") : copy(language, "请核对实际完成结果。节点在线或重连本身不代表任务已完成。", "Verify the actual result. Being online or reconnecting alone does not prove completion.")}</p>

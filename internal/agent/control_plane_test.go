@@ -525,7 +525,7 @@ func TestHeartbeatReportsAgentObservedPublicEgress(t *testing.T) {
 	if observationErr, heartbeatErr := client.heartbeat(context.Background(), store); observationErr != nil || heartbeatErr != nil {
 		t.Fatalf("ordinary heartbeat errors = %v, %v", observationErr, heartbeatErr)
 	}
-	if observations != 1 || reported != nil {
+	if observations != 2 || reported == nil {
 		t.Fatalf("ordinary heartbeat observed=%d reported=%#v", observations, reported)
 	}
 }
@@ -759,9 +759,10 @@ func TestExecutionHostHandoffDoesNotRearmOnRestart(t *testing.T) {
 					}
 					if strings.HasSuffix(r.URL.Path, "/tasks/host-task/result") {
 						var result struct {
-							Succeeded bool `json:"succeeded"`
+							Succeeded        bool `json:"succeeded"`
+							HostUpdateHelper bool `json:"hostUpdateHelper"`
 						}
-						if json.NewDecoder(r.Body).Decode(&result) != nil || result.Succeeded || !failed {
+						if json.NewDecoder(r.Body).Decode(&result) != nil || result.Succeeded || result.HostUpdateHelper || !failed {
 							t.Error("scheduling was reported as completed host work")
 						}
 						results.Add(1)
@@ -927,6 +928,12 @@ func TestHostUpdateHelperUsesAuthenticatedLifecycleCallbacks(t *testing.T) {
 		case "/api/v1/agents/agent-1/updates/agent-update-task-1/start":
 			started = true
 		case "/api/v1/agents/agent-1/tasks/agent-update-task-1/result":
+			var payload struct {
+				HostUpdateHelper bool `json:"hostUpdateHelper"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || !payload.HostUpdateHelper {
+				t.Errorf("update result did not identify its helper owner: %+v %v", payload, err)
+			}
 			completed = true
 		default:
 			t.Fatalf("unexpected host update callback: %s", request.URL.Path)
@@ -960,8 +967,9 @@ func TestHostUpdateHelperReportsRecoveryWithoutTerminalFailure(t *testing.T) {
 			Succeeded              bool   `json:"succeeded"`
 			Error                  string `json:"error"`
 			ReconciliationRequired bool   `json:"reconciliationRequired"`
+			HostUpdateHelper       bool   `json:"hostUpdateHelper"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Attempt != 2 || payload.Succeeded || !payload.ReconciliationRequired || payload.Error == "" {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Attempt != 2 || payload.Succeeded || !payload.ReconciliationRequired || !payload.HostUpdateHelper || payload.Error == "" {
 			t.Errorf("recovery was not explicitly marked as nonterminal: %#v %v", payload, err)
 		}
 		w.Header().Set("Content-Type", "application/json")

@@ -418,7 +418,15 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 			if linkErr != nil {
 				return nil, errors.New("center: stored Meridian routed VLESS credential is invalid")
 			}
-			routes = append(routes, meridian.PublishedRoute{Grant: grant, Protocol: meridian.VLESSReality, EntryName: base.EntryName, EgressRegionCode: selection.LandingRegionCodes[grant.EgressID], BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: base.Material.Credential.Identity, RouteProtocolIdentity: route.Material.Credential.Identity})
+			egressPrefix := ""
+			if code := selection.LandingRegionCodes[grant.EgressID]; code != "" {
+				if code == "TW" {
+					egressPrefix = "🇨🇳 台湾"
+				} else {
+					egressPrefix = regionPrefix(code)
+				}
+			}
+			routes = append(routes, meridian.PublishedRoute{Grant: grant, Protocol: meridian.VLESSReality, EntryName: base.EntryName, EgressRegionPrefix: egressPrefix, BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: base.Material.Credential.Identity, RouteProtocolIdentity: route.Material.Credential.Identity})
 		}
 	}
 	if err := rows.Err(); err != nil {

@@ -15,6 +15,38 @@ import (
 	"github.com/petauron/meridian"
 )
 
+func TestVersion89InvalidatesHealthBeforeLaterRendererMigration(t *testing.T) {
+	legacy := legacyMigrationStore(t, t.TempDir(), 88)
+	seedMeridianVersion88HealthFixture(t, legacy.db)
+	before := meridianVersion88PreservedState(t, legacy.db)
+	provider, err := newMigrationProvider(legacy.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(context.Background(), 89); err != nil {
+		t.Fatal(err)
+	}
+	if after := meridianVersion88PreservedState(t, legacy.db); !reflect.DeepEqual(before, after) {
+		t.Fatal("version 89 changed preserved Meridian material")
+	}
+	var revision, healthy int
+	var status string
+	if err := legacy.db.QueryRow(`SELECT desired_revision,runtime_healthy,status FROM meridian_endpoints WHERE id='v88-health-endpoint'`).Scan(&revision, &healthy, &status); err != nil || revision != 5 || healthy != 1 || status != "ready" {
+		t.Fatalf("version 89 changed endpoint state: revision=%d healthy=%d status=%s err=%v", revision, healthy, status, err)
+	}
+	for _, original := range []string{"ready", "pending", "revoking", "revoked", "failed"} {
+		wantStatus, wantMessage := original, "previous "+original+" diagnostic"
+		if original == "ready" {
+			wantStatus, wantMessage = "blocked", "Awaiting fresh direct entry-to-landing runtime evidence."
+		}
+		var expiry int64
+		var message string
+		if err := legacy.db.QueryRow(`SELECT desired_revision,runtime_healthy,health_expires_unix_ms,status,last_error FROM meridian_route_grants WHERE id=?`, "v88-health-grant-"+original).Scan(&revision, &healthy, &expiry, &status, &message); err != nil || revision != 3 || healthy != 0 || expiry != 0 || status != wantStatus || message != wantMessage {
+			t.Fatalf("version 89 route %s: revision=%d healthy=%d expiry=%d status=%s message=%q err=%v", original, revision, healthy, expiry, status, message, err)
+		}
+	}
+}
+
 func TestVersion89RequiresFreshLandingHealthWithoutChangingIdentityOrQuota(t *testing.T) {
 	directory := t.TempDir()
 	legacy := legacyMigrationStore(t, directory, 88)
@@ -30,14 +62,14 @@ func TestVersion89RequiresFreshLandingHealthWithoutChangingIdentityOrQuota(t *te
 	}
 	t.Cleanup(func() { _ = migrated.Close() })
 	if after := meridianVersion88PreservedState(t, migrated.db); !reflect.DeepEqual(before, after) {
-		t.Fatal("migration changed Meridian identities, configuration, subscription material, or quota usage")
+		t.Fatal("migration changed Meridian identities, configuration, applied revisions, subscription material, or quota usage")
 	}
-	// Version 100 intentionally advances ready VLESS endpoints and their active
-	// grants, so their mutable revisions and health are checked separately.
-	var endpointDesired, endpointApplied, endpointHealthy int
+	// Version 100 deliberately advances desired revisions and invalidates
+	// runtime health for the new renderer, while preserving applied identity.
+	var desired, applied, endpointHealthy int
 	var endpointStatus string
-	if err := migrated.db.QueryRow(`SELECT desired_revision,applied_revision,runtime_healthy,status FROM meridian_endpoints WHERE id='v88-health-endpoint'`).Scan(&endpointDesired, &endpointApplied, &endpointHealthy, &endpointStatus); err != nil || endpointDesired != 6 || endpointApplied != 5 || endpointHealthy != 0 || endpointStatus != "pending" {
-		t.Fatalf("destination migration endpoint revision=%d applied=%d healthy=%d status=%q err=%v", endpointDesired, endpointApplied, endpointHealthy, endpointStatus, err)
+	if err := migrated.db.QueryRow(`SELECT desired_revision,applied_revision,runtime_healthy,status FROM meridian_endpoints WHERE id='v88-health-endpoint'`).Scan(&desired, &applied, &endpointHealthy, &endpointStatus); err != nil || desired != 6 || applied != 5 || endpointHealthy != 0 || endpointStatus != "pending" {
+		t.Fatalf("renderer migration state: desired=%d applied=%d healthy=%d status=%s err=%v", desired, applied, endpointHealthy, endpointStatus, err)
 	}
 	var sourceJSON string
 	if err := migrated.db.QueryRow(`SELECT source_peer_json FROM meridian_endpoints WHERE id='v88-health-endpoint'`).Scan(&sourceJSON); err != nil || sourceJSON != "{}" {
@@ -60,6 +92,13 @@ func TestVersion89RequiresFreshLandingHealthWithoutChangingIdentityOrQuota(t *te
 		}
 		if status != expected.status || healthy != 0 || expires != 0 || message != expected.message {
 			t.Fatalf("route %s health was incorrectly inherited: status=%s healthy=%d expires=%d message=%q", expected.id, status, healthy, expires, message)
+		}
+		wantRevision := 4
+		if expected.id == "revoking" || expected.id == "revoked" {
+			wantRevision = 3
+		}
+		if err := migrated.db.QueryRow(`SELECT desired_revision,applied_revision FROM meridian_route_grants WHERE id=?`, "v88-health-grant-"+expected.id).Scan(&desired, &applied); err != nil || desired != wantRevision || applied != 3 {
+			t.Fatalf("route %s revisions=%d/%d err=%v", expected.id, desired, applied, err)
 		}
 	}
 	if _, err := migrated.db.Exec(`UPDATE meridian_route_grants SET health_expires_unix_ms=-1 WHERE id='v88-health-grant-ready'`); err == nil {
@@ -197,12 +236,14 @@ func seedMeridianVersion88HealthFixture(t *testing.T, db *sql.DB) {
 	}
 }
 
+// Private listen_port is intentionally migrated in v102 and tested there.
+// Public subscription addresses, credentials and usage remain invariant.
 func meridianVersion88PreservedState(t *testing.T, db *sql.DB) map[string]string {
 	t.Helper()
 	queries := map[string]string{
-		"endpoints": `SELECT id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,
+		"endpoints": `SELECT id,application_id,service_id,inbound_tag,advertise_host,advertise_port,target,target_ip,server_names_json,
 			private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,
-			hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,applied_revision,legacy_retired,created_at,updated_at
+			hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,applied_revision,legacy_retired,last_error,created_at,updated_at
 			FROM meridian_endpoints ORDER BY id`,
 		"accounts":    `SELECT * FROM meridian_accounts ORDER BY id`,
 		"credentials": `SELECT * FROM meridian_credentials ORDER BY id`,

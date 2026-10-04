@@ -92,11 +92,11 @@ func TestStopAgentAccessInvalidatesReconnectGrantsAndAllowsExplicitNewGrant(t *t
 	node := enrollAccessTestNode(t, store, "offline-node", "10.0.0.80")
 	other := enrollAccessTestNode(t, store, "other-node", "10.0.0.81")
 	clock = clock.Add(time.Minute)
-	stale, err := store.CreateAgentReconnectEnrollment(ctx, node.ID)
+	stale, err := createReviewedReconnect(t, store, ctx, node.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	unrelated, err := store.CreateAgentReconnectEnrollment(ctx, other.ID)
+	unrelated, err := createReviewedReconnect(t, store, ctx, other.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestStopAgentAccessInvalidatesReconnectGrantsAndAllowsExplicitNewGrant(t *t
 	if _, err := store.AgentEnrollmentInstallProfile(ctx, unrelated.Token); err != nil {
 		t.Fatalf("unrelated reconnect grant changed: %v", err)
 	}
-	current, err := store.CreateAgentReconnectEnrollment(ctx, node.ID)
+	current, err := createReviewedReconnect(t, store, ctx, node.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

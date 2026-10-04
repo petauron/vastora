@@ -468,7 +468,7 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 	privateValue := base64.RawURLEncoding.EncodeToString(privateKey.Bytes())
 	publicValue := base64.RawURLEncoding.EncodeToString(privateKey.PublicKey().Bytes())
 	endpoint := meridian.RealityEndpoint{ID: endpointID, EntryID: input.ApplicationID, InboundTag: "meridian-" + inboundToken,
-		ListenPort: meridian.DefaultRealityPort, AdvertiseHost: input.AdvertiseHost, AdvertisePort: meridian.DefaultRealityPort,
+		ListenPort: meridian.RealityBackendPort, AdvertiseHost: input.AdvertiseHost, AdvertisePort: meridian.DefaultRealityPort,
 		PrivateKey: privateValue, PublicKey: publicValue,
 		ShortIDs: []string{hex.EncodeToString(shortIDRaw)}, Fingerprint: input.Fingerprint}
 
@@ -492,15 +492,17 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 	if appKey != meridianAppKey || status != "running" || net.ParseIP(serviceAddress) == nil {
 		return MeridianEndpointView{}, errors.New("center: Meridian application is not ready for an endpoint")
 	}
+	endpoint.ListenAddress = serviceAddress
 	if err := s.ensureAllMeridianSubscriptionSnapshotsInTx(ctx, tx); err != nil {
 		return MeridianEndpointView{}, err
 	}
 	var previousPrivateSecretID string
-	var previousHY2CertificateSecretID, previousHY2PrivateKeySecretID sql.NullString
+	var previousHY2CertID, previousHY2KeyID sql.NullString
 	reactivate := false
-	retiredErr := tx.QueryRowContext(ctx, `SELECT id,service_id,private_key_secret_id,hy2_certificate_secret_id,hy2_private_key_secret_id
-		FROM meridian_endpoints WHERE application_id=? AND status='retired'`, input.ApplicationID).Scan(
-		&endpointID, &serviceID, &previousPrivateSecretID, &previousHY2CertificateSecretID, &previousHY2PrivateKeySecretID,
+	retiredErr := tx.QueryRowContext(ctx, `SELECT e.id,e.service_id,e.private_key_secret_id,
+		e.hy2_certificate_secret_id,e.hy2_private_key_secret_id -- Stored credential references only. gitleaks:allow
+		FROM meridian_endpoints e WHERE e.application_id=? AND e.status='retired'`, input.ApplicationID).Scan(
+		&endpointID, &serviceID, &previousPrivateSecretID, &previousHY2CertID, &previousHY2KeyID,
 	)
 	if retiredErr == nil {
 		reactivate = true
@@ -568,9 +570,9 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if reactivate {
-		result, err := tx.ExecContext(ctx, `UPDATE services SET site_id=?,name='inbound-1',display_name=?,region_code=?,protocol='tcp',container_port=443,host_port=443,
-			endpoint=?,source='observed',app_protocol=?,management=0,observed_listen='0.0.0.0',status='pending',last_error='',updated_at=?
-			WHERE id=? AND application_id=? AND status='stopped'`, siteID, displayName, region, net.JoinHostPort(serviceAddress, "443"), meridianEntryProtocol, now, serviceID, input.ApplicationID)
+		result, err := tx.ExecContext(ctx, `UPDATE services SET site_id=?,name='inbound-1',display_name=?,region_code=?,protocol='tcp',container_port=10443,host_port=10443,
+			endpoint=?,source='observed',app_protocol=?,management=0,observed_listen=?,status='pending',last_error='',updated_at=?
+			WHERE id=? AND application_id=? AND status='stopped'`, siteID, displayName, region, net.JoinHostPort(serviceAddress, "10443"), meridianEntryProtocol, serviceAddress, now, serviceID, input.ApplicationID)
 		if err != nil {
 			return MeridianEndpointView{}, fmt.Errorf("center: restore Meridian service: %w", err)
 		}
@@ -578,7 +580,7 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 			return MeridianEndpointView{}, errors.New("center: retired Meridian service is not reusable")
 		}
 	} else if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,region_code,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,'tcp',443,443,?,'observed',?,0,'0.0.0','pending',?,?)`, serviceID, input.ApplicationID, siteID, "inbound-1", displayName, region, net.JoinHostPort(serviceAddress, "443"), meridianEntryProtocol, now, now); err != nil {
+		VALUES(?,?,?,?,?,?,'tcp',10443,10443,?,'observed',?,0,?,'pending',?,?)`, serviceID, input.ApplicationID, siteID, "inbound-1", displayName, region, net.JoinHostPort(serviceAddress, "10443"), meridianEntryProtocol, serviceAddress, now, now); err != nil {
 		return MeridianEndpointView{}, fmt.Errorf("center: create Meridian service: %w", err)
 	}
 	secretID, err := s.putSecret(ctx, tx, []byte(privateValue), meridianEndpointSecretContext(endpointID))
@@ -588,10 +590,10 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 	names, _ := json.Marshal(endpoint.ServerNames)
 	shortIDs, _ := json.Marshal(endpoint.ShortIDs)
 	if reactivate {
-		result, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET service_id=?,inbound_tag=?,listen_port=?,advertise_host=?,advertise_port=?,target=?,target_ip=?,
+		result, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET service_id=?,inbound_tag=?,listen_address=?,listen_port=?,advertise_host=?,advertise_port=?,target=?,target_ip=?,
 			server_names_json=?,private_key_secret_id=?,public_key=?,short_ids_json=?,fingerprint=?,vless_enabled=1,hy2_enabled=0,hy2_inbound_tag='',hy2_server_name='',
 			hy2_certificate_secret_id=NULL,hy2_private_key_secret_id=NULL,hy2_certificate_not_after='',desired_revision=desired_revision+1,applied_revision=0,
-			runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE id=? AND application_id=? AND status='retired'`, serviceID, endpoint.InboundTag, endpoint.ListenPort,
+			runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE id=? AND application_id=? AND status='retired'`, serviceID, endpoint.InboundTag, endpoint.ListenAddress, endpoint.ListenPort,
 			endpoint.AdvertiseHost, endpoint.AdvertisePort, endpoint.Target, verified.TargetIP, names, secretID, endpoint.PublicKey, shortIDs, endpoint.Fingerprint, now, endpointID, input.ApplicationID)
 		if err != nil {
 			return MeridianEndpointView{}, fmt.Errorf("center: restore Meridian endpoint: %w", err)
@@ -599,15 +601,15 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 		if changed, _ := result.RowsAffected(); changed != 1 {
 			return MeridianEndpointView{}, errors.New("center: retired Meridian endpoint is not reusable")
 		}
-		for _, previousSecretID := range []sql.NullString{{String: previousPrivateSecretID, Valid: previousPrivateSecretID != ""}, previousHY2CertificateSecretID, previousHY2PrivateKeySecretID} {
+		for _, previousSecretID := range []sql.NullString{{String: previousPrivateSecretID, Valid: previousPrivateSecretID != ""}, previousHY2CertID, previousHY2KeyID} {
 			if previousSecretID.Valid && previousSecretID.String != secretID {
 				if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id=?`, previousSecretID.String); err != nil {
 					return MeridianEndpointView{}, err
 				}
 			}
 		}
-	} else if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,status,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, endpointID, input.ApplicationID, serviceID, endpoint.InboundTag, endpoint.ListenPort,
+	} else if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,status,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, endpointID, input.ApplicationID, serviceID, endpoint.InboundTag, endpoint.ListenAddress, endpoint.ListenPort,
 		endpoint.AdvertiseHost, endpoint.AdvertisePort, endpoint.Target, verified.TargetIP, names, secretID, endpoint.PublicKey, shortIDs, endpoint.Fingerprint, 1, 0, "", "", nil, nil, "", "pending", now, now); err != nil {
 		return MeridianEndpointView{}, fmt.Errorf("center: create Meridian endpoint: %w", err)
 	}

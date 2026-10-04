@@ -54,6 +54,7 @@
     { "value": "inet.no", "reason": "Reviewed public networking reference" },
     { "value": "intel.com", "reason": "Reviewed public REALITY target reference" },
     { "value": "ippure.com", "reason": "Reviewed public IPPure documentation and diagnostic API" },
+    { "value": "ip2location.io", "reason": "Reviewed public IP fraud-score documentation" },
     { "value": "ipqualityscore.com", "reason": "Reviewed public IP risk documentation" },
     { "value": "json-schema.org", "reason": "Reviewed public JSON Schema identifier" },
     { "value": "leaseweb.net", "reason": "Reviewed public bandwidth test endpoint" },

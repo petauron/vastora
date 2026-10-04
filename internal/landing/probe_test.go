@@ -56,7 +56,7 @@ func TestTCPProbeDeadlineCoversSOCKSAndTLSHandshake(t *testing.T) {
 			}()
 			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 			defer cancel()
-			_, err = (Probe{}).tcp(ctx, listener.Addr().String())
+			_, err = (Probe{}).CheckClientTCP(ctx, listener.Addr().String())
 			var failure *probeError
 			if !errors.As(err, &failure) || failure.stage != stage || failure.reason != "timeout" {
 				t.Fatalf("missing phase-specific timeout: %v", err)

@@ -29,7 +29,7 @@ func TestPublicEgressObserverDetectsOncePerProcess(t *testing.T) {
 	}
 }
 
-func TestPublicEgressObserverDoesNotRetryAFailedStartupObservation(t *testing.T) {
+func TestPublicEgressObserverRetriesFailedObservationAfterCooldown(t *testing.T) {
 	now := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
 	calls := 0
 	observer := newStartupPublicEgressObserver(func(_ context.Context, _ string, _ bool, _ []networking.Candidate, _ time.Time) (*networking.PublicEgress, error) {
@@ -39,7 +39,10 @@ func TestPublicEgressObserverDoesNotRetryAFailedStartupObservation(t *testing.T)
 	if value, err := observer(context.Background(), "https://helper.example.com/network/public-address", false, nil, now); value != nil || err == nil {
 		t.Fatalf("first observation = %#v, %v", value, err)
 	}
-	if value, err := observer(context.Background(), "https://helper.example.com/network/public-address", false, nil, now.Add(time.Hour)); value != nil || err != nil || calls != 1 {
+	if value, err := observer(context.Background(), "https://helper.example.com/network/public-address", false, nil, now.Add(30*time.Second)); value != nil || err != nil || calls != 1 {
 		t.Fatalf("cached failure = %#v, %v calls=%d", value, err, calls)
+	}
+	if value, err := observer(context.Background(), "https://helper.example.com/network/public-address", false, nil, now.Add(time.Minute)); value != nil || err == nil || calls != 2 {
+		t.Fatalf("retry = %#v, %v calls=%d", value, err, calls)
 	}
 }

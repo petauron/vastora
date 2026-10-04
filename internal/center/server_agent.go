@@ -105,7 +105,37 @@ func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request
 }
 
 func (s *Server) handleCreateAgentReconnectEnrollment(writer http.ResponseWriter, request *http.Request) {
-	enrollment, err := s.store.CreateAgentReconnectEnrollment(request.Context(), request.PathValue("id"))
+	var input AgentReinstallInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	adminID, err := s.requestAdminID(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	enrollment, err := s.store.CreateAgentReconnectEnrollment(request.Context(), request.PathValue("id"), adminID, input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusCreated, enrollment)
+}
+
+func (s *Server) handleContinueAgentReinstallIsolation(writer http.ResponseWriter, request *http.Request) {
+	var input AgentReinstallContinueInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	adminID, err := s.requestAdminID(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	enrollment, err := s.store.ContinueAgentReinstallIsolation(request.Context(), request.PathValue("id"), adminID, input)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
@@ -224,6 +254,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		GatewayConfigHash            string                             `json:"gatewayConfigHash"`
 		NodeListenerHealthy          bool                               `json:"nodeListenerHealthy"`
 		LandingHealth                *landing.Health                    `json:"landingHealth"`
+		PrivateNetworkPeer           *landing.PeerIdentity              `json:"privateNetworkPeer"`
 		LandingClientRuntime         *landing.ClientRuntime             `json:"landingClientRuntime"`
 		NodeListenerRevision         int64                              `json:"nodeListenerRevision"`
 		NodeListenerConfigHash       string                             `json:"nodeListenerConfigHash"`
@@ -246,7 +277,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
-	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{LandingEgressAddresses: input.LandingEgressAddresses, LandingClientRuntime: input.LandingClientRuntime, LandingHealth: input.LandingHealth, PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, MeridianRuntime: input.MeridianRuntime, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, RuntimeRecoveryApplications: input.RuntimeRecoveryApplications, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{PrivateNetworkPeer: input.PrivateNetworkPeer, LandingEgressAddresses: input.LandingEgressAddresses, LandingClientRuntime: input.LandingClientRuntime, LandingHealth: input.LandingHealth, PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, MeridianRuntime: input.MeridianRuntime, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, RuntimeRecoveryApplications: input.RuntimeRecoveryApplications, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
 		slog.ErrorContext(request.Context(), "Agent heartbeat projection failed", "agent_id", request.PathValue("id"), "error", controlplane.SafeError(err.Error()))
 		writeError(writer, http.StatusInternalServerError, err)
 		return
@@ -359,6 +390,7 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 	var input struct {
 		ExecutionID                  string          `json:"executionId"`
 		SessionID                    string          `json:"sessionId"`
+		HostUpdateHelper             bool            `json:"hostUpdateHelper"`
 		Attempt                      int64           `json:"attempt"`
 		Succeeded                    bool            `json:"succeeded"`
 		Error                        string          `json:"error"`
@@ -383,7 +415,7 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 	if len(input.Result) == 0 {
 		input.Result = json.RawMessage(`{}`)
 	}
-	if err := s.store.StoreExecutionResult(request.Context(), agentID, input.SessionID, input.ExecutionID, input.Result, input.Succeeded, input.ReconciliationRequired, input.Error, input.ApplicationRuntimeGeneration); err != nil {
+	if err := s.store.StoreExecutionResult(request.Context(), agentID, input.SessionID, input.ExecutionID, input.Result, input.Succeeded, input.ReconciliationRequired, input.Error, input.ApplicationRuntimeGeneration, input.HostUpdateHelper); err != nil {
 		writeError(writer, http.StatusConflict, err)
 		return
 	}

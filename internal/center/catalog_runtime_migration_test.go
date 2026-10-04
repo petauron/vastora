@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -49,9 +50,15 @@ func signedLegacyCatalogAuditFixture(t *testing.T, private ed25519.PrivateKey, v
 }
 
 func TestCatalogV4MigrationPreservesLegacyHashesTrustAndResources(t *testing.T) {
+	for _, version := range []int64{100, 108} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) { verifyCatalogV4Migration(t, version) })
+	}
+}
+
+func verifyCatalogV4Migration(t *testing.T, sourceVersion int64) {
 	ctx := context.Background()
 	directory := t.TempDir()
-	legacy := legacyMigrationStore(t, directory, 100)
+	legacy := legacyMigrationStore(t, directory, sourceVersion)
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -128,9 +135,9 @@ func TestCatalogV4MigrationPreservesLegacyHashesTrustAndResources(t *testing.T) 
 	}
 	defer fresh.Close()
 	if !reflect.DeepEqual(databaseSchemaShape(t, fresh.db), databaseSchemaShape(t, migrated.db)) {
-		t.Fatal("schema100 migration differs from fresh schema102")
+		t.Fatal("migrated database differs from fresh schema109")
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v100-before-v102-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v%d-before-v109-*.db", sourceVersion)))
 	if err != nil || len(backups) != 1 {
 		t.Fatal("migration did not preserve pre-upgrade backup", err)
 	}
@@ -138,16 +145,22 @@ func TestCatalogV4MigrationPreservesLegacyHashesTrustAndResources(t *testing.T) 
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatal("migration backup permissions", err)
 	}
-	if version, err := sqliteSchemaVersion(ctx, migrated.db); err != nil || version != 102 {
+	if version, err := sqliteSchemaVersion(ctx, migrated.db); err != nil || version != 109 {
 		t.Fatal("schema version", version, err)
 	}
 }
 
 func TestCatalogV4MigrationRejectsInflightOrUncertainOperations(t *testing.T) {
+	for _, version := range []int64{100, 108} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) { verifyCatalogV4MigrationRejectsWork(t, version) })
+	}
+}
+
+func verifyCatalogV4MigrationRejectsWork(t *testing.T, sourceVersion int64) {
 	for _, state := range []string{"pending", "running", "uncertain"} {
 		t.Run(state, func(t *testing.T) {
 			directory := t.TempDir()
-			legacy := legacyMigrationStore(t, directory, 100)
+			legacy := legacyMigrationStore(t, directory, sourceVersion)
 			stamp := time.Now().UTC().Format(time.RFC3339Nano)
 			actual := state
 			uncertain := 0
@@ -170,7 +183,7 @@ func TestCatalogV4MigrationRejectsInflightOrUncertainOperations(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer db.Close()
-			if version, err := sqliteSchemaVersion(context.Background(), db); err != nil || version != 100 {
+			if version, err := sqliteSchemaVersion(context.Background(), db); err != nil || version != sourceVersion {
 				t.Fatal("failed migration partially advanced schema", version, err)
 			}
 			var storedState string

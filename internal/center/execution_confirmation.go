@@ -58,7 +58,7 @@ func (s *Store) projectRetainedExecutionResult(ctx context.Context, id string, r
 	if resolution.automatic {
 		stateFilter = "state='unknown' AND phase='result_received'"
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT agent_id,task_id,kind,attempt,sealed_task,sealed_result FROM task_executions WHERE id=? AND `+stateFilter+` AND disposition=''`, id).Scan(&agentID, &taskID, &kind, &attempt, &sealedTask, &sealedResult); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT agent_id,task_id,kind,attempt,sealed_task,sealed_result FROM task_executions WHERE id=? AND `+stateFilter+` AND disposition='' AND identity_retired_at=''`, id).Scan(&agentID, &taskID, &kind, &attempt, &sealedTask, &sealedResult); err != nil {
 		if resolution.automatic && errors.Is(err, sql.ErrNoRows) {
 			return errRetainedExecutionNotRecoverable
 		}

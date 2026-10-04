@@ -20,6 +20,81 @@ export function userError(language: Language, error: unknown) {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const normalized = detail.toLowerCase();
+  const reinstallErrors: Record<string, string> = {
+    "center: current authenticated client verification is incomplete": "真实客户端验收未通过或已过期，请查看验收结果并明确重新验证。",
+    "center: real client verification is required": "请先完成真实客户端验收。",
+    "center: an original client identity has no current verification": "部分原有账号或协议尚无有效验收结果，请重新验证全部线路。",
+    "center: client verification is still running or requires inspection": "客户端验证仍在执行或结果不明确，请先核对该任务。",
+    "center: fresh authenticated runtime observation is required": "运行时上报已过期，请等待新机器上报后刷新。",
+    "center: landing transport authorization has expired; wait for a fresh observation": "落地连接授权已过期，请等待新鲜运行时上报。",
+    "center: fresh reports from the original monitoring identity are required": "请先验证原监控身份的新鲜上报。",
+    "center: current shared entry verification is required": "请先重新验证共享入口的解析和 TLS。",
+    "center: current entry DNS verification is required": "请先核对入口 DNS；手动 DNS 需通过入口验证。",
+    "center: business data restoration has not been verified": "业务数据尚未恢复并验证，不能完成全部恢复。",
+    "center: an application has no verified recovery procedure": "部分应用尚无经过验证的恢复方式，请先处理恢复清单。",
+    "center: a separate online verifier is required": "请选择另一台在线且支持自动验收的节点。",
+    "center: inspect the outstanding client check before starting another request": "已有客户端验证尚未结束或结果不明，请先核对，不要重复发起。",
+    "center: fresh exit evidence is required": "出口上报已过期，请等待相关节点重新上报。",
+    "center: selected landing exit is unconfirmed": "当前选择的落地出口尚未确认，请核对出口配置。",
+    "center: usage changed restored access requirements; review runtime before completion": "最新用量改变了访问权限，请核对运行配置后再完成恢复。",
+    "center: resolve outstanding work before completing recovery": "请先处理未完成或结果不明的历史任务。",
+    "center: restored application runtime and reviewed access are required": "请先恢复应用运行配置并启用已确认的访问地址。",
+    "center: current replacement network approval is required": "请先确认当前新机器的网络地址。",
+    "center: an uninstalled application still has running state": "应保持卸载的应用仍显示运行中，请核对后再完成恢复。",
+
+    "center: authenticated previous private identity evidence is missing": "缺少旧机器已认证的私网身份记录，无法安全撤销旧身份。恢复已暂停。",
+    "center: previous private network is externally managed; verify its isolation before recovery": "旧私网由外部管理，请先核对旧机器的访问权限是否已撤销。",
+    "center: previous private address is assigned to another node": "原私网地址已属于另一节点，恢复已暂停。",
+    "center: private controller is unavailable; recovery remains paused": "私网控制面不可用，恢复已暂停。",
+    "center: private controller changed after recovery authorization": "确认后私网控制面发生变化，请核对后再继续。",
+    "center: private identity inspection failed; recovery remains paused": "无法核对旧私网身份，恢复已暂停。",
+    "center: previous private identity or address ownership changed; recovery remains paused": "旧私网身份或地址归属发生变化，恢复已暂停。",
+    "center: private identity withdrawal was not confirmed; inspect the saved identity before continuing": "未收到旧私网身份撤销的确认，请核对已保存的身份记录后再继续。",
+    "center: private identity withdrawal could not be verified; recovery remains paused": "无法验证旧私网身份是否已撤销，恢复已暂停。",
+    "center: previous private identity or address is still present; recovery remains paused": "旧私网身份或地址仍在使用，恢复已暂停。",
+    "center: previous private identity must be isolated before command preparation": "先完成旧私网身份隔离，再生成接入命令。",
+    "center: command preparation stopped; inspect recovery before continuing": "接入命令准备已停止，请先核对恢复进度。",
+    "center: recovery progress changed or command preparation already started; refresh before continuing": "恢复进度已变化，或已进入接入命令准备阶段。请刷新状态，勿重复操作。",
+    "center: explicitly confirm private identity inspection before continuing": "请明确确认核对旧私网身份，再继续隔离。",
+    "center: review address migration through the active reinstall recovery before confirming network settings": "节点正在重装恢复，请先在恢复流程中核对地址迁移。",
+    "center: explicitly confirm the reviewed old-machine executions": "请核对旧本机执行记录，再明确确认终止。",
+    "center: old-machine isolation and authorized replacement enrollment are required before settlement": "先完成旧机器隔离和新机器接入，再处理旧本机执行。",
+    "center: replacement identity changed; review recovery before continuing": "新机器身份已变化，请刷新并核对恢复状态。",
+    "center: previous execution evidence changed; inspect it before settlement": "旧执行证据已变化，请核对后再处理。",
+    "center: previous task attempt changed; inspect it before settlement": "旧任务的执行状态已变化，请到活动记录核对后再处理。",
+    "center: no isolated local executions are eligible for settlement": "当前没有可统一处理的旧本机执行，请刷新状态。",
+  };
+  if (reinstallErrors[normalized]) return copy(language, reinstallErrors[normalized], detail);
+  if (normalized === "center: recovery plan changed; review it again before confirming") {
+    return copy(language, "恢复清单已变化，请刷新状态后重新确认。", detail);
+  }
+  if (normalized === "center: recovery already started; inspect its saved progress before continuing") {
+    return copy(language, "恢复操作已开始，请刷新并核对已保存的进度，避免重复操作。", detail);
+  }
+  if (normalized === "center: recovery command is no longer valid; review the node again") {
+    return copy(language, "接入命令已失效，请重新核对节点的恢复状态。", detail);
+  }
+  if (normalized === "center: disconnect the agent before generating a reconnect command") {
+    return copy(language, "节点仍在线，请先确认原机器已停止接入。", detail);
+  }
+  if (normalized === "center: restore the native meridian runtime and wait for a fresh authenticated private identity report before recovering landing access") {
+    return copy(language, "请先恢复本机 Meridian，并等待节点上报最新私网身份，再恢复落地线路。", detail);
+  }
+  if (normalized === "center: this meridian entry has no replacement private identity to recover") {
+    return copy(language, "当前私网身份与原授权一致，无需进行重装恢复。", detail);
+  }
+  if (normalized === "center: meridian replacement identity or configuration changed; inspect it again before confirming") {
+    return copy(language, "节点身份或配置已变化，请重新检查并确认。", detail);
+  }
+  if (normalized === "center: settle active or uncertain executions on the entry and affected landings before identity recovery") {
+    return copy(language, "线路机或相关落地机仍有未完成任务，请先在活动页面处理。", detail);
+  }
+  if (normalized === "center: wait for the affected landing services to finish their current authorization update") {
+    return copy(language, "相关落地机仍在更新授权，请等待完成后重试。", detail);
+  }
+  if (normalized === "center: wait for the landing services to confirm withdrawal of the previous entry identity") {
+    return copy(language, "正在撤回原节点的落地权限，请等待落地机确认后重试。", detail);
+  }
   if (code === "execution_blocked") return copy(language, "相关节点有待处理任务，请处理后重试。", "A related node has unresolved tasks. Resolve them before retrying.");
   if (code === "landing_pool_revision_changed") return copy(language, "全局落地池已变化，请刷新后重试。", "The global landing pool changed. Refresh before retrying.");
   if (normalized === "center: resolve outstanding execution and runtime recovery before updating") {
@@ -90,6 +165,15 @@ export function userError(language: Language, error: unknown) {
   if (code === "invalid_request") return copy(language, "填写内容不完整或格式不正确，请检查后重试。", "Some entries are missing or invalid. Check them and try again.");
   if (code === "internal_error") return copy(language, "Center 暂时无法完成此操作，请稍后重试。", "Center could not complete the operation. Try again shortly.");
   return copy(language, "操作未完成，请检查填写内容后重试。", "The operation did not complete. Check your entries and try again.");
+}
+
+// Task failures are not form validation failures. Keep raw diagnostics in details.
+export function taskError(language: Language, error?: string) {
+  const value = (error ?? "").toLowerCase();
+  if (value.includes("private identity changed before handover")) return copy(language, "节点重新接入后，连接身份已变化，这次落地配置未完成。请到应用中核对线路与落地机，再重新配置。", "The node rejoined with a new identity, so this exit configuration did not complete. Review its entry and exit connection in Apps before configuring it again.");
+  if (value.includes("deadline exceeded") || value.includes("timeout") || value.includes("timed out")) return copy(language, "节点没有在规定时间内返回结果。请先检查节点是否在线，并核对任务是否已完成。", "The node did not return a result in time. Check whether it is online and whether the task actually completed.");
+  if (value.includes("offline") || value.includes("not connected")) return copy(language, "节点暂时离线。请先恢复节点连接，再检查这项任务。", "The node is offline. Restore its connection, then review this task.");
+  return copy(language, "任务未能完成。请先查看对应节点或应用的状态；技术详情可用于进一步排查。", "The task did not complete. Check the affected node or app; technical details are available for troubleshooting.");
 }
 
 export function TechnicalError({ language, error }: { language: Language; error: unknown }) {

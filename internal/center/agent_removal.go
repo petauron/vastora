@@ -104,6 +104,8 @@ func validateAgentRemovalDependencies(ctx context.Context, tx *sql.Tx, id string
 		`SELECT COUNT(*) FROM landing_proxy_states WHERE landing_node_id=? AND node_id<>landing_node_id AND (status<>'stopped' OR desired_revision<>applied_revision OR json_extract(desired_json,'$.proxy') IS NOT NULL OR json_extract(desired_json,'$.clients') IS NOT NULL)`,
 		`SELECT COUNT(*) FROM landing_proxy_retirements WHERE landing_node_id=? AND node_id<>landing_node_id`,
 		`SELECT COUNT(*) FROM landing_client_grants g JOIN applications a ON a.id=g.application_id WHERE g.landing_node_id=? AND a.node_id<>g.landing_node_id AND g.status<>'revoked'`,
+		`SELECT COUNT(*) FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id JOIN applications a ON a.id=e.application_id WHERE g.egress_node_id=? AND a.node_id<>g.egress_node_id AND g.status<>'revoked'`,
+		`SELECT COUNT(*) FROM meridian_credentials c JOIN meridian_endpoints e ON e.id=c.endpoint_id JOIN applications a ON a.id=e.application_id WHERE c.egress_node_id=? AND a.node_id<>c.egress_node_id AND c.enabled=1`,
 		`SELECT COUNT(*) FROM three_x_ui_migrations m JOIN applications a ON a.id=m.source_application_id OR a.id=m.target_application_id WHERE a.node_id=? AND m.state IN ('backing_up','restoring','switching')`,
 		`SELECT COUNT(*) FROM applications a WHERE a.node_id=? AND a.app_key='vastora-official/pulse' AND EXISTS(SELECT 1 FROM applications p WHERE p.node_id<>a.node_id AND p.app_key='vastora-official/pulse-agent' AND p.status<>'stopped')`,
 		`SELECT COUNT(*) FROM agent_network_candidates c JOIN settings s ON s.key='cloudflare_setup_gateway_binding' WHERE c.agent_id=? AND c.address=json_extract(s.value,'$.bindAddress')`,
@@ -122,6 +124,7 @@ func validateAgentRemovalDependencies(ctx context.Context, tx *sql.Tx, id string
 
 func revokeAgentReconnectGrants(ctx context.Context, tx *sql.Tx, id string) error {
 	for _, query := range []string{
+		`UPDATE agent_reinstall_operations SET state='superseded',sealed_enrollment=NULL,last_error='Recovery command revoked by administrator' WHERE agent_id=? AND state IN ('preparing','awaiting_enrollment')`,
 		`DELETE FROM secrets WHERE id IN (SELECT bootstrap_secret_id FROM agent_enrollment_tokens WHERE target_agent_id=? AND bootstrap_secret_id IS NOT NULL)`,
 		`DELETE FROM agent_enrollment_tokens WHERE target_agent_id=?`,
 		`DELETE FROM agent_enrollment_operations WHERE agent_id=?`,
@@ -159,6 +162,9 @@ func cancelRemovedAgentTasks(ctx context.Context, tx *sql.Tx, id string, now tim
 }
 
 func retryRemovedAgentCommands(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
+	if err := retireMigratedAgentTopology(ctx, tx, id, now); err != nil {
+		return err
+	}
 	// Retry only the latest unresolved command for each retired application.
 	// Old failed attempts must not supersede a later successful receipt.
 	rows, err := tx.QueryContext(ctx, `SELECT c.id FROM application_commands c JOIN applications a ON a.id=c.application_id JOIN three_x_ui_nodes n ON n.worker_application_id=a.id
@@ -330,6 +336,9 @@ func (s *Store) removeAgentSubscriptionNodes(ctx context.Context, id string) err
 		return err
 	}
 	defer tx.Rollback()
+	if err = retireMigratedAgentTopology(ctx, tx, id, s.now().UTC()); err != nil {
+		return err
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT n.worker_application_id FROM three_x_ui_nodes n JOIN applications a ON a.id=n.worker_application_id WHERE a.node_id=? AND n.status<>'stopped' ORDER BY n.worker_application_id`, id)
 	if err != nil {
 		return err
@@ -389,6 +398,24 @@ func (s *Store) removeAgentSubscriptionNodes(ctx context.Context, id string) err
 		return errNodeRemovalWaiting
 	}
 	return nil
+}
+
+// Completed Meridian cutover receipts prove the old controller and worker
+// runtimes were retired. Their retained topology is history, not an installed
+// 3x-ui node to remove remotely. In-flight commands still require reconciliation.
+func retireMigratedAgentTopology(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
+	_, err := tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status='stopped',last_error='',updated_at=?
+		WHERE worker_application_id IN (SELECT id FROM applications WHERE node_id=? AND app_key=?)
+		AND master_application_id IN (
+			SELECT controller.id FROM applications controller JOIN meridian_cutover cutover
+			ON cutover.legacy_controller_application_id=controller.id
+			WHERE controller.app_key=? AND cutover.state='complete' AND cutover.subscription_authority='meridian')
+		AND EXISTS (SELECT 1 FROM meridian_endpoints WHERE application_id=worker_application_id AND legacy_retired=1)
+		AND NOT EXISTS (SELECT 1 FROM meridian_endpoints WHERE application_id=worker_application_id AND legacy_retired=0)
+		AND NOT EXISTS (SELECT 1 FROM application_commands WHERE application_id=worker_application_id
+			AND kind=? AND (state IN ('pending','running') OR reconciliation_required=1))`,
+		now.Format(time.RFC3339Nano), id, meridianAppKey, meridianAppKey, nodeCommandKind)
+	return err
 }
 
 func (s *Store) removeAgentLandingReferences(ctx context.Context, tx *sql.Tx, id string) error {

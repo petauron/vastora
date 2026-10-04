@@ -19,7 +19,6 @@ import (
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 	"github.com/petauron/meridian"
-	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/secret"
@@ -45,6 +44,8 @@ type meridianRuntimeState struct {
 	AppliedSource       *landing.PeerIdentity     `json:"appliedSource,omitempty"`
 	PendingSource       *landing.PeerIdentity     `json:"pendingSource,omitempty"`
 	GateRevision        uint64                    `json:"gateRevision,omitempty"`
+	AppliedGID          uint32                    `json:"appliedGid,omitempty"`
+	PendingGID          uint32                    `json:"pendingGid,omitempty"`
 	Bridge              string                    `json:"bridge,omitempty"`
 	RetiringGates       []meridianGateIdentity    `json:"retiringGates,omitempty"`
 	HandoverPending     bool                      `json:"handoverPending,omitempty"`
@@ -125,10 +126,11 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 		return state, fmt.Errorf("%w: pending revision has no verifiable active configuration", errMeridianExplicitRecoveryRequired)
 	}
 	if state.Applied != nil && artifactMatchesBytes(*state.Applied, active) {
-		state.RetiringGates = appendMeridianGates(state.RetiringGates, meridianPlanGates(state.PendingPeers, state.Bridge, state.Pending.Revision)...)
+		state.RetiringGates = appendMeridianGates(state.RetiringGates, meridianPlanGates(state.PendingPeers, state.Bridge, state.PendingGID, state.Pending.Revision)...)
 		state.Pending = nil
 		state.PendingPeers = nil
 		state.PendingSource = nil
+		state.PendingGID = 0
 		if err := e.Store.saveMeridianRuntimeState(ctx, state); err != nil {
 			return state, err
 		}
@@ -141,6 +143,7 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 	candidate.Applied, candidate.Pending = state.Pending, nil
 	candidate.AppliedPeers, candidate.PendingPeers = slices.Clone(state.PendingPeers), nil
 	candidate.AppliedSource, candidate.PendingSource = cloneMeridianSource(state.PendingSource), nil
+	candidate.AppliedGID, candidate.PendingGID = state.PendingGID, 0
 	candidate.GateRevision = 0
 	candidate.ImageReference = pendingImageReference
 	socket := e.DockerSocket
@@ -171,9 +174,9 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 
 // replaceMeridianPendingState is deliberately reachable only through an
 // operator-authorized Center task. It replaces an uncertain journal entry
-// with the complete current Center projection; the active file is still kept
-// as the transactional rollback input until the new container is healthy.
-func (e ApplicationExecutor) replaceMeridianPendingState(ctx context.Context, state meridianRuntimeState, task meridianruntime.Task) (meridianRuntimeState, error) {
+// with the complete current Center projection. Both artifact versions remain
+// in the encrypted journal until the new container is healthy.
+func (e ApplicationExecutor) replaceMeridianPendingState(ctx context.Context, state meridianRuntimeState, task meridianruntime.Task, gid uint32) (meridianRuntimeState, error) {
 	if !task.ReplacePendingState || state.Pending == nil {
 		return state, errors.New("agent: Meridian pending-state replacement was not authorized")
 	}
@@ -189,6 +192,7 @@ func (e ApplicationExecutor) replaceMeridianPendingState(ctx context.Context, st
 	candidate.Pending = &desired
 	candidate.PendingPeers = slices.Clone(task.Peers)
 	candidate.PendingSource = cloneMeridianSource(task.Source)
+	candidate.PendingGID = gid
 	candidate.ImageReference = task.ImageReference
 	if err := e.Store.saveMeridianRuntimeState(ctx, candidate); err != nil {
 		return state, err
@@ -204,11 +208,48 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	if receiptErr != nil || !receiptAuthorizesImage(receipt, task.ImageReference) {
 		return result, errors.New("agent: Meridian runtime image is not authorized by the installed package receipt")
 	}
+	if len(task.EgressClients) != 0 {
+		defer func() {
+			if resultErr != nil {
+				return
+			}
+			evidence := &meridianruntime.EgressObservation{Policy: task.NativeEgress, ConfigSHA256: task.Desired.ConfigSHA256}
+			for _, c := range task.EgressClients {
+				exit, err := e.verifyMeridianEgressClient(ctx, c, task.ImageReference, task.NativeEgress)
+				if err != nil {
+					resultErr = err
+					return
+				}
+				evidence.Exits = append(evidence.Exits, exit)
+			}
+			evidence.CheckedAt = time.Now().UTC()
+			result.Egress = evidence
+		}()
+	}
 	state, err := e.Store.loadMeridianRuntimeState(ctx)
 	if errors.Is(err, errApplicationNotInstalled) {
 		state = meridianRuntimeState{ApplicationID: task.ApplicationID, ImageReference: task.ImageReference}
 	} else if err != nil {
 		return result, err
+	}
+	if len(task.EgressClients) != 0 && task.NativeEgress != meridian.EgressAuto {
+		if err := e.checkNativeEgressNetwork(ctx, task, state); err != nil {
+			return result, err
+		}
+	}
+	gid := state.AppliedGID
+	unchangedConfig := state.Applied != nil && state.Applied.ConfigSHA256 == task.Desired.ConfigSHA256 && state.ImageReference == task.ImageReference && !task.ReplacePendingState
+	if !unchangedConfig {
+		if err := validateMeridianHostListeners(task.Desired); err != nil {
+			return result, err
+		}
+		gid, err = ensureMeridianRuntimeGroup(ctx)
+		if err != nil {
+			return result, err
+		}
+		if state.AppliedGID != 0 && state.AppliedGID != gid || state.PendingGID != 0 && state.PendingGID != gid {
+			return result, errors.New("agent: Meridian runtime group changed")
+		}
 	}
 	if state.ApplicationID != task.ApplicationID {
 		return result, errors.New("agent: Meridian runtime belongs to another application")
@@ -217,7 +258,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 		if err := e.Store.stopLandingMonitor(ctx); err != nil {
 			return result, err
 		}
-		if err := closeMeridianGates(ctx, state.knownLandingGates(), newMeridianTrafficGate); err != nil {
+		if err := closeMeridianGates(ctx, state.knownLandingGates(), meridianTrafficGateFactory); err != nil {
 			return result, err
 		}
 		if err := e.Store.stopXrayWorkerAPI(ctx, false); err != nil {
@@ -230,7 +271,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 			if !task.ReplacePendingState || !errors.Is(err, errMeridianExplicitRecoveryRequired) {
 				return result, err
 			}
-			state, err = e.replaceMeridianPendingState(ctx, state, task)
+			state, err = e.replaceMeridianPendingState(ctx, state, task, gid)
 			if err != nil {
 				return result, err
 			}
@@ -299,7 +340,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 		if !task.ReplacePendingState {
 			return result, errors.New("agent: another Meridian revision requires explicit recovery")
 		}
-		state, err = e.replaceMeridianPendingState(ctx, state, task)
+		state, err = e.replaceMeridianPendingState(ctx, state, task, gid)
 		if err != nil {
 			return result, err
 		}
@@ -335,12 +376,12 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 		return result, err
 	}
 
-	staged, active, err := e.Store.stageMeridianConfig(task.Desired.Config)
+	staged, active, err := e.Store.stageMeridianConfig(task.Desired.Config, meridianAppliedRuntimeUID(state))
 	if err != nil {
 		return result, err
 	}
 	defer os.Remove(staged)
-	if err := validateXrayWorkerConfig(ctx, docker, task.ImageReference, staged); err != nil {
+	if err := validateXrayWorkerConfigAs(ctx, docker, task.ImageReference, staged, meridianAppliedRuntimeUID(state)); err != nil {
 		return result, err
 	}
 	if len(task.Peers) != 0 {
@@ -348,19 +389,29 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 			return result, err
 		}
 	}
+	if err := validateMeridianHostPorts(ctx, docker, task.Desired, state); err != nil {
+		return result, err
+	}
 	previousActive, _ := os.ReadFile(active)
 	if state.Applied != nil && !artifactMatchesBytes(*state.Applied, previousActive) && !task.ReplacePendingState {
 		return result, errors.New("agent: active Meridian configuration does not match its applied receipt")
 	}
 	deployment := DeploymentTask{ID: "meridian-runtime-r" + fmt.Sprint(task.Desired.Revision), AppKey: meridianKey, ApplicationID: task.ApplicationID}
-	options := xrayWorkerContainerOptions(deployment, task.ImageReference, active, hy2Enabled, task.PreserveLegacyAliases)
-	meridianContainerLandingPolicy(&options, task.Peers)
+	options := meridianHostContainerOptions(deployment, task.ImageReference, active, hy2Enabled, gid)
 	sha, err := e.applyMeridianContainer(ctx, docker, options, func() error {
-		if err := e.beginMeridianLandingHandover(ctx, docker, &state, task); err != nil {
+		if err := e.beginMeridianLandingHandover(ctx, docker, &state, task, gid); err != nil {
 			return err
 		}
 		if err := commitXrayWorkerConfig(staged, active); err != nil {
 			return fmt.Errorf("agent: commit Meridian configuration: %w", err)
+		}
+		if os.Geteuid() == 0 {
+			if err := os.Chown(active, 0, -1); err != nil {
+				return err
+			}
+			if err := os.Chown(filepath.Dir(active), 0, -1); err != nil {
+				return err
+			}
 		}
 		return nil
 	}, func(containerID string) (string, error) {
@@ -385,6 +436,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	state.AppliedPeers, state.PendingPeers = slices.Clone(task.Peers), nil
 	state.AppliedSource, state.PendingSource = cloneMeridianSource(task.Source), nil
 	state.GateRevision = 0
+	state.AppliedGID, state.PendingGID = gid, 0
 	state.ImageReference = task.ImageReference
 	if err := e.Store.saveMeridianRuntimeState(ctx, state); err != nil {
 		return result, uncertainTaskOutcome(err)
@@ -423,56 +475,10 @@ func (e ApplicationExecutor) ensureCleanMeridianContainerIdentity(ctx context.Co
 	if err != nil || !exists || current.Container.Config == nil || current.Container.Config.Labels[applicationIdentityLabel] != meridianKey || current.Container.NetworkSettings == nil {
 		return errors.Join(errors.New("agent: Meridian runtime identity is unavailable"), err)
 	}
-	endpoint := current.Container.NetworkSettings.Networks[dockerruntime.NetworkName]
-	if endpoint == nil {
-		return errors.New("agent: Meridian runtime bridge attachment is unavailable")
+	if state.AppliedGID == 0 {
+		return errors.New("agent: host migration must finish before legacy retirement")
 	}
-	legacyAlias := slices.Contains(endpoint.Aliases, dockerruntime.LegacyXrayAlias) || slices.Contains(endpoint.Aliases, dockerruntime.ThreeXUIAlias)
-	if !legacyAlias {
-		return nil
-	}
-	active := filepath.Join(e.Store.dataDir, meridianRuntimeDirectory, "config.json")
-	encoded, err := os.ReadFile(active)
-	if err != nil || state.Applied == nil || !artifactMatchesBytes(*state.Applied, encoded) || !sameMeridianArtifact(*state.Applied, task.Desired) {
-		return errors.New("agent: Meridian runtime cannot prove its applied artifact before identity cleanup")
-	}
-	deployment := DeploymentTask{ID: "meridian-retire-r" + fmt.Sprint(task.Desired.Revision), AppKey: meridianKey, ApplicationID: task.ApplicationID}
-	hy2Enabled, err := meridianArtifactHY2Enabled(task.Desired)
-	if err != nil {
-		return err
-	}
-	options := xrayWorkerContainerOptions(deployment, task.ImageReference, active, hy2Enabled, false)
-	meridianContainerLandingPolicy(&options, state.AppliedPeers)
-	sha, err := e.applyMeridianContainer(ctx, docker, options, func() error {
-		state.HandoverPending = true
-		if err := e.Store.saveMeridianRuntimeState(ctx, state); err != nil {
-			return err
-		}
-		if err := e.Store.stopLandingMonitor(ctx); err != nil {
-			return err
-		}
-		return closeMeridianGates(ctx, state.knownLandingGates(), newMeridianTrafficGate)
-	}, func(containerID string) (string, error) {
-		if err := waitForXrayWorkerRuntime(ctx, docker, containerID); err != nil {
-			return "", err
-		}
-		return task.Desired.ConfigSHA256, nil
-	}, func(_ string, observed string) error {
-		if subtle.ConstantTimeCompare([]byte(observed), []byte(task.Desired.ConfigSHA256)) != 1 {
-			return errors.New("agent: cleaned Meridian runtime digest changed")
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if subtle.ConstantTimeCompare([]byte(sha), []byte(task.Desired.ConfigSHA256)) != 1 {
-		return uncertainTaskOutcome(errors.New("agent: Meridian identity cleanup returned the wrong digest"))
-	}
-	if err := e.finishMeridianLandingHandover(ctx, &state); err != nil {
-		return uncertainTaskOutcome(err)
-	}
-	return nil
+	return verifyMeridianHostContainer(current, state.AppliedGID, state.Applied)
 }
 
 // cleanupCompletedMeridianReplacement removes only stopped predecessors left
@@ -612,6 +618,23 @@ func (s *Store) legacyMeridianRetired(ctx context.Context, applicationID string)
 	return false, nil
 }
 
+func (s *Store) removeMeridianRuntimeState(ctx context.Context) error {
+	state, err := s.loadMeridianRuntimeState(ctx)
+	if err != nil && !errors.Is(err, errApplicationNotInstalled) {
+		return err
+	}
+	if err := s.stopLandingMonitor(ctx); err != nil {
+		return err
+	}
+	if err := removeSupersededMeridianGates(ctx, state.knownLandingGates(), nil, meridianTrafficGateFactory); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM meridian_runtime_state WHERE id=1`); err != nil {
+		return err
+	}
+	return os.RemoveAll(filepath.Join(s.dataDir, meridianRuntimeDirectory))
+}
+
 func (e ApplicationExecutor) observeAppliedMeridianRuntime(ctx context.Context, state meridianRuntimeState) (meridianruntime.Result, error) {
 	socket := e.DockerSocket
 	if socket == "" {
@@ -666,7 +689,7 @@ func (e ApplicationExecutor) observeAppliedMeridianRuntimeWithDocker(ctx context
 	return result, nil
 }
 
-func (s *Store) stageMeridianConfig(encoded []byte) (string, string, error) {
+func (s *Store) stageMeridianConfig(encoded []byte, uid int) (string, string, error) {
 	if len(encoded) == 0 || len(encoded) > xrayWorkerMaxBody || !json.Valid(encoded) {
 		return "", "", errors.New("agent: invalid Meridian Xray configuration")
 	}
@@ -678,7 +701,7 @@ func (s *Store) stageMeridianConfig(encoded []byte) (string, string, error) {
 		return "", "", err
 	}
 	if os.Geteuid() == 0 {
-		if err := os.Chown(directory, xrayWorkerRuntimeUID(), -1); err != nil {
+		if err := os.Chown(directory, uid, -1); err != nil {
 			return "", "", err
 		}
 	}
@@ -688,7 +711,7 @@ func (s *Store) stageMeridianConfig(encoded []byte) (string, string, error) {
 	}
 	name := temporary.Name()
 	if os.Geteuid() == 0 {
-		err = temporary.Chown(xrayWorkerRuntimeUID(), -1)
+		err = temporary.Chown(uid, -1)
 	}
 	if err == nil {
 		err = temporary.Chmod(0o600)

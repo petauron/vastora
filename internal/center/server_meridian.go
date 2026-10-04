@@ -2,6 +2,34 @@ package center
 
 import "net/http"
 
+func (s *Server) handleMeridianSourceRecovery(writer http.ResponseWriter, request *http.Request) {
+	view, err := s.store.MeridianSourceRecovery(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusOK, view)
+}
+
+func (s *Server) handleRecoverMeridianSource(writer http.ResponseWriter, request *http.Request) {
+	adminID, err := s.requestAdminID(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	var input MeridianSourceRecoveryInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.store.RecoverMeridianSource(request.Context(), request.PathValue("id"), adminID, input); err != nil {
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
+	writeJSON(writer, http.StatusAccepted, map[string]bool{"queued": true})
+}
+
 func (s *Server) handleMeridianInventory(writer http.ResponseWriter, request *http.Request) {
 	view, err := s.store.MeridianInventory(request.Context())
 	if err != nil {
@@ -124,4 +152,14 @@ func (s *Server) handleRevokeMeridianRouteGrant(writer http.ResponseWriter, requ
 		return
 	}
 	writeJSON(writer, http.StatusAccepted, map[string]bool{"accepted": true})
+}
+
+func (s *Server) handleMeridianTraffic(writer http.ResponseWriter, request *http.Request) {
+	view, err := s.store.MeridianTraffic(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusOK, view)
 }

@@ -1,3 +1,4 @@
+import { NodeEgressControls } from "./NodeEgressControls";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { CheckCircle2Icon, CircleArrowUpIcon, GitCompareArrowsIcon, MapPinIcon, NetworkIcon, PlusIcon, RotateCcwIcon, SearchIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon, UnplugIcon } from "lucide-react";
 import { api } from "../api";
@@ -19,28 +20,16 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { regionFlag } from "@/lib/regions";
+import { displayRegionFlag } from "@/lib/regions";
 import { RuntimeRecoveryAlert, XrayConfigurationRecoverySheet } from "./RuntimeRecoveryAlert";
 import { RegionFlag } from "./RegionFlag";
 import { StopNodeAccessSheet } from "./StopNodeAccessSheet";
 import { RemoveNodeDialog } from "./RemoveNodeDialog";
+import { ReinstallNodeSheet } from "./ReinstallNodeSheet";
+import { agentInstallCommand, shellQuote } from "../lib/agent-install";
+import { AgentUpdateRecoveryDialog } from "./AgentUpdateRecoveryDialog";
 
 export { validCenterURL } from "../lib/network";
-
-export function agentInstallCommand({ centerURL, enrollment, installerAvailable }: { centerURL: string; enrollment: AgentEnrollment; installerAvailable: boolean }) {
-  const enrollmentCenterURL = enrollment.centerUrl || centerURL;
-  const caCertificate = enrollment.caCertificatePem?.trim() ?? "";
-  const caPath = caCertificate ? "/tmp/vastora-center-ca.pem" : "";
-  const writeCA = caCertificate ? `printf '%s' ${shellQuote(caCertificate)} > ${caPath} && chmod 0600 ${caPath} && ` : "";
-  if (installerAvailable) {
-    const installer = "/tmp/vastora-agent-install.sh";
-    const bootstrapUsesCA = Boolean(caCertificate) && enrollment.installerUrl.replace(/\/$/, "") === enrollmentCenterURL.replace(/\/$/, "");
-    const bootstrapTrust = bootstrapUsesCA ? `--cacert ${caPath} ` : "";
-    return `${writeCA}curl ${bootstrapTrust}-fsSL ${shellQuote(`${enrollment.installerUrl.replace(/\/$/, "")}/install/agent.sh`)} -o ${installer} && chmod +x ${installer} && ${installer} ${shellQuote(enrollment.token)} ${shellQuote(caPath)} ${bootstrapUsesCA ? "1" : "0"}`;
-  }
-  const caArgument = caPath ? ` --ca-certificate ${caPath}` : "";
-  return `${writeCA}printf '%s' ${shellQuote(enrollment.token)} | sudo /usr/local/bin/vastora agent install --center-url ${shellQuote(enrollmentCenterURL)} --token-file -${caArgument}`;
-}
 
 type NodesViewProps = { data: AppData; language: Language; mutate: Mutate; onAddFirstNodeHandled?: () => void; onNavigate: (screen: Screen) => void; startAdding?: boolean };
 
@@ -51,33 +40,16 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
   const [removingID, setRemovingID] = useState<string | null>(null);
   const removingAgent = data.agents.find((agent) => agent.id === removingID);
   const stoppingAccessAgent = data.agents.find((agent) => agent.id === stoppingAccessID);
-  const [reconnecting, setReconnecting] = useState<{ agent: AgentView; enrollment: AgentEnrollment | null; busy: boolean; error: string } | null>(null);
+  const [reconnecting, setReconnecting] = useState<AgentView | null>(null);
   const [query, setQuery] = useState("");
   const [siteFilter, setSiteFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sort, setSort] = useState("site");
-  const reconnectRequest = useRef(0);
   const currentEditing = editing ? data.agents.find((agent) => agent.id === editing.id) ?? editing : null;
-  const currentReconnecting = reconnecting ? data.agents.find((agent) => agent.id === reconnecting.agent.id) ?? reconnecting.agent : null;
+  const currentReconnecting = reconnecting ? data.agents.find((agent) => agent.id === reconnecting.id) ?? reconnecting : null;
   useEffect(() => {
     if (startAdding) setAdding(true);
   }, [startAdding]);
-  const beginReconnect = async (agent: AgentView) => {
-    const request = ++reconnectRequest.current;
-    setReconnecting({ agent, enrollment: null, busy: true, error: "" });
-    try {
-      const enrollment = await api.createAgentReconnectEnrollment(agent.id);
-      if (reconnectRequest.current !== request) return;
-      setReconnecting({ agent, enrollment, busy: false, error: "" });
-    } catch (reconnectError) {
-      if (reconnectRequest.current !== request) return;
-      setReconnecting({ agent, enrollment: null, busy: false, error: userError(language, reconnectError) });
-    }
-  };
-  const closeReconnect = () => {
-    reconnectRequest.current += 1;
-    setReconnecting(null);
-  };
   const siteByID = useMemo(() => new Map(data.sites.map((site) => [site.id, site])), [data.sites]);
   const summary = useMemo(() => ({
     connected: data.agents.filter((agent) => agent.status === "active" && agent.connected && !agent.credentialRevoked).length,
@@ -132,7 +104,7 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
             </TableRow>
           </TableHeader>
           <TableBody>
-            {visibleGroups.map(({ site, agents }) => <NodeSiteRows agents={agents} data={data} key={site.id} language={language} onApplications={() => onNavigate("apps")} onConfigure={setEditing} onNetwork={() => onNavigate("network")} onReconnect={beginReconnect} onRemove={setRemovingID} site={site} />)}
+            {visibleGroups.map(({ site, agents }) => <NodeSiteRows agents={agents} data={data} key={site.id} language={language} onApplications={() => onNavigate("apps")} onConfigure={setEditing} onNetwork={() => onNavigate("network")} onReconnect={setReconnecting} onRemove={setRemovingID} site={site} />)}
             {visibleAgents.length === 0 ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy(language, "没有符合当前筛选条件的节点", "No nodes match the current filters")}</TableCell></TableRow> : null}
           </TableBody>
         </Table>
@@ -142,7 +114,7 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
     <NodeSettingsSheet agent={currentEditing} data={data} language={language} mutate={mutate} onClose={() => setEditing(null)} onStopAccess={() => { if (currentEditing) { setStoppingAccessID(currentEditing.id); setEditing(null); } }} />
     {stoppingAccessAgent ? <StopNodeAccessSheet agent={stoppingAccessAgent} key={stoppingAccessAgent.id} language={language} mutate={mutate} onClose={() => setStoppingAccessID(null)} /> : null}
     {removingAgent ? <RemoveNodeDialog agent={removingAgent} key={removingAgent.id} language={language} mutate={mutate} onClose={() => setRemovingID(null)} /> : null}
-    <ReconnectNodeSheet agent={currentReconnecting} busy={reconnecting?.busy ?? false} enrollment={reconnecting?.enrollment ?? null} error={reconnecting?.error ?? ""} installerAvailable={data.status.agentInstallerAvailable} language={language} onClose={closeReconnect} onRetry={() => { if (currentReconnecting) void beginReconnect(currentReconnecting); }} />
+    {currentReconnecting ? <ReinstallNodeSheet agent={currentReconnecting} installerAvailable={data.status.agentInstallerAvailable} key={currentReconnecting.id} language={language} onClose={() => setReconnecting(null)} /> : null}
   </section>;
 }
 
@@ -175,7 +147,7 @@ function siteRegionCode(site: AppData["sites"][number]) {
 }
 
 function siteLabel(site: AppData["sites"][number]) {
-  const flag = regionFlag(siteRegionCode(site));
+  const flag = displayRegionFlag(siteRegionCode(site));
   return flag ? `${flag} ${site.name}` : site.name;
 }
 
@@ -196,7 +168,7 @@ function NodeTableRow({ agent, data, language, onApplications, onConfigure, onNe
   const site = data.sites.find((value) => value.id === agent.siteId);
   const selectedGateway = Boolean(site?.gatewayNodes.includes(agent.id));
   const architecture = agent.architecture === "arm64" ? "ARM64" : "x64";
-  const needsNetworkConfirmation = agent.status === "active" && !agent.removal && !agent.networkProfile;
+  const needsNetworkConfirmation = agent.status === "active" && !agent.removal && !agent.reinstall && !agent.networkProfile;
   const cutoverActive = ["project", "verify", "retire"].includes(data.meridian.cutover.state);
   const needsLegacyConfigurationInspection = cutoverActive && agent.connected && !agent.runtimeRecovery && data.meridian.endpoints.some((endpoint) => endpoint.nodeId === agent.id && !endpoint.legacyRetired && (endpoint.status === "applying" || endpoint.status === "failed"));
   return <>
@@ -208,7 +180,7 @@ function NodeTableRow({ agent, data, language, onApplications, onConfigure, onNe
       <TableCell className="py-2 pr-4"><div className="flex flex-wrap items-center justify-end gap-1">
         {needsLegacyConfigurationInspection ? <Button aria-label={copy(language, `检查 ${agent.name} 的旧 Xray 配置差异`, `Inspect ${agent.name} legacy Xray configuration`)} onClick={() => setConfigurationRecoveryOpen(true)} size="icon-sm" title={copy(language, "检查旧 Xray 配置差异", "Inspect legacy Xray configuration")} variant="ghost"><GitCompareArrowsIcon aria-hidden="true" /></Button> : null}
         {needsNetworkConfirmation ? <Button aria-label={copy(language, `确认 ${agent.name} 的网络`, `Confirm network for ${agent.name}`)} onClick={onNetwork} size="icon-sm" title={copy(language, "确认网络", "Confirm network")} variant="ghost"><NetworkIcon aria-hidden="true" /></Button> : null}
-        {!agent.removal && !agent.connected ? <Button aria-label={copy(language, `重新接入 ${agent.name}`, `Reconnect ${agent.name}`)} onClick={onReconnect} size="icon-sm" title={copy(language, "重新接入", "Reconnect")} variant="ghost"><RotateCcwIcon aria-hidden="true" /></Button> : null}
+        {!agent.removal && (!agent.connected || agent.reinstall) ? <Button aria-label={agent.reinstall ? copy(language, `查看 ${agent.name} 的恢复进度`, `View recovery for ${agent.name}`) : copy(language, `重新接入 ${agent.name}`, `Reconnect ${agent.name}`)} onClick={onReconnect} size="icon-sm" title={agent.reinstall ? copy(language, "恢复进度", "Recovery progress") : copy(language, "重新接入", "Reconnect")} variant="ghost"><RotateCcwIcon aria-hidden="true" /></Button> : null}
         {!agent.removal && agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除", "Delete")}</Button> : null}
         {!agent.removal && agent.status === "active" ? <Button aria-label={copy(language, `管理 ${agent.name}`, `Manage ${agent.name}`)} onClick={onConfigure} size="icon-sm" variant="ghost"><Settings2Icon aria-hidden="true" /></Button> : null}
         {!agent.connected ? <Button aria-label={agent.removal ? copy(language, `查看 ${agent.name} 的移除进度`, `View removal progress for ${agent.name}`) : copy(language, `永久移除 ${agent.name}`, `Permanently remove ${agent.name}`)} onClick={onRemove} size="icon-sm" title={agent.removal ? copy(language, "查看移除进度", "View removal progress") : copy(language, "永久移除", "Permanently remove")} variant="ghost"><Trash2Icon aria-hidden="true" /></Button> : null}
@@ -226,7 +198,7 @@ function NodeStatus({ agent, language, compact = false }: { agent: AgentView; la
       : state === "disabled" ? copy(language, "未启用", "Disabled")
         : state === "access_stopped" ? copy(language, "已停止接入", "Access stopped")
           : state === "removal_failed" ? copy(language, "移除未完成", "Removal incomplete") : copy(language, "正在移除", "Removing");
-  const issue = connected && !agent.networkProfile ? copy(language, "网络待确认", "Network unconfirmed")
+  const issue = agent.reinstall ? copy(language, "重装恢复待处理", "Recovery needs attention") : connected && !agent.networkProfile ? copy(language, "网络待确认", "Network unconfirmed")
     : connected && agent.update?.state === "failed" ? copy(language, "更新需处理", "Update needs attention")
       : connected && agent.runtimeRecovery ? copy(language, "恢复中", "Recovering") : "";
   return <span className={`inline-flex min-w-0 ${compact ? "items-center gap-1" : "flex-col items-start gap-0.5"}`}>
@@ -240,7 +212,7 @@ function nodeState(agent: AgentView) {
 }
 
 function nodeNeedsAttention(agent: AgentView) {
-  return agent.status !== "active" || !agent.connected || agent.credentialRevoked || !agent.networkProfile || Boolean(agent.runtimeRecovery) || agent.removal?.state === "failed" || agent.update?.state === "failed";
+  return agent.status !== "active" || !agent.connected || agent.credentialRevoked || !agent.networkProfile || Boolean(agent.runtimeRecovery) || Boolean(agent.reinstall) || agent.removal?.state === "failed" || agent.update?.state === "failed";
 }
 
 function matchesNodeStatus(agent: AgentView, status: string) {
@@ -347,33 +319,6 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
   );
 }
 
-function ReconnectNodeSheet({ agent, busy, enrollment, error, installerAvailable, language, onClose, onRetry }: { agent: AgentView | null; busy: boolean; enrollment: AgentEnrollment | null; error: string; installerAvailable: boolean; language: Language; onClose: () => void; onRetry: () => void }) {
-  const command = enrollment ? agentInstallCommand({ centerURL: enrollment.centerUrl ?? "", enrollment, installerAvailable }) : "";
-  const connected = Boolean(agent?.connected);
-  return (
-    <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(agent)}>
-      <SheetContent className="sm:max-w-xl">
-        <SheetHeader>
-          <SheetTitle>{copy(language, `重新接入 ${agent?.name ?? ""}`, `Reconnect ${agent?.name ?? ""}`)}</SheetTitle>
-          <SheetDescription>{copy(language, "在重装后的原服务器运行新命令，Center 会替换 Agent 凭据而不是创建另一台节点。", "Run the new command on the reinstalled original server. Center replaces its Agent credential instead of creating another node.")}</SheetDescription>
-        </SheetHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4">
-          {busy ? <div aria-live="polite" className="flex items-center gap-3 rounded-xl border p-4"><Spinner /><div><p className="text-sm font-medium">{copy(language, "正在生成安全接入命令…", "Generating a secure reconnect command…")}</p><p className="mt-1 text-xs text-muted-foreground">{copy(language, "原 Agent 凭据会失效，新命令只可使用一次。", "The previous Agent credential will be invalidated and the new command can be used only once.")}</p></div></div> : null}
-          {error ? <Alert variant="destructive"><RotateCcwIcon /><AlertTitle>{copy(language, "无法生成重新接入命令", "Could not create reconnect command")}</AlertTitle><AlertDescription><p>{error}</p><Button className="mt-3" onClick={onRetry} size="sm" variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重试", "Retry")}</Button></AlertDescription></Alert> : null}
-          {enrollment && connected ? <Alert><CheckCircle2Icon /><AlertTitle>{copy(language, `${agent?.name ?? "节点"} 已重新接入`, `${agent?.name ?? "Node"} reconnected`)}</AlertTitle><AlertDescription>{copy(language, "Center 已接收新 Agent 的连接，原节点信息和关联关系保持不变。", "Center received the new Agent connection. The original node details and relationships were preserved.")}</AlertDescription></Alert> : null}
-          {enrollment && !connected ? <>
-            <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "保留原节点，替换身份", "Preserve the node and replace its identity")}</AlertTitle><AlertDescription>{copy(language, "节点 ID、名称、位置、用途、应用关系和已确认网络保持不变；旧 Agent 凭据已失效。", "The node ID, name, location, purpose, app relationships, and confirmed network remain unchanged. The previous Agent credential is now invalid.")}</AlertDescription></Alert>
-            <div className="relative"><code className="block max-h-56 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div>
-            <div aria-live="polite" className="flex items-start gap-3 rounded-xl border p-4"><Spinner className="mt-0.5" /><div><p className="text-sm font-medium">{copy(language, "正在等待原节点重新上线…", "Waiting for the original node to reconnect…")}</p><p className="mt-1 text-xs text-muted-foreground">{copy(language, `命令将在 ${formatDate(language, enrollment.expiresAt)} 失效。`, `The command expires at ${formatDate(language, enrollment.expiresAt)}.`)}</p></div></div>
-            <Alert><TerminalIcon /><AlertTitle>{copy(language, "在原服务器运行一次", "Run once on the original server")}</AlertTitle><AlertDescription>{installerAvailable ? copy(language, "支持 Debian 12/13 或 Ubuntu 22.04/24.04/26.04（x64/ARM64）；脚本会按需安装 Docker 和安全私网组件。", "Supports Debian 12/13 or Ubuntu 22.04/24.04/26.04 (x64/ARM64). The script installs Docker and secure-network components when needed.") : copy(language, "当前 Center 没有内置 Agent 文件，请先把 vastora 放到 /usr/local/bin/vastora。", "This Center does not include Agent binaries. Put vastora at /usr/local/bin/vastora first.")}</AlertDescription></Alert>
-          </> : null}
-        </div>
-        <SheetFooter><Button onClick={onClose}>{connected ? copy(language, "完成", "Done") : copy(language, "关闭", "Close")}</Button></SheetFooter>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
 function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAccess }: { agent: AgentView | null; data: AppData; language: Language; mutate: Mutate; onClose: () => void; onStopAccess: () => void }) {
   const [name, setName] = useState("");
   const [siteID, setSiteID] = useState("");
@@ -382,6 +327,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
   const [commandKind, setCommandKind] = useState<"purpose" | null>(null);
   const [busy, setBusy] = useState(false);
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [recoveringUpdateID, setRecoveringUpdateID] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [danger, setDanger] = useState(false);
   const [confirmation, setConfirmation] = useState("");
@@ -397,6 +343,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
     setError("");
     setDanger(agent.status === "disabled");
     setConfirmation("");
+    setRecoveringUpdateID(null);
   }, [agent?.id]);
   const gatewayRequired = Boolean(agent && (data.sites.some((site) => site.gatewayNodes.includes(agent.id)) || data.publications.some((publication) => publication.ingress.owner === "site_gateway" && publication.ingress.entryNodeId === agent.id && publication.status !== "stopped")));
   const tunnelRequired = Boolean(agent && data.publications.some((publication) => publication.ingress.owner === "tunnel_connector" && publication.ingress.entryNodeId === agent.id && publication.status !== "stopped"));
@@ -433,14 +380,15 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
     }
   };
   const startUpdate = async () => {
-    if (!agent) return;
+    if (!agent || updateBusy || updateActive || !agent.connected) return;
     const failedUpdateId = agent.update?.state === "failed" ? agent.update.id : undefined;
-    if (failedUpdateId && !window.confirm(copy(language,
-      "请先确认旧升级进程已停止、升级故障已处理。继续将保留旧失败记录并创建新的升级任务；不会重放旧任务。确认已处理并继续？",
-      "Confirm the previous updater has stopped and its fault has been resolved. Continue to retain the failure and create a new update, without replaying the old task?"))) return;
+    if (failedUpdateId) {
+      setRecoveringUpdateID(failedUpdateId);
+      return;
+    }
     setUpdateBusy(true); setError("");
     try {
-      await mutate(() => failedUpdateId ? api.recoverAgentUpdate(agent.id, failedUpdateId) : api.startAgentUpdate(agent.id), copy(language, "已向 Agent 下发安全更新。", "Secure Agent update queued."));
+      await mutate(() => api.startAgentUpdate(agent.id), copy(language, "已向 Agent 下发安全更新。", "Secure Agent update queued."));
     } catch (updateError) {
       setError(userError(language, updateError));
     } finally {
@@ -448,7 +396,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
     }
   };
   return (
-    <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(agent)}>
+    <Sheet onOpenChange={(next) => { if (!next && !recoveringUpdateID) onClose(); }} open={Boolean(agent)}>
       <SheetContent className="sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>{copy(language, `管理 ${agent?.name ?? ""}`, `Manage ${agent?.name ?? ""}`)}</SheetTitle>
@@ -472,6 +420,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
               <Button className="mt-3" disabled={!purposeChanged} onClick={() => setCommandKind("purpose")} size="sm" type="button" variant="outline"><TerminalIcon data-icon="inline-start" />{copy(language, "生成修改命令", "Generate change command")}</Button>
             </div>
             <div className="rounded-xl border p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium">Agent</p><p className="mt-1 text-xs text-muted-foreground">{copy(language, `节点版本 ${agent?.version ?? "—"} · Center 版本 ${data.status.version}`, `Node ${agent?.version ?? "—"} · Center ${data.status.version}`)}</p></div><StateBadge value={updateActive ? "applying" : !updateRequired ? "ready" : agent?.update?.state === "failed" ? "failed" : "pending"} /></div>{(updateRequired || updateActive) && agent?.remoteUpdateSupported ? <><Button className="mt-3" disabled={!agent.connected || updateActive || updateBusy} onClick={() => void startUpdate()} size="sm" type="button" variant="outline">{updateBusy || updateActive ? <Spinner data-icon="inline-start" /> : agent.update?.state === "failed" ? <RotateCcwIcon data-icon="inline-start" /> : <CircleArrowUpIcon data-icon="inline-start" />}{updateActive ? copy(language, "正在更新", "Updating") : agent.update?.state === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "通过 Center 更新", "Update through Center")}</Button>{!agent.connected ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, "节点重新上线后才能开始更新。", "The node must reconnect before updating.")}</p> : null}{updateActive ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, `正在安全更新到 ${agent.update?.targetVersion}；节点会短暂离线并自动重新连接。`, `Safely updating to ${agent.update?.targetVersion}. The node briefly disconnects and reconnects automatically.`)}</p> : null}{agent.update?.lastError ? <FieldError className="mt-2">{agent.update.lastError}</FieldError> : null}</> : null}{updateRequired && !agent?.remoteUpdateSupported ? <Alert className="mt-3"><TerminalIcon /><AlertTitle>{copy(language, "需要一次手动更新", "One manual update required")}</AlertTitle><AlertDescription><p>{copy(language, "当前版本还不支持 Center 远程更新。完成这一次后，后续版本可直接在这里更新。", "This version predates Center-managed updates. After this one-time step, future updates can run here.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{manualUpdateCommand}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={manualUpdateCommand} /></div></AlertDescription></Alert> : null}</div>
+            {agent ? <NodeEgressControls key={agent.id} nodeId={agent.id} language={language} /> : null}
             {commandKind ? <Alert><TerminalIcon /><AlertTitle>{copy(language, "在节点运行一次", "Run once on the node")}</AlertTitle><AlertDescription><p>{copy(language, "命令会更新 systemd 配置并重启 Agent，Center 会自动看到新用途。", "The command updates systemd, restarts Agent, and Center detects the new purpose automatically.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{purposeCommand}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={purposeCommand} /></div></AlertDescription></Alert> : null}
             {error ? <FieldError>{error}</FieldError> : null}
           </FieldGroup></div>
@@ -479,8 +428,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
         </form>}
         {danger ? <SheetFooter><Button disabled={busy} onClick={() => { if (deleting) onClose(); else { setDanger(false); setError(""); } }} variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !agent || confirmation.trim() !== agent.name.trim()} onClick={() => void disable()} variant="destructive">{busy ? <Spinner data-icon="inline-start" /> : null}{deleting ? copy(language, "删除节点", "Delete node") : copy(language, "停用节点", "Disable node")}</Button></SheetFooter> : null}
       </SheetContent>
+      {agent && recoveringUpdateID ? <AgentUpdateRecoveryDialog agent={agent} failedUpdateId={recoveringUpdateID} key={recoveringUpdateID} language={language} mutate={mutate} onClose={() => setRecoveringUpdateID(null)} targetVersion={data.status.version} /> : null}
     </Sheet>
   );
 }
-
-function shellQuote(value: string) { return `'${value.replaceAll("'", `'\\''`)}'`; }

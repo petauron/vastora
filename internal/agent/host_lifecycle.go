@@ -133,6 +133,6 @@ func (c Client) CompleteHostUpdate(ctx context.Context, connection Connection, t
 	if recoveryRequired && updateErr == nil {
 		return errors.New("agent: host update recovery requires an error")
 	}
-	payload := map[string]any{"executionId": executionID, "sessionId": sessionID, "attempt": attempt, "succeeded": updateErr == nil, "error": safeTaskError(updateErr), "result": ApplicationTaskResult{}, "reconciliationRequired": recoveryRequired}
+	payload := map[string]any{"executionId": executionID, "sessionId": sessionID, "hostUpdateHelper": true, "attempt": attempt, "succeeded": updateErr == nil, "error": safeTaskError(updateErr), "result": ApplicationTaskResult{}, "reconciliationRequired": recoveryRequired}
 	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
 }

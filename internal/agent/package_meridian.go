@@ -83,9 +83,10 @@ func (b *meridianPackageBackend) Prepare(ctx context.Context, task DeploymentTas
 	if err != nil {
 		return err
 	}
-	options := xrayWorkerContainerOptions(task, b.image, active, hy2, false)
-	options.Name = meridianXrayContainer
-	meridianContainerLandingPolicy(&options, state.AppliedPeers)
+	if state.AppliedGID == 0 {
+		return errors.New("agent: Meridian host migration must complete before package upgrade")
+	}
+	options := meridianHostContainerOptions(task, b.image, active, hy2, state.AppliedGID)
 	b.plans = []packageContainerPlan{{logical: "xray", options: options}}
 	return nil
 }
@@ -99,7 +100,7 @@ func (b *meridianPackageBackend) Backup(ctx context.Context, task DeploymentTask
 		if err := b.Executor.Store.stopLandingMonitor(ctx); err != nil {
 			return err
 		}
-		if err := closeMeridianGates(ctx, b.state.knownLandingGates(), newMeridianTrafficGate); err != nil {
+		if err := closeMeridianGates(ctx, b.state.knownLandingGates(), meridianTrafficGateFactory); err != nil {
 			return err
 		}
 	}
@@ -152,7 +153,7 @@ func (b *meridianPackageBackend) Remove(ctx context.Context, task DeploymentTask
 		return err
 	}
 	if err == nil {
-		if err := removeSupersededMeridianGates(ctx, state.knownLandingGates(), nil, newMeridianTrafficGate); err != nil {
+		if err := removeSupersededMeridianGates(ctx, state.knownLandingGates(), nil, meridianTrafficGateFactory); err != nil {
 			return err
 		}
 	}

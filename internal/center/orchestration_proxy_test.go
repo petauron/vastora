@@ -66,7 +66,7 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	if err := store.StartExecution(ctx, node.ID, session, auth.ID, auth.Digest); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, result, true, false, "", nil); err != nil {
+	if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, result, true, false, "", nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`UPDATE task_executions SET state='unknown' WHERE id=?`, auth.ID); err != nil {

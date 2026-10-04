@@ -216,9 +216,9 @@ describe("application shell", () => {
     act(() => nodes?.click());
     act(() => home?.click());
     expect(staleSignal?.aborted).toBe(true);
-    await vi.waitFor(() => expect(container.textContent).toContain("Welcome back"));
+    await vi.waitFor(() => expect(container.textContent).toContain("Overview"));
     await act(async () => { staleNodes.resolve({ agents: [] }); });
-    expect(container.textContent).toContain("Welcome back");
+    expect(container.textContent).toContain("Overview");
 
     act(() => nodes?.click());
     await vi.waitFor(() => expect(container.textContent).toContain("Add your first node"));

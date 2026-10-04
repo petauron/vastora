@@ -152,11 +152,11 @@ func TestReplaceMeridianPendingStateRequiresExplicitNewerCenterRevision(t *testi
 	executor := ApplicationExecutor{Store: store}
 	desired := meridianRecoveryArtifact(3, `{"revision":3}`)
 	task := meridianruntime.Task{ApplicationID: state.ApplicationID, ImageReference: xrayWorkerImageReference, Desired: desired}
-	if _, err := executor.replaceMeridianPendingState(ctx, state, task); err == nil {
+	if _, err := executor.replaceMeridianPendingState(ctx, state, task, 1001); err == nil {
 		t.Fatal("pending state changed without explicit Center authorization")
 	}
 	task.ReplacePendingState = true
-	replaced, err := executor.replaceMeridianPendingState(ctx, state, task)
+	replaced, err := executor.replaceMeridianPendingState(ctx, state, task, 1001)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestReplaceMeridianPendingStateRequiresExplicitNewerCenterRevision(t *testi
 	}
 	staleTask := task
 	staleTask.Desired = meridianRecoveryArtifact(1, `{"revision":"stale"}`)
-	if _, err := executor.replaceMeridianPendingState(ctx, persisted, staleTask); err == nil {
+	if _, err := executor.replaceMeridianPendingState(ctx, persisted, staleTask, 1001); err == nil {
 		t.Fatal("explicit recovery accepted a revision at or below the applied receipt")
 	}
 }

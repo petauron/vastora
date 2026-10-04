@@ -145,15 +145,7 @@ func TestMeridianJournalBindsPeersSourceAndBootFenceToArtifact(t *testing.T) {
 			t.Fatal("unbound peer plan accepted")
 		}
 	}
-	options := client.ContainerCreateOptions{HostConfig: &container.HostConfig{RestartPolicy: container.RestartPolicy{Name: "unless-stopped"}}}
-	meridianContainerLandingPolicy(&options, nil)
-	if options.HostConfig.RestartPolicy.Name != "unless-stopped" {
-		t.Fatal("native-only boot policy changed")
-	}
-	meridianContainerLandingPolicy(&options, state.AppliedPeers)
-	if options.HostConfig.RestartPolicy.Name != "no" {
-		t.Fatal("peer runtime may start before its boot gate")
-	}
+
 }
 
 func TestMeridianNativeRuntimeRequiresExactReadOnlyConfigurationMount(t *testing.T) {

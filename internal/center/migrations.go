@@ -54,10 +54,9 @@ func (s *Store) migrateSchema(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		// Released schema 101 contains the official UI cache migration. A schema
-		// 100/101 Center must not cross that boundary before the package-runtime
-		// maintenance guard confirms that no application work is in flight.
-		if current >= 100 && current < 102 {
+		// Check quiescence before crossing the package-runtime migration boundary.
+		// Released migrations 100 through 108 retain their original meaning.
+		if current >= 100 && current < 109 {
 			if err := requireCatalogV4Quiescence(ctx, s.db); err != nil {
 				return fmt.Errorf("center: catalog v4 maintenance preflight (backup: %s): %w", backup, err)
 			}

@@ -56,32 +56,40 @@ normal Activity workflow. Nothing automatically retries or starts a check.
 - All IP-sensitive upstream self-lookups use the requested local binding,
   including DB-IP. Reference-file downloads do not contribute exit evidence.
 
-## Meridian exit suitability v2
+## Meridian exit suitability v5
 
-`meridian-v2` is a product selection policy, **not** an industry standard,
+`meridian-v5` is a product selection policy, **not** an industry standard,
 fraud probability, or network-performance measurement. NodeQuality/IPQuality
 supply evidence, not this formula. The score is 1–100, higher is better.
 
 | Component | Weight / rule |
 | --- | --- |
 | Usage type | Residential 20, mobile 17, business 10, hosting 5 |
-| Provider risk | Scamalytics 10, IPQS 10, AbuseIPDB 5 |
+| Provider risk | Higher of Scamalytics and IP2Location 10, IPQS 10, AbuseIPDB 5 |
 | IPPure | 25 |
 | Unlocks | ChatGPT 15, Netflix 6, Disney+ 4, YouTube 2, Prime Video 2, TikTok 1 |
 
 Known 0–100 risk scores contribute `weight * (1 - risk / 100)`.
+IP2Location's 0–99 fraud score is normalized to 0–100 first. Only fresh,
+IP-bound observations enter the formula. IP2Location and Scamalytics share
+one 10-point slot; the higher available risk is used, so a conflicting low
+score cannot erase a confirmed high one. If neither is available, that slot
+is missing. The other source weights and 100-point total are unchanged.
+[IP2Location.io](https://www.ip2location.io/ip2location-documentation)
+defines its `fraud_score` as higher risk for a higher value; the pinned
+[IPQuality script](https://github.com/xykt/IPQuality/blob/ad222ab16778be2a13a174cd1acbd69fb4cac6b7/ip.sh)
+copies that field into `Score.IP2LOCATION`.
 [Scamalytics](https://docs.scamalytics.com/ip-fraud-risk-api/v3/),
 [IPQS](https://www.ipqualityscore.com/documentation/proxy-detection-api/response-parameters),
 and [AbuseIPDB](https://www.abuseipdb.com/faq) measure different risks: this
 weighting is a preference, not a calibrated ensemble probability. AbuseIPDB 0
-cannot establish residential type. Other provider scales remain display-only.
+cannot establish residential type. Unverified provider scales remain display-only.
 Repeated proxy/VPN/Tor/abuse flags are shown without an additional deduction.
 
-Type requires at least two different providers and at least two thirds of
-recognized usage-type votes. Company/organization ISP classifications never
-vote. Unknown categories do not vote. An unconfirmed type with at least two
-recognized votes ranges over the observed types; with fewer votes it ranges
-over all four. Caps: residential 100, mobile 95, business 89, hosting 79.
+Type uses the largest number of recognized usage-type votes; a tie remains
+unconfirmed. Company/organization ISP classifications never vote. Unknown
+categories do not vote. An unconfirmed type ranges over the tied types or all
+four when no valid vote exists. Caps: residential 100, mobile 95, business 89, hosting 79.
 Apply the cap to the sum, round once, then clamp to 1–100.
 
 Complete service availability earns its weight. No/originals-only earns zero.
@@ -249,6 +257,29 @@ runs. A result appears only after the paired server
 task also succeeds. A new check replaces the previous pair result for that
 entry and landing listener. The latest result is displayed in the Network tab,
 with the source-to-landing and landing-to-source directions labelled.
+
+Link execution revision 2 pins both private peer identities and uses iperf3's
+built-in RSA/OAEP authentication with fresh credentials for each probe. Center
+seals credentials with task-bound authenticated encryption. Only the source
+receives the password and public key; only the landing receives the private key
+and password hash. Files exist only in each container's private tmpfs. The
+server limits each authenticated direction to 12 seconds. The pinned image's
+authentication support was verified independently with an isolated bidirectional
+probe; no public listener or persistent host firewall change is needed.
+
+Both Agents check their own identity and fresh peer transport before, every five
+seconds during, and after sampling. DERP, peer relay, unavailable transport, or
+identity changes cancel the probe and trigger container cleanup. These are
+sampled observations, not a guarantee about every packet between samples. Center
+checks current identities again when accepting receipts. Capability revision 2
+is required on both nodes. Forward-only migration 103 retains old diagnostic
+records but marks unauthenticated tasks/results as requiring a new manual test;
+it uses the standard pre-migration backup and fail-closed migration flow.
+Unclaimed probes expire after four minutes. Results older than 24 hours are
+labelled expired, and old samples without transport evidence are not displayed
+as verified bandwidth. Failed or interrupted tests do not expose a partial
+sample as a successful two-direction result. Explicit recovery follows the
+Center execution workflow; tests are never automatically replayed.
 
 No scan runs on page load or on a schedule. Opening the page reads saved
 results; polling observes saved checks and refreshes score expiry/connection evidence.

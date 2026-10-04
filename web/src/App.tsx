@@ -313,16 +313,16 @@ export function App() {
             <SidebarMenu><SidebarMenuItem><NavigationButton active={screen === "settings"} icon={SettingsIcon} label={copy(language, "设置", "Settings")} onSelect={() => navigate("settings")} /></SidebarMenuItem></SidebarMenu>
           </SidebarFooter>
         </Sidebar>
-        <SidebarInset>
+        <SidebarInset className="min-w-0">
           <header className="flex h-14 items-center gap-3 border-b border-border/70 px-4 md:px-7">
-            <SidebarTrigger />
+            <SidebarTrigger aria-label={copy(language, "展开或收起侧栏", "Toggle sidebar")} />
             <span className="text-sm font-medium text-muted-foreground">{currentLabel ? copy(language, currentLabel.zh, currentLabel.en) : copy(language, "设置", "Settings")}</span>
             <div className="flex-1" />
             {loadingScreen === screen ? <span aria-live="polite" className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner />{copy(language, "正在更新", "Updating")}</span> : null}
             <ThemeToggle language={language} />
             <SelectControl aria-label={copy(language, "界面语言", "Interface language")} className="w-auto" onValueChange={(value) => setLanguage(value as Language)} options={[{ value: "zh-CN", label: "简体中文" }, { value: "en", label: "English" }]} size="sm" value={language} />
           </header>
-          <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-7 md:px-8 md:py-10" id="main-content" ref={mainRef} tabIndex={-1}>
+          <div className="mx-auto flex w-full min-w-0 max-w-6xl flex-1 flex-col gap-5 px-4 py-6 md:px-8" id="main-content" ref={mainRef} tabIndex={-1}>
             {connection === "reconnecting" ? <Alert aria-live="assertive" variant="destructive"><WifiOffIcon /><AlertTitle>{copy(language, "与 Center 的连接已中断", "Connection to Center was interrupted")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, `${userError(language, connectionError)} 页面保留的是上次成功同步的数据${lastSync ? `（${lastSync.toLocaleTimeString(language)}）` : ""}。`, `${userError(language, connectionError)} This page is showing the last successful data${lastSync ? ` from ${lastSync.toLocaleTimeString(language)}` : ""}.`)}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
             {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}>{notice.error ? <CircleAlertIcon /> : <CircleCheckIcon />}<AlertTitle className="flex items-start justify-between gap-3"><span>{notice.message}</span><Button aria-label={copy(language, "关闭提示", "Dismiss notice")} onClick={() => setNotice(null)} size="xs" variant="ghost">{copy(language, "关闭", "Dismiss")}</Button></AlertTitle>{notice.detail && notice.detail !== notice.message ? <AlertDescription><details><summary className="cursor-pointer">{copy(language, "查看技术详情", "Technical details")}</summary><code className="mt-2 block break-all text-xs">{notice.detail}</code></details></AlertDescription> : null}</Alert> : null}
             <Suspense fallback={<ScreenLoading language={language} />}>
@@ -331,7 +331,7 @@ export function App() {
               {loadedScreens.has(screen) && screen === "nodes" ? <NodesView data={data} language={language} mutate={mutate} onAddFirstNodeHandled={() => setAddFirstNode(false)} onNavigate={navigate} startAdding={addFirstNode} /> : null}
               {loadedScreens.has(screen) && screen === "apps" ? <AppsView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
-              {loadedScreens.has(screen) && screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} /> : null}
+              {loadedScreens.has(screen) && screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} onNavigate={navigate} /> : null}
               {loadedScreens.has(screen) && screen === "assistant" ? <AssistantView language={language} /> : null}
               {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setPhase("login"); }} onNavigate={navigate} onRefresh={refreshSettings} /> : null}
             </Suspense>

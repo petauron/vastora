@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -49,7 +51,12 @@ func (b *SystemdPackageBackend) preparePulseInputs(task DeploymentTask, receipt 
 	if json.Unmarshal(task.Secrets, &secrets) != nil || secrets == nil {
 		return task, errors.New("agent: invalid Pulse credentials")
 	}
-	if credentials == nil {
+	if task.PulseRestore != nil {
+		if task.Operation != "install" || task.PulseRestore.Validate() != nil {
+			return task, errors.New("agent: invalid Pulse restoration task")
+		}
+		secrets["enrollment_token"] = ""
+	} else if credentials == nil {
 		if task.Operation != "install" {
 			return task, errors.New("agent: retained Pulse identity is missing; explicit re-enrollment required")
 		}
@@ -143,4 +150,71 @@ func (b *SystemdPackageBackend) completePulseEnrollment(ctx context.Context, tas
 	source.SHA256 = hex.EncodeToString(digest[:])
 	// The service now uses its persisted identity, never the one-time token.
 	return removeHostFile(b.Manager.path("/run/" + packageIdentity(task.ApplicationID) + "/enrollment-token"))
+}
+
+func (b *SystemdPackageBackend) restorePulseIdentity(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
+	if task.PulseRestore == nil {
+		return nil
+	}
+	if task.AppKey != pulse.AgentKey || task.Operation != "install" || task.PulseRestore.Validate() != nil {
+		return errors.New("agent: invalid Pulse restoration task")
+	}
+	var settings pulse.AgentConfig
+	if json.Unmarshal(task.Config, &settings) != nil || settings.Validate() != nil {
+		return errors.New("agent: invalid Pulse restoration configuration")
+	}
+	binary := resourceNamed(receipt, "file", "artifact:"+task.Manifest.Runtime.Systemd.Executable)
+	if binary == nil {
+		return errors.New("agent: Pulse executable receipt missing")
+	}
+	path := b.Manager.path(pulsePackageIdentityPath(task, receipt))
+	if err := checkPackageParents(path); err != nil {
+		return err
+	}
+	if entries, err := os.ReadDir(filepath.Dir(path)); err == nil {
+		if len(entries) != 0 {
+			return errors.New("agent: Pulse restoration cannot overwrite existing state")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	if err := os.Chmod(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	user, _, _ := strings.Cut(task.Manifest.Runtime.Systemd.User, ":")
+	if user == "" || user == "root" {
+		return errors.New("agent: Pulse restoration requires a dedicated service user")
+	}
+	if err := b.Manager.run(ctx, "chown", user, filepath.Dir(path)); err != nil {
+		return errors.New("agent: Pulse identity ownership could not be set")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	args := []string{"-u", user, "--", "env", "-i", "PULSE_SERVICE_URL=" + settings.ServiceURL, "PULSE_CREDENTIALS_PATH=" + path, b.Manager.path(binary.Path), "credentials", "import", task.PulseRestore.NodeID}
+	input := strings.NewReader(task.PulseRestore.Token + "\n")
+	var err error
+	if b.Manager.RunInputCommand != nil {
+		err = b.Manager.RunInputCommand(ctx, input, "runuser", args...)
+	} else {
+		cmd := exec.CommandContext(ctx, "runuser", args...)
+		cmd.Stdin = input
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
+		err = cmd.Run()
+	}
+	if err != nil {
+		return errors.New("agent: Pulse identity import requires inspection")
+	}
+	raw, err := readPulsePackageCredentials(path, settings.ServiceURL)
+	var saved struct {
+		NodeID string `json:"node_id"`
+		Token  string `json:"agent_token"`
+	}
+	if err != nil || json.Unmarshal(raw, &saved) != nil || saved.NodeID != task.PulseRestore.NodeID || saved.Token != task.PulseRestore.Token {
+		return errors.New("agent: Pulse importer did not retain approved identity")
+	}
+	return nil
 }

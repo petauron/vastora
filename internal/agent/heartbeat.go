@@ -125,6 +125,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"nodeListenerHealthy":          nodeListenerHealthy,
 		"landingHealth":                store.landingHealth(),
 		"landingClientRuntime":         store.observeLandingClientRuntime(ctx),
+		"privateNetworkPeer":           store.observePrivateNetworkPeer(ctx, candidates, c.TailscaleOwnership),
 		"nodeListenerRevision":         nodeListenerRevision,
 		"nodeListenerConfigHash":       nodeListenerConfigHash,
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
@@ -152,7 +153,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		}
 	}
 	var publicEgressErr error
-	if startup && c.PublicEgress != nil && strings.TrimSpace(response.PublicAddressLookupURL) != "" {
+	if c.PublicEgress != nil && strings.TrimSpace(response.PublicAddressLookupURL) != "" {
 		publicEgress, err := c.PublicEgress(ctx, response.PublicAddressLookupURL, response.PublicHelperAllowPrivate, candidates, now)
 		if err != nil {
 			publicEgressErr = fmt.Errorf("agent: observe public egress: %w", err)

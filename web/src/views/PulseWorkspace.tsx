@@ -4,17 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { AppWorkspaceProps } from "@/app-workspaces/types";
 import { ApplicationStatus } from "./apps/InstalledApplicationPrimitives";
-import { pulsePrivateAccess } from "./appAccess";
+import { pulsePrivateAccess, secureDashboardURL } from "./appAccess";
 import { copy } from "./shared";
-
-function secureDashboardURL(value?: string) {
-  if (!value) return undefined;
-  try {
-    const url = new URL(value);
-    if (url.protocol === "https:" && url.hostname && !url.username && !url.password && !url.hash) return url.href;
-  } catch { /* An incomplete access publication cannot open the dashboard. */ }
-  return undefined;
-}
 
 // Pulse serves and owns its dashboard. Center only shows installation state,
 // access publication, and a link to the dashboard's authenticated origin.

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func fixtureGate(t *testing.T) *BridgeGate {
+func fixtureGate(t *testing.T) *TrafficGate {
 	t.Helper()
 	gate, err := NewBridgeGate(PeerIdentity{ID: "node-landing", PublicKey: "nodekey:expected", Address: "100.64.0.8"}, "br-owned", 7)
 	if err != nil {
@@ -19,7 +19,7 @@ func fixtureGate(t *testing.T) *BridgeGate {
 	return gate
 }
 
-func fixtureNFT(t *testing.T, gate *BridgeGate) nftDocument {
+func fixtureNFT(t *testing.T, gate *TrafficGate) nftDocument {
 	t.Helper()
 	data, err := json.Marshal(nftDocument{Objects: gate.objects()})
 	if err != nil {

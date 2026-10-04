@@ -68,23 +68,36 @@ func (s *Server) handleImportLegacyReceipt(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleListExecutions(w http.ResponseWriter, r *http.Request) {
 	var before int64
+	filter := "all"
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, errors.New("center: invalid execution query"))
 		return
 	}
 	for key, values := range query {
-		if key != "before" || len(values) != 1 || values[0] == "" {
+		if len(values) != 1 || values[0] == "" {
 			writeError(w, http.StatusBadRequest, errors.New("center: invalid execution query"))
 			return
 		}
-		before, err = strconv.ParseInt(values[0], 10, 64)
-		if err != nil || before <= 0 {
-			writeError(w, http.StatusBadRequest, errors.New("center: invalid execution cursor"))
+		switch key {
+		case "filter":
+			filter = values[0]
+			if filter != "all" && filter != "attention" && filter != "running" {
+				writeError(w, http.StatusBadRequest, errors.New("center: invalid execution filter"))
+				return
+			}
+		case "before":
+			before, err = strconv.ParseInt(values[0], 10, 64)
+			if err != nil || before <= 0 {
+				writeError(w, http.StatusBadRequest, errors.New("center: invalid execution cursor"))
+				return
+			}
+		default:
+			writeError(w, http.StatusBadRequest, errors.New("center: invalid execution query"))
 			return
 		}
 	}
-	values, err := s.store.ListExecutions(r.Context(), before)
+	values, err := s.store.ListExecutions(r.Context(), before, filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

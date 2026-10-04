@@ -4,6 +4,10 @@ export function regionFlag(code?: string) {
   return String.fromCodePoint(...Array.from(normalized, (character) => 0x1f1e6 + character.charCodeAt(0) - 65));
 }
 
+export function displayRegionFlag(code?: string) {
+  return code?.trim().toUpperCase() === "TW" ? "🇨🇳" : regionFlag(code);
+}
+
 export function regionName(code: string, locales: string[]) {
   if (!/^[A-Z]{2}$/.test(code)) return code;
   try {

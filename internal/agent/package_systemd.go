@@ -495,6 +495,9 @@ func (b *SystemdPackageBackend) Apply(ctx context.Context, task DeploymentTask, 
 			return err
 		}
 	}
+	if err := b.restorePulseIdentity(ctx, task, receipt); err != nil {
+		return err
+	}
 	if err := b.Manager.run(ctx, "systemctl", "daemon-reload"); err != nil {
 		return errors.New("agent: systemd reload failed")
 	}

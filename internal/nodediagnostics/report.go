@@ -1,6 +1,6 @@
 // Package nodediagnostics defines bounded tasks and results for active node
-// network diagnostics. It intentionally contains no credentials or raw tool
-// output.
+// network diagnostics. Results contain no credentials or raw tool output.
+// Per-probe authentication is delivered only inside encrypted Agent tasks.
 package nodediagnostics
 
 import (
@@ -8,18 +8,21 @@ import (
 	"net"
 	"regexp"
 	"slices"
+
+	"github.com/petauron/vastora/internal/landing"
 )
 
 const (
-	NetworkKind       = "node.network-quality"
-	ReturnRouteKind   = "node.return-route"
-	BandwidthKind     = "node.international-bandwidth"
-	LinkBandwidthKind = "meridian.link-bandwidth"
-	LinkServerKind    = "meridian.link-bandwidth-server"
-	HostProfileKind   = "node.host-profile"
-	MaxResultBytes    = 64 * 1024
-	ProbeCount        = 4
-	BandwidthBytes    = 8 * 1024 * 1024
+	NetworkKind           = "node.network-quality"
+	ReturnRouteKind       = "node.return-route"
+	BandwidthKind         = "node.international-bandwidth"
+	LinkBandwidthKind     = "meridian.link-bandwidth"
+	LinkServerKind        = "meridian.link-bandwidth-server"
+	HostProfileKind       = "node.host-profile"
+	LinkBandwidthRevision = 2
+	MaxResultBytes        = 64 * 1024
+	ProbeCount            = 4
+	BandwidthBytes        = 8 * 1024 * 1024
 )
 
 type Target struct {
@@ -56,19 +59,29 @@ type Task struct {
 	Targets          []Target           `json:"targets,omitempty"`
 	BandwidthTargets []BandwidthTarget  `json:"bandwidthTargets,omitempty"`
 	Link             *LinkBandwidthTask `json:"link,omitempty"`
+	LinkAuth         *LinkBandwidthAuth `json:"linkAuth,omitempty"`
 }
 
 // LinkBandwidthTask is issued only by Center for an authorized Meridian entry
 // and a selected managed landing. Both addresses are authenticated private peers.
 type LinkBandwidthTask struct {
-	SourceNodeID  string `json:"sourceNodeId"`
-	LandingNodeID string `json:"landingNodeId"`
-	SourceIP      string `json:"sourceIp"`
-	LandingIP     string `json:"landingIp"`
-	Port          int    `json:"port"`
+	SourceNodeID  string               `json:"sourceNodeId"`
+	LandingNodeID string               `json:"landingNodeId"`
+	SourceIP      string               `json:"sourceIp"`
+	LandingIP     string               `json:"landingIp"`
+	Port          int                  `json:"port"`
+	SourcePeer    landing.PeerIdentity `json:"sourcePeer"`
+	LandingPeer   landing.PeerIdentity `json:"landingPeer"`
+}
+
+type LinkBandwidthAuth struct {
+	KeyPEM       string `json:"keyPem"`
+	Password     string `json:"password,omitempty"`
+	PasswordHash string `json:"passwordHash,omitempty"`
 }
 
 type LinkBandwidthMeasurement struct {
+	TransportState  string  `json:"transportState,omitempty"`
 	SourceNodeID    string  `json:"sourceNodeId"`
 	LandingNodeID   string  `json:"landingNodeId"`
 	UploadMbps      float64 `json:"uploadMbps"`
@@ -141,6 +154,19 @@ func (t Task) ValidateLinkBandwidth(kind string) error {
 	return nil
 }
 
+// ValidateLinkIdentity is required for execution. Historical diagnostic rows may
+// lack peer evidence; they remain readable but cannot authorize a new probe.
+func (t Task) ValidateLinkIdentity(kind string) error {
+	if err := t.ValidateLinkBandwidth(kind); err != nil {
+		return err
+	}
+	v := t.Link
+	if v.SourcePeer.Address != v.SourceIP || v.LandingPeer.Address != v.LandingIP || v.SourcePeer.ID == "" || v.LandingPeer.ID == "" || v.SourcePeer.PublicKey == "" || v.LandingPeer.PublicKey == "" || v.SourcePeer.ID == v.LandingPeer.ID || v.SourcePeer.PublicKey == v.LandingPeer.PublicKey {
+		return errors.New("node diagnostics: missing or mismatched link peer identity")
+	}
+	return nil
+}
+
 // HostProfile is a read-only snapshot of the host, not a recommendation or
 // evidence that a persistent sysctl configuration was applied.
 type HostProfile struct {
@@ -208,6 +234,9 @@ func (t Task) ValidateBandwidth() error {
 
 func (r Result) Validate(kind string) error {
 	if r.Error != "" {
+		if (kind == LinkBandwidthKind || kind == LinkServerKind) && (r.Error == "transport_not_direct" || r.Error == "peer_identity_changed") {
+			return nil
+		}
 		if r.Error == "timeout" || r.Error == "probe_failed" || r.Error == "tool_unavailable" {
 			return nil
 		}
@@ -221,7 +250,7 @@ func (r Result) Validate(kind string) error {
 	}
 	if kind == LinkBandwidthKind {
 		v := r.Link
-		if v == nil || r.LinkServerCompleted || r.Host != nil || len(r.Network) != 0 || len(r.Routes) != 0 || len(r.Bandwidth) != 0 || v.SourceNodeID == "" || v.LandingNodeID == "" || v.SourceNodeID == v.LandingNodeID || v.UploadBytes <= 0 || v.DownloadBytes <= 0 || v.UploadSeconds < 8 || v.UploadSeconds > 30 || v.DownloadSeconds < 8 || v.DownloadSeconds > 30 || v.UploadMbps < 0 || v.UploadMbps > 1_000_000 || v.DownloadMbps < 0 || v.DownloadMbps > 1_000_000 {
+		if v == nil || (v.TransportState != "" && v.TransportState != "direct") || r.LinkServerCompleted || r.Host != nil || len(r.Network) != 0 || len(r.Routes) != 0 || len(r.Bandwidth) != 0 || v.SourceNodeID == "" || v.LandingNodeID == "" || v.SourceNodeID == v.LandingNodeID || v.UploadBytes <= 0 || v.DownloadBytes <= 0 || v.UploadSeconds < 8 || v.UploadSeconds > 30 || v.DownloadSeconds < 8 || v.DownloadSeconds > 30 || v.UploadMbps < 0 || v.UploadMbps > 1_000_000 || v.DownloadMbps < 0 || v.DownloadMbps > 1_000_000 {
 			return errors.New("node diagnostics: invalid Meridian link result")
 		}
 		return nil

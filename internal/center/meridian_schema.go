@@ -4,6 +4,16 @@ package center
 // deployment model. Legacy 3x-ui tables are migration input only; once the
 // explicit cutover is complete no Meridian operation reads or writes them.
 const meridianSchema = `
+CREATE TABLE node_egress_policies (
+ node_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+ policy TEXT NOT NULL CHECK(policy IN ('auto','ipv4_only','ipv6_only')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ verified_revision INTEGER NOT NULL DEFAULT 0 CHECK(verified_revision>=0),
+ applied_policy TEXT NOT NULL DEFAULT 'auto' CHECK(applied_policy IN ('auto','ipv4_only','ipv6_only')),
+ verified_json BLOB NOT NULL DEFAULT '{}' CHECK(json_valid(verified_json)),
+ updated_at TEXT NOT NULL
+);
+
 CREATE TABLE meridian_cutover (
  id INTEGER PRIMARY KEY CHECK(id=1),
  state TEXT NOT NULL CHECK(state IN ('not_required','inspect','backup','import','publish','project','verify','retire','complete','failed')),
@@ -26,6 +36,7 @@ CREATE TABLE meridian_endpoints (
  application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE RESTRICT,
  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE RESTRICT,
  inbound_tag TEXT NOT NULL UNIQUE,
+ listen_address TEXT NOT NULL DEFAULT '',
  listen_port INTEGER NOT NULL CHECK(listen_port BETWEEN 1 AND 65535),
  advertise_host TEXT NOT NULL,
  advertise_port INTEGER NOT NULL CHECK(advertise_port BETWEEN 1 AND 65535),
@@ -127,6 +138,14 @@ CREATE TABLE meridian_route_grants (
  UNIQUE(account_id,endpoint_id,egress_node_id)
 );
 CREATE INDEX meridian_route_grants_endpoint ON meridian_route_grants(endpoint_id,status);
+CREATE TABLE meridian_line_usage (
+ credential_id TEXT PRIMARY KEY REFERENCES meridian_credentials(id) ON DELETE CASCADE,
+ upload_bytes INTEGER NOT NULL DEFAULT 0 CHECK(upload_bytes>=0),
+ download_bytes INTEGER NOT NULL DEFAULT 0 CHECK(download_bytes>=0),
+ started_at TEXT NOT NULL,
+ observed_at TEXT NOT NULL
+);
+
 CREATE TABLE meridian_usage_watermarks (
  credential_id TEXT PRIMARY KEY REFERENCES meridian_credentials(id) ON DELETE CASCADE,
  baseline_bytes INTEGER NOT NULL DEFAULT 0 CHECK(baseline_bytes>=0),

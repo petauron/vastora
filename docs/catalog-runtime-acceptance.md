@@ -9,7 +9,25 @@ dependency update and the schema 102 merge; current CI and the bounded historica
 copy rehearsal are recorded separately. Do not enable the independent publisher
 or run the maintenance cutover based on unit tests alone.
 
-## Verified locally
+## Current main integration (2026-10-04)
+
+The integrated target is schema 109. Released migration files through schema 108
+are unchanged; the catalog runtime migration is `00109_catalog_runtime_v4.sql`.
+Historical schema 102 observations below describe the earlier branch and do not
+prove the current rollout.
+
+The focused Center `TestAgentReinstall` suite passes after carrying the saved
+package revision, canonical manifest digest, and approved capabilities into
+replacement deployments. The preparation claim/projection checks also reject
+changed digests, revisions, and capability grants. This is local recovery
+coverage, not live deployment or adoption evidence. Focused package lifecycle, catalog admission, and Pulse restore tests pass; the
+command entry point compiles. Migration fixtures cover both schema 100 and the
+released schema 108, retain backups/trust/application identity, and reject
+unfinished or uncertain work without advancing the source schema. These fixture
+results do not replace a production database copy rehearsal. Current CI, the
+schema 109 production-copy rehearsal, and A1 rollout remain pending.
+
+## Earlier local checkpoint
 
 - All Go packages pass `GOWORK=off go test ./... -count=1 -timeout=180s`
   using the pinned external catalog module, not the development workspace.

@@ -90,7 +90,7 @@ func TestMeridianObservationKeepsImportedServiceIdentityAndRepairsListener(t *te
 	if _, err := store.db.ExecContext(ctx, `UPDATE services SET name='inbound-8',app_protocol='vless/tcp/reality' WHERE id='snapshot-shared-service'`); err != nil {
 		t.Fatal(err)
 	}
-	observation := []ApplicationEndpointObservation{{AppKey: meridianAppKey, Name: "inbound-1", Protocol: "tcp", AppProtocol: meridianEntryProtocol, Listen: "0.0.0.0", Port: 443, Enabled: true, InboundTag: "shared-entry"}}
+	observation := []ApplicationEndpointObservation{{AppKey: meridianAppKey, Name: "inbound-1", Protocol: "tcp", AppProtocol: meridianEntryProtocol, Listen: "100.64.0.61", Port: 10443, Enabled: true, InboundTag: "shared-entry"}}
 	var nodeID string
 	if err := store.db.QueryRowContext(ctx, `SELECT node_id FROM applications WHERE id='snapshot-shared-app'`).Scan(&nodeID); err != nil {
 		t.Fatal(err)
@@ -261,15 +261,15 @@ func openMeridianSharedEndpointSnapshotFixture(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
-		VALUES('snapshot-shared-service','snapshot-shared-app',?,'shared-entry','Shared entry','tcp',443,443,'100.64.0.61:443','observed',?,0,'0.0.0.0','ready',?,?)`, siteID, meridianEntryProtocol, now, now); err != nil {
+		VALUES('snapshot-shared-service','snapshot-shared-app',?,'shared-entry','Shared entry','tcp',10443,10443,'100.64.0.61:10443','observed',?,0,'0.0.0.0','ready',?,?)`, siteID, meridianEntryProtocol, now, now); err != nil {
 		t.Fatal(err)
 	}
 	endpointSecretID, err := store.putSecret(ctx, tx, []byte("test-private-key"), meridianEndpointSecretContext(sharedSnapshotEndpointID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
-		VALUES(?,'snapshot-shared-app','snapshot-shared-service','shared-entry',443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'test-public-key','["abcd"]','chrome',1,1,1,'ready',?,?)`, sharedSnapshotEndpointID, endpointSecretID, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
+		VALUES(?,'snapshot-shared-app','snapshot-shared-service','shared-entry','100.64.0.61',10443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'test-public-key','["abcd"]','chrome',1,1,1,'ready',?,?)`, sharedSnapshotEndpointID, endpointSecretID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,desired_revision,applied_revision,status,created_at,updated_at)

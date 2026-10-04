@@ -46,14 +46,24 @@ func (s *Store) disposeTaskExecution(ctx context.Context, executionID, adminID s
 	if !admin {
 		return errors.New("center: administrator authorization required")
 	}
-	var taskID, agentID, kind, state, disposition string
+	var taskID, agentID, kind, state, disposition, identityRetired string
 	var attempt int64
 	var sealed []byte
-	if err := tx.QueryRowContext(ctx, `SELECT task_id,agent_id,kind,state,attempt,disposition,sealed_task FROM task_executions WHERE id=?`, executionID).Scan(&taskID, &agentID, &kind, &state, &attempt, &disposition, &sealed); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT task_id,agent_id,kind,state,attempt,disposition,sealed_task,identity_retired_at FROM task_executions WHERE id=?`, executionID).Scan(&taskID, &agentID, &kind, &state, &attempt, &disposition, &sealed, &identityRetired); err != nil {
 		return err
 	}
 	if state != "failed" && state != "unknown" || disposition != "" {
 		return errors.New("center: execution is not unresolved")
+	}
+	if identityRetired != "" && input.Action == "reexecute" {
+		return errors.New("center: previous machine identity was retired; create a new recovery task from reviewed intent")
+	}
+	if kind == "application.command" && input.Action == "reexecute" {
+		if blocked, err := reinstallCommandTargetBlocked(ctx, tx, agentID, taskID); err != nil {
+			return err
+		} else if blocked {
+			return errExecutionBlocked
+		}
 	}
 	raw, err := secret.Open(s.key, sealed, []byte("execution-task:"+executionID))
 	if err != nil {
@@ -75,8 +85,23 @@ func (s *Store) disposeTaskExecution(ctx context.Context, executionID, adminID s
 	if err != nil {
 		return err
 	}
-	if changed, _ := updated.RowsAffected(); changed != 1 {
-		return errors.New("center: task changed; verify its current state")
+	changed, err := updated.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		// An application may have been removed while its execution evidence was
+		// retained. Explicit abandonment can retire that orphaned execution,
+		// but must never re-create the command or affect a changed attempt.
+		missingCommand := false
+		if changed == 0 && input.Action == "abandon" && kind == "application.command" {
+			if err := tx.QueryRowContext(ctx, `SELECT NOT EXISTS(SELECT 1 FROM application_commands WHERE id=?)`, taskID).Scan(&missingCommand); err != nil {
+				return err
+			}
+		}
+		if !missingCommand {
+			return errors.New("center: task changed; verify its current state")
+		}
 	}
 	if kind == "application.apply" {
 		applicationStatus := "pending"

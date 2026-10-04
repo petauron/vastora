@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Earlier migrations must preserve queued work, while schema 102 must refuse
+// Earlier migrations must preserve queued work, while schema 109 must refuse
 // to take ownership until the maintenance operator has resolved that work.
 // Inspect the stopped database directly; do not bypass the production guard.
 func openBeforeCatalogMaintenanceForTest(t *testing.T, directory string) *Store {
@@ -15,7 +15,7 @@ func openBeforeCatalogMaintenanceForTest(t *testing.T, directory string) *Store 
 	opened, err := Open(directory)
 	if err == nil {
 		opened.Close()
-		t.Fatal("schema 102 accepted unfinished historical work")
+		t.Fatal("schema 109 accepted unfinished historical work")
 	}
 	if !strings.Contains(err.Error(), "unfinished = 0") && !strings.Contains(err.Error(), "safe=1") {
 		t.Fatalf("unexpected maintenance blocker: %v", err)
@@ -29,7 +29,7 @@ func openBeforeCatalogMaintenanceForTest(t *testing.T, directory string) *Store 
 		t.Fatal(err)
 	}
 	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || (version != 99 && version != 100 && version != 101) {
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || (version < 99 || version >= 109) {
 		db.Close()
 		t.Fatalf("failed maintenance changed schema %d: %v", version, err)
 	}
@@ -52,7 +52,7 @@ func finishCatalogMaintenanceFixture(t *testing.T, store *Store, directory strin
 	}
 	defer upgraded.Close()
 	var version int
-	if err := upgraded.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 102 {
+	if err := upgraded.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != centerSchemaVersion {
 		t.Fatalf("resolved maintenance did not migrate: version=%d err=%v", version, err)
 	}
 }
@@ -87,6 +87,7 @@ func removePostVersion85TablesForFixture(t *testing.T, store *Store) {
 		`DROP TRIGGER deployment_updates_block_during_meridian_cutover`,
 		`DROP TABLE meridian_deployments`,
 		`DROP TABLE meridian_subscription_snapshots`,
+		`DROP TABLE meridian_line_usage`,
 		`DROP TABLE meridian_usage_watermarks`,
 		`DROP TABLE meridian_route_grants`,
 		`DROP TABLE meridian_credentials`,

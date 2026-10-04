@@ -14,6 +14,7 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/nodediagnostics"
 )
 
@@ -23,17 +24,28 @@ import (
 // Run as that unprivileged owner while retaining the container restrictions.
 const meridianIperfImage = "ghcr.io/userdocs/iperf3-static@sha256:c61d33698fd938a1334af93c9b59ee042dad90657df9de827dc5b53d5f8894f2"
 
+// BusyBox timeout must not become namespace PID 1: its watchdog cannot kill
+// that process from inside the namespace. Keep a waiting shell as PID 1.
+const meridianIperfDeadlineScript = `timeout -s KILL 235 /bin/sh -c "$1" meridian-iperf "$2" "$3" "${4:-}"; result=$?; exit "$result"`
+
 const meridianIperfServerScript = `set -eu
+umask 077
+printf '%s' "$MERIDIAN_IPERF_KEY" >/tmp/key.pem
+printf 'meridian,%s\n' "$MERIDIAN_IPERF_HASH" >/tmp/users.csv
+unset MERIDIAN_IPERF_KEY MERIDIAN_IPERF_HASH
 for run in 1 2; do
-  timeout -s KILL 115 iperf3 -s -1 --idle-timeout 105 -4 -B "$1" -p "$2" >/dev/null
+  timeout -s KILL 115 iperf3 -s -1 --idle-timeout 105 --server-max-duration 12 --rsa-private-key-path /tmp/key.pem --authorized-users-path /tmp/users.csv -4 -B "$1" -p "$2" >/dev/null
 done`
 
 const meridianIperfClientScript = `set -eu
+umask 077
+printf '%s' "$MERIDIAN_IPERF_KEY" >/tmp/key.pem
+unset MERIDIAN_IPERF_KEY
 for direction in upload download; do
   attempt=0
   while :; do
     if [ "$direction" = download ]; then reverse=-R; else reverse=; fi
-    if iperf3 -c "$1" -p "$2" -4 -B "$3" --connect-timeout 3000 -J -i 0 -t 10 $reverse >/tmp/sample.json 2>/tmp/sample.err; then break; fi
+    if iperf3 -c "$1" -p "$2" -4 -B "$3" --connect-timeout 3000 --username meridian --rsa-public-key-path /tmp/key.pem -J -i 0 -t 10 $reverse >/tmp/sample.json 2>/tmp/sample.err; then break; fi
     if ! grep -qi 'unable to connect to server' /tmp/sample.err /tmp/sample.json; then exit 1; fi
     attempt=$((attempt + 1))
     if [ "$attempt" -ge 60 ]; then exit 1; fi
@@ -52,10 +64,19 @@ func meridianIperfOptions(task nodediagnostics.Task, server bool) client.Contain
 		script = meridianIperfServerScript
 		cmd = []string{address, strconv.Itoa(task.Link.Port)}
 	}
+	env := []string{"HOME=/tmp"}
+	if task.LinkAuth != nil {
+		env = append(env, "MERIDIAN_IPERF_KEY="+task.LinkAuth.KeyPEM)
+		if server {
+			env = append(env, "MERIDIAN_IPERF_HASH="+task.LinkAuth.PasswordHash)
+		} else {
+			env = append(env, "IPERF3_PASSWORD="+task.LinkAuth.Password)
+		}
+	}
 	pids := int64(32)
 	return client.ContainerCreateOptions{
-		Config: &container.Config{Image: meridianIperfImage, User: "1000:1000", WorkingDir: "/tmp", Env: []string{"HOME=/tmp"},
-			Entrypoint: []string{"/bin/sh", "-c", script, "meridian-iperf"}, Cmd: cmd,
+		Config: &container.Config{Image: meridianIperfImage, User: "1000:1000", WorkingDir: "/tmp", Env: env,
+			Entrypoint: []string{"/bin/sh", "-c", meridianIperfDeadlineScript, "meridian-deadline", script}, Cmd: cmd,
 			Labels: map[string]string{"io.vastora.application": "meridian", "io.vastora.diagnostic": "link-bandwidth"}},
 		HostConfig: &container.HostConfig{NetworkMode: "host", AutoRemove: false, ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"},
 			Tmpfs: map[string]string{"/tmp": "rw,nosuid,size=2m,mode=1777"}, LogConfig: container.LogConfig{Type: "none"},
@@ -68,9 +89,20 @@ func (e ApplicationExecutor) runMeridianIperf(parent context.Context, task noded
 	if server {
 		kind = nodediagnostics.LinkServerKind
 	}
-	if err := task.ValidateLinkBandwidth(kind); err != nil {
+	if err := task.ValidateLinkIdentity(kind); err != nil {
 		return nil, err
 	}
+	if err := validateMeridianLinkAuth(task.LinkAuth, server); err != nil {
+		return nil, err
+	}
+	checker := landing.NewLinkChecker()
+	defer checker.Close()
+	return guardMeridianLink(parent, checker, *task.Link, server, landing.CheckInterval, func(ctx context.Context) ([]byte, error) {
+		return e.runMeridianIperfContainer(ctx, task, server)
+	})
+}
+
+func (e ApplicationExecutor) runMeridianIperfContainer(parent context.Context, task nodediagnostics.Task, server bool) (out []byte, err error) {
 	ctx, cancel := context.WithTimeout(parent, 4*time.Minute)
 	defer cancel()
 	socket := e.DockerSocket
@@ -155,6 +187,10 @@ func (e ApplicationExecutor) CheckMeridianLinkServer(ctx context.Context, task n
 	if errors.Is(err, errIPQualityCleanupUnconfirmed) {
 		return nodediagnostics.Result{}, err
 	}
+	var linkFailure meridianLinkFailure
+	if errors.As(err, &linkFailure) {
+		return nodediagnostics.Result{Error: string(linkFailure)}, nil
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return nodediagnostics.Result{Error: "timeout"}, nil
 	}
@@ -168,6 +204,10 @@ func (e ApplicationExecutor) CheckMeridianLinkBandwidth(ctx context.Context, tas
 	raw, err := e.runMeridianIperf(ctx, task, false)
 	if errors.Is(err, errIPQualityCleanupUnconfirmed) {
 		return nodediagnostics.Result{}, err
+	}
+	var linkFailure meridianLinkFailure
+	if errors.As(err, &linkFailure) {
+		return nodediagnostics.Result{Error: string(linkFailure)}, nil
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return nodediagnostics.Result{Error: "timeout"}, nil
@@ -184,7 +224,7 @@ func (e ApplicationExecutor) CheckMeridianLinkBandwidth(ctx context.Context, tas
 		return nodediagnostics.Result{Error: "probe_failed"}, nil
 	}
 	u, d := upload.End.SumSent, download.End.SumReceived
-	measurement := &nodediagnostics.LinkBandwidthMeasurement{SourceNodeID: task.Link.SourceNodeID, LandingNodeID: task.Link.LandingNodeID,
+	measurement := &nodediagnostics.LinkBandwidthMeasurement{TransportState: "direct", SourceNodeID: task.Link.SourceNodeID, LandingNodeID: task.Link.LandingNodeID,
 		UploadMbps: u.BitsPerSecond / 1_000_000, DownloadMbps: d.BitsPerSecond / 1_000_000,
 		UploadBytes: u.Bytes, DownloadBytes: d.Bytes, UploadSeconds: u.Seconds, DownloadSeconds: d.Seconds}
 	result := nodediagnostics.Result{Link: measurement}

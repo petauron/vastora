@@ -92,7 +92,7 @@ CREATE TRIGGER command_updates_block_during_package_maintenance BEFORE UPDATE ON
 WHEN NEW.state IN ('pending','running') AND EXISTS(SELECT 1 FROM application_maintenance WHERE agent_id=NEW.agent_id AND (state IN ('pending','running') OR reconciliation_required=1))
 BEGIN SELECT RAISE(ABORT,'Application package maintenance requires completion or reconciliation'); END;
 
-PRAGMA user_version = 102;
+PRAGMA user_version = 109;
 
 -- +goose Down
 SELECT RAISE(ABORT, 'Vastora Center database downgrades are not supported');

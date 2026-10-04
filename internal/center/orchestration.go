@@ -15,6 +15,7 @@ import (
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/pulse"
 	"golang.org/x/mod/semver"
 )
 
@@ -29,6 +30,7 @@ type ApplicationServiceResult struct {
 type ApplicationTaskResult struct {
 	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
 	Resources            json.RawMessage                     `json:"resources,omitempty"`
+	PulseRestored        *pulse.RestoreResult                `json:"pulseRestored,omitempty"`
 	Services             []ApplicationServiceResult          `json:"services"`
 	GeneratedSecrets     map[string]string                   `json:"generatedSecrets,omitempty"`
 	ApplicationCommand   *RealityCommandResult               `json:"applicationCommand,omitempty"`

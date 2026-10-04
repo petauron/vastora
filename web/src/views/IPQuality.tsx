@@ -6,7 +6,7 @@ import type { Language } from "../translations";
 import type { IPQualityCheck, IPQualityClassification, IPQualityRiskFactor, IPQualityService, IPQualityTarget } from "../ip-quality-types";
 import type { Carrier, NodeDiagnosticCheck } from "../node-diagnostics-types";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
@@ -18,7 +18,6 @@ import { routeLine, type RouteTier } from "./returnRouteModel";
 import { canonicalIPQualityAddress, checkPending, cleanIPQualityValue, ipClassification, ipQualityCheckForAddress, ipQualityError, ipQualityFamilyLabel, ipQualitySummary, landingQualityAddress, unlockLabel, unlockServiceLabel, unlockServices, unlockTypeLabel } from "./ipQualityModel";
 import { AssessmentBadge, AssessmentSummary, AssessmentTypeBadge } from "./IPAssessment";
 import { IPQualityComparison } from "./IPQualityComparison";
-import { MeridianLinkBandwidth } from "./MeridianLinkBandwidth";
 
 type QualityState = {
   checks: IPQualityCheck[]; targets: IPQualityTarget[]; diagnostics: NodeDiagnosticCheck[]; agents: AgentView[]; loading: boolean; error: boolean;
@@ -167,7 +166,7 @@ export function IPQualityProvider({ agents, enabled, children }: { agents: Agent
   return <DiagnosticsProvider agents={agents} enabled={enabled} includeIPQuality>{children}</DiagnosticsProvider>;
 }
 
-type DiagnosticsButtonProps = { nodeId: string; name: string; language: Language; compact?: boolean; linkBandwidth?: boolean; egressAddress?: string; landingEgress?: boolean };
+type DiagnosticsButtonProps = { nodeId: string; name: string; language: Language; compact?: boolean; egressAddress?: string; landingEgress?: boolean };
 
 export function IPQualityButton(props: DiagnosticsButtonProps) {
   return <DiagnosticsButton {...props} includeIPQuality />;
@@ -177,7 +176,7 @@ export function NodeDiagnosticsButton(props: DiagnosticsButtonProps) {
   return <DiagnosticsButton {...props} includeIPQuality={false} />;
 }
 
-function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwidth = false, egressAddress, landingEgress = false, includeIPQuality }: DiagnosticsButtonProps & { includeIPQuality: boolean }) {
+function DiagnosticsButton({ nodeId, name, language, compact = false, egressAddress, landingEgress = false, includeIPQuality }: DiagnosticsButtonProps & { includeIPQuality: boolean }) {
   const state = useContext(QualityContext);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState(includeIPQuality ? "quality" : "network");
@@ -252,10 +251,11 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
   const currentUnlocks = Boolean(!state.error && check?.state === "succeeded" && check.report && !check.stale && !check.error && check.assessment?.status !== "ip_changed");
   const broadcast = currentUnlocks && report?.ippure?.status === "ok" ? report.ippure.broadcast : undefined;
   const ipOrigin = broadcast === true ? copy(language, "广播 IP", "Broadcast IP") : broadcast === false ? copy(language, "原生 IP", "Native IP") : copy(language, "未知", "Unknown");
-  return <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) { setTab(includeIPQuality ? "quality" : "network"); setSelection(null); setError(""); void state.refresh(); } }}>
-    <SheetTrigger render={<Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "quality-list-trigger h-auto min-h-11 w-full max-w-full justify-start gap-2 px-0 py-1 text-left text-xs text-muted-foreground"} />} aria-label={compact ? copy(language, `查看 ${name} 的节点诊断`, `View node diagnostics for ${name}`) : copy(language, `查看 ${name} 的节点诊断：${summary}`, `View node diagnostics for ${name}: ${summary}`)} title={compact ? copy(language, "查看节点诊断", "View node diagnostics") : summary}>
+  const changeOpen = (value: boolean) => { setOpen(value); if (value) { setTab(includeIPQuality ? "quality" : "network"); setSelection(null); setError(""); void state.refresh(); } };
+  return <Sheet open={open} onOpenChange={changeOpen}>
+    <Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "quality-list-trigger h-auto min-h-11 w-full max-w-full justify-start gap-2 px-0 py-1 text-left text-xs text-muted-foreground"} aria-haspopup="dialog" aria-expanded={open} onClick={() => changeOpen(true)} aria-label={compact ? copy(language, `查看 ${name} 的节点诊断`, `View node diagnostics for ${name}`) : copy(language, `查看 ${name} 的节点诊断：${summary}`, `View node diagnostics for ${name}: ${summary}`)} title={compact ? copy(language, "查看节点诊断", "View node diagnostics") : summary}>
       {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="flex shrink-0 flex-col items-center gap-0.5"><span className="text-[10px]" title={currentAddress}>{currentAddress ? currentAddress.includes(":") ? "IPv6" : "IPv4" : "IP"}</span><span className="flex items-center gap-1.5"><AssessmentBadge language={language} assessment={!state.error && !listCheck?.stale ? listCheck?.assessment : undefined} /><AssessmentTypeBadge language={language} assessment={!state.error && !listCheck?.stale && listCheck?.report ? listCheck.assessment : undefined} checkedAt={listCheck?.checkedAt} /></span></span><UnlockIndicators check={listCheck} language={language} current={listUnlocks} /><ChevronRightIcon className="ml-auto shrink-0" aria-hidden="true" /></>}
-    </SheetTrigger>
+    </Button>
     {open ? <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-6xl">
       <SheetHeader className="pr-12">
         <SheetTitle>{name} · {copy(language, "节点诊断", "Node diagnostics")}</SheetTitle>
@@ -298,12 +298,15 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
               <h3 className="mb-1 text-xs font-semibold text-latency-fast">{copy(language, "一 · IP 类型", "1 · IP type")}</h3>
               <IPTypeMatrix language={language} usageTypes={report.usageTypes ?? []} companyTypes={report.companyTypes ?? []} />
             </section>
-            <section className="border-t pt-2" aria-label={copy(language, "来源评分", "Provider scores")}>
-              <h3 className="mb-1 text-xs font-semibold text-latency-fast">{copy(language, "二 · 来源评分", "2 · Provider scores")}</h3>
+            <section className="border-t pt-2" aria-label={copy(language, "来源风险", "Provider risk")}>
+              <h3 className="mb-1 text-xs font-semibold text-latency-fast">{copy(language, "二 · 来源风险（越高风险越高）", "2 · Provider risk (higher is riskier)")}</h3>
               <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">{report.scores.map((value) => {
-                const risk = ["SCAMALYTICS", "IPQS", "AbuseIPDB"].includes(value.source) && /^\d{1,3}(?:\.\d+)?$/.test(value.value) ? Number(value.value) : NaN;
-                const hasKnownScale = Number.isFinite(risk) && risk >= 0 && risk <= 100;
-                return <div key={value.source} className="grid grid-cols-[100px_minmax(0,1fr)_56px] items-center gap-2 text-xs"><span className="truncate text-muted-foreground" title={value.source}>{value.source}</span><span className="h-1.5 rounded-full bg-muted">{hasKnownScale ? <span className="block h-full rounded-full bg-primary" style={{ width: `${risk}%` }} /> : null}</span><span className="text-right font-medium tabular-nums">{value.value}</span></div>;
+                const maxRisk = value.source === "IP2LOCATION" ? 99 : ["SCAMALYTICS", "IPQS", "AbuseIPDB"].includes(value.source) ? 100 : NaN;
+                const risk = /^\d{1,3}(?:\.\d+)?$/.test(value.value) ? Number(value.value) : NaN;
+                const hasKnownScale = Number.isFinite(risk) && risk >= 0 && risk <= maxRisk;
+                const description = hasKnownScale ? copy(language, `${value.source} 风险分 ${value.value} / ${maxRisk}，越高风险越高`, `${value.source} risk ${value.value} / ${maxRisk}; higher is riskier`) : copy(language, `${value.source} 原始值，未核实量纲`, `${value.source} raw value; scale unverified`);
+                const barColor = value.source === "IP2LOCATION" ? risk >= 66 ? "bg-destructive" : risk >= 33 ? "bg-amber-500" : "bg-emerald-500" : "bg-primary";
+                return <div key={value.source} className="grid grid-cols-[100px_minmax(0,1fr)_56px] items-center gap-2 text-xs" title={description}><span className="truncate text-muted-foreground" title={value.source}>{value.source}</span><span className="h-1.5 rounded-full bg-muted">{hasKnownScale ? <span className={cn("block h-full rounded-full", barColor)} style={{ width: `${risk / maxRisk * 100}%` }} /> : null}</span><span className="text-right font-medium tabular-nums">{value.value}</span></div>;
               })}{!report.scores.length ? <p className="text-xs text-muted-foreground">{copy(language, "暂无评分数据", "No score data")}</p> : null}</div>
             </section>
             <section className="border-t pt-2" aria-label={copy(language, "风险因子", "Risk factors")}>
@@ -358,7 +361,6 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, linkBandwi
             {bandwidthCheck?.error ? <p role="alert" className="text-sm text-destructive">{bandwidthCheck.error === "tool_unavailable" ? copy(language, "此 Agent 未安装 iPerf3，安装后重启 Agent 才会开放测速。", "iPerf3 is not installed on this Agent. Install it and restart the Agent to enable testing.") : bandwidthCheck.error}</p> : null}
             {!agent?.capabilities.bandwidthDiagnostics ? <p className="text-xs text-muted-foreground">{copy(language, "需要在 Linux 节点安装 iPerf3 并重启 Agent；Vastora 不会自动修改系统软件包。", "Install iPerf3 on the Linux host and restart the Agent. Vastora does not modify system packages automatically.")}</p> : null}
             <Button variant="outline" disabled={diagnosticsUnavailable || !agent?.capabilities.bandwidthDiagnostics || submitting || bandwidthCheck?.state === "pending" || bandwidthCheck?.state === "running"} onClick={() => void startDiagnostic("node.international-bandwidth")}>{bandwidthCheck?.state === "pending" || bandwidthCheck?.state === "running" ? copy(language, "测速中…", "Testing…") : copy(language, "测试国际带宽", "Test international bandwidth")}</Button>
-            {linkBandwidth ? <MeridianLinkBandwidth nodeId={nodeId} language={language} checks={state.diagnostics} agents={state.agents} refresh={state.refresh} /> : null}
               </section>
               <section className="space-y-3 rounded-lg border p-3 sm:p-4" aria-label={copy(language, "主机与 TCP", "Host & TCP")}>
                 <div><h3 className="text-sm font-semibold">{copy(language, "主机与 TCP", "Host & TCP")}</h3><p className="text-xs text-muted-foreground">{copy(language, "只读采集实际生效值", "Read-only effective values")}</p></div>

@@ -19,6 +19,7 @@ import (
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 )
@@ -67,6 +68,7 @@ type AgentCredential struct {
 }
 
 type AgentView struct {
+	Reinstall                   *AgentReinstallOperation           `json:"reinstall,omitempty"`
 	ID                          string                             `json:"id"`
 	Name                        string                             `json:"name"`
 	Version                     string                             `json:"version"`
@@ -106,13 +108,20 @@ func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 	capabilities := NodeCapabilities{Docker: true, Gateway: spec.Gateway, Tunnel: spec.Tunnel}
 	rolesJSON, _ := json.Marshal(roles)
 	capabilitiesJSON, _ := json.Marshal(capabilities)
-	return s.createAgentEnrollment(ctx, spec, rolesJSON, capabilitiesJSON, "")
+	return s.createAgentEnrollment(ctx, spec, rolesJSON, capabilitiesJSON, "", "")
 }
 
-func (s *Store) CreateAgentReconnectEnrollment(ctx context.Context, agentID string) (AgentEnrollment, error) {
+func (s *Store) createAgentReconnectEnrollment(ctx context.Context, agentID, operationID string) (AgentEnrollment, error) {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return AgentEnrollment{}, errors.New("center: Agent not found")
+	}
+	var isolated bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agent_reinstall_operations WHERE id=? AND agent_id=? AND state='preparing' AND private_isolation IN ('not_required','withdrawn'))`, operationID, agentID).Scan(&isolated); err != nil {
+		return AgentEnrollment{}, err
+	}
+	if !isolated {
+		return AgentEnrollment{}, errors.New("center: previous private identity must be isolated before command preparation")
 	}
 	network, err := s.CenterNetworkConfig(ctx)
 	if err != nil {
@@ -148,10 +157,10 @@ func (s *Store) CreateAgentReconnectEnrollment(ctx context.Context, agentID stri
 	spec.UseHeadscale = network.AgentConnectionMode == "headscale"
 	spec.Gateway = profile.Capabilities.Gateway
 	spec.Tunnel = profile.Capabilities.Tunnel
-	return s.createAgentEnrollment(ctx, spec, rolesJSON, capabilitiesJSON, agentID)
+	return s.createAgentEnrollment(ctx, spec, rolesJSON, capabilitiesJSON, agentID, operationID)
 }
 
-func (s *Store) createAgentEnrollment(ctx context.Context, spec AgentEnrollmentSpec, rolesJSON, capabilitiesJSON []byte, targetAgentID string) (AgentEnrollment, error) {
+func (s *Store) createAgentEnrollment(ctx context.Context, spec AgentEnrollmentSpec, rolesJSON, capabilitiesJSON []byte, targetAgentID, operationID string) (AgentEnrollment, error) {
 	spec.SiteID = strings.TrimSpace(spec.SiteID)
 	spec.Name = strings.TrimSpace(spec.Name)
 	if spec.Name == "" || len(spec.Name) > 128 {
@@ -275,6 +284,9 @@ func (s *Store) createAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 		if _, err := tx.ExecContext(ctx, `UPDATE agents SET credential_revoked_at = ? WHERE id = ?`, now, targetAgentID); err != nil {
 			return AgentEnrollment{}, fmt.Errorf("center: revoke replaced Agent credential: %w", err)
 		}
+		if err := retireAgentExecutionIdentity(ctx, tx, targetAgentID, now); err != nil {
+			return AgentEnrollment{}, err
+		}
 	}
 	var bootstrapSecretID sql.NullString
 	if bootstrapCommand != "" {
@@ -287,6 +299,11 @@ func (s *Store) createAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 	targetAgent := sql.NullString{String: targetAgentID, Valid: targetAgentID != ""}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_enrollment_tokens(token_hash, site_id, name, center_url, roles_json, capabilities_json, bootstrap_secret_id, ca_fingerprint, ca_certificate_pem, target_agent_id, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, tokenHash(token), spec.SiteID, spec.Name, centerURL, rolesJSON, capabilitiesJSON, bootstrapSecretID, spec.CAFingerprint, spec.CACertificatePEM, targetAgent, enrollment.ExpiresAt.Format(time.RFC3339Nano)); err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: create agent enrollment: %w", err)
+	}
+	if targetAgentID != "" {
+		if err := s.saveAgentReinstallEnrollment(ctx, tx, targetAgentID, operationID, enrollment, now); err != nil {
+			return AgentEnrollment{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: commit agent enrollment: %w", err)
@@ -463,6 +480,9 @@ func (s *Store) EnrollAgentOperation(ctx context.Context, enrollmentToken, opera
 			return AgentCredential{}, fmt.Errorf("center: save agent: %w", err)
 		}
 	} else {
+		if err := acceptAgentReinstallIdentity(ctx, tx, targetAgentID, enrollmentTokenHash, publicKey, now.Format(time.RFC3339Nano)); err != nil {
+			return AgentCredential{}, err
+		}
 		result, err := tx.ExecContext(ctx, `UPDATE agents SET status = 'active', credential_hash = ?, x25519_public_key = ?, version = ?, operating_system = ?, architecture = ?, credential_revoked_at = '', applied_installations = 0, gateway_healthy = 0, runtime_generation = 0, tailscale_ownership = '', remote_update_supported = 0, last_seen_at = ? WHERE id = ? AND status IN ('active', 'disabled') AND credential_revoked_at <> '' AND NOT EXISTS(SELECT 1 FROM agent_removals WHERE agent_id = agents.id) AND NOT EXISTS(SELECT 1 FROM agent_decommissions WHERE agent_id = agents.id AND state IN ('pending', 'running', 'cleaning'))`, tokenHash(credential), append([]byte(nil), publicKey...), version, target.OS, target.Architecture, now.Format(time.RFC3339Nano), targetAgentID)
 		if err != nil {
 			return AgentCredential{}, fmt.Errorf("center: replace Agent identity: %w", err)
@@ -485,7 +505,7 @@ func (s *Store) EnrollAgentOperation(ctx context.Context, enrollmentToken, opera
 		VALUES(?, ?, ?, ?, ?, ?, ?)`, enrollmentTokenHash, operationID, requestHash[:], id, responseSecretID, now.Add(agentEnrollmentReplayLifetime).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return AgentCredential{}, fmt.Errorf("center: save Agent enrollment operation: %w", err)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE agent_enrollment_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL`, now.Format(time.RFC3339Nano), enrollmentTokenHash)
+	result, err := tx.ExecContext(ctx, `UPDATE agent_enrollment_tokens SET used_at = ?, bootstrap_secret_id = NULL WHERE token_hash = ? AND used_at IS NULL`, now.Format(time.RFC3339Nano), enrollmentTokenHash)
 	if err != nil {
 		return AgentCredential{}, fmt.Errorf("center: consume agent enrollment: %w", err)
 	}
@@ -578,16 +598,8 @@ func (s *Store) RevokeAgentCredential(ctx context.Context, agentID string) error
 	if changed != 1 {
 		return errors.New("center: active Agent credential was not found")
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id IN (
-		SELECT bootstrap_secret_id FROM agent_enrollment_tokens WHERE target_agent_id = ? AND bootstrap_secret_id IS NOT NULL
-	)`, agentID); err != nil {
-		return fmt.Errorf("center: revoke Agent reconnect bootstrap: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_enrollment_tokens WHERE target_agent_id = ?`, agentID); err != nil {
-		return fmt.Errorf("center: revoke Agent reconnect command: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_enrollment_operations WHERE agent_id = ?`, agentID); err != nil {
-		return fmt.Errorf("center: revoke Agent enrollment recovery: %w", err)
+	if err := revokeAgentReconnectGrants(ctx, tx, agentID); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
@@ -713,7 +725,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if len(storedPublicKey) != 0 && len(heartbeat.PublicKey) != 0 && !bytes.Equal(storedPublicKey, heartbeat.PublicKey) {
 		return errors.New("center: Agent X25519 identity changed; revoke and enroll it again")
 	}
-	replacePublicEgress := heartbeat.Startup
+	replacePublicEgress := heartbeat.Startup || heartbeat.PublicEgress != nil
 	publicEgress := networking.PublicEgress{}
 	if heartbeat.PublicEgress != nil {
 		publicEgress = *heartbeat.PublicEgress
@@ -750,8 +762,23 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, id).Scan(&executionBlocked); err != nil {
 		return err
 	}
+	reinstalling, err := agentReinstallBlocked(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if reinstalling {
+		if err := recordReinstallNetworkObservation(ctx, tx, id, heartbeat.PrivateNetworkPeer, heartbeat.TailscaleOwnership, now); err != nil {
+			return err
+		}
+	}
+	executionBlocked = executionBlocked || reinstalling
 	if !executionBlocked && heartbeat.ApplicationEndpointsObserved {
 		if err := s.reconcileApplicationEndpoints(ctx, tx, id, heartbeat.ApplicationEndpoints, now, &publicationCleanups); err != nil {
+			return err
+		}
+	}
+	if reinstalling && heartbeat.MeridianRuntime != nil {
+		if err := s.recordReinstallRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
 			return err
 		}
 	}
@@ -820,7 +847,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
-	if heartbeat.Startup {
+	if heartbeat.Startup && !reinstalling {
 		if err := expireAgentProcessTaskLeases(ctx, tx, id, now); err != nil {
 			return err
 		}
@@ -1124,6 +1151,8 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		if json.Unmarshal(rolesJSON, &agent.Roles) != nil || json.Unmarshal(capabilitiesJSON, &agent.Capabilities) != nil {
 			return nil, errors.New("center: invalid stored Agent capabilities")
 		}
+		// Advertise availability only for the current execution contract.
+		agent.Capabilities.MeridianLinkBandwidth = agent.Capabilities.MeridianLinkBandwidth && agent.Capabilities.MeridianLinkRevision == nodediagnostics.LinkBandwidthRevision
 		if agent.Roles == nil {
 			agent.Roles = []string{}
 		}
@@ -1136,6 +1165,26 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 	for index := range agents {
 		byID[agents[index].ID] = index
 		agents[index].NetworkCandidates = []networking.Candidate{}
+	}
+	recoveryRows, err := s.db.QueryContext(ctx, `SELECT agent_id,id,plan_revision,state,private_isolation,attempt,authorized_by,previous_fingerprint,replacement_fingerprint,last_error,created_at,updated_at FROM agent_reinstall_operations WHERE state NOT IN ('superseded','completed')`)
+	if err != nil {
+		return nil, err
+	}
+	for recoveryRows.Next() {
+		var id string
+		var op AgentReinstallOperation
+		if err := recoveryRows.Scan(&id, &op.ID, &op.PlanRevision, &op.State, &op.PrivateIsolation, &op.Attempt, &op.AuthorizedBy, &op.PreviousFingerprint, &op.ReplacementFingerprint, &op.LastError, &op.CreatedAt, &op.UpdatedAt); err != nil {
+			recoveryRows.Close()
+			return nil, err
+		}
+		if index, ok := byID[id]; ok {
+			agents[index].Reinstall = &op
+		}
+	}
+	recoveryErr := recoveryRows.Err()
+	recoveryRows.Close()
+	if recoveryErr != nil {
+		return nil, recoveryErr
 	}
 	removalRows, err := s.db.QueryContext(ctx, `SELECT agent_id,state,last_error FROM agent_removals`)
 	if err != nil {
@@ -1168,7 +1217,8 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		return nil, removalErr
 	}
 	updateRows, err := s.db.QueryContext(ctx, `SELECT u.id, u.agent_id, u.target_version, u.state, u.last_error, u.updated_at
-		FROM agent_updates u WHERE u.rowid = (SELECT latest.rowid FROM agent_updates latest WHERE latest.agent_id = u.agent_id ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1)`)
+		FROM agent_updates u WHERE u.rowid = (SELECT latest.rowid FROM agent_updates latest WHERE latest.agent_id = u.agent_id ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1)
+		AND NOT (u.state='failed' AND EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=u.id AND e.agent_id=u.agent_id AND e.kind='agent.update' AND e.attempt=u.attempt AND e.disposition='abandon'))`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list Agent updates: %w", err)
 	}

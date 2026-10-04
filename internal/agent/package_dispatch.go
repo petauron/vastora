@@ -44,6 +44,9 @@ func (e ApplicationExecutor) CompleteCommandResources(applicationID, taskID stri
 }
 
 func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentTask) (ApplicationTaskResult, error) {
+	if task.PulseRestore != nil && (task.AppKey != pulse.AgentKey || task.Operation != "install" || task.PulseRestore.Validate() != nil) {
+		return ApplicationTaskResult{}, errors.New("agent: invalid Pulse restoration task")
+	}
 	if task.Operation == "adopt" {
 		return e.Adopt(ctx, task)
 	}
@@ -69,7 +72,11 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 			return ApplicationTaskResult{}, errors.New("agent: generic systemd executor is unavailable")
 		}
 		backend := &SystemdPackageBackend{Manager: manager, StateDirectory: e.packageDirectory()}
-		return (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: backend}).Deploy(ctx, task)
+		result, err := (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: backend}).Deploy(ctx, task)
+		if err == nil && task.PulseRestore != nil {
+			result.PulseRestored = &pulse.RestoreResult{NodeID: task.PulseRestore.NodeID}
+		}
+		return result, err
 	}
 	// Product runtime state is a separate integration. An unsupported integrated
 	// migration must fail before touching its runtime, never silently become a

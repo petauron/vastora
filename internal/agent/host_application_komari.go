@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/platform"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,11 +23,12 @@ const (
 )
 
 type SystemdHostApplicationManager struct {
-	RootDir     string
-	HTTPClient  *http.Client
-	RunCommand  func(context.Context, string, ...string) error
-	ReadCommand func(context.Context, string, ...string) ([]byte, error)
-	HostTarget  platform.Target
+	RootDir         string
+	HTTPClient      *http.Client
+	RunCommand      func(context.Context, string, ...string) error
+	ReadCommand     func(context.Context, string, ...string) ([]byte, error)
+	HostTarget      platform.Target
+	RunInputCommand func(context.Context, io.Reader, string, ...string) error
 }
 
 func declaredArtifact(manifest catalog.AppManifest, name string, target platform.Target) (catalog.Artifact, error) {
