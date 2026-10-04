@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.288](https://github.com/petauron/vastora/compare/v0.1.0-alpha.287...v0.1.0-alpha.288) (2026-10-04)
+
+
+### Bug Fixes
+
+* **agent:** honor reviewed package reexecution authorizations ([#816](https://github.com/petauron/vastora/issues/816)) ([c3deb04](https://github.com/petauron/vastora/commit/c3deb0446bcc103678ebdc3822e0b83ce3f4629e))
+
 ## [0.1.0-alpha.287](https://github.com/petauron/vastora/compare/v0.1.0-alpha.286...v0.1.0-alpha.287) (2026-10-04)
 
 
