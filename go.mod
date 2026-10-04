@@ -9,10 +9,9 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/google/uuid v1.6.0
-	github.com/moby/moby/api v1.55.0
-	github.com/moby/moby/client v0.5.1
+	github.com/moby/moby/api v1.56.0
+	github.com/moby/moby/client v0.6.0
 	github.com/petauron/catalog v0.2.0
-	github.com/opencontainers/go-digest v1.0.0
 	github.com/petauron/meridian v0.0.0-20261003085836-17e08203e08b
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/projectdiscovery/cdncheck v1.2.51
