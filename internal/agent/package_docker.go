@@ -124,6 +124,11 @@ func runtimeInputs(task DeploymentTask) (map[string]any, map[string]string, erro
 }
 
 func runtimeStrings(values []catalog.Value, config map[string]any, secrets map[string]string, runtimeValues ...map[string]string) ([]string, error) {
+	// Docker inherits the image entrypoint only when it is nil. An empty,
+	// non-nil array explicitly clears it, even if no override was declared.
+	if len(values) == 0 {
+		return nil, nil
+	}
 	result := make([]string, len(values))
 	for i, value := range values {
 		if value.Secret != "" {
