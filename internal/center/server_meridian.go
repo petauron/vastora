@@ -153,3 +153,13 @@ func (s *Server) handleRevokeMeridianRouteGrant(writer http.ResponseWriter, requ
 	}
 	writeJSON(writer, http.StatusAccepted, map[string]bool{"accepted": true})
 }
+
+func (s *Server) handleMeridianTraffic(writer http.ResponseWriter, request *http.Request) {
+	view, err := s.store.MeridianTraffic(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusOK, view)
+}

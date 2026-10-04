@@ -138,6 +138,14 @@ CREATE TABLE meridian_route_grants (
  UNIQUE(account_id,endpoint_id,egress_node_id)
 );
 CREATE INDEX meridian_route_grants_endpoint ON meridian_route_grants(endpoint_id,status);
+CREATE TABLE meridian_line_usage (
+ credential_id TEXT PRIMARY KEY REFERENCES meridian_credentials(id) ON DELETE CASCADE,
+ upload_bytes INTEGER NOT NULL DEFAULT 0 CHECK(upload_bytes>=0),
+ download_bytes INTEGER NOT NULL DEFAULT 0 CHECK(download_bytes>=0),
+ started_at TEXT NOT NULL,
+ observed_at TEXT NOT NULL
+);
+
 CREATE TABLE meridian_usage_watermarks (
  credential_id TEXT PRIMARY KEY REFERENCES meridian_credentials(id) ON DELETE CASCADE,
  baseline_bytes INTEGER NOT NULL DEFAULT 0 CHECK(baseline_bytes>=0),

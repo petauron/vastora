@@ -141,6 +141,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/sites", s.requireAuth(true, s.handleCreateSite))
 	mux.HandleFunc("PUT /api/v1/sites/{id}", s.requireAuth(true, s.handleUpdateSite))
 	mux.HandleFunc("GET /api/v1/applications", s.requireAuth(false, s.handleListApplications))
+	mux.HandleFunc("GET /api/v1/meridian/traffic", s.requireAuth(false, s.handleMeridianTraffic))
 	mux.HandleFunc("GET /api/v1/meridian", s.requireAuth(false, s.handleMeridianInventory))
 	mux.HandleFunc("GET /api/v1/meridian/cutover", s.requireAuth(false, s.handleMeridianCutover))
 	mux.HandleFunc("POST /api/v1/meridian/cutover", s.requireAuth(true, s.handleStartMeridianCutover))

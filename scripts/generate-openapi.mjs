@@ -594,6 +594,10 @@ for (const route of routes) {
       "applicationId", "regionCode", "name",
       "dnsProvider", "targetHost", "serverName", "verificationId", "targetIp",
     ];
+  } else if (route.handler === "handleMeridianTraffic") {
+    operation.description = "Read directional traffic grouped by entry node and egress. Totals start at the first authenticated tracking sample, never infer historical direction, never reset or enforce quotas, and are not provider billing. Stale means no current active credential sample within 15 minutes.";
+    operation.responses["200"].headers = noStoreHeaders;
+    operation.responses["200"].content["application/json"].schema = schemaForGoType("MeridianTrafficView");
   } else if (route.handler === "handleCreateMeridianEndpoint") {
     operation.requestBody.content["application/json"].schema.required = [
       "applicationId", "verificationId", "targetIp", "targetHost", "serverName", "regionCode", "name",
