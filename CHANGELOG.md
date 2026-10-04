@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.285](https://github.com/petauron/vastora/compare/v0.1.0-alpha.284...v0.1.0-alpha.285) (2026-10-04)
+
+
+### Bug Fixes
+
+* **web:** simplify task triage and everyday navigation ([#760](https://github.com/petauron/vastora/issues/760)) ([34afe9b](https://github.com/petauron/vastora/commit/34afe9b173d1705812ae96af7862f16d9d012c79))
+
 ## [0.1.0-alpha.284](https://github.com/petauron/vastora/compare/v0.1.0-alpha.283...v0.1.0-alpha.284) (2026-10-04)
 
 
