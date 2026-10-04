@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.284](https://github.com/petauron/vastora/compare/v0.1.0-alpha.283...v0.1.0-alpha.284) (2026-10-04)
+
+
+### Features
+
+* **meridian:** track directional traffic per route ([#810](https://github.com/petauron/vastora/issues/810)) ([cacfbe9](https://github.com/petauron/vastora/commit/cacfbe913f3ea307b6c2959fb4c3aae97524a73c)), closes [#505](https://github.com/petauron/vastora/issues/505)
+
 ## [0.1.0-alpha.283](https://github.com/petauron/vastora/compare/v0.1.0-alpha.282...v0.1.0-alpha.283) (2026-10-03)
 
 
