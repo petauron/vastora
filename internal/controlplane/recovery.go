@@ -27,7 +27,7 @@ func (scope RecoveryScope) Validate() error {
 	seen := map[string]bool{}
 	for _, application := range scope.Applications {
 		switch application.AppKey {
-		case "vastora-official/3x-ui", "vastora-official/cpa", "vastora-official/keeper", "vastora-official/komari-agent", "vastora-official/pulse", "vastora-official/pulse-agent":
+		case "vastora-official/meridian", "vastora-official/3x-ui", "vastora-official/cpa", "vastora-official/keeper", "vastora-official/komari-agent", "vastora-official/pulse", "vastora-official/pulse-agent":
 		default:
 			return errors.New("invalid recovery application")
 		}

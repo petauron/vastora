@@ -23,6 +23,16 @@ func TestRecoveryHeartbeatUsesBoundedReasonsAndClearsDetails(t *testing.T) {
 	if err != nil || len(agents) != 1 || len(agents[0].RuntimeRecoveryApplications) != 1 || agents[0].RuntimeRecoveryApplications[0].Reason != "image_unavailable" || agents[0].GatewayHealthy {
 		t.Fatalf("recovery status=%#v err=%v", agents, err)
 	}
+	// Meridian must remain reachable while reporting a failed package handover.
+	heartbeat.RuntimeRecoveryApplications[0].AppKey = "vastora-official/meridian"
+	heartbeat.RuntimeRecoveryApplications[0].Reason = "state_incomplete"
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatalf("Meridian recovery heartbeat rejected: %v", err)
+	}
+	agents, err = store.ListAgents(ctx)
+	if err != nil || len(agents) != 1 || len(agents[0].RuntimeRecoveryApplications) != 1 || agents[0].RuntimeRecoveryApplications[0].AppKey != "vastora-official/meridian" || agents[0].RuntimeRecoveryApplications[0].Reason != "state_incomplete" {
+		t.Fatalf("Meridian recovery status=%#v err=%v", agents, err)
+	}
 	heartbeat.RuntimeRecoveryApplications[0].Reason = "private path or secret"
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err == nil {
 		t.Fatal("unbounded runtime error accepted")
