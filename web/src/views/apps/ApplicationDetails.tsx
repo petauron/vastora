@@ -22,6 +22,8 @@ import { Switch } from "@/components/ui/switch";
 
 export function InstalledAppDetails({ instance, data, language, onClients, onConfigure, onCredentials, onMigrate, onAppManager, onPublish, onReality, onRenameReality, onRemoveReality, onSubscription, onTraffic, onUninstall, onUpgrade, mutate }: { instance: InstalledAppInstance; data: AppData; language: Language; onClients: () => void; onConfigure: () => void; onCredentials: () => void; onMigrate: () => void; onAppManager: () => void; onPublish: (service: Service) => void; onReality: () => void; onRenameReality: (service: Service) => void; onRemoveReality: (service: Service) => void; onSubscription: () => void; onTraffic: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
   const [syncingNode, setSyncingNode] = useState(false);
+  const [backupsConfirmed, setBackupsConfirmed] = useState(false);
+  const [adopting, setAdopting] = useState(false);
   const { application, app, agent, services, deployment, activeChange, locked: serviceAccessLocked } = instance;
   const subscriptionService = services.find((service) => service.name === "subscription");
   const subscriptionPublication = subscriptionService ? data.publications.find((value) => value.serviceId === subscriptionService.id && value.status !== "stopped" && (value.kind === "cloudflare_tunnel" || value.kind === "public_direct")) : undefined;
@@ -52,6 +54,14 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
       setSyncingNode(false);
     }
   };
+  const adopt = async () => {
+    setAdopting(true);
+    try {
+      await mutate(() => api.adoptApplication(application.id, backupsConfirmed), copy(language, "已提交资源接管，请在活动中查看结果。", "Resource adoption queued. Follow its result in Activity."));
+    } finally {
+      setAdopting(false);
+    }
+  };
   return <SheetContent className="apps-workspace data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
     <SheetHeader className="pr-12">
       <SheetTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app ? <AppIdentityBadge app={app} language={language} /> : null}{isController ? <Badge>{copy(language, "全局订阅主机", "Global subscription controller")}</Badge> : null}{isLegacyController ? <Badge variant="outline">{copy(language, "待替换为 Xray", "Converting to Xray")}</Badge> : null}{isWorker ? <Badge variant="outline">{copy(language, "Xray 节点", "Xray node")}</Badge> : null}</SheetTitle>
@@ -59,6 +69,7 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
       <div className="mt-2"><StateBadge language={language} value={application.status} /></div>
     </SheetHeader>
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4">
+      {application.adoptionState === "pending" || application.adoptionState === "blocked" ? <Alert><ShieldAlertIcon /><AlertTitle>{copy(language, "需要接管已有安装", "Adopt the existing installation")}</AlertTitle><AlertDescription><p>{copy(language, "核对现有资源归属后才能修改线路或升级。接管不会重启应用。", "Resource ownership must be verified before changing routes or upgrading. Adoption does not restart the app.")}</p>{application.adoptionError ? <p>{application.adoptionError}</p> : null}<label className="flex items-start gap-2"><input checked={backupsConfirmed} onChange={(event) => setBackupsConfirmed(event.target.checked)} type="checkbox" />{copy(language, "已保存 Center、Agent 和应用数据的独立备份", "Independent Center, Agent, and application data backups are saved")}</label><Button disabled={!backupsConfirmed || adopting || Boolean(activeChange)} onClick={() => void adopt()} size="sm">{adopting ? <Spinner /> : null}{copy(language, "核对并接管", "Verify and adopt")}</Button></AlertDescription></Alert> : null}
       {activeChange ? <Alert>{activeChange.reconciliationRequired ? <ShieldAlertIcon /> : <Spinner />}<AlertTitle>{activeChange.reconciliationRequired ? copy(language, "需要继续恢复", "Recovery required") : copy(language, `正在${operationLabel(language, activeChange.operation)}`, `${operationLabel(language, activeChange.operation)} in progress`)}</AlertTitle><AlertDescription>{activeChange.reconciliationRequired ? copy(language, "应用状态尚未确认，恢复完成前不能修改或发布服务；已有入口仍可停止。", "The app state is not confirmed. Services cannot be changed or published until recovery finishes; existing access points can still be stopped.") : copy(language, "完成前暂时不能发起其他应用变更。", "Other app changes are unavailable until this finishes.")}</AlertDescription></Alert> : null}
       {application.status === "failed" ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "最近一次操作失败，应用仍保留", "The last operation failed; the app is still installed")}</AlertTitle><AlertDescription>{copy(language, "原有安装记录和数据仍保留；请查看最近操作，修正后重试或卸载。", "The installed record and data remain available. Review the recent operation, then retry or uninstall.")}</AlertDescription></Alert> : null}
       {application.appKey === "vastora-official/pulse" ? <PulseSetupNotice data={data} language={language} /> : null}
