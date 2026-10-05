@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.294](https://github.com/petauron/vastora/compare/v0.1.0-alpha.293...v0.1.0-alpha.294) (2026-10-05)
+
+
+### Bug Fixes
+
+* **agent:** allow reviewed package recovery before rollout ([#838](https://github.com/petauron/vastora/issues/838)) ([0d12998](https://github.com/petauron/vastora/commit/0d12998f179af6f3e34a6daf89ba8f78ead6e7d1))
+* **meridian:** allow explicitly readding revoked landing routes ([#836](https://github.com/petauron/vastora/issues/836)) ([fffe27f](https://github.com/petauron/vastora/commit/fffe27f692f5d4ff886f5fb5c05e66d40429ba06))
+
 ## [0.1.0-alpha.293](https://github.com/petauron/vastora/compare/v0.1.0-alpha.292...v0.1.0-alpha.293) (2026-10-05)
 
 
