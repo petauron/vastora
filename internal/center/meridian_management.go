@@ -876,6 +876,14 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 	if adoptionPending {
 		return MeridianRouteGrantView{}, errors.New("center: adopt application resources before adding a Meridian route")
 	}
+	var previousGrantID, previousStatus string
+	err = tx.QueryRowContext(ctx, `SELECT id,status FROM meridian_route_grants WHERE account_id=? AND endpoint_id=? AND egress_node_id=?`, input.AccountID, input.EndpointID, input.EgressNodeID).Scan(&previousGrantID, &previousStatus)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return MeridianRouteGrantView{}, err
+	}
+	if previousGrantID != "" && previousStatus != "revoked" {
+		return MeridianRouteGrantView{}, errors.New("center: Meridian route already exists or is still being revoked")
+	}
 	if err := s.authorizeMeridianEntrySource(ctx, tx, input.EndpointID); err != nil {
 		return MeridianRouteGrantView{}, err
 	}
@@ -898,8 +906,18 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 	if err != nil {
 		return MeridianRouteGrantView{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,mode,hide_native,enabled,status,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,'fixed',?,1,'pending',?,?)`, grantID, input.AccountID, input.EndpointID, input.EgressNodeID, baseCredentialID, routeCredentialID, boolInt(input.HideNative), now, now); err != nil {
+	if previousGrantID != "" {
+		// A completed revocation may be explicitly added again, but its old
+		// credential and health evidence must never become valid again.
+		grantID = previousGrantID
+		_, err = tx.ExecContext(ctx, `UPDATE meridian_route_grants SET base_credential_id=?,route_credential_id=?,hide_native=?,enabled=1,
+			desired_revision=desired_revision+1,runtime_healthy=0,health_expires_unix_ms=0,status='pending',last_error='',updated_at=? WHERE id=? AND status='revoked'`,
+			baseCredentialID, routeCredentialID, boolInt(input.HideNative), now, grantID)
+	} else {
+		_, err = tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,mode,hide_native,enabled,status,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,'fixed',?,1,'pending',?,?)`, grantID, input.AccountID, input.EndpointID, input.EgressNodeID, baseCredentialID, routeCredentialID, boolInt(input.HideNative), now, now)
+	}
+	if err != nil {
 		return MeridianRouteGrantView{}, fmt.Errorf("center: create Meridian route grant: %w", err)
 	}
 	if err := s.refreshClientLandingSources(ctx, tx, input.EgressNodeID); err != nil {
