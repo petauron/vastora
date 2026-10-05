@@ -21,7 +21,7 @@ func TestRecoveryHeartbeatUsesBoundedReasonsAndClearsDetails(t *testing.T) {
 	}
 	agents, err := store.ListAgents(ctx)
 	if err != nil || len(agents) != 1 || len(agents[0].RuntimeRecoveryApplications) != 1 || agents[0].RuntimeRecoveryApplications[0].Reason != "image_unavailable" || agents[0].GatewayHealthy {
-		 t.Fatalf("recovery status=%#v err=%v", agents, err)
+		t.Fatalf("recovery status=%#v err=%v", agents, err)
 	}
 	// Meridian must remain reachable while reporting a failed package handover.
 	heartbeat.RuntimeRecoveryApplications[0].AppKey = "vastora-official/meridian"
