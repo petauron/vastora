@@ -6,6 +6,48 @@ import (
 	"time"
 )
 
+func TestMeridianRouteRecreationRequiresCompletedRevocation(t *testing.T) {
+	store, grantID, _ := openMeridianRouteHealthReadFixture(t)
+	ctx := context.Background()
+	var input MeridianRouteGrantInput
+	var oldCredential string
+	if err := store.db.QueryRow(`SELECT account_id,endpoint_id,egress_node_id,route_credential_id FROM meridian_route_grants WHERE id=?`, grantID).Scan(&input.AccountID, &input.EndpointID, &input.EgressNodeID, &oldCredential); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateMeridianRouteGrant(ctx, input); err == nil {
+		t.Fatal("duplicate active route accepted")
+	}
+	if err := store.RevokeMeridianRouteGrant(ctx, grantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateMeridianRouteGrant(ctx, input); err == nil {
+		t.Fatal("unfinished revocation accepted")
+	}
+	// Model the Agent's completed removal receipt, retaining the revoked row.
+	if _, err := store.db.Exec(`UPDATE meridian_route_grants SET status='revoked',applied_revision=desired_revision,health_expires_unix_ms=0 WHERE id=?`, grantID); err != nil {
+		t.Fatal(err)
+	}
+	var previousRevision int64
+	if err := store.db.QueryRow(`SELECT desired_revision FROM meridian_route_grants WHERE id=?`, grantID).Scan(&previousRevision); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := store.CreateMeridianRouteGrant(ctx, input)
+	if err != nil || grant.ID != grantID {
+		t.Fatalf("recreate revoked route: %v", err)
+	}
+	var credential, status string
+	var revision, healthy, expires, oldEnabled int64
+	if err := store.db.QueryRow(`SELECT route_credential_id,status,desired_revision,runtime_healthy,health_expires_unix_ms FROM meridian_route_grants WHERE id=?`, grantID).Scan(&credential, &status, &revision, &healthy, &expires); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT enabled FROM meridian_credentials WHERE id=?`, oldCredential).Scan(&oldEnabled); err != nil {
+		t.Fatal(err)
+	}
+	if credential == oldCredential || status != "pending" || revision <= previousRevision || healthy != 0 || expires != 0 || oldEnabled != 0 {
+		t.Fatal("recreated route reused revoked authority or stale health")
+	}
+}
+
 func TestMeridianRouteRevocationSurvivesAccountInvalidations(t *testing.T) {
 	for _, operation := range []string{"quota-boundary", "scheduled-reset", "account-expiry", "account-update"} {
 		t.Run(operation, func(t *testing.T) {
