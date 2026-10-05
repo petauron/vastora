@@ -21,6 +21,32 @@ func nodeEgressFixture(t *testing.T) (*Store, string) {
 	return s, id
 }
 
+func TestNodeEgressRejectsUnadoptedRuntimeWithoutChangingEndpoint(t *testing.T) {
+	s, id := nodeEgressFixture(t)
+	if _, err := s.db.Exec(`UPDATE application_resources SET adoption_state='pending' WHERE application_id='snapshot-shared-app'`); err != nil {
+		t.Fatal(err)
+	}
+	var before, after string
+	read := func(out *string) {
+		t.Helper()
+		if err := s.db.QueryRow(`SELECT json_array(status,runtime_healthy,desired_revision,applied_revision) FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID).Scan(out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read(&before)
+	if _, err := s.SetNodeEgress(context.Background(), id, NodeEgressInput{Policy: meridian.EgressIPv6Only}); err == nil {
+		t.Fatal("unadopted runtime change accepted")
+	}
+	read(&after)
+	if before != after {
+		t.Fatalf("rejected change invalidated endpoint: before=%s after=%s", before, after)
+	}
+	var commands int
+	if err := s.db.QueryRow(`SELECT count(*) FROM application_commands WHERE application_id='snapshot-shared-app'`).Scan(&commands); err != nil || commands != 0 {
+		t.Fatalf("rejected change queued a command: count=%d err=%v", commands, err)
+	}
+}
+
 func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
 	for _, success := range []bool{false, true} {
 		s, id := nodeEgressFixture(t)

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/pulse"
 )
 
@@ -101,6 +102,25 @@ func historicalDockerResources(ctx context.Context, task DeploymentTask, history
 		if mounted.Type == "volume" {
 			logical, known := logicalVolumes[mounted.Name]
 			if !known {
+				// Xray declares these image volumes, although Vastora's active
+				// configuration is the separate managed bind mount. Retain their
+				// data across adoption and upgrades instead of claiming labels
+				// that Docker never assigned to anonymous volumes.
+				if task.AppKey == meridianKey && (mounted.Destination == "/usr/local/etc/xray" || mounted.Destination == "/var/log/xray") {
+					if _, declared := current.Container.Config.Volumes[mounted.Destination]; !declared {
+						return nil, errors.New("agent: historical Xray volume was not declared by the container")
+					}
+					volume, err := docker.VolumeInspect(ctx, mounted.Name, client.VolumeInspectOptions{})
+					if err != nil {
+						return nil, err
+					}
+					retained := RuntimeResource{Kind: "retained-volume", LogicalName: "historical:" + mounted.Destination, Name: mounted.Name, Path: mounted.Destination, Persistent: true, VolumeCreatedAt: volume.Volume.CreatedAt}
+					if err := inspectHistoricalXrayVolume(ctx, docker, task, retained); err != nil {
+						return nil, err
+					}
+					receipt.Resources = append(receipt.Resources, retained)
+					continue
+				}
 				return nil, errors.New("agent: unknown historical volume mapping")
 			}
 			component := applicationVolumeComponent(mounted.Name)
@@ -123,6 +143,25 @@ func historicalDockerResources(ctx context.Context, task DeploymentTask, history
 		}
 	}
 	return receipt, nil
+}
+
+func inspectHistoricalXrayVolume(ctx context.Context, docker packageDockerEngine, task DeploymentTask, resource RuntimeResource) error {
+	if task.AppKey != meridianKey || resource.Kind != "retained-volume" || resource.VolumeCreatedAt == "" || len(resource.Name) != 64 || (resource.Path != "/usr/local/etc/xray" && resource.Path != "/var/log/xray") {
+		return errors.New("agent: invalid historical Xray volume receipt")
+	}
+	if _, err := hex.DecodeString(resource.Name); err != nil {
+		return errors.New("agent: invalid anonymous volume identity")
+	}
+	inspected, err := docker.VolumeInspect(ctx, resource.Name, client.VolumeInspectOptions{})
+	if err != nil {
+		return err
+	}
+	v := inspected.Volume
+	marker, anonymous := v.Labels["com.docker.volume.anonymous"]
+	if !anonymous || marker != "" || len(v.Labels) != 1 || v.Name != resource.Name || v.CreatedAt != resource.VolumeCreatedAt || v.Driver != "local" || v.Scope != "local" || len(v.Options) != 0 {
+		return errors.New("agent: historical Xray volume identity changed")
+	}
+	return nil
 }
 
 func historicalSystemdResources(ctx context.Context, task DeploymentTask, history AppliedInstallation, manager SystemdHostApplicationManager) (*InstanceResources, error) {

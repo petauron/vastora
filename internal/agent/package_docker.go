@@ -463,6 +463,12 @@ func (b *DockerPackageBackend) Inspect(ctx context.Context, task DeploymentTask,
 				return errors.New("agent: container changed during adoption")
 			}
 		case "volume", "retained-volume":
+			if resource.VolumeCreatedAt != "" {
+				if err := inspectHistoricalXrayVolume(ctx, b.Docker, task, resource); err != nil {
+					return err
+				}
+				continue
+			}
 			_, exists, err := inspectOwnedApplicationVolume(ctx, b.Docker, resource.Name, task.AppKey, resource.Component, task.ApplicationID)
 			if err != nil || !exists {
 				return errors.New("agent: volume receipt no longer matches runtime ownership")
@@ -733,6 +739,15 @@ func (b *DockerPackageBackend) Remove(ctx context.Context, task DeploymentTask, 
 	receipt.Resources = slices.DeleteFunc(receipt.Resources, func(item RuntimeResource) bool { return item.Kind == "network" })
 	for _, resource := range receipt.Resources {
 		if resource.Kind != "volume" && resource.Kind != "retained-volume" || resource.Persistent && !task.DeleteData {
+			continue
+		}
+		if resource.VolumeCreatedAt != "" {
+			if err := inspectHistoricalXrayVolume(ctx, b.Docker, task, resource); err != nil {
+				return err
+			}
+			if _, err := b.Docker.VolumeRemove(ctx, resource.Name, client.VolumeRemoveOptions{}); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := removeOwnedApplicationVolume(ctx, b.Docker, resource.Name, task.AppKey, resource.Component, task.ApplicationID); err != nil {

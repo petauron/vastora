@@ -183,6 +183,15 @@ func (s *Store) queueMeridianRuntime(ctx context.Context, tx *sql.Tx, endpointID
 	if err != nil {
 		return "", err
 	}
+	// Reject before queueing or invalidating an applied endpoint. The Agent
+	// cannot authorize a runtime image until historical resources are adopted.
+	var adoptionState string
+	if err := tx.QueryRowContext(ctx, `SELECT adoption_state FROM application_resources WHERE application_id=?`, projection.task.ApplicationID).Scan(&adoptionState); err != nil {
+		return "", errors.New("center: adopt application resources before changing Meridian runtime")
+	}
+	if adoptionState != "ready" {
+		return "", errors.New("center: adopt application resources before changing Meridian runtime")
+	}
 	command := meridianruntime.Command{EndpointID: endpointID, ReplacePendingState: replacePendingState}
 	encoded, err := json.Marshal(command)
 	if err != nil {

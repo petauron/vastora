@@ -487,6 +487,7 @@ func TestRecoverMeridianEndpointReleasesOnlyMatchingFenceAndQueuesCenterAuthorit
 		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Recover Meridian entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
+	seedMeridianAdoptedResources(t, store, applicationID)
 	verified := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
 	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: "Recover entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
 	if err != nil {
@@ -592,6 +593,7 @@ func TestExpiredMeridianRuntimeLeaseProjectsFailedEndpointForRecovery(t *testing
 		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Expired Meridian entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
+	seedMeridianAdoptedResources(t, store, applicationID)
 	verified := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
 	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: "Expired entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
 	if err != nil {
@@ -654,6 +656,7 @@ func TestLegacyRetirementTaskNeverRemovesVerifiedEndpointFromSubscriptions(t *te
 		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Retiring Meridian entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
+	seedMeridianAdoptedResources(t, store, applicationID)
 	verified := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
 	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: "Retiring entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
 	if err != nil {

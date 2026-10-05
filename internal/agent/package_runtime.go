@@ -50,6 +50,8 @@ type RuntimeResource struct {
 	MainPID      int    `json:"mainPid,omitempty"`
 	InvocationID string `json:"invocationId,omitempty"`
 	Component    string `json:"component,omitempty"`
+	// Historical anonymous volumes are retained by immutable creation identity.
+	VolumeCreatedAt string `json:"volumeCreatedAt,omitempty"`
 }
 
 type RuntimeBackup struct {
