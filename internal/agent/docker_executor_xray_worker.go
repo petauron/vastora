@@ -189,10 +189,17 @@ func validateXrayWorkerOwnership(ctx context.Context, docker threeXUIContainerEn
 }
 
 func requireNoInterruptedXrayWorkerDeploy(ctx context.Context, docker threeXUIContainerEngine) error {
+	return requireNoUnreviewedXrayWorkerDeploy(ctx, docker, "")
+}
+
+func requireNoUnreviewedXrayWorkerDeploy(ctx context.Context, docker threeXUIContainerEngine, reviewedID string) error {
 	for _, name := range []string{xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer, meridianXrayCandidateContainer, meridianXrayBackupContainer, meridianXrayCleanupContainer} {
-		if _, exists, err := inspectOwnedProxyRuntimeContainer(ctx, docker, name); err != nil {
+		if current, exists, err := inspectOwnedProxyRuntimeContainer(ctx, docker, name); err != nil {
 			return err
 		} else if exists {
+			if name == meridianXrayCandidateContainer && reviewedID != "" && current.Container.ID == reviewedID {
+				continue
+			}
 			return uncertainTaskOutcome(fmt.Errorf("agent: retained Xray replacement %s requires explicit review", name))
 		}
 	}

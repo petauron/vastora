@@ -35,16 +35,41 @@ func (b *meridianPackageBackend) Prepare(ctx context.Context, task DeploymentTas
 	if !validXrayWorkerImageReference(b.image) {
 		return errors.New("agent: invalid Meridian runtime image identity")
 	}
-	if err := requireNoInterruptedXrayWorkerDeploy(ctx, b.Client); err != nil {
+	recovering := reviewedPackageRecovery(task, receipt)
+	reviewedID := ""
+	if recovering {
+		resource := resourceNamed(receipt, "container", "xray")
+		if resource == nil || resource.ID == "" || (resource.Name != meridianXrayContainer && resource.Name != meridianXrayCandidateContainer) {
+			return errors.New("agent: reviewed Meridian recovery requires a runtime receipt")
+		}
+		reviewedID = resource.ID
+	}
+	if err := requireNoUnreviewedXrayWorkerDeploy(ctx, b.Client, reviewedID); err != nil {
 		return err
 	}
 	state, err := b.Executor.Store.loadMeridianRuntimeState(ctx)
 	if err == nil {
-		if state.ApplicationID != task.ApplicationID || state.Pending != nil || state.HandoverPending || state.Applied == nil {
+		if state.ApplicationID != task.ApplicationID || state.Pending != nil || state.HandoverPending && !recovering || state.Applied == nil {
 			return errors.New("agent: Meridian runtime requires explicit recovery before package changes")
 		}
-		if _, err := b.Executor.observeAppliedMeridianRuntimeWithDocker(ctx, b.Client, state); err != nil {
-			return err
+		if recovering {
+			resource := resourceNamed(receipt, "container", "xray")
+			current, exists, inspectErr := inspectOwnedApplicationContainer(ctx, b.Client, resource.Name, task.AppKey, "xray", task.ApplicationID, anyApplicationDeployment)
+			if inspectErr != nil || !exists || current.Container.ID != reviewedID || current.Container.Config == nil || current.Container.Config.Image != b.image {
+				return errors.New("agent: reviewed Meridian runtime identity changed")
+			}
+			if resource.Name != meridianXrayContainer {
+				if _, _, exists, err := inspectCurrentMeridianRuntime(ctx, b.Client); err != nil || exists {
+					return errors.New("agent: reviewed Meridian replacement conflicts with another runtime")
+				}
+			}
+			if err := b.Executor.verifyMeridianRuntimeAttachment(ctx, b.Client, current, state, state.AppliedPeers); err != nil {
+				return err
+			}
+		} else {
+			if _, err := b.Executor.observeAppliedMeridianRuntimeWithDocker(ctx, b.Client, state); err != nil {
+				return err
+			}
 		}
 		b.state = &state
 	} else if !errors.Is(err, errApplicationNotInstalled) {
@@ -62,6 +87,9 @@ func (b *meridianPackageBackend) Prepare(ctx context.Context, task DeploymentTas
 		return err
 	}
 	if b.state == nil {
+		if recovering {
+			return errors.New("agent: reviewed Meridian recovery requires its runtime journal")
+		}
 		if current, _, exists, err := inspectCurrentMeridianRuntime(ctx, b.Client); err != nil || exists {
 			return errors.Join(errors.New("agent: existing proxy requires explicit historical adoption or migration"), err)
 		} else {
@@ -87,6 +115,7 @@ func (b *meridianPackageBackend) Prepare(ctx context.Context, task DeploymentTas
 		return errors.New("agent: Meridian host migration must complete before package upgrade")
 	}
 	options := meridianHostContainerOptions(task, b.image, active, hy2, state.AppliedGID)
+	options.Name = meridianXrayContainer
 	b.plans = []packageContainerPlan{{logical: "xray", options: options}}
 	return nil
 }
