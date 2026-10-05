@@ -867,6 +867,15 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 	if accountStatus != "active" || accountEnabled != 1 {
 		return MeridianRouteGrantView{}, errors.New("center: disabled Meridian account cannot receive a route")
 	}
+	// Historical installations have an explicit pending/blocked adoption row.
+	// Reject before changing landing authorization or the endpoint revision.
+	var adoptionPending bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_resources WHERE application_id=? AND adoption_state<>'ready')`, applicationID).Scan(&adoptionPending); err != nil {
+		return MeridianRouteGrantView{}, err
+	}
+	if adoptionPending {
+		return MeridianRouteGrantView{}, errors.New("center: adopt application resources before adding a Meridian route")
+	}
 	if err := s.authorizeMeridianEntrySource(ctx, tx, input.EndpointID); err != nil {
 		return MeridianRouteGrantView{}, err
 	}
