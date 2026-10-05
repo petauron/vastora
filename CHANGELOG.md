@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.291](https://github.com/petauron/vastora/compare/v0.1.0-alpha.290...v0.1.0-alpha.291) (2026-10-05)
+
+
+### Bug Fixes
+
+* **meridian:** adopt historical Xray resources before runtime changes ([#830](https://github.com/petauron/vastora/issues/830)) ([263f6e1](https://github.com/petauron/vastora/commit/263f6e1e5ce0d5dc8247862a822889519f978d50))
+
 ## [0.1.0-alpha.290](https://github.com/petauron/vastora/compare/v0.1.0-alpha.289...v0.1.0-alpha.290) (2026-10-05)
 
 
