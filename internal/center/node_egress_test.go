@@ -11,6 +11,10 @@ import (
 func nodeEgressFixture(t *testing.T) (*Store, string) {
 	t.Helper()
 	s := openMeridianSharedEndpointSnapshotFixture(t)
+	// This domain fixture represents an installed, already adopted package.
+	if _, err := s.db.Exec(`INSERT INTO application_resources(application_id,adoption_state,resources_json,updated_at) VALUES('snapshot-shared-app','ready',?,?)`, `{"version":1,"applicationId":"snapshot-shared-app","appKey":"vastora-official/meridian","taskId":"fixture-install","packageVersion":"fixture-version","packageRevision":1,"manifestSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runtime":"docker","state":"ready","authorizedCapabilities":[],"resources":[{"kind":"container","id":"fixture-container"}]}`, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
 	var id string
 	if err := s.db.QueryRow(`SELECT node_id FROM applications WHERE id='snapshot-shared-app'`).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -19,6 +23,32 @@ func nodeEgressFixture(t *testing.T) (*Store, string) {
 		t.Fatal(err)
 	}
 	return s, id
+}
+
+func TestNodeEgressRejectsUnadoptedRuntimeWithoutChangingEndpoint(t *testing.T) {
+	s, id := nodeEgressFixture(t)
+	if _, err := s.db.Exec(`UPDATE application_resources SET adoption_state='pending' WHERE application_id='snapshot-shared-app'`); err != nil {
+		t.Fatal(err)
+	}
+	var before, after string
+	read := func(out *string) {
+		t.Helper()
+		if err := s.db.QueryRow(`SELECT json_array(status,runtime_healthy,desired_revision,applied_revision) FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID).Scan(out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read(&before)
+	if _, err := s.SetNodeEgress(context.Background(), id, NodeEgressInput{Policy: meridian.EgressIPv6Only}); err == nil {
+		t.Fatal("unadopted runtime change accepted")
+	}
+	read(&after)
+	if before != after {
+		t.Fatalf("rejected change invalidated endpoint: before=%s after=%s", before, after)
+	}
+	var commands int
+	if err := s.db.QueryRow(`SELECT count(*) FROM application_commands WHERE application_id='snapshot-shared-app'`).Scan(&commands); err != nil || commands != 0 {
+		t.Fatalf("rejected change queued a command: count=%d err=%v", commands, err)
+	}
 }
 
 func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
