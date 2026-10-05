@@ -12,7 +12,7 @@ func nodeEgressFixture(t *testing.T) (*Store, string) {
 	t.Helper()
 	s := openMeridianSharedEndpointSnapshotFixture(t)
 	// This domain fixture represents an installed, already adopted package.
-	if _, err := s.db.Exec(`INSERT INTO application_resources(application_id,adoption_state,resources_json,updated_at) VALUES('snapshot-shared-app','ready',?,?)`, `{"version":1,"applicationId":"snapshot-shared-app","appKey":"vastora-official/meridian","taskId":"fixture-install","packageVersion":"fixture-version","packageRevision":1,"manifestSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runtime":"docker","state":"ready","authorizedCapabilities":[],"resources":[{"kind":"container","id":"fixture-container"}]}`, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO application_resources(application_id,adoption_state,package_revision,manifest_sha256,resources_json,updated_at) VALUES('snapshot-shared-app','ready',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',?,?)`, `{"version":1,"applicationId":"snapshot-shared-app","appKey":"vastora-official/meridian","taskId":"fixture-install","packageVersion":"fixture-version","packageRevision":1,"manifestSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runtime":"docker","state":"ready","authorizedCapabilities":[],"resources":[{"kind":"container","id":"fixture-container"}]}`, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 	var id string
