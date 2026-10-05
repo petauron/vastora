@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.290](https://github.com/petauron/vastora/compare/v0.1.0-alpha.289...v0.1.0-alpha.290) (2026-10-05)
+
+
+### Bug Fixes
+
+* **center:** remove reinstall evidence before retired node records ([#828](https://github.com/petauron/vastora/issues/828)) ([b159201](https://github.com/petauron/vastora/commit/b159201b5a635ace69ea66e1cf9a74e0d4d5103e))
+
 ## [0.1.0-alpha.289](https://github.com/petauron/vastora/compare/v0.1.0-alpha.288...v0.1.0-alpha.289) (2026-10-04)
 
 
