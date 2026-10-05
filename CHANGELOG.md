@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.293](https://github.com/petauron/vastora/compare/v0.1.0-alpha.292...v0.1.0-alpha.293) (2026-10-05)
+
+
+### Bug Fixes
+
+* **meridian:** accept bounded runtime recovery heartbeats ([#834](https://github.com/petauron/vastora/issues/834)) ([946d238](https://github.com/petauron/vastora/commit/946d238055378ec90af374688ee374fbefb68385))
+
 ## [0.1.0-alpha.292](https://github.com/petauron/vastora/compare/v0.1.0-alpha.291...v0.1.0-alpha.292) (2026-10-05)
 
 
