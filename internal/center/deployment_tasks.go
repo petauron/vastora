@@ -207,7 +207,32 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	// work produced by the newer Center during that window. Once the rollout
 	// queues an update, the update remains the first claim above.
 	if agentVersionBehindTarget(agentVersion, Version) {
-		return nil, nil
+		// An exact reviewed retry retains its original package contract. Blocking
+		// it on the current Center version deadlocks with the update policy,
+		// which correctly requires runtime recovery to finish first.
+		if agentVersionBehindTarget(agentVersion, "0.1.0-alpha.292") {
+			return nil, nil
+		}
+		pending, err := readPendingApplicationDeployment(ctx, tx, agentID, requiredTaskID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		reviewed := pending.task
+		reviewed.Kind = "application.apply"
+		reviewed.Attempt = pending.attempt + 1
+		if err := json.Unmarshal(pending.manifest, &reviewed.Manifest); err != nil {
+			return nil, err
+		}
+		if err := s.attachPackageRecovery(ctx, tx, agentID, &reviewed); err != nil {
+			return nil, err
+		}
+		if reviewed.PackageRecovery == nil {
+			return nil, nil
+		}
+		return s.claimApplicationDeployment(ctx, tx, agentID, agentRuntimeGeneration, pending, commitTask)
 	}
 	adoptionTask, adoptionErr := s.claimApplicationAdoption(ctx, tx, agentID, requiredTaskID)
 	if adoptionErr != nil {
