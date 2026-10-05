@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.292](https://github.com/petauron/vastora/compare/v0.1.0-alpha.291...v0.1.0-alpha.292) (2026-10-05)
+
+
+### Bug Fixes
+
+* **meridian:** recover reviewed package runtime replacements ([#832](https://github.com/petauron/vastora/issues/832)) ([286b7a1](https://github.com/petauron/vastora/commit/286b7a1f654c7484cd03de9eea62263caae8afda))
+
 ## [0.1.0-alpha.291](https://github.com/petauron/vastora/compare/v0.1.0-alpha.290...v0.1.0-alpha.291) (2026-10-05)
 
 
