@@ -75,6 +75,18 @@ func completeMeridianHealthFixture(t *testing.T, store *Store, projection meridi
 
 // Domain tests model an already-installed generic package. They do not execute
 // Docker or prove resource adoption; those have separate runtime tests.
+func seedMeridianAdoptedResources(t *testing.T, store *Store, appID string) {
+	t.Helper()
+	receipt := map[string]any{"version": 1, "applicationId": appID, "appKey": meridianAppKey, "taskId": "fixture-install", "packageVersion": "fixture-version", "packageRevision": 1, "manifestSha256": strings.Repeat("a", 64), "runtime": "docker", "state": "ready", "authorizedCapabilities": []string{}, "resources": []any{map[string]string{"kind": "container", "id": "fixture-container"}}}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO application_resources(application_id,package_revision,manifest_sha256,authorized_capabilities_json,resources_json,adoption_state,updated_at) VALUES(?,1,?,'[]',?,'ready',?) ON CONFLICT(application_id) DO NOTHING`, appID, strings.Repeat("a", 64), raw, store.now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func mockIntegratedResources(t *testing.T, store *Store, commandID string) json.RawMessage {
 	t.Helper()
 	var appID, appKey string

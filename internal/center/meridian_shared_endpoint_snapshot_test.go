@@ -307,5 +307,6 @@ func openMeridianSharedEndpointSnapshotFixture(t *testing.T) *Store {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
+	seedMeridianAdoptedResources(t, store, "snapshot-shared-app")
 	return store
 }

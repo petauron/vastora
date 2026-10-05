@@ -208,6 +208,11 @@ func TestMeridianLiveAndSavedSubscriptionsUseAppliedSourceAuthorization(t *testi
 func completeMeridianAuthorizationEndpoint(t *testing.T, store *Store, endpointID string) {
 	t.Helper()
 	ctx := context.Background()
+	var appID string
+	if err := store.db.QueryRow(`SELECT application_id FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&appID); err != nil {
+		t.Fatal(err)
+	}
+	seedMeridianAdoptedResources(t, store, appID)
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
