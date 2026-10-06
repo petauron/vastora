@@ -59,3 +59,24 @@ func TestMeridianLandingCannotRemoveAuthorizedExit(t *testing.T) {
 		t.Fatalf("rejected removal changed selection: %+v %v", selection, err)
 	}
 }
+
+func TestLandingNameSuffixPersistence(t *testing.T) {
+	store, _, egress := openMeridianLandingSourcesFixture(t)
+	ctx := context.Background()
+	if _, err := store.db.Exec(`INSERT INTO settings(key,value) VALUES(?,json_object('revision',1,'nodeIds',json_array(?),'landingRegionCodes',json_object(?,'US'))) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, landingSelectionKey, egress, egress); err != nil {
+		t.Fatal(err)
+	}
+	for i, suffixes := range []map[string]string{{egress: "ATT"}, nil, {egress: ""}} {
+		if err := store.SelectMeridianLanding(ctx, LandingSelection{NodeIDs: []string{egress}, LandingRegionCodes: map[string]string{egress: "US"}, LandingNameSuffixes: suffixes, Revision: uint64(i + 1)}); err != nil {
+			t.Fatal(err)
+		}
+		selection, err := store.LandingSelection(ctx)
+		want := "ATT"
+		if i == 2 {
+			want = ""
+		}
+		if err != nil || selection.LandingNameSuffixes[egress] != want {
+			t.Fatalf("suffix not retained/cleared: %+v %v", selection, err)
+		}
+	}
+}
