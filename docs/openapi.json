@@ -3555,6 +3555,12 @@
                       "type": "string"
                     }
                   },
+                  "landingNameSuffixes": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
                   "revision": {
                     "type": "integer"
                   }
@@ -16471,6 +16477,12 @@
             }
           },
           "landingRegionCodes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "landingNameSuffixes": {
             "type": "object",
             "additionalProperties": {
               "type": "string"
