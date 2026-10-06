@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.295](https://github.com/petauron/vastora/compare/v0.1.0-alpha.294...v0.1.0-alpha.295) (2026-10-06)
+
+
+### Features
+
+* **meridian:** optional landing subscription name suffix ([#839](https://github.com/petauron/vastora/issues/839)) ([f48a62c](https://github.com/petauron/vastora/commit/f48a62cb19a4b01b33fb6c6e1d2de95ec55e1412))
+
 ## [0.1.0-alpha.294](https://github.com/petauron/vastora/compare/v0.1.0-alpha.293...v0.1.0-alpha.294) (2026-10-05)
 
 
