@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/petauron/vastora/internal/landing"
 )
@@ -52,6 +53,24 @@ func (s *Store) SelectMeridianLanding(ctx context.Context, input LandingSelectio
 	if current.Revision != input.Revision {
 		return errors.New("center: landing selection changed; refresh and retry")
 	}
+	// Selection changes preserve display names unless explicitly edited.
+	if input.LandingNameSuffixes == nil {
+		input.LandingNameSuffixes = current.LandingNameSuffixes
+	}
+	suffixes := make(map[string]string)
+	for id, suffix := range input.LandingNameSuffixes {
+		if !slices.Contains(input.NodeIDs, id) {
+			continue
+		}
+		suffix = strings.TrimSpace(suffix)
+		if strings.ContainsAny(suffix, "|｜") || strings.ContainsFunc(suffix, unicode.IsControl) {
+			return errors.New("center: invalid landing name suffix")
+		}
+		if suffix != "" {
+			suffixes[id] = suffix
+		}
+	}
+	input.LandingNameSuffixes = suffixes
 	changedNodes := append(slices.Clone(current.NodeIDs), input.NodeIDs...)
 	for _, id := range changedNodes {
 		if slices.Contains(current.NodeIDs, id) && slices.Contains(input.NodeIDs, id) {

@@ -16,16 +16,18 @@ import (
 const landingSelectionKey = "meridian_landing_selection"
 
 type LandingSelection struct {
-	NodeIDs            []string          `json:"nodeIds"`
-	LandingRegionCodes map[string]string `json:"landingRegionCodes,omitempty"`
-	RetiringNodeIDs    []string          `json:"retiringNodeIds,omitempty"`
-	Revision           uint64            `json:"revision"`
+	NodeIDs             []string          `json:"nodeIds"`
+	LandingRegionCodes  map[string]string `json:"landingRegionCodes,omitempty"`
+	LandingNameSuffixes map[string]string `json:"landingNameSuffixes,omitempty"`
+	RetiringNodeIDs     []string          `json:"retiringNodeIds,omitempty"`
+	Revision            uint64            `json:"revision"`
 }
 
 type LandingSelectionInput struct {
-	NodeIDs            []string          `json:"nodeIds"`
-	LandingRegionCodes map[string]string `json:"landingRegionCodes,omitempty"`
-	Revision           uint64            `json:"revision"`
+	NodeIDs             []string          `json:"nodeIds"`
+	LandingRegionCodes  map[string]string `json:"landingRegionCodes,omitempty"`
+	LandingNameSuffixes map[string]string `json:"landingNameSuffixes,omitempty"`
+	Revision            uint64            `json:"revision"`
 }
 
 type LandingCandidate struct {
@@ -454,7 +456,7 @@ func (s *Server) handleSelectLanding(writer http.ResponseWriter, request *http.R
 		return
 	}
 	if err := s.store.SelectMeridianLanding(request.Context(), LandingSelection{
-		NodeIDs: input.NodeIDs, LandingRegionCodes: input.LandingRegionCodes, Revision: input.Revision,
+		NodeIDs: input.NodeIDs, LandingRegionCodes: input.LandingRegionCodes, LandingNameSuffixes: input.LandingNameSuffixes, Revision: input.Revision,
 	}); err != nil {
 		writeError(writer, http.StatusConflict, err)
 		return
