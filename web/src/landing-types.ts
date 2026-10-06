@@ -33,6 +33,7 @@ export type LandingView = {
   nodeIds: string[];
   retiringNodeIds?: string[];
   landingRegionCodes?: Record<string, string>;
+  landingNameSuffixes?: Record<string, string>;
   revision: number;
   status: "ready" | "applying" | "failed";
   eligibleEntries: number;
