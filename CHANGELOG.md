@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.297](https://github.com/petauron/vastora/compare/v0.1.0-alpha.296...v0.1.0-alpha.297) (2026-10-07)
+
+
+### Bug Fixes
+
+* distinguish routed subscriptions with readable labels ([#846](https://github.com/petauron/vastora/issues/846)) ([a327d6f](https://github.com/petauron/vastora/commit/a327d6faea730a5189b818627b144c7ea25d4d39))
+
 ## [0.1.0-alpha.296](https://github.com/petauron/vastora/compare/v0.1.0-alpha.295...v0.1.0-alpha.296) (2026-10-07)
 
 
