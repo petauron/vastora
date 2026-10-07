@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.296](https://github.com/petauron/vastora/compare/v0.1.0-alpha.295...v0.1.0-alpha.296) (2026-10-07)
+
+
+### Bug Fixes
+
+* shorten mobile subscription names with landing circuit suffixes ([#844](https://github.com/petauron/vastora/issues/844)) ([a952b98](https://github.com/petauron/vastora/commit/a952b984abea0e2bddd67c006f842f361ea8b6f2))
+
 ## [0.1.0-alpha.295](https://github.com/petauron/vastora/compare/v0.1.0-alpha.294...v0.1.0-alpha.295) (2026-10-06)
 
 
