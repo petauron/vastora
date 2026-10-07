@@ -142,10 +142,13 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
+# A private /etc directory prevents host-side rename/replacement of resolv.conf
+# from bypassing the resolver bind mount. Expose only runtime dependencies.
+TemporaryFileSystem=/etc:ro
+BindReadOnlyPaths=/etc/vastora-landing /etc/passwd /etc/group /etc/ssl
+BindReadOnlyPaths=-/etc/ld.so.cache -/etc/services -/etc/protocols -/etc/localtime
 BindReadOnlyPaths=/etc/vastora-landing/resolv.conf:/etc/resolv.conf
 BindReadOnlyPaths=/etc/vastora-landing/nsswitch.conf:/etc/nsswitch.conf
-# Tailscale may replace the host resolver mount after this unit starts.
-# Keep its unprivileged DNS resolver pinned for the lifetime of Dante.
 MountFlags=private
 ProtectKernelTunables=true
 ProtectKernelModules=true
