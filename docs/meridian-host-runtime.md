@@ -75,47 +75,7 @@ ownership and missing private addresses. These tests are part of CI. Center
 tests cover forward migration and backup, busy-command rollback, preserved
 subscription identities, applied-receipt backend changes and stale observations.
 
-The [reproducible proxy lab](../scripts/meridian-fullcone-lab/README.md) uses
-the pinned Xray `26.7.28` and HAProxy `3.2.7` images. Both VLESS/REALITY through
-HAProxy in a separate bridge namespace + Proxy Protocol v2 and native HY2
-passed, before and after container
-restart:
-
-| Check | VLESS/XUDP | HY2 |
-| --- | --- | --- |
-| Ordinary STUN binding response | Pass | Pass |
-| Response from another IP and port | Pass | Pass |
-| Response from another port | Pass | Pass |
-| Same mapping when sending to another destination | Pass | Pass |
-
-The protocol parser checks transaction IDs, response source addresses and
-XOR-MAPPED-ADDRESS; a 32-packet capture independently confirms all four runs.
-Unknown SNI was closed and the API was unreachable from the peer namespace.
-Mappings are stable within each association; restarting Xray can allocate a
-new source port, which is expected.
-
-The lab shares Xray's network namespace with a private namespace holder to
-avoid touching development-host listeners. There is no extra Docker NAT at
-the Xray boundary, but this is **not** a public-provider FullCone result or an
-actual production Docker host deployment. An exact private STUN allow rule
-exists only in the fixture because Xray otherwise blocks private destinations.
-Production outbound policy is unchanged. Fixed landing routes remain TCP-only.
-
-No A1/production migration, public NAT/provider classification, handset/client
-matrix, or before/after CPU and memory comparison was performed. These production acceptance items are separate from the requested functional
-delivery of #394; an ordinary UDP response or an `Unknown` classifier result
-must not be reported as FullCone.
-
-## Functional delivery follow-up
-
-The follow-up hardens UDP evidence parsing: exact SOCKS relay source, STUN
-cookie/transaction/length checks, duplicate mapped-address rejection and
-complete TCP handshake reads. Checks remain active under Python optimization.
-Malformed data, timeout or destination-dependent mapping reports unconfirmed,
-never a successful FullCone classification. The CI gate exercises parser
-negative cases and the complete isolated VLESS/REALITY + HY2 paths before and
-after restart, including the existing SNI and API boundaries.
-
-Closing the feature after required CI and merge records software delivery.
-It does not certify an arbitrary provider's NAT, a production migration, or
-unmeasured CPU/memory savings. Fixed remote landing routes remain TCP-only.
+The former standalone proxy lab and its CI job were retired from the MVP
+pipeline on 2026-10-07. The earlier isolated results were historical fixture
+evidence, not public-provider or production acceptance. Production outbound
+policy is unchanged; fixed landing routes remain TCP-only.

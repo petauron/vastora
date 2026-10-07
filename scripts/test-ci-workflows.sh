@@ -43,6 +43,8 @@ require_line "$cache_workflow" '    name: Warm dependency caches'
 require_line "$cache_workflow" '      - go.mod'
 require_line "$cache_workflow" '      - go.sum'
 require_line "$cache_workflow" '      - web/package-lock.json'
+require_line "$cache_workflow" "      - if: steps.changed.outputs.go == 'true'"
+require_line "$cache_workflow" "      - if: steps.changed.outputs.npm == 'true'"
 require_line "$ci_workflow" '      DOCKER_BUILD_RECORD_UPLOAD: "false"'
 require_line "$ci_workflow" '          cache-from: type=registry,ref=ghcr.io/petauron/vastora-center:buildcache'
 require_line "$ci_workflow" '        run: scripts/check-runtime-image-platforms.sh'
@@ -55,14 +57,14 @@ require_line "$codeql_workflow" "  cancel-in-progress: \${{ github.event_name ==
 # Alpha normally validates shape; forward-only migrations also need their
 # targeted regression before release. Full checks remain outside this job.
 alpha_job="$(sed -n '/^  alpha-minimal:/,/^  go-race:/p' "$ci_workflow")"
-if ! printf '%s\n' "$alpha_job" | grep -Fq 'cache: false' ||
+if ! printf '%s\n' "$alpha_job" | grep -Fq 'cache: true' ||
    ! printf '%s\n' "$alpha_job" | grep -Fq 'run: make go-format-check' ||
    printf '%s\n' "$alpha_job" | grep -Fv \
      -e "run: go test ./internal/center -run '^TestExecutionPagesRetainOldUnresolvedHistory$' -count=1" \
      -e "run: go test ./internal/center -run '^(TestVersion(100|102)|TestOfficialUI|TestMeridianHost)' -count=1" \
      -e "run: go test ./internal/meridianruntime ./internal/agent ./internal/center -run '^(TestNativeEgress|TestNodeEgress|TestVersion106|TestVersion107|TestVersion108|TestMeridianTraffic)' -count=1" \
-     -e "run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1" | grep -Eq '(go test|go build|go-static-check|web-check|cache: true|docker build)'; then
-  echo 'Alpha CI must not restore the Go build cache or duplicate release builds/full checks.' >&2
+     -e "run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1" | grep -Eq '(go test|go build|go-static-check|web-check|docker build)'; then
+  echo 'Alpha CI must restore the Go cache without duplicating release builds/full checks.' >&2
   exit 1
 fi
 require_line "$ci_workflow" "run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1"
@@ -83,11 +85,12 @@ for job in analyze-go analyze-javascript; do
     exit 1
   fi
 done
-# Package ownership/migration and host lifecycle acceptance are mandatory even
-# in alpha mode; they are not optional broad performance/security scans.
-require_line "$project_dir/.github/workflows/catalog-check.yml" 'run: go test ./internal/agent ./internal/center -count=1 -timeout=10m'
-require_line "$project_dir/.github/workflows/catalog-check.yml" 'runner: [ubuntu-24.04, ubuntu-24.04-arm]'
-require_line "$project_dir/.github/workflows/catalog-check.yml" '  schedule:'
+# Retired specialist workflows must not return through a stale reference.
+if [ -e "$project_dir/.github/workflows/catalog-check.yml" ] ||
+   [ -d "$project_dir/scripts/meridian-fullcone-lab" ]; then
+  echo 'Retired catalog/UDP CI resources must remain removed.' >&2
+  exit 1
+fi
 
 if grep -Fq 'cache-to: type=gha' "$ci_workflow"; then
   echo 'Pull-request image builds must not write GitHub Actions caches.' >&2
