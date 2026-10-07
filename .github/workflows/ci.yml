@@ -63,7 +63,7 @@ jobs:
         run: go test ./internal/center -run '^TestExecutionPagesRetainOldUnresolvedHistory$' -count=1
       - name: Verify native egress policy
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/meridianruntime ./internal/agent ./internal/center -run '^(TestNativeEgress|TestNodeEgress|TestVersion106|TestVersion107|TestVersion108|TestMeridianTraffic)' -count=1
+        run: go test ./internal/meridianruntime ./internal/agent ./internal/center -run '^(TestShared443KeepsCaddyOnItsPrivateContainerSocket|TestNativeEgress|TestNodeEgress|TestVersion106|TestVersion107|TestVersion108|TestMeridianTraffic)' -count=1
       - name: Verify Agent reconnect execution boundary
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1

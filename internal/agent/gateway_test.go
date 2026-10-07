@@ -480,6 +480,20 @@ func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 	if strings.Contains(haproxy, "127.0.0.1:3443 check send-proxy") || strings.Contains(haproxy, "server caddy vastora-gateway-caddy:443 check send-proxy") {
 		t.Fatalf("Proxy Protocol leaked to an unrelated backend: %s", haproxy)
 	}
+	// Long-lived raw tunnels get their own idle budget; HTTP and rejected
+	// connections keep the normal timeouts.
+	for _, wanted := range []string{
+		"timeout connect 10s\n  timeout client 1m\n  timeout client-fin 30s\n  timeout server 1m",
+		"backend vastora-raw-0\n  timeout tunnel 1h\n  timeout server-fin 30s",
+		"backend vastora-raw-1\n  timeout tunnel 1h\n  timeout server-fin 30s",
+	} {
+		if !strings.Contains(haproxy, wanted) {
+			t.Fatalf("HAProxy tunnel timeout configuration missing %q", wanted)
+		}
+	}
+	if strings.Count(haproxy, "timeout tunnel") != len(state.SharedHTTPS.Routes) {
+		t.Fatal("tunnel timeout leaked outside raw backends")
+	}
 	invalid := *state.SharedHTTPS
 	invalid.Routes = append([]gateway.Layer4Route(nil), invalid.Routes...)
 	invalid.Routes[0].ProxyProtocol = "v1"
