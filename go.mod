@@ -12,7 +12,6 @@ require (
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.1
 	github.com/petauron/catalog v0.2.0
-	github.com/opencontainers/go-digest v1.0.0
 	github.com/petauron/meridian v0.0.0-20261007044131-62cd660b5e5e
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/projectdiscovery/cdncheck v1.2.51
@@ -43,7 +42,7 @@ require (
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v0.24.0 // indirect
-	github.com/google/go-containerregistry v0.20.7 // indirect
+	github.com/google/go-containerregistry v0.22.1 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
