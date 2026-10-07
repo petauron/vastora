@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.299](https://github.com/petauron/vastora/compare/v0.1.0-alpha.298...v0.1.0-alpha.299) (2026-10-07)
+
+
+### Bug Fixes
+
+* preserve idle proxy tunnels for long responses ([#851](https://github.com/petauron/vastora/issues/851)) ([16b694c](https://github.com/petauron/vastora/commit/16b694c14d3c8be7a67624608a330d27447460e1))
+
 ## [0.1.0-alpha.298](https://github.com/petauron/vastora/compare/v0.1.0-alpha.297...v0.1.0-alpha.298) (2026-10-07)
 
 
