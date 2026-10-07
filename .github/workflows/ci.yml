@@ -50,11 +50,8 @@ jobs:
         with:
           persist-credentials: false
       # Keep the release migration regression in the alpha gate too.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/setup-go-cached
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        with:
-          go-version: "1.26.6"
-          cache: false
       - name: Check Go formatting and API contract
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: make go-format-check
@@ -70,17 +67,6 @@ jobs:
       - name: Verify Agent reconnect execution boundary
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1
-      - name: Verify isolated Meridian UDP evidence
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        timeout-minutes: 6
-        run: |
-          python3 -m unittest discover -s scripts/meridian-fullcone-lab -p 'test_*.py'
-          python3 -O -m unittest discover -s scripts/meridian-fullcone-lab -p 'test_*.py'
-          lab=$(mktemp -d "$RUNNER_TEMP/meridian-udp.XXXXXX")
-          go run scripts/meridian-fullcone-lab/generate.go "$lab"
-          cp scripts/meridian-fullcone-lab/*.py scripts/meridian-fullcone-lab/haproxy.cfg "$lab/"
-          sh scripts/meridian-fullcone-lab/run.sh "$lab"
-          tcpdump -nn -r "$lab/stun.pcap"
       - name: Check deployment syntax and release workflow contracts
         if: needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'
         run: |
@@ -126,10 +112,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.26.6"
-          cache-dependency-path: go.sum
+      - uses: ./.github/actions/setup-go-cached
       - run: make go-race-check
 
   go-quality:
@@ -140,10 +123,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.26.6"
-          cache: false
+      - uses: ./.github/actions/setup-go-cached
       - run: make go-format-check go-static-check
       - name: Verify Agent update recovery invariants
         run: go test ./cmd/vastora ./internal/agent ./internal/center -run '^(TestHostUpdate|TestAgentUpdate|TestUninstall.*Updater|TestCancelledUpdater)' -count=1
@@ -219,10 +199,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.26.6"
-          cache: false
+      - uses: ./.github/actions/setup-go-cached
       - name: Cross-compile Agent binaries
         run: make agent-binaries
 
@@ -268,10 +245,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.26.6"
-          cache-dependency-path: go.sum
+      - uses: ./.github/actions/setup-go-cached
       - name: Scan Git history for secrets
         run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --verbose .
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

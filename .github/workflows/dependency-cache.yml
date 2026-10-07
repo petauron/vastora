@@ -23,14 +23,38 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
-          cache-dependency-path: go.sum
-      - run: go mod download
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select changed dependency caches
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          go_cache=false
+          npm_cache=false
+          if [ "$EVENT_NAME" = workflow_dispatch ] || [ "$BEFORE_SHA" = 0000000000000000000000000000000000000000 ]; then
+            go_cache=true
+            npm_cache=true
+          else
+            changed=$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")
+            if printf '%s\n' "$changed" | grep -Eq '^go\.(mod|sum)$'; then go_cache=true; fi
+            if printf '%s\n' "$changed" | grep -Fxq 'web/package-lock.json'; then npm_cache=true; fi
+          fi
+          echo "go=$go_cache" >> "$GITHUB_OUTPUT"
+          echo "npm=$npm_cache" >> "$GITHUB_OUTPUT"
+      - if: steps.changed.outputs.go == 'true'
+        uses: ./.github/actions/setup-go-cached
+        with:
+          build-cache: 'false'
+      - if: steps.changed.outputs.go == 'true'
+        run: go mod download
+      - if: steps.changed.outputs.npm == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24.19.0"
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: cd web && npm ci --ignore-scripts
+      - if: steps.changed.outputs.npm == 'true'
+        run: cd web && npm ci --ignore-scripts
