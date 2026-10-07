@@ -634,7 +634,7 @@ func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
 	}
 	desired = *state.Sorted().SharedHTTPS
 	var configuration strings.Builder
-	configuration.WriteString("global\n  log stdout format raw local0\n  maxconn 4096\n\ndefaults\n  log global\n  mode tcp\n  option tcplog\n  timeout connect 10s\n  timeout client 1m\n  timeout server 1m\n\nresolvers vastora-docker\n  nameserver docker 127.0.0.11:53\n  resolve_retries 3\n  timeout resolve 1s\n  timeout retry 1s\n\n")
+	configuration.WriteString("global\n  log stdout format raw local0\n  maxconn 4096\n\ndefaults\n  log global\n  mode tcp\n  option tcplog\n  timeout connect 10s\n  timeout client 1m\n  timeout client-fin 30s\n  timeout server 1m\n\nresolvers vastora-docker\n  nameserver docker 127.0.0.11:53\n  resolve_retries 3\n  timeout resolve 1s\n  timeout retry 1s\n\n")
 	configuration.WriteString("frontend vastora-shared-https\n  bind ")
 	configuration.WriteString(net.JoinHostPort("0.0.0.0", strconv.Itoa(desired.Port)))
 	configuration.WriteString("\n  tcp-request inspect-delay 5s\n  tcp-request content accept if { req_ssl_hello_type 1 }\n")
@@ -650,7 +650,7 @@ func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
 		configuration.WriteString(" check resolvers vastora-docker init-addr libc,none\n")
 	}
 	for index, route := range desired.Routes {
-		configuration.WriteString(fmt.Sprintf("\nbackend vastora-raw-%d\n", index))
+		configuration.WriteString(fmt.Sprintf("\nbackend vastora-raw-%d\n  timeout tunnel 1h\n  timeout server-fin 30s\n", index))
 		for upstreamIndex, upstream := range route.Upstreams {
 			proxyProtocol := ""
 			if route.ProxyProtocol == gateway.ProxyProtocolV2 {
