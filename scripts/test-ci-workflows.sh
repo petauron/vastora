@@ -57,7 +57,7 @@ require_line "$codeql_workflow" "  cancel-in-progress: \${{ github.event_name ==
 # Alpha normally validates shape; forward-only migrations also need their
 # targeted regression before release. Full checks remain outside this job.
 alpha_job="$(sed -n '/^  alpha-minimal:/,/^  go-race:/p' "$ci_workflow")"
-if ! printf '%s\n' "$alpha_job" | grep -Fq 'cache: true' ||
+if ! printf '%s\n' "$alpha_job" | grep -Fq 'uses: ./.github/actions/setup-go-cached' ||
    ! printf '%s\n' "$alpha_job" | grep -Fq 'run: make go-format-check' ||
    printf '%s\n' "$alpha_job" | grep -Fv \
      -e "run: go test ./internal/center -run '^TestExecutionPagesRetainOldUnresolvedHistory$' -count=1" \
@@ -170,3 +170,10 @@ for workflow in "$ci_workflow" "$codeql_workflow" "$cache_workflow"; do
 done
 
 echo "CI workflow policy test passed"
+
+# Download-only warming must not populate a combined immutable build cache.
+go_cache_action="$project_dir/.github/actions/setup-go-cached/action.yml"
+require_line "$go_cache_action" 'path: ${{ steps.paths.outputs.modules }}'
+require_line "$go_cache_action" 'path: ${{ steps.paths.outputs.build }}'
+require_line "$go_cache_action" "\${{ github.job }}-\${{ hashFiles('go.sum') }}-\${{ github.sha }}"
+require_line "$cache_workflow" "          build-cache: 'false'"
