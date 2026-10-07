@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.298](https://github.com/petauron/vastora/compare/v0.1.0-alpha.297...v0.1.0-alpha.298) (2026-10-07)
+
+
+### Bug Fixes
+
+* isolate landing resolver from host DNS replacements ([#849](https://github.com/petauron/vastora/issues/849)) ([07c3b7c](https://github.com/petauron/vastora/commit/07c3b7c49dadb4a39ebfb45e46afa33e9ca1440f))
+
 ## [0.1.0-alpha.297](https://github.com/petauron/vastora/compare/v0.1.0-alpha.296...v0.1.0-alpha.297) (2026-10-07)
 
 
