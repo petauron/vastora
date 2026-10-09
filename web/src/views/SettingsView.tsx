@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { BotIcon, ChevronDownIcon, DatabaseBackupIcon, DatabaseIcon, DownloadIcon, KeyRoundIcon, PencilIcon, PlusIcon, PowerIcon, RefreshCwIcon, SettingsIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
+import { BotIcon, ChevronRightIcon, DatabaseBackupIcon, DatabaseIcon, DownloadIcon, KeyRoundIcon, PencilIcon, PlusIcon, PowerIcon, RefreshCwIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
 import { api } from "../api";
 import { SignOutButton, type AppData, type Mutate } from "../App";
 import { administratorPasswordMinLength } from "../lib/security";
@@ -18,27 +18,69 @@ import { Textarea } from "@/components/ui/textarea";
 import { CenterUpdateCard } from "./CenterUpdateCard";
 import { isInstalledApplication } from "./appAccess";
 import { SystemDomainSettings } from "./SystemDomainSettings";
+import { AppIcon } from "@/components/desktop/AppIcon";
+
+const settingsSections = [
+  { id: "general", icon: "settings", zh: "通用", en: "General" },
+  { id: "updates", icon: "updates", zh: "软件更新", en: "Software Update" },
+  { id: "data", icon: "backup", zh: "数据与诊断", en: "Data & Diagnostics" },
+  { id: "assistant", icon: "assistant", zh: "AI 助手", en: "AI Assistant" },
+  { id: "domains", icon: "network", zh: "域名与访问", en: "Domains & Access" },
+  { id: "catalog", icon: "catalog", zh: "应用目录", en: "App Catalogs" },
+] as const;
+type SettingsSection = typeof settingsSections[number]["id"];
+function sectionFromHash(): SettingsSection {
+  const hash = window.location.hash.slice(1);
+  return settingsSections.find((section) => section.id === hash)?.id ?? "general";
+}
 
 export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onLogout, onNavigate, onRefresh }: { data: AppData; language: Language; mutate: Mutate; onCenterUpdateStatus: (status: CenterUpdateStatus) => void; onLogout: () => Promise<void>; onNavigate?: (screen: Screen) => void; onRefresh: () => Promise<void> }) {
+  const [section, setSection] = useState<SettingsSection>(sectionFromHash);
+  const selectSection = (next: SettingsSection) => {
+    setSection(next);
+    if (window.location.hash !== `#${next}`) window.history.pushState({}, "", `${window.location.pathname}${window.location.search}#${next}`);
+  };
   const [adding, setAdding] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
   const [diagnosticsError, setDiagnosticsError] = useState("");
   useEffect(() => {
-    const section = window.location.hash.slice(1);
-    if (section === "assistant" || section === "catalog") document.getElementById(section)?.scrollIntoView({ block: "start" });
+    const syncSection = () => setSection(sectionFromHash());
+    window.addEventListener("hashchange", syncSection);
+    window.addEventListener("popstate", syncSection);
+    return () => {
+      window.removeEventListener("hashchange", syncSection);
+      window.removeEventListener("popstate", syncSection);
+    };
   }, []);
   const downloadDiagnostics = async () => { setDiagnosticsBusy(true); setDiagnosticsError(""); try { await api.downloadDiagnostics(); } catch (error) { setDiagnosticsError(userError(language, error)); } finally { setDiagnosticsBusy(false); } };
   return (
-    <section className="flex flex-col gap-7">
-      <PageHeading title={copy(language, "控制面板", "Control Panel")} description={copy(language, "管理系统更新、备份和登录安全。", "Manage system updates, backups, and sign-in security.")} action={<SignOutButton language={language} onLogout={onLogout} />} />
-      <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><SettingsIcon />{copy(language,"管理中心","Management center")}</CardTitle><CardDescription>{copy(language, "当前运行信息", "Current runtime information")}</CardDescription></CardHeader>
-        <CardContent><dl className="grid gap-4 text-sm sm:grid-cols-3"><div><dt className="text-muted-foreground">{copy(language, "版本", "Version")}</dt><dd className="mt-1 font-medium">{data.centerUpdate.currentVersion}</dd></div><div><dt className="text-muted-foreground">{copy(language, "节点", "Nodes")}</dt><dd className="mt-1 font-medium">{data.agents.filter((agent) => agent.status === "active").length}</dd></div><div><dt className="text-muted-foreground">{copy(language, "应用", "Apps")}</dt><dd className="mt-1 font-medium">{data.applications.filter(isInstalledApplication).length}</dd></div></dl></CardContent>
-        <CardFooter className="justify-end"><Button onClick={() => setPasswordOpen(true)} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "修改管理员密码", "Change administrator password")}</Button></CardFooter>
-      </Card>
+    <section className="mac-settings" aria-label={copy(language, "控制面板", "Control Panel")}>
+      <nav className="mac-settings-sidebar" aria-label={copy(language, "设置分类", "Settings categories")}>
+        <h2>{copy(language, "控制面板", "Control Panel")}</h2>
+        {settingsSections.map((item) => <button className="mac-settings-link" key={item.id} aria-current={section === item.id ? "page" : undefined} aria-controls={`settings-${item.id}`} onClick={() => selectSection(item.id)}><AppIcon appKey={item.icon} className="size-7" /><span>{copy(language, item.zh, item.en)}</span></button>)}
+      </nav>
+      <div className="mac-settings-content">
+      <section className="mac-settings-panel" id="settings-general" hidden={section !== "general"} aria-labelledby="settings-general-title">
+        <PageHeading title={copy(language, "管理中心", "Management center")} description={copy(language, "管理 Vastora 的基础信息与账户设置。", "Manage Vastora information and account settings.")} />
+        <h2 className="sr-only" id="settings-general-title">{copy(language, "通用", "General")}</h2>
+        <dl className="mac-settings-group">
+          <div className="mac-settings-row"><dt>{copy(language, "版本", "Version")}</dt><dd>{data.centerUpdate.currentVersion}</dd></div>
+          <div className="mac-settings-row"><dt>{copy(language, "节点", "Nodes")}</dt><dd>{data.agents.filter((agent) => agent.status === "active").length}</dd></div>
+          <div className="mac-settings-row"><dt>{copy(language, "应用", "Apps")}</dt><dd>{data.applications.filter(isInstalledApplication).length}</dd></div>
+        </dl>
+        <div className="mac-settings-group">
+          <button className="mac-settings-action" onClick={() => setPasswordOpen(true)}><KeyRoundIcon aria-hidden="true" /><span>{copy(language, "修改管理员密码", "Change administrator password")}</span><ChevronRightIcon aria-hidden="true" /></button>
+          <div className="mac-settings-actions"><SignOutButton language={language} onLogout={onLogout} /></div>
+        </div>
+      </section>
+      <section className="mac-settings-panel" id="settings-updates" hidden={section !== "updates"} aria-label={copy(language, "软件更新", "Software Update")}>
+        <PageHeading title={copy(language, "软件更新", "Software Update")} description={copy(language, "检查与管理 Center 和 Agent 更新。", "Check and manage Center and Agent updates.")} />
       <CenterUpdateCard language={language} onRefresh={onRefresh} onStatusChange={onCenterUpdateStatus} onViewActivity={onNavigate ? () => onNavigate("activity") : undefined} status={data.centerUpdate} />
+      </section>
+      <section className="mac-settings-panel" id="settings-data" hidden={section !== "data"} aria-label={copy(language, "数据与诊断", "Data & Diagnostics")}>
+        <PageHeading title={copy(language, "数据与诊断", "Data & Diagnostics")} />
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheckIcon />{copy(language, "数据与故障排查", "Data & troubleshooting")}</CardTitle><CardDescription>{copy(language, "备份 Center 配置，或下载不含密钥的诊断信息。", "Back up Center configuration or download diagnostics that contain no secret values.")}</CardDescription></CardHeader>
         <CardContent>
@@ -47,9 +89,20 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
           <p className="mt-4 text-xs leading-5 text-muted-foreground">{copy(language, "恢复时先停止 Center，再使用 vastora center restore 将备份恢复到新的空数据目录。", "To restore, stop Center and use vastora center restore with a new empty data directory.")}</p>
         </CardContent>
       </Card>
-      <details className="scroll-mt-20 rounded-xl border bg-card" id="assistant" open={window.location.hash === "#assistant" || undefined}><summary className="cursor-pointer p-4 text-sm font-medium">{copy(language,"AI 助手配置","AI assistant setup")}</summary><div className="border-t p-4"><AssistantProviderSettings language={language} /></div></details>
-      <details className="rounded-xl border bg-card"><summary className="cursor-pointer p-4 text-sm font-medium">{copy(language,"高级：域名设置","Advanced: domain settings")}</summary><div className="border-t p-4"><SystemDomainSettings domain={data.systemDomain} language={language} /></div></details>
-      <CatalogSettings data={data} language={language} mutate={mutate} onAdd={() => setAdding(true)} />
+      </section>
+      <section className="mac-settings-panel" id="settings-assistant" hidden={section !== "assistant"} aria-label={copy(language, "AI 助手", "AI Assistant")}>
+        <PageHeading title={copy(language, "AI 助手", "AI Assistant")} />
+        <AssistantProviderSettings language={language} />
+      </section>
+      <section className="mac-settings-panel" id="settings-domains" hidden={section !== "domains"} aria-label={copy(language, "域名与访问", "Domains & Access")}>
+        <PageHeading title={copy(language, "域名与访问", "Domains & Access")} />
+        <SystemDomainSettings domain={data.systemDomain} language={language} />
+      </section>
+      <section className="mac-settings-panel" id="settings-catalog" hidden={section !== "catalog"} aria-label={copy(language, "应用目录", "App Catalogs")}>
+        <PageHeading title={copy(language, "应用目录", "App Catalogs")} />
+        <CatalogSettings data={data} language={language} mutate={mutate} onAdd={() => setAdding(true)} />
+      </section>
+      </div>
       {adding ? <SourceSheet language={language} onClose={() => setAdding(false)} onSubmit={async (source) => { await mutate(() => api.createSource(source), copy(language, "应用目录已添加。", "App catalog added.")); setAdding(false); }} open /> : null}
       {backupOpen ? <BackupSheet language={language} onClose={() => setBackupOpen(false)} open /> : null}
       {passwordOpen ? <PasswordSheet language={language} onClose={() => setPasswordOpen(false)} open /> : null}
@@ -111,25 +164,13 @@ function AssistantProviderSettings({ language }: { language: Language }) {
 }
 
 function CatalogSettings({ data, language, mutate, onAdd }: { data: AppData; language: Language; mutate: Mutate; onAdd: () => void }) {
-  return (
-    <details className="group scroll-mt-20 rounded-2xl border bg-card shadow-xs" id="catalog" open={window.location.hash === "#catalog" || undefined}>
-      <summary className="flex min-h-16 cursor-pointer list-none items-center gap-3 px-5 py-4">
-        <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground"><DatabaseIcon aria-hidden="true" className="size-5" /></span>
-        <span className="min-w-0 flex-1">
-          <span className="block font-semibold">{copy(language, "高级：应用目录", "Advanced: app catalogs")}</span>
-          <span className="mt-1 block text-sm font-normal text-muted-foreground">{copy(language, "官方目录已预先配置；仅在接入其他可信目录时使用。", "The official catalog is already configured. Use this only for another trusted catalog.")}</span>
-        </span>
-        <ChevronDownIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-      </summary>
-      <div className="border-t px-5 py-5">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div><h2 className="font-semibold">{copy(language, "已连接目录", "Connected catalogs")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "目录必须使用固定签名公钥。", "Catalogs must use a pinned signing key.")}</p></div>
-          <Button onClick={onAdd} size="sm"><PlusIcon data-icon="inline-start" />{copy(language, "添加目录", "Add catalog")}</Button>
-        </div>
-        <div className="grid gap-4 lg:grid-cols-2">{data.sources.map((source) => <SourceCard key={source.id} language={language} mutate={mutate} source={source} />)}</div>
-      </div>
-    </details>
-  );
+  return <section className="flex min-w-0 flex-col gap-4" aria-label={copy(language, "已连接目录", "Connected catalogs")}>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <p className="max-w-lg text-xs leading-5 text-muted-foreground">{copy(language, "官方目录已预先配置。新增目录必须来自可信来源，并使用固定签名公钥。", "The official catalog is configured. Additional catalogs must be trusted and use a pinned signing key.")}</p>
+      <Button onClick={onAdd} size="sm"><PlusIcon data-icon="inline-start" />{copy(language, "添加目录", "Add catalog")}</Button>
+    </div>
+    <div className="flex flex-col gap-4">{data.sources.map((source) => <SourceCard key={source.id} language={language} mutate={mutate} source={source} />)}</div>
+  </section>;
 }
 
 function PasswordSheet({ language, onClose, open }: { language: Language; onClose: () => void; open: boolean }) {

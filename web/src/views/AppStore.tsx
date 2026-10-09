@@ -1,17 +1,18 @@
-import { useId, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { PackagePlusIcon } from "lucide-react";
 import type { AppData, AppView } from "../types";
 import type { Language } from "../translations";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { eligibleAppNodes, installBlocker, isInstalledApplication, localized } from "./appAccess";
 import { AppHostAccessNote, AppIdentityBadge, isOfficialProduct } from "./AppIdentity";
 import { catalogInstallBlocked, copy } from "./shared";
 import { isBackgroundApplication } from "./applicationLaunch";
 import { AppIcon } from "@/components/desktop/AppIcon";
 
-export function AppStore({ data, language, onInstall, query = "", renderInstalledActions, renderInstalledSummary }: { data: AppData; language: Language; onInstall: (app: AppView) => void; query?: string; renderInstalledActions?: (key: string) => ReactNode; renderInstalledSummary?: (key: string) => ReactNode }) {
+export function AppStore({ data, language, onInstall, query = "", renderInstalledActions, renderInstalledSummary, renderInstalledStatus, renderInstalledDetailActions }: { data: AppData; language: Language; onInstall: (app: AppView) => void; query?: string; renderInstalledActions?: (key: string) => ReactNode; renderInstalledSummary?: (key: string) => ReactNode; renderInstalledStatus?: (key: string) => ReactNode; renderInstalledDetailActions?: (key: string) => ReactNode }) {
   const officialSource = data.sources.find((source) => source.id === "vastora-official");
   const officialUnavailable = officialSource && (officialSource.status === "pending" || officialSource.status === "failed" || officialSource.status === "expired" || !data.apps.some((app) => app.sourceId === officialSource.id));
   const installedCounts = new Map<string, number>();
@@ -37,18 +38,32 @@ export function AppStore({ data, language, onInstall, query = "", renderInstalle
         ? copy(language, "请刷新页面重试。已安装应用仍可管理。", "Refresh the page to retry. Installed apps remain manageable.")
         : copy(language, "请到控制面板刷新应用目录，验证完成后即可安装。已安装应用不受影响。", "Refresh the app catalog in Control Panel before installing. Installed apps are unaffected.")}</AlertDescription>
     </Alert> : null}
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="store-app-grid">
       {data.apps.filter((app) => !query || [localized(app, language, "name"), localized(app, language, "description"), app.sourceId, app.key].some((text) => text.toLocaleLowerCase().includes(query))).map((app) => {
         const canInstall = eligibleAppNodes(data, app.key).length > 0;
         return <AppStoreCard key={app.key} app={app} language={language}
-          installedCount={installedCounts.get(app.key) ?? 0} summary={renderInstalledSummary?.(app.key)} canInstall={canInstall}
+          status={renderInstalledStatus?.(app.key)} detailActions={renderInstalledDetailActions?.(app.key)} installedCount={installedCounts.get(app.key) ?? 0} summary={renderInstalledSummary?.(app.key)} canInstall={canInstall}
           blocker={canInstall ? "" : installBlocker(data, app.key, language)} onInstall={onInstall} actions={installedCounts.has(app.key) ? renderInstalledActions?.(app.key) : undefined} />;
       })}
     </div>
   </div>;
 }
 
-export function AppStoreCard({ app, language, installedCount, canInstall: nodeAvailable, blocker: nodeBlocker, onInstall, actions, summary }: {
+export function AppStoreTile({ appKey, name, language, meta, action, onDetails }: {
+  appKey: string; name: string; language: Language; meta: ReactNode; action: ReactNode; onDetails: () => void;
+}) {
+  const id = useId();
+  return <Card aria-labelledby={id} className="store-app-card min-w-0" role="article">
+    <CardHeader>
+      <AppIcon appKey={appKey} className="size-12" />
+      <CardTitle><h3 id={id}><button className="store-app-title" onClick={onDetails} title={name} aria-label={copy(language, `查看 ${name} 详情`, `View ${name} details`)}>{name}</button></h3></CardTitle>
+      <CardDescription className="store-app-meta">{meta}</CardDescription>
+    </CardHeader>
+    <CardFooter>{action}</CardFooter>
+  </Card>;
+}
+
+export function AppStoreCard({ app, language, installedCount, canInstall: nodeAvailable, blocker: nodeBlocker, onInstall, actions, summary, status, detailActions }: {
   app: AppView;
   language: Language;
   installedCount: number;
@@ -57,48 +72,40 @@ export function AppStoreCard({ app, language, installedCount, canInstall: nodeAv
   onInstall: (app: AppView) => void;
   actions?: ReactNode;
   summary?: ReactNode;
+  status?: ReactNode;
+  detailActions?: ReactNode;
 }) {
   const id = useId();
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const name = localized(app, language, "name");
   const catalogBlocked = catalogInstallBlocked(app);
   const canInstall = nodeAvailable && !catalogBlocked;
   const blocker = catalogBlocked
     ? app.installBlockedReason || copy(language, "请先在控制面板刷新应用目录，再安装或升级。已安装应用不受影响。", "Refresh the app catalog in Control Panel before installing or upgrading. Installed apps are unaffected.")
     : nodeBlocker;
-  return <Card aria-labelledby={`${id}-name`} className="store-app-card min-w-0" role="article">
-    <CardHeader className="gap-2">
-      <AppIcon appKey={app.key} className="mb-3 size-14" />
-      <CardTitle className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <h3 className="min-w-0 break-words" id={`${id}-name`}>{name}</h3>
-        <AppIdentityBadge app={app} language={language} />
-      </CardTitle>
-      <CardDescription className="break-words">{localized(app, language, "description")}</CardDescription>
-    </CardHeader>
-    <CardContent className="flex flex-col gap-2">
-      {summary}
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <span className="break-all">{copy(language, "目录版本", "Catalog version")} v{app.app.version} · r{app.app.packageRevision ?? 0}</span>
-        <span aria-hidden="true">·</span>
-        <span>{app.app.hostAccess ? copy(language, "主机应用", "Host app") : copy(language, "容器应用", "Container app")}</span>
-      </p>
-      <p aria-label={copy(language, "目录来源", "Catalog source")} className="break-all text-xs text-muted-foreground">{app.sourceId === "vastora-official" && app.key === `vastora-official/${app.app.id}`
-        ? copy(language, "官方目录", "Official catalog")
-        : copy(language, `第三方目录 · ${app.sourceId}`, `Third-party catalog · ${app.sourceId}`)}</p>
-      {isBackgroundApplication(app) ? <p className="text-xs text-muted-foreground">{copy(language, "后台服务 · 在应用商店管理", "Background service · manage in App Store")}</p> : null}
-      {app.app.hostAccess && !isOfficialProduct(app) ? <AppHostAccessNote app={app} language={language} /> : null}
-    </CardContent>
-    <CardFooter className="mt-auto flex-col items-stretch gap-2 py-3">
-      {!actions && blocker ? <p className="text-xs leading-5 text-muted-foreground" id={`${id}-blocker`}>{blocker}</p> : null}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">{installedCount
-          ? copy(language, `已安装到 ${installedCount} 个节点`, `Installed on ${installedCount} node(s)`)
-          : copy(language, "尚未安装", "Not installed")}</span>
-        {actions ?? <Button aria-label={copy(language, `安装 ${name}`, `Install ${name}`)}
-          aria-describedby={blocker ? `${id}-blocker` : undefined} disabled={!canInstall}
-          onClick={() => onInstall(app)} size="sm" variant="secondary">
-          <PackagePlusIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "安装", "Install")}
-        </Button>}
+  const officialCatalog = app.sourceId === "vastora-official" && app.key === `vastora-official/${app.app.id}`;
+  const installAction = <Button aria-label={copy(language, `安装 ${name}`, `Install ${name}`)} aria-describedby={blocker ? `${id}-blocker` : undefined} disabled={!canInstall} onClick={() => { setDetailsOpen(false); onInstall(app); }} size="sm" variant="secondary"><PackagePlusIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "安装", "Install")}</Button>;
+  const installation = installedCount ? copy(language, `已安装到 ${installedCount} 个节点`, `Installed on ${installedCount} node(s)`) : copy(language, "尚未安装", "Not installed");
+  return <>
+    <AppStoreTile appKey={app.key} name={name} language={language} onDetails={() => setDetailsOpen(true)} action={actions ?? installAction} meta={<>
+      {!officialCatalog ? <span aria-label={copy(language, "目录来源", "Catalog source")} title={app.sourceId}>{app.sourceId} · </span> : null}
+      {!actions && blocker ? <span id={`${id}-blocker`} title={blocker}>{blocker}</span> : status ?? <span>{installedCount ? installation : localized(app, language, "description")}</span>}
+    </>} />
+    <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}><SheetContent className="sm:max-w-xl">
+      <SheetHeader><SheetTitle className="flex items-center gap-3"><AppIcon appKey={app.key} className="size-12" />{name}<AppIdentityBadge app={app} language={language} /></SheetTitle><SheetDescription>{localized(app, language, "description")}</SheetDescription></SheetHeader>
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 pb-5">
+        {summary}
+        <dl className="mac-settings-group">
+          <div className="mac-settings-row"><dt>{copy(language, "目录版本", "Catalog version")}</dt><dd>v{app.app.version} · r{app.app.packageRevision ?? 0}</dd></div>
+          <div className="mac-settings-row"><dt>{copy(language, "目录来源", "Catalog source")}</dt><dd>{officialCatalog ? copy(language, "官方目录", "Official catalog") : copy(language, `第三方目录 · ${app.sourceId}`, `Third-party catalog · ${app.sourceId}`)}</dd></div>
+          <div className="mac-settings-row"><dt>{copy(language, "类型", "Type")}</dt><dd>{app.app.hostAccess ? copy(language, "主机应用", "Host app") : copy(language, "容器应用", "Container app")}</dd></div>
+          <div className="mac-settings-row"><dt>{copy(language, "安装情况", "Installations")}</dt><dd>{installation}</dd></div>
+        </dl>
+        {isBackgroundApplication(app) ? <p className="text-xs text-muted-foreground">{copy(language, "后台服务 · 在应用商店管理", "Background service · manage in App Store")}</p> : null}
+        {app.app.hostAccess && !isOfficialProduct(app) ? <AppHostAccessNote app={app} language={language} /> : null}
+        {blocker ? <p className="text-sm text-muted-foreground">{blocker}</p> : null}
       </div>
-    </CardFooter>
-  </Card>;
+      <SheetFooter><div className="flex flex-wrap gap-2" onClick={(event) => { if ((event.target as HTMLElement).closest("button:not(:disabled), a")) setDetailsOpen(false); }}>{detailActions ?? actions ?? installAction}</div></SheetFooter>
+    </SheetContent></Sheet>
+  </>;
 }

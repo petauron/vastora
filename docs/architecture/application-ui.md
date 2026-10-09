@@ -20,6 +20,16 @@ The exact official identities are `vastora-official/meridian` and
 declarative Center path. Center retains all authorization checks on API calls;
 loading an official interface does not grant any new permission.
 
+## Shared presentation
+
+Center owns the [Vastora design language](../design-language.md): global semantic
+colors, typography, desktop chrome, shared component slots, and application icons.
+Mounted official workspaces inherit these values, including portalled controls.
+Application bundles must not redefine `:root` colors or embed a second desktop
+shell. Meridian still owns its product layout, data and actions; Center styling
+must not add or remove Meridian business controls. Independently opened dashboards
+retain their own frontend and release lifecycle.
+
 ## Meridian release and trust boundary
 
 The Meridian UI produces a JS module and stylesheet named

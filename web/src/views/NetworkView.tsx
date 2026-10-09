@@ -54,9 +54,9 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
   };
 
   return (
-    <section className="flex flex-col gap-7">
+    <section className="mac-network flex flex-col gap-6">
       <PageHeading title={copy(language, "网络", "Network")} description={copy(language, "每台节点可以同时具备局域网、安全私网和公网能力；Vastora 会为服务自动选择合适的入口。", "Each node can use local, secure private, and public networking together. Vastora selects a suitable access method for each service.")} />
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="mac-network-capabilities">
         <CapabilityCard icon={<CableIcon />} title={copy(language, "局域网", "Local network")} description={copy(language, "家中或办公室内的设备可以直接访问。", "Devices at home or in the office can connect directly.")} count={enabledCount("lan")} language={language} technical={copy(language, "局域网依赖本地路由可达，不会自动开放公网端口。", "Local access depends on LAN routing and never opens a public port automatically.")} />
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><NetworkIcon />{copy(language, "安全私网", "Secure private network")}</CardTitle><CardDescription>{copy(language, "让不同地点的设备像在同一局域网中一样安全访问。", "Securely connects devices across locations as if they were on one LAN.")}</CardDescription><CardAction><StateBadge value={headscale.status} /></CardAction></CardHeader>

@@ -16,13 +16,13 @@ export function ActivityView({ actions, agents, language, onNavigate }: { action
   const visibleActions = actions.slice(0, visibleEventLimit);
   const groups = groupActions(visibleActions);
   return (
-    <section className="flex flex-col gap-7">
+    <section className="mac-activity flex flex-col gap-6">
       <PageHeading title={copy(language, "活动", "Activity")} description={copy(language, "查看需要处理的任务，再按需查看历史操作。", "Review tasks needing attention, then browse historical activity.")} />
       <ExecutionSettings agents={agents} language={language} onNavigate={onNavigate} />
       <details className="rounded-xl border p-4"><summary className="cursor-pointer text-sm font-medium">{copy(language,"操作日志","Operation log")}</summary><div className="mt-4">
       {actions.length > visibleEventLimit ? <p className="text-xs text-muted-foreground">{copy(language, `显示最近 ${visibleEventLimit} 条事件，已按操作合并。`, `Showing the latest ${visibleEventLimit} events, grouped by operation.`)}</p> : null}
       {groups.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><HistoryIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有活动记录", "No activity yet")}</EmptyTitle><EmptyDescription>{copy(language, "创建安装或访问任务后，进度会显示在这里。", "Progress appears here after an install or access operation is created.")}</EmptyDescription></EmptyHeader></Empty> : (
-        <div aria-live="polite" className="flex flex-col gap-3">
+        <div aria-live="polite" className="mac-activity-list">
           {groups.map((group) => {
             const latest = group.actions[0];
             const message = visibleActionMessage(language, latest);

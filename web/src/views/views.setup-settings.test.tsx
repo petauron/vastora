@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { APIError, api } from "../api";
 import { NetworkView } from "./NetworkView";
 import { agentInstallCommand } from "../lib/agent-install";
@@ -15,6 +15,8 @@ import { userError } from "./shared";
 import { dashboard, rerender, resetRender, render } from "./views.test-support";
 
 describe("network and app views", () => {
+  beforeEach(() => window.history.replaceState({}, "", "/"));
+
   it("allows the detected setup timezone to be searched and changed", async () => {
     const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
     const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
@@ -563,10 +565,14 @@ describe("network and app views", () => {
 
   it("makes backup and diagnostics discoverable without the CLI", () => {
     const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    expect(container.querySelector<HTMLElement>("#settings-data")?.hidden).toBe(true);
+    act(() => container.querySelector<HTMLButtonElement>('[aria-controls="settings-data"]')?.click());
+    expect(container.querySelector<HTMLElement>("#settings-data")?.hidden).toBe(false);
     expect(container.textContent).toContain("数据与故障排查");
     expect(container.textContent).toContain("下载加密备份");
     expect(container.textContent).toContain("下载诊断报告");
     expect(container.textContent).toContain("不含 Token");
+    act(() => container.querySelector<HTMLButtonElement>('[aria-controls="settings-general"]')?.click());
     expect(container.textContent).toContain("修改管理员密码");
     const changePassword = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("修改管理员密码"));
     act(() => changePassword?.click());
@@ -585,6 +591,7 @@ describe("network and app views", () => {
       Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    clickButton("数据与诊断");
     const openAndFill = () => {
       clickButton("下载加密备份");
       enter("#backup-password", "secret-backup-password");
@@ -640,7 +647,7 @@ describe("network and app views", () => {
       const overlay = document.querySelector<HTMLElement>('[data-slot="sheet-overlay"]');
       for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) overlay?.dispatchEvent(new MouseEvent(type, { bubbles: true }));
     });
-    act(() => [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("应用目录"))?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-controls="settings-catalog"]')?.click());
     openAndFill(); clickButton("取消"); expectReopenedEmpty();
     openAndFill(); act(() => document.querySelector<HTMLButtonElement>('[data-slot="sheet-close"]')?.click()); expectReopenedEmpty();
     openAndFill(); act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))); expectReopenedEmpty();
@@ -673,7 +680,7 @@ describe("network and app views", () => {
       Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    act(() => [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("应用目录"))?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-controls="settings-catalog"]')?.click());
     clickButton("添加目录");
     enter("#source-id", "private-source"); enter("#source-name", "Private source"); enter("#source-url", "https://private.example/catalog"); enter("#source-key", "public-key"); enter("#source-token", "secret-bearer-token"); enter("#source-ca", "secret-custom-ca");
     await act(async () => {
@@ -696,7 +703,7 @@ describe("network and app views", () => {
       { id: "disabled", displayName: "Disabled source", url: "https://disabled.example/catalog", publicKey: "key", customCASet: false, bearerTokenSet: false, enabled: false, status: "disabled", refreshIntervalSeconds: 3600 }
     ];
     const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
-    const catalogs = [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("应用目录"));
+    const catalogs = container.querySelector<HTMLButtonElement>('[aria-controls="settings-catalog"]');
     act(() => catalogs?.click());
     for (const expected of ["健康", "使用缓存", "失败", "等待中", "未启用", "正在继续使用最后一次验证通过的缓存", "目录暂不可用于安装"]) {
       expect(container.textContent).toContain(expected);
@@ -707,7 +714,7 @@ describe("network and app views", () => {
     const data = dashboard();
     data.sources = [{ id: "vastora-official", displayName: "Vastora Official", url: "https://downloads.petauron.com/vastora/catalog/", publicKey: "", customCASet: false, bearerTokenSet: false, enabled: true, status: "expired", refreshIntervalSeconds: 3600, catalogRevision: 42, expiresAt: "2026-09-11T00:00:00Z" }];
     const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
-    act(() => [...container.querySelectorAll("summary")].find(summary => summary.textContent?.includes("应用目录"))?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-controls="settings-catalog"]')?.click());
     for (const text of ["Vastora 官方目录", "目录修订", "42", "有效期至", "需刷新", "已安装应用不受影响"]) expect(container.textContent).toContain(text);
     expect(container.querySelector('[aria-label="目录身份"]')?.textContent).toBe("官方目录");
   });
@@ -716,7 +723,7 @@ describe("network and app views", () => {
     const data = dashboard();
     data.sources = [{ id: "community", displayName: "Vastora 官方目录", url: "https://private.example/catalog", publicKey: "key", customCASet: false, bearerTokenSet: false, enabled: true, status: "healthy", refreshIntervalSeconds: 3600 }];
     const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
-    act(() => [...container.querySelectorAll("summary")].find(summary => summary.textContent?.includes("应用目录"))?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-controls="settings-catalog"]')?.click());
     expect(container.querySelector('[aria-label="目录身份"]')?.textContent).toBe("第三方目录");
   });
 
@@ -728,7 +735,7 @@ describe("network and app views", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const mutate = async (operation: () => Promise<unknown>) => { await operation(); };
     const container = render(<SettingsView data={data} language="en" mutate={mutate} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
-    act(() => [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("app catalogs"))?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-controls="settings-catalog"]')?.click());
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Edit"))?.click());
     expect(document.body.textContent).toContain("Blank credential fields preserve the stored values");
     expect(document.querySelector<HTMLInputElement>("#source-token-private-source")?.placeholder).toContain("keep the stored token");

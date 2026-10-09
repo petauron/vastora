@@ -79,11 +79,11 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
     }
     return [...groups.values()];
   }, [siteByID, visibleAgents]);
-  return <section className="flex flex-col gap-5">
+  return <section className="mac-nodes flex flex-col gap-5">
     <PageHeading title={copy(language, "节点", "Nodes")} description={copy(language, "管理运行应用的设备", "Manage devices that run apps")} action={<Button onClick={() => setAdding(true)}><PlusIcon data-icon="inline-start" />{copy(language, "添加节点", "Add node")}</Button>} />
     {data.agents.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><ServerIcon /></EmptyMedia><EmptyTitle>{copy(language, "添加第一台节点", "Add your first node")}</EmptyTitle><EmptyDescription>{copy(language, "当前 Center 主机或另一台受支持的 Linux 设备都可以作为节点；复制一条命令即可按需安装 Docker 和 Agent。", "The current Center host or another supported Linux device can be a node. Copy one command to install Docker when needed and then install Agent.")}</EmptyDescription><Button className="mt-3" onClick={() => setAdding(true)}><PlusIcon data-icon="inline-start" />{copy(language, "开始添加", "Get started")}</Button></EmptyHeader></Empty> : <div className="flex min-w-0 flex-col gap-4">
       <FleetSummary agents={data.agents.length} connected={summary.connected} attention={summary.attention} language={language} />
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="mac-workspace-toolbar flex flex-wrap items-center gap-2">
         <InputGroup className="w-full sm:w-64 lg:w-80">
           <InputGroupInput aria-label={copy(language, "搜索节点", "Search nodes")} onChange={(event) => setQuery(event.target.value)} placeholder={copy(language, "搜索节点、位置或版本…", "Search node, location, or version…")} type="search" value={query} />
           <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
