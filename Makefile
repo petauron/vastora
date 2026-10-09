@@ -1,4 +1,4 @@
-GO_TOOLCHAIN := go1.26.6
+GO_TOOLCHAIN := go1.26.9
 GO := GOTOOLCHAIN=$(GO_TOOLCHAIN) go
 GO_PACKAGES := ./cmd/... ./internal/...
 STATICCHECK_VERSION := v0.7.0

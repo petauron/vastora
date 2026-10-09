@@ -80,7 +80,14 @@ describe("application shell", () => {
   it("lets the user switch themes and remembers the choice", async () => {
     mockReadyCenter();
     const container = await renderReadyApp();
-    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Quick settings"]')?.click());
+    const quickSettings = container.querySelector<HTMLButtonElement>('button[aria-label="Quick settings"]');
+    expect(quickSettings).not.toBeNull();
+    act(() => {
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+        quickSettings?.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+      }
+    });
+    await vi.waitFor(() => expect(document.querySelector('button[aria-label="Switch to dark mode"]')).not.toBeNull());
     const toggle = document.querySelector<HTMLButtonElement>(
       'button[aria-label="Switch to dark mode"]',
     );

@@ -46,7 +46,7 @@ when the Center is unavailable.
 
 ## Development
 
-Requirements: Go 1.26.6, Node.js 24.19, and npm.
+Requirements: Go 1.26.9, Node.js 24.19, and npm.
 
 ```sh
 make bootstrap
@@ -57,7 +57,7 @@ make security-check
 Start a local control plane after the checks pass:
 
 ```sh
-GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora center serve --data-dir .vastora/center --listen 127.0.0.1:8080 --agent-connect-url http://127.0.0.1:8080
+GOTOOLCHAIN=go1.26.9 go run ./cmd/vastora center serve --data-dir .vastora/center --listen 127.0.0.1:8080 --agent-connect-url http://127.0.0.1:8080
 ```
 
 To connect Headscale, authorize its exact HTTPS origin when Center starts by
@@ -90,8 +90,8 @@ Create an encrypted control-plane backup with a password stored in a local
 `0600` file, then restore only into a new empty state directory:
 
 ```sh
-GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora center backup --data-dir .vastora/center --output center.vastora --password-file ./backup-password
-GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora center restore --input center.vastora --data-dir .vastora/restored-center --password-file ./backup-password
+GOTOOLCHAIN=go1.26.9 go run ./cmd/vastora center backup --data-dir .vastora/center --output center.vastora --password-file ./backup-password
+GOTOOLCHAIN=go1.26.9 go run ./cmd/vastora center restore --input center.vastora --data-dir .vastora/restored-center --password-file ./backup-password
 ```
 
 Restore uses an equivalent Vastora version and recreates the Center directory

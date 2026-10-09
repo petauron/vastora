@@ -5,16 +5,16 @@ RUN sh /install-build-deps.sh
 COPY scripts/build-landing-dante.sh /build-dante.sh
 RUN sh /build-dante.sh "$TARGETARCH" /out
 
-FROM --platform=$BUILDPLATFORM golang:1.26.8-bookworm AS go-build
+FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm AS go-build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN GOTOOLCHAIN=go1.26.6 go mod download
+RUN GOTOOLCHAIN=go1.26.9 go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY --from=dante-build /out/ /src/internal/dantebundle/assets/
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOTOOLCHAIN=go1.26.6 go build -trimpath -ldflags="-s -w" -o /out/vastora ./cmd/vastora
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOTOOLCHAIN=go1.26.9 go build -trimpath -ldflags="-s -w" -o /out/vastora ./cmd/vastora
 RUN mkdir /out/agent-data && chown 65532:65532 /out/agent-data
 
 FROM gcr.io/distroless/static-debian13

@@ -29,12 +29,12 @@ RUN npm run build
 FROM scratch AS web-assets
 COPY --link --from=web-build /src/web/dist/ /dist/
 
-FROM --platform=$BUILDPLATFORM golang:1.26.8-bookworm AS go-source
+FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm AS go-source
 WORKDIR /src
 COPY go.mod go.sum ./
 # Keep extracted modules, checksum metadata and the selected toolchain. The
 # downloaded ZIPs duplicate those files and are not needed to compile them.
-RUN GOTOOLCHAIN=go1.26.6 go mod download && \
+RUN GOTOOLCHAIN=go1.26.9 go mod download && \
     find /go/pkg/mod/cache/download -type f -name '*.zip' -delete
 COPY --link cmd/ ./cmd/
 COPY --link internal/ ./internal/
@@ -44,23 +44,23 @@ COPY --link internal/ ./internal/
 # arguments belong only to the final link stage, not package compilation.
 FROM go-source AS compile-amd64
 COPY --link --from=dante-amd64 /out/ /src/internal/dantebundle/assets/
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.9 \
     go list -export -deps -trimpath ./cmd/vastora > /dev/null
 
 FROM compile-amd64 AS binary-amd64
 ARG VASTORA_VERSION=0.1.0-dev
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.9 go build -trimpath \
     -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
     -o /out/vastora ./cmd/vastora
 
 FROM go-source AS compile-arm64
 COPY --link --from=dante-arm64 /out/ /src/internal/dantebundle/assets/
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.26.6 \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.26.9 \
     go list -export -deps -trimpath ./cmd/vastora > /dev/null
 
 FROM compile-arm64 AS binary-arm64
 ARG VASTORA_VERSION=0.1.0-dev
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.26.9 go build -trimpath \
     -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
     -o /out/vastora ./cmd/vastora
 

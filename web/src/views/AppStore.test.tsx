@@ -67,7 +67,7 @@ describe("app store cards", () => {
     const data = { apps: [], applications: [], sources: [{ id: "vastora-official", status: "pending" }] } as unknown as AppData;
     const container = markup(<AppStore data={data} language="zh-CN" onInstall={vi.fn()} />);
     expect(container.querySelector('[role="status"]')?.textContent).toContain("官方目录等待首次验证");
-    expect(container.textContent).toContain("设置中刷新应用目录");
+    expect(container.textContent).toContain("控制面板刷新应用目录");
     expect(container.querySelector("button")).toBeNull();
   });
 
