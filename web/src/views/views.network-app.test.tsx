@@ -265,6 +265,7 @@ describe("network and app views", () => {
     const all = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("所有应用"));
     expect(installed?.getAttribute("aria-current")).toBe("page");
     expect(container.querySelectorAll('[role="article"]')).toHaveLength(1);
+    expect([...container.querySelectorAll('[role="article"] button')].some((button) => button.textContent === "打开")).toBe(false);
     act(() => all?.click());
     expect(all?.getAttribute("aria-current")).toBe("page");
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "管理")?.click());
@@ -273,7 +274,7 @@ describe("network and app views", () => {
 
   it("opens an application card and only mounts the selected workspace", () => {
     const data = dashboard();
-    data.apps.push({ ...data.apps[0], key: "vastora-official/z-app", app: { ...data.apps[0].app, id: "z-app", name: { en: "Second app", "zh-CN": "第二个应用" } } });
+    data.apps.push({ ...data.apps[0], key: "vastora-official/z-app", app: { ...data.apps[0].app, id: "z-app", name: { en: "Second app", "zh-CN": "第二个应用" }, homepage: { service: "dashboard", path: "/" }, services: [{ name: "dashboard", protocol: "http", containerPort: 8080, management: true }] } });
     data.applications.push({ ...data.applications[0], id: "second-app", appKey: "vastora-official/z-app", name: "第二个应用" });
     const container = render(<AppsView startInStore data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.querySelectorAll("[data-app-group]")).toHaveLength(0);
