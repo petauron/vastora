@@ -44,7 +44,7 @@ function render(data: AppData) {
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  act(() => root?.render(<ThemeProvider><AppsView data={data} language="zh-CN" mutate={async (action) => { await action(); }} /></ThemeProvider>));
+  act(() => root?.render(<ThemeProvider><AppsView workspaceKey={null} onOpenApp={vi.fn()} onStore={vi.fn()} onSettings={vi.fn()} data={data} language="zh-CN" mutate={async (action) => { await action(); }} /></ThemeProvider>));
   return container;
 }
 

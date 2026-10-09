@@ -5,14 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 import type { Publication } from "../types";
 import { APIError, api } from "../api";
 import { vastoraDomainDefaults } from "../lib/network";
-import { AppsView } from "./AppsView";
 import { HomeView } from "./HomeView";
 import { NetworkView } from "./NetworkView";
 import { CenterRemoteAccessSheet } from "./CenterRemoteAccessSheet";
 import { defaultPublicationHostname } from "./appAccess";
 import { CopyButton } from "./shared";
 
-import { dashboard, rerender, openAppDetails, realityDashboard, render, renderAppDetails } from "./views.test-support";
+import { TestAppsView as AppsView, dashboard, rerender, openAppDetails, realityDashboard, render, renderAppDetails } from "./views.test-support";
 
 describe("network and app views", () => {
   it("shows one current action at a time during first-time setup", () => {
@@ -257,35 +256,37 @@ describe("network and app views", () => {
     expect(document.querySelector('[role="alert"]')).not.toBeNull();
   });
 
-  it("shows only successful applications and marks host-privileged packages", () => {
-    const container = render(<AppsView data={dashboard()} language="zh-CN" mutate={async () => undefined} />);
+  it("groups installed applications and preserves privileged-package identity", () => {
+    const container = render(<AppsView startInStore data={dashboard()} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("Komari 探针");
     expect(container.textContent).toContain("高权限");
     expect(container.textContent).not.toContain("Failed");
-    expect(container.textContent).toContain("管理应用、订阅与各节点的访问入口");
     const installed = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("已安装"));
-    const store = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("应用商店"));
-    expect(installed?.getAttribute("aria-selected")).toBe("true");
-    act(() => store?.click());
-    expect(store?.getAttribute("aria-selected")).toBe("true");
-    expect(store?.textContent).toContain("1");
-    expect(container.textContent).toContain("所有可用节点都已安装或正在安装此应用");
+    const all = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("所有应用"));
+    expect(installed?.getAttribute("aria-current")).toBe("page");
+    expect(container.querySelectorAll('[role="article"]')).toHaveLength(1);
+    act(() => all?.click());
+    expect(all?.getAttribute("aria-current")).toBe("page");
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "管理")?.click());
+    expect(document.body.textContent).toContain("所有可用节点都已安装或正在安装此应用");
   });
 
-  it("shows one application workspace at a time and switches using named tabs", () => {
+  it("opens an application card and only mounts the selected workspace", () => {
     const data = dashboard();
     data.apps.push({ ...data.apps[0], key: "vastora-official/z-app", app: { ...data.apps[0].app, id: "z-app", name: { en: "Second app", "zh-CN": "第二个应用" } } });
     data.applications.push({ ...data.applications[0], id: "second-app", appKey: "vastora-official/z-app", name: "第二个应用" });
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-    expect(container.querySelectorAll("[data-app-group]")).toHaveLength(1);
-    expect(container.querySelector('[data-application-id="running"]')).not.toBeNull();
-    const tab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((item) => item.textContent?.includes("第二个应用"));
-    expect(tab).toBeDefined();
-    act(() => tab?.click());
-    expect(tab?.getAttribute("aria-selected")).toBe("true");
+    const container = render(<AppsView startInStore data={data} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.querySelectorAll("[data-app-group]")).toHaveLength(0);
+    const card = [...container.querySelectorAll('[role="article"]')].find((item) => item.querySelector("h3")?.textContent === "第二个应用");
+    const open = [...(card?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent === "打开");
+    expect(open).toBeDefined();
+    act(() => open?.click());
     expect(container.querySelectorAll("[data-app-group]")).toHaveLength(1);
     expect(container.querySelector('[data-application-id="second-app"]')).not.toBeNull();
     expect(container.querySelector('[data-application-id="running"]')).toBeNull();
+    rerender(<AppsView workspaceKey="vastora-official/komari-agent" data={data} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.querySelector('[data-application-id="running"]')).not.toBeNull();
+    expect(container.querySelector('[data-application-id="second-app"]')).toBeNull();
   });
 
   it("keeps CPA installation one-click and protects reveal and rotation", async () => {
@@ -305,9 +306,6 @@ describe("network and app views", () => {
     const reveal = vi.spyOn(api, "revealApplicationCredentials").mockResolvedValue({ kind: "cpa", managementKey: "management-value", clientApiKey: "client-value" });
     const rotate = vi.spyOn(api, "rotateApplicationCredentials").mockResolvedValue({ id: "rotation-1", applicationId: "cpa-application", target: "management", state: "pending", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" });
     rerender(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-    const installedTab = [...container.querySelectorAll("button")].find((button) => button.textContent?.startsWith("已安装"));
-    expect(installedTab).toBeDefined();
-    act(() => installedTab?.click());
     openAppDetails(container, "cpa-application");
     const credentialsButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "凭据");
     expect(credentialsButton).toBeDefined();

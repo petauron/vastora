@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { AppWindowIcon, BotIcon, CircleAlertIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, RefreshCwIcon, ServerIcon, SettingsIcon, WifiOffIcon, type LucideIcon } from "lucide-react";
+import { CircleAlertIcon, CircleCheckIcon, LanguagesIcon, LogOutIcon, RefreshCwIcon, WifiOffIcon } from "lucide-react";
 import { APIError, api } from "./api";
 import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import { administratorPasswordMinLength } from "./lib/security";
@@ -11,9 +11,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { SelectControl } from "@/components/SelectControl";
 import { ThemeToggle } from "@/components/theme";
-import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
+import { DesktopShell } from "@/components/desktop/DesktopShell";
+import { systemApplications, workspaceFromURL, workspacePath } from "@/components/desktop/navigation";
+import { localized } from "./views/appAccess";
+import { desktopApplications } from "./views/applicationLaunch";
 import { Spinner } from "@/components/ui/spinner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Turnstile } from "@/components/Turnstile";
@@ -28,18 +30,10 @@ const preferredLanguage = (): Language => {
   return navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
 };
 
-const navigation = [
-  { id: "home" as const, icon: HomeIcon, zh: "主页", en: "Home" },
-  { id: "nodes" as const, icon: ServerIcon, zh: "节点", en: "Nodes" },
-  { id: "apps" as const, icon: AppWindowIcon, zh: "应用", en: "Apps" },
-  { id: "network" as const, icon: NetworkIcon, zh: "网络", en: "Network" },
-  { id: "activity" as const, icon: HistoryIcon, zh: "活动", en: "Activity" },
-  { id: "assistant" as const, icon: BotIcon, zh: "助手", en: "Assistant" }
-];
-
 const ActivityView = lazy(() => import("./views/ActivityView").then((module) => ({ default: module.ActivityView })));
 const AssistantView = lazy(() => import("./views/AssistantView").then((module) => ({ default: module.AssistantView })));
 const AppsView = lazy(() => import("./views/AppsView").then((module) => ({ default: module.AppsView })));
+const DesktopView = lazy(() => import("./views/DesktopView").then((module) => ({ default: module.DesktopView })));
 const HomeView = lazy(() => import("./views/HomeView").then((module) => ({ default: module.HomeView })));
 const NetworkView = lazy(() => import("./views/NetworkView").then((module) => ({ default: module.NetworkView })));
 const NodesView = lazy(() => import("./views/NodesView").then((module) => ({ default: module.NodesView })));
@@ -50,6 +44,8 @@ export function App() {
   const [language, setLanguageState] = useState<Language>(preferredLanguage);
   const [phase, setPhase] = useState<Phase>("loading");
   const [screen, setScreen] = useState<Screen>(screenFromPath);
+  const [workspaceKey, setWorkspaceKey] = useState<string | null>(workspaceFromURL);
+  const [recentAppKeys, setRecentAppKeys] = useState<string[]>(() => { const key = workspaceFromURL(); return key ? [key] : []; });
   const [data, setData] = useState<AppData | null>(null);
   const [loadedScreens, setLoadedScreens] = useState<Set<Screen>>(() => new Set());
   const [loadingScreen, setLoadingScreen] = useState<Screen | null>(null);
@@ -115,11 +111,14 @@ export function App() {
     }
   }, []);
 
-  const navigate = useCallback((target: Screen, replace = false) => {
-    const path = pathForScreen(target);
-    if (window.location.pathname !== path) {
+  const navigate = useCallback((target: Screen, replace = false, appKey: string | null = null) => {
+    const selectedApp = target === "apps" ? appKey : null;
+    const path = selectedApp ? workspacePath(selectedApp) : pathForScreen(target);
+    if (`${window.location.pathname}${window.location.search}` !== path) {
       window.history[replace ? "replaceState" : "pushState"]({}, "", path);
     }
+    setWorkspaceKey(selectedApp);
+    if (selectedApp) setRecentAppKeys((current) => [selectedApp, ...current.filter((key) => key !== selectedApp)].slice(0, 4));
     focusAfterNavigation.current = true;
     setNotice(null);
     activeScreen.current = target;
@@ -177,6 +176,9 @@ export function App() {
   useEffect(() => {
     const onPopState = () => {
       const target = screenFromPath();
+      const selectedApp = workspaceFromURL();
+      setWorkspaceKey(selectedApp);
+      if (selectedApp) setRecentAppKeys((current) => [selectedApp, ...current.filter((key) => key !== selectedApp)].slice(0, 4));
       focusAfterNavigation.current = true;
       activeScreen.current = target;
       setScreen(target);
@@ -189,24 +191,27 @@ export function App() {
     if (phase !== "ready" || !focusAfterNavigation.current || !loadedScreens.has(screen)) return;
     focusAfterNavigation.current = false;
     window.requestAnimationFrame(() => mainRef.current?.focus());
-  }, [loadedScreens, phase, screen]);
+  }, [loadedScreens, phase, screen, workspaceKey]);
   useEffect(() => {
-    const label = navigation.find((item) => item.id === screen);
-    document.title = `${label ? copy(language, label.zh, label.en) : copy(language, "设置", "Settings")} · Vastora`;
-  }, [language, screen]);
+    const label = systemApplications.find((item) => item.id === screen)!;
+    const app = data?.apps.find((value) => value.key === workspaceKey);
+    const appName = app ? localized(app, language, "name") : data?.applications.find((value) => value.appKey === workspaceKey)?.name;
+    document.title = `${workspaceKey ? appName ?? copy(language, "应用", "Application") : copy(language, label.zh, label.en)} · Vastora`;
+  }, [language, screen, workspaceKey, data?.apps, data?.applications]);
   useEffect(() => {
     if (phase !== "ready") return;
     let cancelled = false;
     let timer = 0;
+    const interval = screen === "home" || screen === "overview" || screen === "settings" ? 30000 : 5000;
     const poll = async () => {
       if (document.visibilityState === "visible") {
         try { await loadScreen(screen); } catch (error) {
           if (error instanceof APIError && error.status === 401 && !cancelled) setPhase("login");
         }
       }
-      if (!cancelled) timer = window.setTimeout(() => void poll(), screen === "home" || screen === "settings" ? 30000 : 5000);
+      if (!cancelled) timer = window.setTimeout(() => void poll(), interval);
     };
-    timer = window.setTimeout(() => void poll(), screen === "home" || screen === "settings" ? 30000 : 5000);
+    timer = window.setTimeout(() => void poll(), interval);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [phase, screen, loadScreen]);
 
@@ -276,6 +281,7 @@ export function App() {
         window.history.replaceState({}, "", pathForScreen("nodes"));
         activeScreen.current = "nodes";
         setScreen("nodes");
+        setWorkspaceKey(null);
         await loadScreen("nodes");
         setAddFirstNode(true);
         setPhase("ready");
@@ -288,63 +294,32 @@ export function App() {
   if (phase === "login") return <CredentialPage language={language} loginProtection={setupStatus?.loginProtection} mode="login" onLanguage={setLanguage} onSubmit={async (username, password, turnstileToken) => { await api.login(username, password, turnstileToken); const setup = await api.setupStatus(); setSetupStatus(setup); if (!setup.onboardingComplete) { setPhase("setup-wizard"); return; } const target = screenFromPath(); activeScreen.current = target; await loadScreen(target); setScreen(target); setPhase("ready"); }} />;
   if (!data) return <CenteredState language={language} onRetry={initialize} />;
 
-  const currentLabel = navigation.find((item) => item.id === screen);
+  const appName = (key: string) => { const app = data.apps.find((value) => value.key === key); return app ? localized(app, language, "name") : data.applications.find((value) => value.appKey === key)?.name ?? copy(language, "应用", "Application"); };
+  const desktopApps = desktopApplications(data, language);
+  const recentApps = recentAppKeys.flatMap((key) => { const app = desktopApps.find((app) => app.key === key); return app ? [app] : []; });
+  const openApp = (key: string) => navigate("apps", false, key);
   return (
     <TooltipProvider>
       <a className="fixed left-4 top-4 z-50 -translate-y-24 rounded-lg bg-background px-3 py-2 text-sm font-medium shadow-lg transition-transform focus:translate-y-0" href="#main-content">{copy(language, "跳到主要内容", "Skip to main content")}</a>
-      <SidebarProvider>
-        <Sidebar collapsible="icon">
-          <SidebarHeader className="px-3 pb-3 pt-5">
-            <Brand />
-            <div className="mt-3 flex items-center gap-2 px-2 text-xs text-muted-foreground"><span className={`size-2 rounded-full ${connection === "connected" ? "bg-success" : "bg-destructive"}`} aria-hidden="true" />{connection === "connected" ? copy(language, "Center 连接正常", "Center connected") : copy(language, "正在重新连接", "Reconnecting")}</div>
-          </SidebarHeader>
-          <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {navigation.map((item) => {
-                    return <SidebarMenuItem key={item.id}><NavigationButton active={screen === item.id} icon={item.icon} label={copy(language, item.zh, item.en)} onSelect={() => navigate(item.id)} /></SidebarMenuItem>;
-                  })}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          </SidebarContent>
-          <SidebarFooter className="border-t border-sidebar-border p-3">
-            <SidebarMenu><SidebarMenuItem><NavigationButton active={screen === "settings"} icon={SettingsIcon} label={copy(language, "设置", "Settings")} onSelect={() => navigate("settings")} /></SidebarMenuItem></SidebarMenu>
-          </SidebarFooter>
-        </Sidebar>
-        <SidebarInset className="min-w-0">
-          <header className="flex h-14 items-center gap-3 border-b border-border/70 px-4 md:px-7">
-            <SidebarTrigger aria-label={copy(language, "展开或收起侧栏", "Toggle sidebar")} />
-            <span className="text-sm font-medium text-muted-foreground">{currentLabel ? copy(language, currentLabel.zh, currentLabel.en) : copy(language, "设置", "Settings")}</span>
-            <div className="flex-1" />
-            {loadingScreen === screen ? <span aria-live="polite" className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner />{copy(language, "正在更新", "Updating")}</span> : null}
-            <ThemeToggle language={language} />
-            <SelectControl aria-label={copy(language, "界面语言", "Interface language")} className="w-auto" onValueChange={(value) => setLanguage(value as Language)} options={[{ value: "zh-CN", label: "简体中文" }, { value: "en", label: "English" }]} size="sm" value={language} />
-          </header>
-          <div className="mx-auto flex w-full min-w-0 max-w-6xl flex-1 flex-col gap-5 px-4 py-6 md:px-8" id="main-content" ref={mainRef} tabIndex={-1}>
+      <DesktopShell screen={screen} language={language} connected={connection === "connected"} loading={loadingScreen === screen} workspace={workspaceKey ? { key: workspaceKey, name: appName(workspaceKey) } : null} apps={desktopApps} recentApps={recentApps} onNavigate={navigate} onOpenApp={openApp} onCloseWorkspace={() => { if (workspaceKey) setRecentAppKeys((keys) => keys.filter((key) => key !== workspaceKey)); navigate("home"); }} onLanguage={setLanguage}>
+          <div className={screen === "home" ? "desktop-home-content" : `desktop-window-content${screen === "apps" && !workspaceKey ? " desktop-store-window" : ""}`} id="main-content" role="main" ref={mainRef} tabIndex={-1}>
             {connection === "reconnecting" ? <Alert aria-live="assertive" variant="destructive"><WifiOffIcon /><AlertTitle>{copy(language, "与 Center 的连接已中断", "Connection to Center was interrupted")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, `${userError(language, connectionError)} 页面保留的是上次成功同步的数据${lastSync ? `（${lastSync.toLocaleTimeString(language)}）` : ""}。`, `${userError(language, connectionError)} This page is showing the last successful data${lastSync ? ` from ${lastSync.toLocaleTimeString(language)}` : ""}.`)}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
             {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}>{notice.error ? <CircleAlertIcon /> : <CircleCheckIcon />}<AlertTitle className="flex items-start justify-between gap-3"><span>{notice.message}</span><Button aria-label={copy(language, "关闭提示", "Dismiss notice")} onClick={() => setNotice(null)} size="xs" variant="ghost">{copy(language, "关闭", "Dismiss")}</Button></AlertTitle>{notice.detail && notice.detail !== notice.message ? <AlertDescription><details><summary className="cursor-pointer">{copy(language, "查看技术详情", "Technical details")}</summary><code className="mt-2 block break-all text-xs">{notice.detail}</code></details></AlertDescription> : null}</Alert> : null}
             <Suspense fallback={<ScreenLoading language={language} />}>
               {!loadedScreens.has(screen) ? <ScreenLoading language={language} /> : null}
-              {loadedScreens.has(screen) && screen === "home" ? <HomeView data={data} language={language} onNavigate={navigate} mutate={mutate} /> : null}
+              {loadedScreens.has(screen) && screen === "home" ? <DesktopView data={data} language={language} onNavigate={navigate} onOpenApp={openApp} /> : null}
+              {loadedScreens.has(screen) && screen === "overview" ? <HomeView data={data} language={language} onNavigate={navigate} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "nodes" ? <NodesView data={data} language={language} mutate={mutate} onAddFirstNodeHandled={() => setAddFirstNode(false)} onNavigate={navigate} startAdding={addFirstNode} /> : null}
-              {loadedScreens.has(screen) && screen === "apps" ? <AppsView data={data} language={language} mutate={mutate} /> : null}
+              {loadedScreens.has(screen) && screen === "apps" ? <AppsView data={data} language={language} mutate={mutate} workspaceKey={workspaceKey} onOpenApp={openApp} onStore={() => navigate("apps")} onSettings={() => { navigate("settings"); window.history.replaceState({}, "", "/settings#catalog"); }} /> : null}
               {loadedScreens.has(screen) && screen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} onNavigate={navigate} /> : null}
               {loadedScreens.has(screen) && screen === "assistant" ? <AssistantView language={language} /> : null}
-              {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setPhase("login"); }} onNavigate={navigate} onRefresh={refreshSettings} /> : null}
+              {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setRecentAppKeys([]); setPhase("login"); }} onNavigate={navigate} onRefresh={refreshSettings} /> : null}
             </Suspense>
           </div>
-        </SidebarInset>
-      </SidebarProvider>
+      </DesktopShell>
     </TooltipProvider>
   );
-}
-
-function NavigationButton({ active, icon: Icon, label, onSelect }: { active: boolean; icon: LucideIcon; label: string; onSelect: () => void }) {
-  const { isMobile, setOpenMobile } = useSidebar();
-  return <SidebarMenuButton className="min-h-11 rounded-xl px-3" isActive={active} onClick={() => { onSelect(); if (isMobile) setOpenMobile(false); }} tooltip={label}><Icon /><span>{label}</span></SidebarMenuButton>;
 }
 
 function CredentialPage({ language, loginProtection, mode, onLanguage, onSubmit }: { language: Language; loginProtection?: SetupStatus["loginProtection"]; mode: "setup" | "login"; onLanguage: (language: Language) => void; onSubmit: (username: string, password: string, turnstileToken: string) => Promise<void> }) {

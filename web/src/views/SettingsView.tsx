@@ -26,12 +26,13 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
   const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
   const [diagnosticsError, setDiagnosticsError] = useState("");
   useEffect(() => {
-    if (window.location.hash === "#assistant") document.getElementById("assistant")?.scrollIntoView({ block: "start" });
+    const section = window.location.hash.slice(1);
+    if (section === "assistant" || section === "catalog") document.getElementById(section)?.scrollIntoView({ block: "start" });
   }, []);
   const downloadDiagnostics = async () => { setDiagnosticsBusy(true); setDiagnosticsError(""); try { await api.downloadDiagnostics(); } catch (error) { setDiagnosticsError(userError(language, error)); } finally { setDiagnosticsBusy(false); } };
   return (
     <section className="flex flex-col gap-7">
-      <PageHeading title={copy(language, "设置", "Settings")} description={copy(language, "管理系统更新、备份和登录安全。", "Manage system updates, backups, and sign-in security.")} action={<SignOutButton language={language} onLogout={onLogout} />} />
+      <PageHeading title={copy(language, "控制面板", "Control Panel")} description={copy(language, "管理系统更新、备份和登录安全。", "Manage system updates, backups, and sign-in security.")} action={<SignOutButton language={language} onLogout={onLogout} />} />
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><SettingsIcon />{copy(language,"管理中心","Management center")}</CardTitle><CardDescription>{copy(language, "当前运行信息", "Current runtime information")}</CardDescription></CardHeader>
         <CardContent><dl className="grid gap-4 text-sm sm:grid-cols-3"><div><dt className="text-muted-foreground">{copy(language, "版本", "Version")}</dt><dd className="mt-1 font-medium">{data.centerUpdate.currentVersion}</dd></div><div><dt className="text-muted-foreground">{copy(language, "节点", "Nodes")}</dt><dd className="mt-1 font-medium">{data.agents.filter((agent) => agent.status === "active").length}</dd></div><div><dt className="text-muted-foreground">{copy(language, "应用", "Apps")}</dt><dd className="mt-1 font-medium">{data.applications.filter(isInstalledApplication).length}</dd></div></dl></CardContent>
@@ -111,7 +112,7 @@ function AssistantProviderSettings({ language }: { language: Language }) {
 
 function CatalogSettings({ data, language, mutate, onAdd }: { data: AppData; language: Language; mutate: Mutate; onAdd: () => void }) {
   return (
-    <details className="group rounded-2xl border bg-card shadow-xs">
+    <details className="group scroll-mt-20 rounded-2xl border bg-card shadow-xs" id="catalog" open={window.location.hash === "#catalog" || undefined}>
       <summary className="flex min-h-16 cursor-pointer list-none items-center gap-3 px-5 py-4">
         <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground"><DatabaseIcon aria-hidden="true" className="size-5" /></span>
         <span className="min-w-0 flex-1">

@@ -4,12 +4,11 @@ import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { ApplicationCommand } from "../types";
 import { APIError, api } from "../api";
-import { AppsView } from "./AppsView";
 import { NodesView } from "./NodesView";
 import { SetupWizard } from "./SetupWizard";
 import { commandSecretScope, secretOperation } from "../secret-delivery";
 
-import { dashboard, rerender, resetRender, mockCommandEvent, openAppDetails, openRealityCreation, realityDashboard, render, renderAppDetails } from "./views.test-support";
+import { TestAppsView as AppsView, dashboard, rerender, resetRender, mockCommandEvent, openAppDetails, openRealityCreation, realityDashboard, render, renderAppDetails } from "./views.test-support";
 
 describe("network and app views", () => {
   it("guides a new administrator to add the first node", () => {
@@ -192,9 +191,9 @@ describe("network and app views", () => {
     data.agents.push({ ...data.agents[0], id: "worker", name: "edge-worker", networkProfile: { serviceAddress: "100.64.0.20", headscaleAddress: "100.64.0.20", enabledKinds: ["headscale"], directPublic: false } });
     const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ id: "worker-deployment", agentId: "worker", appKey: "vastora-official/3x-ui", appVersion: "3.7.0", state: "pending", operation: "install", deleteData: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
     const mutate = async (operation: () => Promise<unknown>) => { await operation(); };
-    const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("应用商店"))?.click());
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "安装")?.click());
+    const container = render(<AppsView startInStore data={data} language="zh-CN" mutate={mutate} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "管理")?.click());
+    act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "安装到其他主机")?.click());
     expect(document.body.textContent).toContain("将作为 Xray 节点");
     expect(document.body.textContent).toContain("只运行 Xray，不创建面板或独立订阅地址");
     await act(async () => {
@@ -311,7 +310,7 @@ describe("network and app views", () => {
 
     rerender(<AppsView data={{ ...nextData, applications: [] }} language="zh-CN" mutate={async () => undefined} />);
     expect(document.querySelector('[data-slot="sheet-content"]')).toBeNull();
-    expect(container.textContent).toContain("还没有安装应用");
+    expect(container.textContent).toContain("尚未安装");
   });
 
 	it("renames an existing REALITY node from Center", async () => {

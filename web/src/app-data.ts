@@ -57,6 +57,12 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
 
   switch (screen) {
     case "home": {
+      const [status, apps, agents, applications, services, publications] = await Promise.all([
+        statusPromise, api.apps(signal), api.agents(signal), api.applications(signal), api.services(signal), api.publications(signal)
+      ]);
+      return { status, apps: apps.apps, agents: agents.agents, applications: applications.applications, services: services.services, publications: publications.publications };
+    }
+    case "overview": {
       const [status, centerUpdate, sites, agents, applications, publications, actions] = await Promise.all([
         statusPromise,
         api.centerUpdate(false, signal),
@@ -174,6 +180,7 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
 
 const screenPaths: Record<Screen, string> = {
   home: "/",
+  overview: "/overview",
   nodes: "/nodes",
   apps: "/apps",
   network: "/network",
