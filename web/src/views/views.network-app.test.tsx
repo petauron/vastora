@@ -259,7 +259,6 @@ describe("network and app views", () => {
   it("groups installed applications and preserves privileged-package identity", () => {
     const container = render(<AppsView startInStore data={dashboard()} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("Komari 探针");
-    expect(container.textContent).toContain("高权限");
     expect(container.textContent).not.toContain("Failed");
     const installed = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("已安装"));
     const all = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("所有应用"));
@@ -268,7 +267,9 @@ describe("network and app views", () => {
     expect([...container.querySelectorAll('[role="article"] button')].some((button) => button.textContent === "打开")).toBe(false);
     act(() => all?.click());
     expect(all?.getAttribute("aria-current")).toBe("page");
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "管理")?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="查看 Komari 探针 详情"]')!.click());
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("高权限");
+    act(() => document.querySelector<HTMLButtonElement>('[role="dialog"] [aria-label="管理 Komari 探针"]')!.click());
     expect(document.body.textContent).toContain("所有可用节点都已安装或正在安装此应用");
   });
 

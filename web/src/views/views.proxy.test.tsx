@@ -192,8 +192,13 @@ describe("network and app views", () => {
     const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ id: "worker-deployment", agentId: "worker", appKey: "vastora-official/3x-ui", appVersion: "3.7.0", state: "pending", operation: "install", deleteData: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
     const mutate = async (operation: () => Promise<unknown>) => { await operation(); };
     const container = render(<AppsView startInStore data={data} language="zh-CN" mutate={mutate} />);
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "管理")?.click());
-    act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "安装到其他主机")?.click());
+    const details = container.querySelector<HTMLButtonElement>('[aria-label="查看 3x-ui 详情"]');
+    expect(details).not.toBeNull();
+    act(() => details!.click());
+    act(() => document.querySelector<HTMLButtonElement>('[aria-label="管理 3x-ui"]')!.click());
+    const installMore = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "安装到其他主机");
+    expect(installMore?.disabled).toBe(false);
+    act(() => installMore!.click());
     expect(document.body.textContent).toContain("将作为 Xray 节点");
     expect(document.body.textContent).toContain("只运行 Xray，不创建面板或独立订阅地址");
     await act(async () => {
@@ -310,7 +315,9 @@ describe("network and app views", () => {
 
     rerender(<AppsView data={{ ...nextData, applications: [] }} language="zh-CN" mutate={async () => undefined} />);
     expect(document.querySelector('[data-slot="sheet-content"]')).toBeNull();
-    expect(container.textContent).toContain("尚未安装");
+    expect(container.querySelector('[aria-label="安装 Komari 探针"]')).not.toBeNull();
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="查看 Komari 探针 详情"]')!.click());
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("尚未安装");
   });
 
 	it("renames an existing REALITY node from Center", async () => {
