@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, type ReactNode } from "react";
+import { act, useState, type ComponentProps, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { AppData } from "../App";
 import type { ApplicationCommand } from "../types";
 import { ThemeProvider } from "../components/theme";
+import { AppsView } from "./AppsView";
+import { installedAppGroups } from "./installed-apps-model";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -107,4 +109,12 @@ export function mockCommandEvent(command: ApplicationCommand) {
     close() {}
   }
   vi.stubGlobal("EventSource", CommandEventSource);
+}
+
+// Domain tests can target an explicit workspace while using the same store and
+// navigation callbacks as the desktop shell.
+export function TestAppsView({ startInStore = false, workspaceKey, ...props }: Pick<ComponentProps<typeof AppsView>, "data" | "language" | "mutate"> & { startInStore?: boolean; workspaceKey?: string | null }) {
+  const [selected, setSelected] = useState<string | null | undefined>(startInStore ? null : undefined);
+  const target = workspaceKey !== undefined ? workspaceKey : selected !== undefined ? selected : installedAppGroups(props.data)[0]?.appKey ?? null;
+  return <AppsView {...props} workspaceKey={target} onOpenApp={setSelected} onStore={() => setSelected(null)} onSettings={() => undefined} />;
 }

@@ -192,7 +192,7 @@ describe("apps loader to AppStore integration", () => {
     state.apps = [{ ...catalogApp("vastora-official"), installBlocked: true }];
     state.applications = [installed];
     const data = await loadStore();
-    act(() => root?.render(<ThemeProvider><AppsView data={data} language="zh-CN" mutate={async () => undefined} /></ThemeProvider>));
+    act(() => root?.render(<ThemeProvider><AppsView workspaceKey={installed.appKey} onOpenApp={vi.fn()} onStore={vi.fn()} onSettings={vi.fn()} data={data} language="zh-CN" mutate={async () => undefined} /></ThemeProvider>));
     const manage = container.querySelector<HTMLButtonElement>('[data-application-id="installed"] button[aria-label^="管理"]');
     expect(manage).not.toBeNull();
     act(() => manage?.click());

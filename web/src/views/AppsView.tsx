@@ -4,15 +4,14 @@ import { api } from "../api";
 import type { AppData, Mutate } from "../App";
 import type { Application, Deployment, Service } from "../types";
 import type { Language } from "../translations";
-import { isInstalledApplication, latestOperations, localized, operationLabel } from "./appAccess";
-import { CopyButton, PageHeading, StateBadge, TechnicalError, copy } from "./shared";
+import { latestOperations, localized, operationLabel } from "./appAccess";
+import { CopyButton, StateBadge, TechnicalError, copy } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Sheet } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ThreeXUIClientsSheet } from "./ThreeXUIClientsSheet";
 import { ThreeXUIControllerMigrationSheet } from "./ThreeXUIControllerMigrationSheet";
 import { ThreeXUIInboundTrafficSheet } from "./ThreeXUIInboundTrafficSheet";
@@ -20,7 +19,7 @@ import { RealitySheet } from "./RealitySheet";
 import { RealityRemoveDialog } from "./RealityRemoveDialog";
 import { clearSecretOperation, deploymentSecretScope, readSecretOperation, secretOperation } from "../secret-delivery";
 import { InstalledApps } from "./InstalledApps";
-import { AppStore } from "./AppStore";
+import { ApplicationStore } from "./ApplicationStore";
 import { installedAppGroups } from "./installed-apps-model";
 import { ApplicationCredentialsSheet, InstalledAppDetails } from "./apps/ApplicationDetails";
 import { DeploymentSheet, PublicationSheet, type DeploymentEditor } from "./apps/DeploymentSheets";
@@ -29,7 +28,7 @@ import { OfficialAppManagerHost } from "@/app-workspaces/OfficialAppWorkspaceHos
 
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
 
-export function AppsView({ data, language, mutate }: { data: AppData; language: Language; mutate: Mutate }) {
+export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onStore, onSettings }: { data: AppData; language: Language; mutate: Mutate; workspaceKey: string | null; onOpenApp: (key: string) => void; onStore: () => void; onSettings: () => void }) {
   const [deploymentEditor, setDeploymentEditor] = useState<DeploymentEditor>(null);
   const [publicationService, setPublicationService] = useState<Service | null>(null);
   const [uninstallApplication, setUninstallApplication] = useState<Application | null>(null);
@@ -47,14 +46,13 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 	const [appManagerApplication, setAppManagerApplication] = useState<Application | null>(null);
 	const [managedApplicationID, setManagedApplicationID] = useState<string | null>(null);
 	const [recoveringTask, setRecoveringTask] = useState("");
-  const [section, setSection] = useState<"installed" | "store">(() => data.applications.some(isInstalledApplication) ? "installed" : "store");
   const catalogByKey = useMemo(() => new Map(data.apps.map((app) => [app.key, app])), [data.apps]);
-  const installedApplications = data.applications.filter(isInstalledApplication);
   const installedGroups = useMemo(() => installedAppGroups({
     applications: data.applications, apps: data.apps, agents: data.agents, sites: data.sites,
     services: data.services, publications: data.publications, deployments: data.deployments,
     threeXUIControllerMigrations: data.threeXUIControllerMigrations,
   }), [data.applications, data.apps, data.agents, data.sites, data.services, data.publications, data.deployments, data.threeXUIControllerMigrations]);
+  const selectedGroup = installedGroups.find((group) => group.appKey === workspaceKey);
   const managedInstance = installedGroups.flatMap((group) => group.instances).find((instance) => instance.application.id === managedApplicationID);
   const recentOperations = latestOperations(data.deployments).filter((deployment) => deployment.state === "pending" || deployment.state === "running" || deployment.reconciliationRequired);
   const trafficApplication = trafficService ? data.applications.find((application) => application.id === trafficService.applicationId) : undefined;
@@ -104,12 +102,11 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 	};
 
   return (
-    <section className="apps-workspace flex min-w-0 flex-col gap-5">
-      <PageHeading title={copy(language, "应用", "Apps")} description={copy(language, "管理应用、订阅与各节点的访问入口。", "Manage apps, subscriptions, and access on every node.")} />
+    <section className="apps-workspace flex min-w-0 flex-col gap-5" data-mode={workspaceKey ? "workspace" : "store"}>
 
       {credentials ? <Alert><KeyRoundIcon /><AlertTitle>{credentials.setupToken ? copy(language, "请保存 Pulse 初始化令牌", "Save the Pulse setup token") : copy(language, "请保存 Vastora Proxy 管理账号", "Save the Vastora Proxy administrator account")}</AlertTitle><AlertDescription><p>{copy(language, "确认保存前可在断线或刷新后重新领取；确认后 Center 会永久关闭再次显示。", "Until you acknowledge it, the same browser can recover these credentials after a disconnect or refresh. Acknowledgement permanently disables disclosure.")}</p>{credentials.setupToken ? <div className="mt-3 rounded-lg bg-muted p-3 text-sm"><p className="text-muted-foreground">{copy(language, "首次访问 Pulse /login 时使用", "Use for the first Pulse /login setup")}</p><div className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.setupToken}<CopyButton language={language} value={credentials.setupToken} /></div></div> : <dl className="mt-3 grid gap-2 rounded-lg bg-muted p-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "账号", "Username")}</dt><dd className="mt-1 flex items-center gap-2 font-mono">{credentials.username}<CopyButton language={language} value={credentials.username || ""} /></dd></div><div><dt className="text-muted-foreground">{copy(language, "密码", "Password")}</dt><dd className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.password}<CopyButton language={language} value={credentials.password || ""} /></dd></div></dl>}<Button className="mt-3" disabled={credentialAckBusy} onClick={() => void acknowledgeCredentials()} size="sm" variant="outline">{credentialAckBusy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "我已保存并关闭再次显示", "Saved — disable further disclosure")}</Button></AlertDescription></Alert> : null}
 
-      {recentOperations.length ? <div aria-live="polite" className="flex flex-col gap-3"><div><h2 className="text-lg font-semibold">{copy(language, "最近操作", "Recent operations")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "页面会自动更新，无需手动刷新。", "This page updates automatically; no manual refresh is needed.")}</p></div>{recentOperations.map((deployment) => {
+      {recentOperations.length ? <details className="rounded-xl border bg-muted/25 p-3" open={recentOperations.some((operation) => operation.reconciliationRequired)}><summary className="cursor-pointer text-sm font-medium">{copy(language, `进行中的任务 · ${recentOperations.length}`, `Active tasks · ${recentOperations.length}`)}</summary><div aria-live="polite" className="mt-3 flex flex-col gap-3">{recentOperations.map((deployment) => {
         const app = catalogByKey.get(deployment.appKey); const agent = data.agents.find((value) => value.id === deployment.agentId); const application = data.applications.find((value) => value.id === deployment.applicationId);
         const retry = () => { if (!app || !agent) return; if (deployment.operation === "uninstall" && application) setUninstallApplication(application); else if (deployment.operation === "upgrade" || deployment.operation === "configure") setDeploymentEditor({ app, agent, operation: deployment.operation }); else setDeploymentEditor({ app, agent, operation: "install" }); };
 	        const recover = async () => {
@@ -121,22 +118,11 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 	          }
 	        };
 	        return <Card key={deployment.id} size="sm"><CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center"><StateBadge language={language} value={deployment.reconciliationRequired ? "recovery" : deployment.state} /><div className="min-w-0 flex-1"><p className="font-medium">{operationLabel(language, deployment.operation)} · {app ? localized(app, language, "name") : deployment.appKey}</p><p className="mt-1 text-xs text-muted-foreground">{agent?.name ?? deployment.agentId}</p>{deployment.reconciliationRequired ? <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">{copy(language, "节点状态未能完全确认。系统已锁定这项应用，继续恢复会复用原任务，不会重复安装。", "The node state could not be fully confirmed. This app is locked; continuing recovery reuses the original task and will not install a duplicate.")}</p> : null}{deployment.error ? <div className="mt-2"><TechnicalError error={deployment.error} language={language} /></div> : null}</div>{deployment.reconciliationRequired ? <Button disabled={recoveringTask === deployment.id} onClick={() => void recover()} size="sm" variant="outline">{recoveringTask === deployment.id ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{copy(language, "继续恢复", "Continue recovery")}</Button> : deployment.state === "failed" && app && agent ? <Button onClick={retry} size="sm" variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重试", "Retry")}</Button> : null}</CardContent></Card>;
-      })}</div> : null}
+      })}</div></details> : null}
 
-      <Tabs value={section} onValueChange={(value) => { if (value === "installed" || value === "store") setSection(value); }} className="gap-5">
-        <TabsList aria-label={copy(language, "应用内容", "App content")}>
-          <TabsTrigger value="installed">{copy(language, "已安装", "Installed")}<span className="text-xs text-muted-foreground tabular-nums">{installedApplications.length}</span></TabsTrigger>
-          <TabsTrigger value="store">{copy(language, "应用商店", "App Store")}<span className="text-xs text-muted-foreground tabular-nums">{data.apps.length}</span></TabsTrigger>
-        </TabsList>
-
-      <TabsContent value="installed" className="flex flex-col gap-4">
-	        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <InstalledApps groups={installedGroups} data={data} language={language} mutate={mutate} managerApplication={appManagerApplication?.appKey === "vastora-official/meridian" ? appManagerApplication : null} onManagerClose={() => setAppManagerApplication(null)} onClients={(application) => { if (application.appKey === "vastora-official/meridian") setAppManagerApplication(application); else setClientsApplication(application); }} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onReality={setRealityApplication} />}
-      </TabsContent>
-
-      <TabsContent value="store" className="flex flex-col gap-4">
-        <AppStore data={data} language={language} onInstall={(app) => setDeploymentEditor({ app, operation: "install" })} />
-      </TabsContent>
-      </Tabs>
+      {workspaceKey ? selectedGroup ? <InstalledApps key={selectedGroup.id} group={selectedGroup} data={data} language={language} mutate={mutate} managerApplication={appManagerApplication?.appKey === "vastora-official/meridian" ? appManagerApplication : null} onManagerClose={() => setAppManagerApplication(null)} onClients={(application) => { if (application.appKey === "vastora-official/meridian") setAppManagerApplication(application); else setClientsApplication(application); }} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onReality={setRealityApplication} />
+        : <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "此应用尚未安装或已移除", "This app is not installed")}</EmptyTitle><EmptyDescription>{copy(language, "在应用商店查看当前可用的应用。", "Visit the App Store to see available apps.")}</EmptyDescription><Button onClick={onStore}>{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty>
+        : <ApplicationStore data={data} groups={installedGroups} language={language} onInstall={(app) => setDeploymentEditor({ app, operation: "install" })} onOpen={onOpenApp} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onSettings={onSettings} />}
 
       <Sheet onOpenChange={(open) => { if (!open) setManagedApplicationID(null); }} open={Boolean(managedInstance)}>
         {managedInstance ? <InstalledAppDetails
@@ -149,7 +135,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
           onConfigure={() => openFromDetails(() => openChange(managedInstance.application, "configure"))}
           onCredentials={() => openFromDetails(() => setCredentialApplication(managedInstance.application))}
           onMigrate={() => openFromDetails(() => setMigrationApplication(managedInstance.application))}
-	          onAppManager={() => openFromDetails(() => setAppManagerApplication(managedInstance.application))}
+	          onAppManager={() => openFromDetails(() => { setAppManagerApplication(managedInstance.application); if (managedInstance.application.appKey === "vastora-official/meridian") onOpenApp(managedInstance.application.appKey); })}
           onPublish={(service) => openFromDetails(() => setPublicationService(service))}
           onReality={() => openFromDetails(() => setRealityApplication(managedInstance.application))}
           onRenameReality={(service) => openFromDetails(() => setRealityRenameService(service))}

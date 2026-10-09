@@ -26,7 +26,7 @@ export type CenterStatus = {
   agentConnectUrl: string;
 };
 
-export type Screen = "home" | "nodes" | "apps" | "network" | "activity" | "assistant" | "settings";
+export type Screen = "home" | "overview" | "nodes" | "apps" | "network" | "activity" | "assistant" | "settings";
 
 export type AppData = {
   status: CenterStatus;

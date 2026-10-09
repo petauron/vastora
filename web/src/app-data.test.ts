@@ -33,7 +33,7 @@ describe("screen-scoped data loading", () => {
     expect(loadMeridian).toHaveBeenCalledWith(undefined);
   });
 
-  it("loads only the home summary resources", async () => {
+  it("loads only the overview summary resources", async () => {
     const controller = new AbortController();
     vi.spyOn(api, "status").mockResolvedValue(status);
     vi.spyOn(api, "centerUpdate").mockResolvedValue({ currentVersion: "test", latestVersion: "test", updateAvailable: false, releaseCheckAvailable: true, automatic: true, state: "idle" });
@@ -45,7 +45,7 @@ describe("screen-scoped data loading", () => {
     const apps = vi.spyOn(api, "apps");
     const deployments = vi.spyOn(api, "deployments");
 
-    const result = await loadScreenData("home", controller.signal);
+    const result = await loadScreenData("overview", controller.signal);
 
     expect(result.status).toEqual(status);
     expect(actions).toHaveBeenCalledWith(10, controller.signal);

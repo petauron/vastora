@@ -48,6 +48,8 @@ function mockReadyCenter() {
   vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
   vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
   vi.spyOn(api, "applications").mockResolvedValue({ applications: [] });
+  vi.spyOn(api, "apps").mockResolvedValue({ apps: [] });
+  vi.spyOn(api, "services").mockResolvedValue({ services: [] });
   vi.spyOn(api, "publications").mockResolvedValue({ publications: [] });
   vi.spyOn(api, "actions").mockResolvedValue({ actions: [] });
   vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
@@ -60,7 +62,7 @@ async function renderReadyApp() {
   document.body.append(container);
   root = createRoot(container);
   act(() => root?.render(<ThemeProvider><App /></ThemeProvider>));
-  await vi.waitFor(() => expect(container.textContent).toContain("Center connected"));
+  await vi.waitFor(() => expect(container.querySelector(".desktop-system-bar")).not.toBeNull());
   return container;
 }
 
@@ -71,14 +73,15 @@ describe("application shell", () => {
 
     const container = await renderReadyApp();
 
-    expect(container.textContent).toContain("Center connected");
+    expect(container.querySelector(".desktop-system-bar")).not.toBeNull();
     expect(document.documentElement.classList.contains("dark")).toBe(true);
   });
 
   it("lets the user switch themes and remembers the choice", async () => {
     mockReadyCenter();
     const container = await renderReadyApp();
-    const toggle = container.querySelector<HTMLButtonElement>(
+    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Quick settings"]')?.click());
+    const toggle = document.querySelector<HTMLButtonElement>(
       'button[aria-label="Switch to dark mode"]',
     );
 
@@ -162,7 +165,7 @@ describe("application shell", () => {
   it("moves keyboard focus to the main content after navigation", async () => {
     mockReadyCenter();
     const container = await renderReadyApp();
-    const nodes = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Nodes"));
+    const nodes = container.querySelector<HTMLButtonElement>('button[aria-label="Hosts"]');
     act(() => nodes?.click());
     await vi.waitFor(() => expect(container.textContent).toContain("Add your first node"));
     await vi.waitFor(() => expect(document.activeElement).toBe(container.querySelector("#main-content")));
@@ -173,7 +176,7 @@ describe("application shell", () => {
     const status = mockReadyCenter();
     const container = await renderReadyApp();
     status.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    const nodes = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Nodes"));
+    const nodes = container.querySelector<HTMLButtonElement>('button[aria-label="Hosts"]');
     act(() => nodes?.click());
     await vi.waitFor(() => expect(container.textContent).toContain("Connection to Center was interrupted"));
     expect(container.textContent).toContain("This page is showing the last successful data");
@@ -190,10 +193,13 @@ describe("application shell", () => {
     let staleSignal: AbortSignal | undefined;
     sites.mockImplementationOnce((signal) => { staleSignal = signal; return stale.promise; });
     sites.mockImplementationOnce(() => fresh.promise);
-    const home = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Home");
+    const visitOverview = () => {
+      window.history.pushState({}, "", "/overview");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    };
 
-    act(() => home?.click());
-    act(() => home?.click());
+    act(visitOverview);
+    act(visitOverview);
     expect(staleSignal?.aborted).toBe(true);
     await act(async () => { fresh.resolve({ sites: [site("fresh", "Fresh location")] }); });
     await vi.waitFor(() => expect(container.textContent).toContain("Fresh location"));
@@ -210,15 +216,15 @@ describe("application shell", () => {
     const staleNodes = deferred<Awaited<ReturnType<typeof api.agents>>>();
     let staleSignal: AbortSignal | undefined;
     agents.mockImplementationOnce((signal) => { staleSignal = signal; return staleNodes.promise; });
-    const nodes = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Nodes");
-    const home = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Home");
+    const nodes = container.querySelector<HTMLButtonElement>('button[aria-label="Hosts"]');
+    const home = container.querySelector<HTMLButtonElement>('button[aria-label="Desktop"]');
 
     act(() => nodes?.click());
     act(() => home?.click());
     expect(staleSignal?.aborted).toBe(true);
-    await vi.waitFor(() => expect(container.textContent).toContain("Overview"));
+    await vi.waitFor(() => expect(container.textContent).toContain("Vastora desktop"));
     await act(async () => { staleNodes.resolve({ agents: [] }); });
-    expect(container.textContent).toContain("Overview");
+    expect(container.textContent).toContain("Vastora desktop");
 
     act(() => nodes?.click());
     await vi.waitFor(() => expect(container.textContent).toContain("Add your first node"));
@@ -236,7 +242,7 @@ describe("application shell", () => {
     let staleSignal: AbortSignal | undefined;
     updates.mockImplementationOnce((_refresh, signal) => { staleSignal = signal; return stale.promise; });
     updates.mockResolvedValueOnce({ currentVersion: "fresh-version", latestVersion: "fresh-version", updateAvailable: false, releaseCheckAvailable: true, automatic: true, state: "idle" });
-    const settings = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Settings");
+    const settings = container.querySelector<HTMLButtonElement>('button[aria-label="Control Panel"]');
 
     act(() => settings?.click());
     const check = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Check"));
