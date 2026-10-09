@@ -84,9 +84,9 @@ describe("application shell", () => {
     expect(quickSettings).not.toBeNull();
     await act(async () => {
       quickSettings?.focus();
-      quickSettings?.click();
+      quickSettings?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
     });
-    await vi.waitFor(() => expect(document.querySelector('button[aria-label="Switch to dark mode"]'), document.body.textContent ?? "").not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector('button[aria-label="Switch to dark mode"]'), (quickSettings?.outerHTML ?? "") + (document.body.textContent ?? "")).not.toBeNull());
     const toggle = document.querySelector<HTMLButtonElement>(
       'button[aria-label="Switch to dark mode"]',
     );
