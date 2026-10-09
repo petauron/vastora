@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowUpCircleIcon, DownloadIcon, Grid2X2Icon, SearchIcon, Settings2Icon } from "lucide-react";
+import { ArrowUpCircleIcon, ArrowUpRightIcon, DownloadIcon, Grid2X2Icon, SearchIcon, Settings2Icon } from "lucide-react";
 import type { AppData, Application, AppView } from "@/types";
 import type { Language } from "@/translations";
 import { Button } from "@/components/ui/button";
@@ -8,11 +8,12 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { AppIcon } from "@/components/desktop/AppIcon";
 import { AppStore, AppStoreCard } from "./AppStore";
+import { AppInstallationSummary } from "./apps/AppInstallationSummary";
 import { ApplicationStatus } from "./apps/InstalledApplicationPrimitives";
 import { eligibleAppNodes, installBlocker, localized } from "./appAccess";
 import { catalogInstallBlocked, copy } from "./shared";
 import type { InstalledAppGroup } from "./installed-apps-model";
-import { applicationLaunchURL } from "./applicationLaunch";
+import { applicationLaunchURL, isBackgroundApplication } from "./applicationLaunch";
 
 type Section = "installed" | "all" | "updates";
 export function ApplicationStore({ data, groups, language, onInstall, onOpen, onManage, onUpgrade, onSettings }: {
@@ -32,7 +33,7 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
   const search = query.trim().toLocaleLowerCase();
   const name = (group: InstalledAppGroup) => group.app ? localized(group.app, language, "name") : group.instances[0].application.name;
   const shown = (section === "updates" ? updates : groups).filter((group) => !search || [name(group), group.appKey, group.app ? localized(group.app, language, "description") : ""].some((value) => value.toLocaleLowerCase().includes(search)));
-  const matchingCatalog = data.apps.filter((app) => !search || [localized(app, language, "name"), localized(app, language, "description"), app.sourceId].some((value) => value.toLocaleLowerCase().includes(search)));
+  const matchingCatalog = data.apps.filter((app) => !search || [localized(app, language, "name"), localized(app, language, "description"), app.sourceId, app.key].some((value) => value.toLocaleLowerCase().includes(search)));
   const managedGroup = groups.find((group) => group.id === managedGroupKey);
   const managedApp = managedGroup?.app;
   const canInstallMore = managedApp && !catalogInstallBlocked(managedApp) && eligibleAppNodes(data, managedApp.key).length > 0;
@@ -43,10 +44,15 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
   ];
   const actions = (group: InstalledAppGroup) => {
     const url = applicationLaunchURL(data, group.appKey);
+    const background = isBackgroundApplication(group.app);
+    const showUpdate = section === "updates" && group.instances.some((instance) => instance.application.updateAvailable);
+    const openVariant = showUpdate ? "outline" : "default";
     return <div className="flex flex-wrap gap-2">
-    {url ? <Button className="min-h-9" nativeButton={false} render={<a href={url} target="_blank" rel="noreferrer" />} aria-label={copy(language, `在新标签页打开 ${name(group)}`, `Open ${name(group)} in a new tab`)} size="sm" variant="secondary">{copy(language, "打开 ↗", "Open ↗")}</Button> : <Button className="min-h-9" onClick={() => onOpen(group.appKey)} size="sm" variant="secondary">{copy(language, "打开", "Open")}</Button>}
-    <Button className="min-h-9" onClick={() => setManagedGroupKey(group.id)} size="sm" variant={group.instances.some((instance) => instance.application.updateAvailable) ? "default" : "outline"}>{group.instances.some((instance) => instance.application.updateAvailable) ? copy(language, "查看更新", "View updates") : copy(language, "管理", "Manage")}</Button>
-  </div>;
+      {!background ? url
+        ? <Button className="min-h-9" nativeButton={false} render={<a href={url} target="_blank" rel="noreferrer" />} aria-label={copy(language, `在新标签页打开 ${name(group)}`, `Open ${name(group)} in a new tab`)} size="sm" variant={openVariant}>{copy(language, "打开", "Open")}<ArrowUpRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
+        : <Button className="min-h-9" onClick={() => onOpen(group.appKey)} size="sm" variant={openVariant}>{copy(language, "打开", "Open")}</Button> : null}
+      <Button className="min-h-9" aria-label={copy(language, `${showUpdate ? "查看更新" : "管理"} ${name(group)}`, `${showUpdate ? "View updates for" : "Manage"} ${name(group)}`)} onClick={() => setManagedGroupKey(group.id)} size="sm" variant={background || showUpdate ? "default" : "outline"}>{showUpdate ? copy(language, "查看更新", "View updates") : copy(language, "管理", "Manage")}</Button>
+    </div>;
   };
   return <div className="store-layout">
     <nav aria-label={copy(language, "应用商店分类", "App Store categories")} className="store-navigation">
@@ -58,9 +64,9 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
         <div><h1 className="text-xl font-semibold tracking-tight">{sections.find((item) => item.id === section)!.label}</h1><p className="mt-1 text-xs text-muted-foreground" role="status">{copy(language, `${section === "all" ? matchingCatalog.length : shown.length} 个应用`, `${section === "all" ? matchingCatalog.length : shown.length} applications`)}</p></div>
         <InputGroup className="h-10 w-full sm:w-64"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={copy(language, "搜索应用商店", "Search App Store")} placeholder={copy(language, "搜索应用…", "Search apps…")} type="search" value={query} onChange={(event) => setQuery(event.target.value)} /></InputGroup>
       </header>
-      {section === "all" ? <AppStore data={data} language={language} onInstall={onInstall} query={search} renderInstalledActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group) : null; }} /> : <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{shown.map((group) => group.app
-        ? <AppStoreCard key={group.id} app={group.app} language={language} installedCount={group.instances.length} canInstall={false} blocker="" onInstall={onInstall} actions={actions(group)} />
-        : <Card className="store-app-card" key={group.id}><CardHeader><AppIcon appKey={group.appKey} className="mb-3 size-14" /><CardTitle><h3>{name(group)}</h3></CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">{copy(language, "应用已安装，当前目录中没有此应用。", "Installed app is absent from the current catalog.")}</p></CardContent><CardFooter className="mt-auto flex-wrap justify-between gap-3"><span className="text-xs text-muted-foreground">{copy(language, `${group.instances.length} 台主机`, `${group.instances.length} hosts`)}</span>{actions(group)}</CardFooter></Card>)}</div>}
+      {section === "all" ? <AppStore data={data} language={language} onInstall={onInstall} query={search} renderInstalledSummary={(key) => { const group = groups.find((value) => value.appKey === key); return group ? <AppInstallationSummary group={group} language={language} /> : null; }} renderInstalledActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group) : null; }} /> : <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{shown.map((group) => group.app
+        ? <AppStoreCard key={group.id} app={group.app} language={language} installedCount={group.instances.length} summary={<AppInstallationSummary group={group} language={language} />} canInstall={false} blocker="" onInstall={onInstall} actions={actions(group)} />
+        : <Card className="store-app-card" key={group.id}><CardHeader><AppIcon appKey={group.appKey} className="mb-3 size-14" /><CardTitle><h3>{name(group)}</h3></CardTitle></CardHeader><CardContent className="flex flex-col gap-3"><AppInstallationSummary group={group} language={language} /><p className="text-sm text-muted-foreground">{copy(language, "应用已安装，当前目录中没有此应用。", "Installed app is absent from the current catalog.")}</p></CardContent><CardFooter className="mt-auto flex-wrap justify-between gap-3"><span className="text-xs text-muted-foreground">{copy(language, `${group.instances.length} 台主机`, `${group.instances.length} hosts`)}</span>{actions(group)}</CardFooter></Card>)}</div>}
       {(section === "all" ? !matchingCatalog.length && Boolean(search) : !shown.length) ? <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-5 py-14 text-center"><AppIcon appKey="apps" className="size-12" /><p className="text-sm text-muted-foreground">{search ? copy(language, "没有匹配的应用", "No matching apps") : section === "updates" ? copy(language, "当前没有可用的应用更新", "No app updates available") : copy(language, "还没有安装应用", "No apps installed")}</p><Button onClick={() => { if (search) setQuery(""); else setSection("all"); }} variant="outline">{search ? copy(language, "清除搜索", "Clear search") : copy(language, "浏览所有应用", "Browse all apps")}</Button></div> : null}
     </div>
     <Sheet open={Boolean(managedGroup)} onOpenChange={(open) => { if (!open) setManagedGroupKey(null); }}><SheetContent className="sm:max-w-xl">

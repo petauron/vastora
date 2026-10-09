@@ -1,17 +1,23 @@
-import type { AppData } from "@/types";
+import type { AppData, AppView } from "@/types";
 import type { Language } from "@/translations";
 import { isInstalledApplication, localized, pulsePrivateAccess, secureDashboardURL } from "./appAccess";
 
 export type DesktopApplication = { key: string; name: string; count: number; url?: string };
 
+export function isBackgroundApplication(app: AppView | undefined) {
+  return app?.app.runtime?.kind === "systemd" && !app.app.homepage
+    && !app.app.services?.some((service) => service.management && ["http", "https"].includes(service.protocol));
+}
+
 export function desktopApplications(data: AppData, language: Language): DesktopApplication[] {
   const catalog = new Map(data.apps.map((app) => [app.key, app]));
   const groups = new Map<string, DesktopApplication>();
   for (const application of data.applications.filter(isInstalledApplication)) {
+    const app = catalog.get(application.appKey);
+    if (isBackgroundApplication(app)) continue;
     const group = groups.get(application.appKey);
     if (group) group.count++;
     else {
-      const app = catalog.get(application.appKey);
       groups.set(application.appKey, { key: application.appKey, name: app ? localized(app, language, "name") : application.name, count: 1, url: applicationLaunchURL(data, application.appKey) });
     }
   }
@@ -26,8 +32,8 @@ export function applicationLaunchURL(data: AppData, appKey: string): string | un
     const publication = pulsePrivateAccess(data);
     return publication && !publication.actionRequired && !publication.lastError ? secureDashboardURL(publication.accessUrl) : undefined;
   }
-  const applications = data.applications.filter((app) => app.appKey === appKey && app.installedVersion && app.status === "running");
-  if (applications.length !== 1) return undefined;
+  const applications = data.applications.filter((app) => app.appKey === appKey && isInstalledApplication(app));
+  if (applications.length !== 1 || applications[0].status !== "running") return undefined;
   const services = new Set(data.services.filter((service) => service.applicationId === applications[0].id && service.management && ["http", "https"].includes(service.protocol) && ["ready", "publishing"].includes(service.status)).map((service) => service.id));
   const entries = data.publications.filter((publication) => services.has(publication.serviceId) && publication.status === "ready" && !publication.actionRequired && !publication.lastError);
   return entries.length === 1 ? secureDashboardURL(entries[0].accessUrl) : undefined;
