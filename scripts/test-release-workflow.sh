@@ -65,6 +65,27 @@ require_in "$release_pr_job" '    needs: [prepare, publish]'
 require_in "$release_pr_job" "    if: always() && needs.prepare.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')"
 require_in "$release_pr_job" '          skip-github-release: true'
 require_in "$release_pr_job" '        run: scripts/validate-release-metadata.sh "$BASE_SHA"'
+require_in "$release_pr_job" '      actions: write'
+require_in "$release_pr_job" '          persist-credentials: false'
+
+dispatch_step="$(printf '%s\n' "$release_pr_job" | sed -n '/^      - name: Dispatch required checks for the version PR$/,$p')"
+require_in "$dispatch_step" "        if: steps.release_pr_action.outputs.prs_created == 'true'"
+require_in "$dispatch_step" '          RELEASE_BRANCH: ${{ steps.release_pr.outputs.head_branch }}'
+require_in "$dispatch_step" '          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_BRANCH"'
+require_in "$dispatch_step" '          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_BRANCH"'
+for required_workflow in ci.yml codeql.yml; do
+  require_in "$(cat "$project_dir/.github/workflows/$required_workflow")" '  workflow_dispatch:'
+done
+if printf '%s\n' "$release_pr_job" | grep -Eq 'checks: write|/check-runs|CHECK_CONCLUSION'; then
+  echo 'Release PRs must dispatch real workflows, not manufacture required check results.' >&2
+  exit 1
+fi
+metadata_line="$(printf '%s\n' "$release_pr_job" | grep -nF '      - name: Validate release pull request metadata' | head -n 1 | cut -d: -f1)"
+dispatch_line="$(printf '%s\n' "$release_pr_job" | grep -nF '      - name: Dispatch required checks for the version PR' | head -n 1 | cut -d: -f1)"
+if [ -z "$metadata_line" ] || [ -z "$dispatch_line" ] || [ "$dispatch_line" -le "$metadata_line" ]; then
+  echo 'Version PR metadata must be validated before dispatching required workflows.' >&2
+  exit 1
+fi
 
 require_fresh_release_step() {
   step_name="$1"
