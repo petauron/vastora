@@ -61,7 +61,8 @@ async function renderReadyApp() {
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  act(() => root?.render(<ThemeProvider><App /></ThemeProvider>));
+  // Complete initialization and menu registration before sending user events.
+  await act(async () => root?.render(<ThemeProvider><App /></ThemeProvider>));
   await vi.waitFor(() => expect(container.querySelector(".desktop-system-bar")).not.toBeNull());
   return container;
 }
@@ -86,7 +87,7 @@ describe("application shell", () => {
       quickSettings?.focus();
       quickSettings?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
     });
-    await vi.waitFor(() => expect(document.querySelector('button[aria-label="Switch to dark mode"]'), (quickSettings?.outerHTML ?? "") + (document.body.textContent ?? "")).not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector('button[aria-label="Switch to dark mode"]')).not.toBeNull());
     const toggle = document.querySelector<HTMLButtonElement>(
       'button[aria-label="Switch to dark mode"]',
     );
