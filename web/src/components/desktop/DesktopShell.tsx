@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { BellIcon, Grid2X2Icon, LanguagesIcon, Maximize2Icon, MinusIcon, SearchIcon, Settings2Icon, WifiIcon, WifiOffIcon, XIcon } from "lucide-react";
+import { ArrowUpRightIcon, BellIcon, Grid2X2Icon, LanguagesIcon, Maximize2Icon, MinusIcon, SearchIcon, Settings2Icon, WifiIcon, WifiOffIcon, XIcon } from "lucide-react";
 import type { Language } from "@/translations";
 import type { Screen } from "@/types";
 import type { DesktopApplication } from "@/views/applicationLaunch";
@@ -27,6 +27,8 @@ export function DesktopShell({ children, screen, language, connected, loading, w
   onLanguage: (language: Language) => void;
 }) {
   const [launcherOpen, setLauncherOpen] = useState(false);
+  const [launcherMode, setLauncherMode] = useState<"all" | "search">("search");
+  const showLauncher = (mode: "all" | "search") => { setLauncherMode(mode); setLauncherOpen(true); };
   const [expanded, setExpanded] = useState(false);
   const [minimizedScreen, setMinimizedScreen] = useState<Screen | null>(null);
   const current = systemApplications.find((item) => item.id === screen)!;
@@ -39,19 +41,19 @@ export function DesktopShell({ children, screen, language, connected, loading, w
   const minimize = () => { if (!workspace) setMinimizedScreen(screen); onNavigate("home"); };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setLauncherOpen((open) => !open); }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setLauncherMode("search"); setLauncherOpen((open) => !open); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
-  return <div className="desktop-shell" data-expanded={expanded && screen !== "home"}>
+  return <div className="desktop-shell" data-desktop={screen === "home"} data-expanded={expanded && screen !== "home"}>
     <header className="desktop-system-bar">
       <DropdownMenu>
         <DropdownMenuTrigger className="desktop-menu-brand" aria-label={copy(language, "Vastora 菜单", "Vastora menu")}><span className="desktop-brand-mark" aria-hidden="true"><i /><i /><i /><i /></span><span>Vastora</span></DropdownMenuTrigger>
         <DropdownMenuContent className="w-56">
           <DropdownMenuGroup><DropdownMenuItem onClick={() => onNavigate("overview")}>{copy(language, "系统概览", "System overview")}</DropdownMenuItem><DropdownMenuItem onClick={() => onNavigate("settings")}>{copy(language, "控制面板…", "Control Panel…")}</DropdownMenuItem></DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuGroup><DropdownMenuItem onClick={() => onNavigate("home")}>{copy(language, "显示桌面", "Show desktop")}</DropdownMenuItem><DropdownMenuItem onClick={() => setLauncherOpen(true)}>{copy(language, "搜索应用…", "Search applications…")}<kbd className="ml-auto text-xs text-muted-foreground">⌘ K</kbd></DropdownMenuItem></DropdownMenuGroup>
+          <DropdownMenuGroup><DropdownMenuItem onClick={() => onNavigate("home")}>{copy(language, "显示桌面", "Show desktop")}</DropdownMenuItem><DropdownMenuItem onClick={() => showLauncher("search")}>{copy(language, "搜索应用…", "Search applications…")}<kbd className="ml-auto text-xs text-muted-foreground">⌘ K</kbd></DropdownMenuItem></DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
       <span className="desktop-active-app">{title}</span>
@@ -68,7 +70,7 @@ export function DesktopShell({ children, screen, language, connected, loading, w
       </DropdownMenu>
       <div className="flex-1" />
       <span className="desktop-connection" role="status" title={connected ? copy(language, "Center 已连接", "Center connected") : copy(language, "正在重新连接 Center", "Reconnecting to Center")}>{connected ? <WifiIcon /> : <WifiOffIcon />}<span className="sr-only">{connected ? copy(language, "已连接", "Connected") : copy(language, "重新连接中", "Reconnecting")}</span></span>
-      <Button aria-label={copy(language, "搜索应用（⌘ K / Ctrl K）", "Search apps (⌘ K / Ctrl K)")} onClick={() => setLauncherOpen(true)} variant="ghost" size="icon"><SearchIcon /></Button>
+      <Button aria-label={copy(language, "搜索应用（⌘ K / Ctrl K）", "Search apps (⌘ K / Ctrl K)")} onClick={() => showLauncher("search")} variant="ghost" size="icon"><SearchIcon /></Button>
       <DropdownMenu>
         <DropdownMenuTrigger render={<Button variant="ghost" size="icon" />} aria-label={copy(language, "快捷设置", "Quick settings")}><Settings2Icon /></DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-60 p-3">
@@ -89,18 +91,21 @@ export function DesktopShell({ children, screen, language, connected, loading, w
           <button className="desktop-traffic-light" data-kind="zoom" aria-label={expanded ? copy(language, "还原窗口", "Restore window") : copy(language, "放大窗口", "Zoom window")} title={expanded ? copy(language, "还原窗口", "Restore window") : copy(language, "放大窗口", "Zoom window")} aria-pressed={expanded} onClick={() => setExpanded((value) => !value)}><Maximize2Icon /></button>
         </div>
         <div className="desktop-window-title"><AppIcon appKey={currentKey} className="size-5" /><span>{title}</span></div>
-        <div className="desktop-window-tools">{loading ? <Spinner aria-label={copy(language, "正在更新", "Updating")} /> : null}<Button aria-label={copy(language, "搜索并切换应用", "Find and switch apps")} onClick={() => setLauncherOpen(true)} size="icon" variant="ghost"><Grid2X2Icon /></Button></div>
+        <div className="desktop-window-tools">{loading ? <Spinner aria-label={copy(language, "正在更新", "Updating")} /> : null}<Button aria-label={copy(language, "所有应用", "All applications")} onClick={() => showLauncher("all")} size="icon" variant="ghost"><Grid2X2Icon /></Button></div>
       </div> : null}
       {children}
     </div>
     <nav className="desktop-dock" aria-label={copy(language, "Dock 应用切换", "Dock applications")}>
       {pins.map((item) => <button aria-current={!workspace && screen === item.id ? "page" : undefined} aria-label={copy(language, item.zh, item.en)} className="desktop-dock-item" key={item.id} onClick={() => onNavigate(item.id)}><AppIcon appKey={item.id} /><span className="desktop-dock-label">{copy(language, item.zh, item.en)}</span></button>)}
-      <button className="desktop-dock-item" aria-label={copy(language, "所有应用", "All applications")} onClick={() => setLauncherOpen(true)}><span className="desktop-launchpad-icon" aria-hidden="true">{Array.from({ length: 9 }, (_, i) => <i key={i} />)}</span><span className="desktop-dock-label">{copy(language, "所有应用", "All applications")}</span></button>
+      <button className="desktop-dock-item" aria-label={copy(language, "所有应用", "All applications")} onClick={() => showLauncher("all")}><span className="desktop-launchpad-icon" aria-hidden="true">{Array.from({ length: 9 }, (_, i) => <i key={i} />)}</span><span className="desktop-dock-label">{copy(language, "所有应用", "All applications")}</span></button>
       {recentApps.length || auxiliaryApp ? <span className="desktop-dock-divider" aria-hidden="true" /> : null}
-      {recentApps.map((app) => <button aria-current={workspace?.key === app.key ? "page" : undefined} aria-label={app.name} className="desktop-dock-item" data-open="true" key={app.key} onClick={() => onOpenApp(app.key)}><AppIcon appKey={app.key} /><span className="desktop-dock-label">{app.name}</span></button>)}
-      {auxiliaryApp ? <button className="desktop-dock-item" data-open="true" aria-current={!workspace && screen === auxiliaryApp.id ? "page" : undefined} aria-label={copy(language, auxiliaryApp.zh, auxiliaryApp.en)} onClick={() => onNavigate(auxiliaryApp.id)}><AppIcon appKey={auxiliaryApp.id} /><span className="desktop-dock-label">{copy(language, auxiliaryApp.zh, auxiliaryApp.en)}</span></button> : null}
+      {recentApps.map((app) => {
+        const content = <><AppIcon appKey={app.key} /><span className="desktop-dock-label">{app.name}{app.url ? <ArrowUpRightIcon aria-hidden="true" className="ml-1 inline size-3" /> : null}</span></>;
+        return app.url ? <a className="desktop-dock-item" key={app.key} href={app.url} target="_blank" rel="noreferrer" aria-label={copy(language, `在新标签页打开 ${app.name}`, `Open ${app.name} in a new tab`)}>{content}</a> : <button aria-current={workspace?.key === app.key ? "page" : undefined} aria-label={app.name} className="desktop-dock-item" key={app.key} onClick={() => onOpenApp(app.key)}>{content}</button>;
+      })}
+      {auxiliaryApp ? <button className="desktop-dock-item" aria-current={!workspace && screen === auxiliaryApp.id ? "page" : undefined} aria-label={copy(language, auxiliaryApp.zh, auxiliaryApp.en)} onClick={() => onNavigate(auxiliaryApp.id)}><AppIcon appKey={auxiliaryApp.id} /><span className="desktop-dock-label">{copy(language, auxiliaryApp.zh, auxiliaryApp.en)}</span></button> : null}
     </nav>
-    <AppLauncher apps={apps} language={language} open={launcherOpen} onOpenChange={setLauncherOpen} onNavigate={onNavigate} onOpenApp={onOpenApp} />
+    <AppLauncher key={launcherMode} mode={launcherMode} apps={apps} language={language} open={launcherOpen} onOpenChange={setLauncherOpen} onNavigate={onNavigate} onOpenApp={onOpenApp} />
   </div>;
 }
 

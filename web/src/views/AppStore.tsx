@@ -8,9 +8,10 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { eligibleAppNodes, installBlocker, isInstalledApplication, localized } from "./appAccess";
 import { AppHostAccessNote, AppIdentityBadge, isOfficialProduct } from "./AppIdentity";
 import { catalogInstallBlocked, copy } from "./shared";
+import { isBackgroundApplication } from "./applicationLaunch";
 import { AppIcon } from "@/components/desktop/AppIcon";
 
-export function AppStore({ data, language, onInstall, query = "", renderInstalledActions }: { data: AppData; language: Language; onInstall: (app: AppView) => void; query?: string; renderInstalledActions?: (key: string) => ReactNode }) {
+export function AppStore({ data, language, onInstall, query = "", renderInstalledActions, renderInstalledSummary }: { data: AppData; language: Language; onInstall: (app: AppView) => void; query?: string; renderInstalledActions?: (key: string) => ReactNode; renderInstalledSummary?: (key: string) => ReactNode }) {
   const officialSource = data.sources.find((source) => source.id === "vastora-official");
   const officialUnavailable = officialSource && (officialSource.status === "pending" || officialSource.status === "failed" || officialSource.status === "expired" || !data.apps.some((app) => app.sourceId === officialSource.id));
   const installedCounts = new Map<string, number>();
@@ -37,17 +38,17 @@ export function AppStore({ data, language, onInstall, query = "", renderInstalle
         : copy(language, "请到控制面板刷新应用目录，验证完成后即可安装。已安装应用不受影响。", "Refresh the app catalog in Control Panel before installing. Installed apps are unaffected.")}</AlertDescription>
     </Alert> : null}
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {data.apps.filter((app) => !query || [localized(app, language, "name"), localized(app, language, "description"), app.sourceId].some((text) => text.toLocaleLowerCase().includes(query))).map((app) => {
+      {data.apps.filter((app) => !query || [localized(app, language, "name"), localized(app, language, "description"), app.sourceId, app.key].some((text) => text.toLocaleLowerCase().includes(query))).map((app) => {
         const canInstall = eligibleAppNodes(data, app.key).length > 0;
         return <AppStoreCard key={app.key} app={app} language={language}
-          installedCount={installedCounts.get(app.key) ?? 0} canInstall={canInstall}
+          installedCount={installedCounts.get(app.key) ?? 0} summary={renderInstalledSummary?.(app.key)} canInstall={canInstall}
           blocker={canInstall ? "" : installBlocker(data, app.key, language)} onInstall={onInstall} actions={installedCounts.has(app.key) ? renderInstalledActions?.(app.key) : undefined} />;
       })}
     </div>
   </div>;
 }
 
-export function AppStoreCard({ app, language, installedCount, canInstall: nodeAvailable, blocker: nodeBlocker, onInstall, actions }: {
+export function AppStoreCard({ app, language, installedCount, canInstall: nodeAvailable, blocker: nodeBlocker, onInstall, actions, summary }: {
   app: AppView;
   language: Language;
   installedCount: number;
@@ -55,6 +56,7 @@ export function AppStoreCard({ app, language, installedCount, canInstall: nodeAv
   blocker: string;
   onInstall: (app: AppView) => void;
   actions?: ReactNode;
+  summary?: ReactNode;
 }) {
   const id = useId();
   const name = localized(app, language, "name");
@@ -73,14 +75,16 @@ export function AppStoreCard({ app, language, installedCount, canInstall: nodeAv
       <CardDescription className="break-words">{localized(app, language, "description")}</CardDescription>
     </CardHeader>
     <CardContent className="flex flex-col gap-2">
+      {summary}
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <span className="break-all">v{app.app.version} · r{app.app.packageRevision ?? 0}</span>
+        <span className="break-all">{copy(language, "目录版本", "Catalog version")} v{app.app.version} · r{app.app.packageRevision ?? 0}</span>
         <span aria-hidden="true">·</span>
         <span>{app.app.hostAccess ? copy(language, "主机应用", "Host app") : copy(language, "容器应用", "Container app")}</span>
       </p>
       <p aria-label={copy(language, "目录来源", "Catalog source")} className="break-all text-xs text-muted-foreground">{app.sourceId === "vastora-official" && app.key === `vastora-official/${app.app.id}`
         ? copy(language, "官方目录", "Official catalog")
         : copy(language, `第三方目录 · ${app.sourceId}`, `Third-party catalog · ${app.sourceId}`)}</p>
+      {isBackgroundApplication(app) ? <p className="text-xs text-muted-foreground">{copy(language, "后台服务 · 在应用商店管理", "Background service · manage in App Store")}</p> : null}
       {app.app.hostAccess && !isOfficialProduct(app) ? <AppHostAccessNote app={app} language={language} /> : null}
     </CardContent>
     <CardFooter className="mt-auto flex-col items-stretch gap-2 py-3">
