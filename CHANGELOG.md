@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.301](https://github.com/petauron/vastora/compare/v0.1.0-alpha.300...v0.1.0-alpha.301) (2026-10-09)
+
+
+### Bug Fixes
+
+* **web:** refine desktop interactions and app store clarity ([#860](https://github.com/petauron/vastora/issues/860)) ([70e57a9](https://github.com/petauron/vastora/commit/70e57a98394722037e494efc551b7ee95a8e37e8))
+
 ## [0.1.0-alpha.300](https://github.com/petauron/vastora/compare/v0.1.0-alpha.299...v0.1.0-alpha.300) (2026-10-09)
 
 
