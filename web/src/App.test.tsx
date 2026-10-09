@@ -82,8 +82,11 @@ describe("application shell", () => {
     const container = await renderReadyApp();
     const quickSettings = container.querySelector<HTMLButtonElement>('button[aria-label="Quick settings"]');
     expect(quickSettings).not.toBeNull();
-    await act(async () => quickSettings?.click());
-    await vi.waitFor(() => expect(document.querySelector('button[aria-label="Switch to dark mode"]')).not.toBeNull());
+    await act(async () => {
+      quickSettings?.focus();
+      quickSettings?.click();
+    });
+    await vi.waitFor(() => expect(document.querySelector('button[aria-label="Switch to dark mode"]'), document.body.textContent ?? "").not.toBeNull());
     const toggle = document.querySelector<HTMLButtonElement>(
       'button[aria-label="Switch to dark mode"]',
     );

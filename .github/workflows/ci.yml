@@ -105,15 +105,37 @@ jobs:
         run: make privacy-check
 
   go-race:
-    name: Go race tests
+    name: Go race tests (${{ matrix.shard }}/8)
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-go-cached
-      - run: make go-race-check
+      - name: Run all Center race tests across deterministic shards
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          # Discover the compiled suite, including examples and fuzz seed tests.
+          # Sorted round-robin assignment covers every top-level test exactly once.
+          go test -race ./internal/center -list '^(Test|Example|Fuzz)' > "$RUNNER_TEMP/center-tests.txt"
+          tests=$(grep -E '^(Test|Example|Fuzz)[^[:space:]]*$' "$RUNNER_TEMP/center-tests.txt" | LC_ALL=C sort)
+          selected=$(printf '%s\n' "$tests" | awk -v shard="$SHARD" '(NR - 1) % 8 == shard - 1')
+          test -n "$selected"
+          pattern=$(printf '%s\n' "$selected" | paste -sd '|' -)
+          printf 'Center race shard %s/8: %s tests\n' "$SHARD" "$(printf '%s\n' "$selected" | wc -l)"
+          go test -race -timeout=20m ./internal/center -run "^($pattern)$"
+      - name: Run remaining package race tests
+        if: matrix.shard == 1
+        run: |
+          packages=$(go list ./cmd/... ./internal/... | grep -v '^github.com/petauron/vastora/internal/center$')
+          test -n "$packages"
+          go test -race -timeout=20m $packages
 
   go-quality:
     name: Go quality and security
