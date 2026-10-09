@@ -68,6 +68,6 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
         <div className="divide-y rounded-xl border">{managedGroup.instances.map((instance) => <div className="flex flex-wrap items-center gap-3 p-4" key={instance.application.id}><div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{instance.agent?.name ?? instance.application.nodeId}</p><p className="mt-1 text-xs text-muted-foreground">v{instance.application.installedVersion} · {instance.siteName}</p></div><ApplicationStatus instance={instance} language={language} onUpgrade={(application) => { setManagedGroupKey(null); onUpgrade(application); }} /><Button onClick={() => { setManagedGroupKey(null); onManage(instance.application); }} variant="outline" size="sm">{copy(language, "管理", "Manage")}</Button></div>)}</div>
         {managedApp ? <div className="flex flex-col gap-2"><Button disabled={!canInstallMore} onClick={() => { setManagedGroupKey(null); onInstall(managedApp); }} variant="outline">{copy(language, "安装到其他主机", "Install on another host")}</Button>{!canInstallMore ? <p className="text-xs text-muted-foreground">{catalogInstallBlocked(managedApp) ? copy(language, "请先在控制面板刷新应用目录。", "Refresh the app catalog in Control Panel first.") : installBlocker(data, managedApp.key, language)}</p> : null}</div> : null}
       </div></> : null}
-    </Sheet>
+    </SheetContent></Sheet>
   </div>;
 }
