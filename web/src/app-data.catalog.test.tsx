@@ -102,7 +102,9 @@ describe("apps loader to AppStore integration", () => {
     expect(data.sources[0].status).toBe(sourceStatus);
     if (expectedNotice) expect(container.querySelector('[role="status"]')?.textContent).toContain(expectedNotice);
     else expect(container.querySelector('[role="status"]')).toBeNull();
-    expect(container.textContent).toContain("第三方目录 · community");
+    expect(container.querySelector('[aria-label="目录来源"]')?.textContent).toContain("community");
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="查看 第三方工具 详情"]')!.click());
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("第三方目录 · community");
     expect(container.querySelector<HTMLButtonElement>('[aria-label="安装 第三方工具"]')?.disabled).toBe(false);
     if (sourceStatus === "expired") expect(container.querySelector<HTMLButtonElement>('[aria-label="安装 示例应用"]')?.disabled).toBe(true);
     expect(fetch.mock.calls.filter(([path]) => path === "/api/v1/catalog/sources")).toHaveLength(1);
