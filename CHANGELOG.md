@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.302](https://github.com/petauron/vastora/compare/v0.1.0-alpha.301...v0.1.0-alpha.302) (2026-10-09)
+
+
+### Bug Fixes
+
+* **web:** unify macOS styling and compact the app store ([102bb0a](https://github.com/petauron/vastora/commit/102bb0a8648a76ec724867d5bec52c3757e5f304))
+
 ## [0.1.0-alpha.301](https://github.com/petauron/vastora/compare/v0.1.0-alpha.300...v0.1.0-alpha.301) (2026-10-09)
 
 
