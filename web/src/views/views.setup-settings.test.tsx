@@ -490,7 +490,7 @@ describe("network and app views", () => {
     const manage = container.querySelector<HTMLButtonElement>('[aria-label="管理 home-server"]');
     act(() => manage?.click());
     expect(document.body.textContent).toContain("节点用途");
-    const updateButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("更新节点程序"));
+    const updateButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("通过 Center 更新"));
     await act(async () => updateButton?.click());
     expect(update).toHaveBeenCalledWith("agent");
     expect(document.body.textContent).not.toContain("agent update");

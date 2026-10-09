@@ -206,22 +206,6 @@ func requireNoUnreviewedXrayWorkerDeploy(ctx context.Context, docker threeXUICon
 	return nil
 }
 
-func prepareXrayWorkerKeepDataUninstall(ctx context.Context, docker threeXUIContainerEngine, appKey, applicationID string, names []string) error {
-	for _, name := range names {
-		worker, exists, err := inspectOwnedApplicationContainer(ctx, docker, name, appKey, "xray", applicationID, anyApplicationDeployment)
-		if err != nil {
-			return err
-		}
-		if !exists || worker.Container.State == nil || !worker.Container.State.Running {
-			continue
-		}
-		if _, err := docker.ContainerStop(ctx, worker.Container.ID, client.ContainerStopOptions{}); err != nil && !errdefs.IsNotModified(err) && !errdefs.IsNotFound(err) {
-			return uncertainTaskOutcome(fmt.Errorf("agent: stop Xray worker before preserving state: %w", err))
-		}
-	}
-	return nil
-}
-
 func replaceXrayWorkerContainer(ctx context.Context, docker threeXUIContainerEngine, options client.ContainerCreateOptions, beforeStop func() error, validate func(string) (string, error), verify func(string, string) error) (result string, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

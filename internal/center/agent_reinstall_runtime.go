@@ -170,7 +170,7 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 	if err = tx.QueryRowContext(ctx, `SELECT id,desired_revision FROM meridian_endpoints WHERE application_id=? AND status<>'retired'`, input.ApplicationID).Scan(&endpointID, &revision); err != nil {
 		return result, errors.New("center: saved Meridian endpoint is unavailable")
 	}
-	if revision < 1 || revision >= math.MaxInt64 {
+	if revision < 1 || revision == math.MaxInt64 {
 		return result, errors.New("center: invalid saved Meridian revision")
 	}
 	// Keep the reviewed source pin and reserve the runtime after landing receipts.

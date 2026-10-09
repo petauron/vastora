@@ -11,3 +11,5 @@ f4b353af85ed0c1656f8a9c0f1ebcd37ea19d68f:web/src/api.test.ts:generic-api-key:67
 5970e624a97f9b0bc6065546cd54135cb7e6b8fb:internal/center/meridian_cutover_flow.go:generic-api-key:360
 5970e624a97f9b0bc6065546cd54135cb7e6b8fb:internal/center/meridian_cutover_flow.go:generic-api-key:371
 c9c974eadfc6c846c870042956d99a0befb04bcc:internal/center/meridian_subscription_snapshot_lifecycle_test.go:generic-api-key:68
+# SQL JOIN on certificate secret IDs; contains no credential value.
+111e98d586b977bb2a0a5f58193f493e774846b6:internal/center/agent_reinstall_runtime_evidence.go:generic-api-key:38
