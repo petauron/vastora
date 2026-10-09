@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.300](https://github.com/petauron/vastora/compare/v0.1.0-alpha.299...v0.1.0-alpha.300) (2026-10-09)
+
+
+### Features
+
+* **web:** introduce Mac-style desktop and app store ([#854](https://github.com/petauron/vastora/issues/854)) ([221fd7f](https://github.com/petauron/vastora/commit/221fd7f16d19d2f582ea0bb9bd35331ff492945c))
+
+
+### Bug Fixes
+
+* repair release checks and update Go security patches ([a4d80b1](https://github.com/petauron/vastora/commit/a4d80b127e1f80d40cc6adf25e2179d2061c6f9d))
+
 ## [0.1.0-alpha.299](https://github.com/petauron/vastora/compare/v0.1.0-alpha.298...v0.1.0-alpha.299) (2026-10-07)
 
 
