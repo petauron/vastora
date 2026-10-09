@@ -4,7 +4,7 @@ import type { Language } from "@/translations";
 import { publicationNeedsAttention, serviceNeedsAttention, type InstalledAppGroup } from "../installed-apps-model";
 import { copy } from "../shared";
 
-export function AppInstallationSummary({ group, language }: { group: InstalledAppGroup; language: Language }) {
+export function AppInstallationSummary({ group, language, compact = false }: { group: InstalledAppGroup; language: Language; compact?: boolean }) {
   const attention = (instance: InstalledAppGroup["instances"][number]) =>
     ["failed", "degraded"].includes(instance.application.status) || instance.activeChange?.reconciliationRequired
     || Boolean(instance.agent && (!instance.agent.connected || instance.agent.credentialRevoked))
@@ -14,6 +14,14 @@ export function AppInstallationSummary({ group, language }: { group: InstalledAp
   const changing = group.instances.filter((instance) => instance.activeChange && !attention(instance)).length;
   const running = group.instances.filter((instance) => instance.application.status === "running" && !instance.activeChange && (!instance.agent || (instance.agent.connected && !instance.agent.credentialRevoked))).length;
   const updates = group.instances.filter((instance) => instance.application.updateAvailable).length;
+  if (compact) {
+    const label = affected ? copy(language, `${affected} 台需处理`, `${affected} need attention`)
+      : changing ? copy(language, `${changing} 台处理中`, `${changing} in progress`)
+      : updates ? copy(language, `${updates} 台可更新`, `${updates} updatable`)
+      : running ? copy(language, `运行中 · ${running} 台主机`, `Running · ${running} hosts`)
+      : copy(language, "未运行", "Not running");
+    return <span className={affected ? "text-destructive" : undefined}>{label}</span>;
+  }
   const versions = [...new Set(group.instances.map(({ application }) =>
     `v${application.installedVersion} · r${application.installedPackageRevision ?? 0}`))];
   return <div className="flex flex-col gap-2">

@@ -46,6 +46,9 @@ when the Center is unavailable.
 
 ## Development
 
+Frontend work follows the [Vastora design language](docs/design-language.md), including
+shared macOS-style components, application icons, and responsive behavior.
+
 Requirements: Go 1.26.9, Node.js 24.19, and npm.
 
 ```sh

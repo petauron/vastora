@@ -28,10 +28,10 @@ export function DesktopView({ data, language, onNavigate, onOpenApp }: { data: A
       {failed ? <button className="desktop-widget-notice" onClick={() => onNavigate("apps")}>{copy(language, `${failed} 项应用安装需要检查`, `${failed} installations need attention`)}<ArrowUpRightIcon /></button> : null}
     </aside>
     <nav className="desktop-shortcuts" aria-label={copy(language, "桌面应用", "Desktop applications")}>
-      <button className="desktop-shortcut" {...itemProps("system:apps")} onClick={() => onNavigate("apps")}><AppIcon appKey="apps" /><span>{copy(language, "应用商店", "App Store")}</span></button>
-      <button className="desktop-shortcut" {...itemProps("system:nodes")} onClick={() => onNavigate("nodes")}><AppIcon appKey="nodes" /><span>{copy(language, "主机管理", "Hosts")}</span></button>
+      <button className="desktop-shortcut" {...itemProps("system:apps")} onClick={() => onNavigate("apps")}><AppIcon appKey="apps" /><span className="desktop-shortcut-label">{copy(language, "应用商店", "App Store")}</span></button>
+      <button className="desktop-shortcut" {...itemProps("system:nodes")} onClick={() => onNavigate("nodes")}><AppIcon appKey="nodes" /><span className="desktop-shortcut-label">{copy(language, "主机管理", "Hosts")}</span></button>
       {apps.map((app) => {
-        const content = <><AppIcon appKey={app.key} /><span>{app.name}{app.url ? <ArrowUpRightIcon aria-hidden="true" className="ml-0.5 inline size-3" /> : null}</span></>;
+        const content = <><span className="desktop-shortcut-art"><AppIcon appKey={app.key} />{app.url ? <span className="desktop-shortcut-link" aria-hidden="true"><ArrowUpRightIcon /></span> : null}</span><span className="desktop-shortcut-label">{app.name}</span></>;
         return app.url ? <a className="desktop-shortcut" {...itemProps(`app:${app.key}`)} key={app.key} href={app.url} target="_blank" rel="noreferrer" aria-label={copy(language, `在新标签页打开 ${app.name}`, `Open ${app.name} in a new tab`)}>{content}</a> : <button className="desktop-shortcut" {...itemProps(`app:${app.key}`)} key={app.key} onClick={() => onOpenApp(app.key)}>{content}</button>;
       })}
       {!apps.length ? <p className="desktop-empty-hint">{copy(language, "从应用商店添加你的第一个应用", "Add your first application from the App Store")}</p> : null}

@@ -198,7 +198,7 @@ export function Brand() {
 }
 
 export function PageHeading({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
-  return <div className="flex flex-col gap-3 sm:flex-row sm:items-start"><div className="flex min-w-0 flex-1 flex-col gap-1"><h1 className="text-balance text-2xl font-semibold tracking-tight">{title}</h1>{description ? <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p> : null}</div>{action}</div>;
+  return <div className="mac-page-heading"><div className="mac-page-heading-copy"><h1>{title}</h1>{description ? <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p> : null}</div>{action}</div>;
 }
 
 export function StateBadge({ value, language = document.documentElement.lang === "zh-CN" ? "zh-CN" : "en" }: { value: string; language?: Language }) {

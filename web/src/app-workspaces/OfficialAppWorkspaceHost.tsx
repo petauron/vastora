@@ -33,7 +33,7 @@ function acquireStyle(url: string) {
   styles.set(url, lease);
   // Keep Center's styles after the application bundle so shared Tailwind
   // utilities cannot hide Center navigation (for example .hidden vs md:block).
-  document.head.insertBefore(link, document.head.querySelector('link[rel="stylesheet"]'));
+  document.head.insertBefore(link, document.head.querySelector('style, link[rel="stylesheet"]'));
   return lease;
 }
 

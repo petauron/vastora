@@ -1,0 +1,145 @@
+/* Shared macOS-inspired component treatment. Tokens live at :root so portals and
+   official mounted workspaces receive exactly the same light/dark appearance. */
+[data-slot="button"] { border-radius: 6px; font-size: 13px; font-weight: 500; letter-spacing: 0; transition-duration: 140ms; }
+[data-slot="button"][data-variant="default"] { background: var(--primary-control); color: #ffffff; border-color: rgb(0 0 0 / 8%); box-shadow: var(--control-shadow); }
+[data-slot="button"][data-variant="default"]:hover { background: color-mix(in srgb, var(--primary-control) 92%, #000000); }
+[data-slot="button"][data-variant="outline"] { background: var(--control-surface); box-shadow: var(--control-shadow); }
+[data-slot="button"][data-variant="outline"]:hover { background: var(--muted); }
+[data-slot="button"][data-variant="secondary"] { border-color: color-mix(in srgb, var(--foreground) 8%, transparent); }
+[data-slot="button"][data-size="xs"] { font-size: 11px; }
+[data-slot="button"]:disabled { box-shadow: none; }
+[data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"], [data-slot="input-group"] { border-radius: 6px; background: var(--control-surface); border-color: var(--input); box-shadow: inset 0 1px 2px #00000006; font-size: 13px; }
+[data-slot="input-group"] [data-slot="input-group-control"] { background: transparent; box-shadow: none; border: 0; font-size: inherit; }
+/* Appearance overrides must preserve focus and validation for portalled forms. */
+:is([data-slot="button"], [data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"], [data-slot="tabs-trigger"]):focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+[data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible) { outline: 2px solid var(--ring); outline-offset: 2px; }
+:is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"]):focus-visible { border-color: var(--ring); }
+:is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"])[aria-invalid="true"], [data-slot="input-group"]:has([aria-invalid="true"]) { border-color: var(--destructive); }
+:is([data-slot="input"], [data-slot="textarea"]):disabled, [data-slot="input-group"]:has(:disabled) { background: var(--muted); }
+
+[data-slot="field-label"], [data-slot="label"] { font-size: 13px; font-weight: 500; }
+[data-slot="field-description"], [data-slot="card-description"], [data-slot="sheet-description"], [data-slot="dialog-description"] { font-size: 12px; line-height: 1.6; }
+[data-slot="card"] { border-radius: 10px; box-shadow: 0 0 0 1px var(--border); }
+[data-slot="card-title"] { font-size: 15px; font-weight: 600; }
+[data-slot="card-title"] > svg { width: 17px; height: 17px; color: var(--muted-foreground); }
+[data-slot="card-footer"] { background: color-mix(in srgb, var(--muted) 45%, var(--card)); border-radius: 0 0 10px 10px; }
+[data-slot="badge"] { font-size: 11px; font-weight: 500; }
+[data-slot="tabs-list"] { background: var(--secondary); border: 1px solid color-mix(in srgb, var(--foreground) 7%, transparent); border-radius: 7px; padding: 2px; gap: 2px; }
+[data-slot="tabs-trigger"] { font-size: 12px; font-weight: 500; border-radius: 5px; padding-inline: 12px; }
+[data-slot="tabs-trigger"][data-active] { background: var(--control-surface); color: var(--foreground); border-color: transparent; box-shadow: 0 1px 3px #0000001c; }
+[data-slot="tabs-trigger"]::after { display: none; }
+[data-slot="tabs-content"] { font-size: 13px; }
+[data-slot="table"] { font-size: 13px; font-variant-numeric: tabular-nums; }
+[data-slot="table-header"] { background: var(--muted); }
+[data-slot="table-head"] { height: 34px; color: var(--muted-foreground); font-size: 12px; font-weight: 500; }
+[data-slot="table-body"] > [data-slot="table-row"]:nth-child(even):not(:has([colspan])) { background: var(--row-alternate); }
+[data-slot="table-body"] > [data-slot="table-row"]:hover { background: var(--accent); }
+[data-slot="table-body"] > [data-slot="table-row"][data-state="selected"] { background: var(--accent); }
+[data-slot="table-cell"] { padding-block: 10px; }
+[data-slot="table-row"] { border-color: color-mix(in srgb, var(--border) 70%, transparent); }
+[data-slot="switch"][data-checked] { background: var(--primary); }
+[data-slot="switch-thumb"] { background: #ffffff; box-shadow: 0 1px 3px #00000030; }
+[data-slot="dropdown-menu-content"], [data-slot="select-content"], [data-slot="popover-content"], [data-slot="combobox-content"] { border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--panel-shadow); font-size: 13px; }
+[data-slot="dropdown-menu-item"], [data-slot="select-item"] { border-radius: 5px; font-size: 13px; }
+[data-slot="dialog-content"], [data-slot="alert-dialog-content"] { border: 1px solid var(--border); border-radius: 14px; background: var(--popover); box-shadow: var(--panel-shadow); }
+[data-slot="dialog-title"], [data-slot="alert-dialog-title"], [data-slot="sheet-title"] { font-size: 16px; font-weight: 600; }
+[data-slot="sheet-content"] { overflow-y: auto; overscroll-behavior: contain; background: var(--background); border: 1px solid var(--border); box-shadow: var(--panel-shadow); }
+[data-slot="sheet-header"] { flex-shrink: 0; padding: 20px 44px 16px 20px; border-bottom: 1px solid var(--border); background: var(--card); }
+[data-slot="sheet-footer"] { flex-shrink: 0; border-top: 1px solid var(--border); background: var(--card); padding: 16px 20px; }
+[data-slot="alert"] { border-radius: 8px; font-size: 13px; }
+
+.mac-page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.mac-page-heading-copy { flex: 1; min-width: 160px; }
+.mac-page-heading h1 { font-size: 22px; line-height: 1.3; letter-spacing: -.025em; font-weight: 600; text-wrap: balance; }
+.mac-page-heading p { margin-top: 5px; font-size: 12px; line-height: 1.6; }
+.desktop-window-content > section { min-width: 0; }
+.desktop-window-content details { border-radius: 10px; }
+.desktop-window-content summary { display: flex; align-items: center; gap: 8px; list-style: none; font-size: 13px; }
+.desktop-window-content summary:not(:has(svg))::before { content: ''; width: 6px; height: 6px; flex-shrink: 0; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 140ms; opacity: .65; }
+.desktop-window-content details[open] > summary::before { transform: rotate(45deg); }
+
+/* Settings is a real category workspace; each existing form retains its state. */
+@media (min-width: 761px) {
+  .desktop-shell:not([data-expanded="true"]) .desktop-window:has(.desktop-settings-window) { max-width: 1080px; height: min(720px, calc(100svh - 180px)); }
+}
+.desktop-window-content.desktop-settings-window { padding: 0; overflow: hidden; gap: 0; }
+.desktop-settings-window > [data-slot="alert"] { flex-shrink: 0; margin: 12px 16px; }
+.mac-settings { display: grid; grid-template-columns: 208px minmax(0, 1fr); min-width: 0; min-height: 0; flex: 1; }
+.mac-settings-sidebar { display: flex; flex-direction: column; gap: 4px; padding: 20px 12px; border-right: 1px solid var(--border); background: var(--desktop-glass); overflow-y: auto; }
+.mac-settings-sidebar h2 { padding: 0 10px 12px; font-size: 12px; color: var(--muted-foreground); font-weight: 500; }
+.mac-settings-link { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px; border-radius: 7px; color: var(--foreground); text-align: left; font-size: 13px; white-space: nowrap; }
+.mac-settings-link:hover { background: var(--muted); }
+.mac-settings-link[aria-current="page"] { background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); }
+.mac-settings-content { min-width: 0; min-height: 0; overflow-y: auto; padding: 28px; }
+.mac-settings-panel { display: flex; flex-direction: column; gap: 24px; max-width: 840px; margin-inline: auto; }
+.mac-settings-panel[hidden] { display: none; }
+.mac-settings-group { overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.mac-settings-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; margin-inline: 16px; padding-block: 12px; border-bottom: 1px solid var(--border); }
+.mac-settings-row:last-child { border-bottom: 0; }
+.mac-settings-row dd { color: var(--muted-foreground); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.mac-settings-action { display: flex; align-items: center; gap: 12px; width: 100%; padding: 16px; text-align: left; color: var(--foreground); }
+.mac-settings-action:hover { background: var(--muted); }
+.mac-settings-action > svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--muted-foreground); }
+.mac-settings-action > svg:last-child { margin-left: auto; }
+.mac-settings-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); }
+
+@media (min-width: 761px) {
+  [data-slot="sheet-content"][data-side="right"], [data-slot="sheet-content"][data-side="left"] { top: 46px; bottom: 16px; height: auto; border-radius: 12px; }
+  [data-slot="sheet-content"][data-side="right"] { right: 16px; }
+  [data-slot="sheet-content"][data-side="left"] { left: 16px; }
+  [data-slot="sheet-footer"] { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; }
+}
+@media (max-width: 760px) {
+  .mac-page-heading h1 { font-size: 20px; }
+  .mac-settings { display: flex; flex-direction: column; }
+  .mac-settings-sidebar { flex-shrink: 0; flex-direction: row; gap: 4px; border-right: 0; border-bottom: 1px solid var(--border); overflow-x: auto; padding: 10px 12px; }
+  .mac-settings-sidebar h2 { display: none; }
+  .mac-settings-link { width: auto; flex-shrink: 0; min-height: 44px; }
+  .mac-settings-link .desktop-app-icon { width: 24px; height: 24px; }
+  .mac-settings-content { padding: 20px 16px; }
+  .mac-settings-panel { gap: 20px; }
+  [data-slot="input"], [data-slot="textarea"], [data-slot="input-group"] { font-size: 16px; }
+  [data-slot="sheet-content"][data-side="right"], [data-slot="sheet-content"][data-side="left"] { width: 100%; max-width: 100%; }
+}
+@media (pointer: coarse) {
+  [data-slot="tabs-list"] { height: auto; }
+  [data-slot="tabs-trigger"], .mac-settings-link { min-height: 44px; }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .mac-settings-sidebar { background: var(--sidebar); }
+}
+@media (forced-colors: active) {
+  [data-slot="button"], [data-slot="card"], .desktop-shortcut[data-selected="true"], .mac-settings-link[aria-current="page"] { border: 1px solid ButtonText; }
+  .desktop-selection-box { border: 1px solid Highlight; background: transparent; box-shadow: none; }
+  .desktop-app-icon { forced-color-adjust: none; }
+}
+
+/* Data-oriented windows retain their real information hierarchy. */
+.mac-workspace-toolbar { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.mac-overview-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: 10px; background: var(--card); overflow: hidden; }
+.mac-overview-summary > [data-slot="button"] { border: 0; border-right: 1px solid var(--border); border-radius: 0; box-shadow: none; background: transparent; }
+.mac-overview-summary > [data-slot="button"]:last-child { border-right: 0; }
+.mac-network-capabilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: 10px; background: var(--card); overflow: hidden; }
+.mac-network-capabilities > [data-slot="card"] { min-width: 0; border-right: 1px solid var(--border); border-radius: 0; box-shadow: none; background: transparent; }
+.mac-network-capabilities > [data-slot="card"]:last-child { border-right: 0; }
+.mac-network-capabilities [data-slot="card-footer"] { margin-top: auto; border-radius: 0; }
+.mac-activity-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--card); }
+.mac-activity-list > [data-slot="card"] { border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--border); }
+.mac-activity-list > [data-slot="card"]:last-child { border-bottom: 0; }
+.mac-assistant-workspace { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 34rem; min-width: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.mac-assistant-workspace > [data-slot="card"] { border-radius: 0; box-shadow: none; }
+.mac-assistant-sidebar { border-right: 1px solid var(--border); background: var(--sidebar); }
+.mac-assistant-sidebar [data-slot="card-content"] > button { border: 0; background: transparent; }
+.mac-assistant-sidebar [data-slot="card-content"] > button:hover { background: var(--muted); }
+.mac-assistant-sidebar [data-slot="card-content"] > button[aria-current="true"] { background: var(--sidebar-accent); }
+@container (max-width: 850px) {
+  .mac-network-capabilities { grid-template-columns: 1fr; }
+  .mac-network-capabilities > [data-slot="card"] { border-right: 0; border-bottom: 1px solid var(--border); }
+  .mac-network-capabilities > [data-slot="card"]:last-child { border-bottom: 0; }
+}
+@media (max-width: 760px) {
+  .mac-overview-summary, .mac-network-capabilities, .mac-assistant-workspace { grid-template-columns: 1fr; }
+  .mac-overview-summary > [data-slot="button"], .mac-network-capabilities > [data-slot="card"] { border-right: 0; border-bottom: 1px solid var(--border); }
+  .mac-overview-summary > [data-slot="button"]:last-child, .mac-network-capabilities > [data-slot="card"]:last-child { border-bottom: 0; }
+  .mac-assistant-sidebar { border-right: 0; border-bottom: 1px solid var(--border); max-height: 220px; }
+}
