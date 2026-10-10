@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -15,8 +15,9 @@ let root: Root | undefined;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => { resolve = next; });
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 function site(id: string, name: string): Site {
@@ -24,6 +25,7 @@ function site(id: string, name: string): Site {
 }
 
 beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn().mockImplementation((query: string) => ({ matches: false, media: query, onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() })) });
   window.localStorage.setItem("vastora.language", "en");
 });
@@ -38,6 +40,7 @@ afterEach(() => {
   document.documentElement.style.removeProperty("color-scheme");
   delete window.turnstile;
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function mockReadyCenter() {
@@ -68,6 +71,68 @@ async function renderReadyApp() {
 }
 
 describe("application shell", () => {
+  it("keeps one neutral startup screen during StrictMode initialization and delayed session data", async () => {
+    const status = mockReadyCenter();
+    const pending = deferred<Awaited<ReturnType<typeof api.status>>>();
+    status.mockImplementation((signal) => new Promise((resolve, reject) => {
+      pending.promise.then(resolve, reject);
+      signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<StrictMode><ThemeProvider><App /></ThemeProvider></StrictMode>));
+
+    expect(container.textContent).toContain("Loading desktop…");
+    expect(container.querySelector(".auth-shell")).toBeNull();
+    expect(container.textContent).not.toContain("Center unavailable");
+    expect(container.querySelector("#username")).toBeNull();
+    expect(container.querySelector(".desktop-dock")).toBeNull();
+    await act(async () => pending.resolve({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" }));
+    await vi.waitFor(() => expect(container.querySelector(".desktop-dock")).not.toBeNull());
+    expect(container.textContent).not.toContain("Center unavailable");
+  });
+
+  it.each(["setup", "unauthorized", "network"])("ignores obsolete %s initialization results", async (outcome) => {
+    mockReadyCenter();
+    const setup = await api.setupStatus();
+    const obsolete = deferred<typeof setup>();
+    const current = deferred<typeof setup>();
+    vi.mocked(api.setupStatus).mockImplementationOnce(() => obsolete.promise).mockImplementationOnce(() => current.promise);
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<StrictMode><ThemeProvider><App /></ThemeProvider></StrictMode>));
+    await act(async () => {
+      if (outcome === "setup") obsolete.resolve({ ...setup, administratorConfigured: false });
+      else obsolete.reject(outcome === "unauthorized" ? new APIError("Authentication required", 401) : new TypeError("Failed to fetch"));
+    });
+    expect(container.textContent).toContain("Loading desktop…");
+    expect(container.querySelector(".auth-shell")).toBeNull();
+    expect(api.status).not.toHaveBeenCalled();
+    await act(async () => current.resolve(setup));
+    await vi.waitFor(() => expect(container.querySelector(".desktop-dock")).not.toBeNull());
+  });
+
+  it("shows a real startup failure and returns to neutral loading while retrying", async () => {
+    mockReadyCenter();
+    const setup = await api.setupStatus();
+    vi.mocked(api.setupStatus).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<ThemeProvider><App /></ThemeProvider>));
+    expect(container.textContent).toContain("Center unavailable");
+    const pending = deferred<typeof setup>();
+    vi.mocked(api.setupStatus).mockImplementationOnce(() => pending.promise);
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Retry")?.click());
+    expect(container.textContent).toContain("Loading desktop…");
+    expect(container.textContent).not.toContain("Center unavailable");
+    await act(async () => pending.resolve(setup));
+    await vi.waitFor(() => expect(container.querySelector(".desktop-dock")).not.toBeNull());
+    expect(container.textContent).not.toContain("Unable to connect");
+  });
+
   it("renders when the browser cannot observe system theme changes", async () => {
     Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn().mockImplementation((query: string) => ({ matches: true, media: query })) });
     mockReadyCenter();
@@ -134,6 +199,14 @@ describe("application shell", () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(password, "wrong-password");
       password.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    expect(password.type).toBe("password");
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Show password"]')!.click());
+    expect(password.type).toBe("text");
+    expect(password.value).toBe("wrong-password");
+    expect(login).not.toHaveBeenCalled();
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Hide password"]')!.click());
+    expect(password.type).toBe("password");
+    expect(password.autocomplete).toBe("current-password");
     await act(async () => {
       [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Sign in")?.click();
       await Promise.resolve();
@@ -143,6 +216,11 @@ describe("application shell", () => {
     expect(container.querySelector("#credential-error")?.getAttribute("role")).toBe("alert");
     expect(container.textContent).not.toMatch(/Turnstile|Cloudflare|backoff|lockout|consecutive failures|seconds|Retry in/);
     expect(renderTurnstile.mock.calls.length).toBeGreaterThan(1);
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Change language"]')!.click());
+    expect(container.querySelector("#credential-error")?.textContent).toBe("账号或密码不正确。");
+    expect(username.value).toBe("admin");
+    expect(password.value).toBe("wrong-password");
+    expect(login).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -184,11 +262,15 @@ describe("application shell", () => {
     const container = await renderReadyApp();
     status.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const nodes = container.querySelector<HTMLButtonElement>('button[aria-label="Hosts"]');
-    act(() => nodes?.click());
+    await act(async () => nodes?.click());
     await vi.waitFor(() => expect(container.textContent).toContain("Connection to Center was interrupted"));
     expect(container.textContent).toContain("This page is showing the last successful data");
     expect(container.textContent).toContain("Retry now");
-    expect(container.textContent).toContain("Reconnecting");
+    const retry = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Retry now");
+    expect(retry?.disabled).toBe(false);
+    await act(async () => retry?.click());
+    await vi.waitFor(() => expect(container.textContent).toContain("Add your first node"));
+    expect(container.textContent).not.toContain("Connection to Center was interrupted");
   });
 
   it("keeps the newest same-screen refresh when deferred responses resolve in reverse order", async () => {

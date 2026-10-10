@@ -1,3 +1,4 @@
+import { useConfirmation } from "../hooks/use-confirmation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Globe2Icon, KeyRoundIcon, RadioTowerIcon, RotateCcwIcon, ShieldCheckIcon, UsersIcon } from "lucide-react";
 import { api } from "../api";
@@ -34,6 +35,7 @@ type RealityDraft = {
 };
 
 export function RealitySheet({ application, data, language, onClose, siteTimezone }: { application: Application | null; data: AppData; language: Language; onClose: () => void; siteTimezone?: string }) {
+  const { confirm, confirmation } = useConfirmation(language);
   const [draft, setDraft] = useState<RealityDraft>(emptyDraft());
   const [collectInitialClient, setCollectInitialClient] = useState(false);
   const [regionMatch, setRegionMatch] = useState<RegionMatch>("idle");
@@ -126,8 +128,8 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
   const gateway = targetAgent;
   const displayName = regionDisplayName(draft.regionCode, draft.name);
 
-  const requestClose = () => {
-    if (dirty && !window.confirm(copy(language, "放弃尚未保存的修改？", "Discard unsaved changes?"))) return;
+  const requestClose = async () => {
+    if (dirty && !await confirm({ title: copy(language, "放弃尚未保存的修改？", "Discard unsaved changes?"), description: copy(language, "继续后，本次未保存的内容将丢失。", "Your unsaved changes will be lost."), confirmLabel: copy(language, "放弃修改", "Discard changes"), destructive: true })) return;
     onClose();
   };
 
@@ -252,6 +254,7 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
 
   return <Sheet onOpenChange={(next) => { if (!next) requestClose(); }} open={Boolean(application)}>
     <SheetContent className="sm:max-w-xl">
+      {confirmation}
       <SheetHeader>
         <SheetTitle>{copy(language, "创建 VLESS REALITY", "Create VLESS REALITY")}</SheetTitle>
         <SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 Xray、节点直连 443 和 DNS。", "Vastora is configuring Xray, node-direct port 443, and DNS on the node.") : copy(language, "填写节点名称和套餐，再选择当前节点可用的连接目标。", "Enter the node name and plan, then select an available connection target.")}</SheetDescription>

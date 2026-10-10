@@ -8,7 +8,6 @@ import type { Language } from "../translations";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -16,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { localized } from "./appAccess";
 import { copy } from "./shared";
 import { AppIdentityBadge } from "./AppIdentity";
+import { AppIcon } from "@/components/desktop/AppIcon";
 import { RegionFlag } from "./RegionFlag";
 import { IPQualityButton } from "./IPQuality";
 import { canCreateRealityNode, publicationNeedsAttention, showInstalledNode, threeXUIAppKey, type InstalledAppGroup, type InstalledAppInstance } from "./installed-apps-model";
@@ -33,52 +33,53 @@ export function DefaultInstalledAppWorkspace({ group, language, mutate, onManage
   const name = group.app ? localized(group.app, language, "name") : group.instances[0].application.name;
   const search = query.trim().toLocaleLowerCase();
   const instances = group.instances.filter(showInstalledNode).filter((instance) => !search || [instance.agent?.name, instance.application.nodeId, instance.siteName, ...instance.realityServices.map((service) => service.displayName)].some((value) => value?.toLocaleLowerCase().includes(search)));
-  const Container = threeXUI ? "section" : Card;
-  const Header = threeXUI ? "header" : CardHeader;
-  const Content = threeXUI ? "div" : CardContent;
+  const showSearch = threeXUI || nodeCount > 1 || Boolean(query);
 
-  return <Container aria-labelledby={headingID} data-app-group={group.id} role="region" className={threeXUI ? "apps-three-xui flex min-w-0 flex-col gap-3" : undefined}>
-    <Header className="flex flex-row flex-wrap items-center gap-3">
+  return <section aria-labelledby={headingID} data-app-group={group.id} className={cn("apps-installed-workspace", threeXUI && "apps-three-xui")}>
+    <header className="apps-installed-heading">
+      {!threeXUI ? <AppIcon appKey={group.appKey} className="size-12 shrink-0" /> : null}
       <div className="min-w-0 flex-1">
-        {threeXUI ? <div className="flex items-center gap-2"><h2 className="text-base font-medium" id={headingID}>{name}</h2>{group.app ? <AppIdentityBadge app={group.app} language={language} /> : null}</div> : <CardTitle className="flex flex-wrap items-center gap-2">
-          <h2 className="min-w-0 break-words" id={headingID}>{name}</h2>{group.app ? <AppIdentityBadge app={group.app} language={language} /> : null}
-        </CardTitle>}
-        {threeXUI ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, `${nodeCount} 个线路机 · ${group.controller ? 1 : 0} 台订阅主机`, `${nodeCount} entry nodes · ${group.controller ? 1 : 0} subscription host`)}</p>
-          : <CardDescription>{copy(language, `已安装到 ${group.instances.length} 个节点`, `Installed on ${group.instances.length} node(s)`)}</CardDescription>}
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 id={headingID}>{name}</h2>{group.app ? <AppIdentityBadge app={group.app} language={language} /> : null}
+        </div>
+        <p>{threeXUI
+          ? copy(language, `${nodeCount} 个线路机 · ${group.controller ? 1 : 0} 台订阅主机`, `${nodeCount} entry nodes · ${group.controller ? 1 : 0} subscription host`)
+          : copy(language, `已安装到 ${nodeCount} 个节点`, `Installed on ${nodeCount} node(s)`)}</p>
       </div>
       {attentionInstance ? <Button onClick={() => onManage(attentionInstance.application)} size="sm" variant="ghost">
         <ShieldAlertIcon aria-hidden="true" data-icon="inline-start" />
         <span className="text-destructive">{copy(language, `${attentionCount} 个入口待处理`, `${attentionCount} access point(s) need attention`)}</span>
       </Button> : null}
-    </Header>
-    <Content className={cn("flex min-w-0 flex-col", threeXUI ? "gap-3" : "gap-4")}>
+    </header>
+    <div className={threeXUI ? "flex min-w-0 flex-col gap-3" : "apps-installed-list"}>
       {legacyThreeXUI && group.legacyControllers.length > 0 ? <ControllerConvergence group={group} language={language} onManage={onManage} /> : null}
-      <div className={cn("flex flex-wrap items-center gap-3", threeXUI ? "apps-three-xui-toolbar py-2" : "justify-between")}>
-        <InputGroup className={threeXUI ? "w-full sm:w-48" : "max-w-xs"}>
+      <div className={threeXUI ? "apps-three-xui-toolbar flex flex-wrap items-center gap-3 py-2" : "apps-installed-toolbar"}>
+        {!threeXUI ? <h3>{copy(language, "已安装节点", "Installed nodes")}</h3> : null}
+        {showSearch ? <InputGroup className={threeXUI ? "w-full sm:w-48" : "apps-installed-search"}>
           <InputGroupInput type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={copy(language, "搜索节点", "Search nodes")} placeholder={copy(language, "搜索节点…", "Search nodes…")} />
           <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
-        </InputGroup>
-        {!threeXUI ? <p role="status" className="text-xs text-muted-foreground">{copy(language, `${instances.length} 个节点`, `${instances.length} node(s)`)}</p> : null}
+        </InputGroup> : null}
+        {!threeXUI && search ? <p role="status" className="text-xs text-muted-foreground">{copy(language, `${instances.length} 个结果`, `${instances.length} result(s)`)}</p> : null}
         {group.controller ? <ControllerBand instance={group.controller} language={language} onClients={onClients} onManage={onManage} onUpgrade={onUpgrade} /> : null}
       </div>
-      <Table aria-label={threeXUI ? copy(language, `${name} 节点`, `${name} nodes`) : copy(language, `${name} 已安装实例`, `${name} installed instances`)} className="apps-instance-table block lg:table lg:table-fixed">
-        <TableHeader className="hidden lg:table-header-group">
+      <Table aria-label={threeXUI ? copy(language, `${name} 节点`, `${name} nodes`) : copy(language, `${name} 已安装实例`, `${name} installed instances`)} className="apps-instance-table">
+        <TableHeader>
           <TableRow>
-            <TableHead className={threeXUI ? "w-[24%]" : "w-[36%]"}>{copy(language, "节点", "Node")}</TableHead>
+            <TableHead className={threeXUI ? "w-[24%]" : "w-[40%]"}>{copy(language, "节点", "Node")}</TableHead>
             {threeXUI ? <TableHead className="w-[48%]">{copy(language, "IP 质量与解锁", "IP quality & availability")}</TableHead> : null}
-            <TableHead className={threeXUI ? "w-[12%]" : "w-[24%]"}>{copy(language, "状态", "Status")}</TableHead>
-            <TableHead className={threeXUI ? "w-[10%]" : "w-[24%]"}>{copy(language, "入口", "Access")}</TableHead>
-            <TableHead className={threeXUI ? "w-[6%]" : "w-[16%]"}><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
+            <TableHead className={threeXUI ? "w-[12%]" : "w-[18%]"}>{copy(language, "状态", "Status")}</TableHead>
+            <TableHead className={threeXUI ? "w-[10%]" : "w-[22%]"}>{copy(language, "入口", "Access")}</TableHead>
+            <TableHead className={threeXUI ? "w-[6%]" : "w-[20%]"}><span className={threeXUI ? "sr-only" : "block text-right"}>{copy(language, "操作", "Actions")}</span></TableHead>
           </TableRow>
         </TableHeader>
-        <TableBody className="block lg:table-row-group">
-          {threeXUI ? <TableRow className="block bg-muted/30 hover:bg-muted/30 lg:table-row"><TableCell colSpan={5} className="block text-xs font-medium lg:table-cell">{copy(language, "线路机", "Entry nodes")} <span className="ml-1 text-muted-foreground">{instances.length}</span></TableCell></TableRow> : null}
+        <TableBody>
+          {threeXUI ? <TableRow className="apps-instance-group bg-muted/30 hover:bg-muted/30"><TableCell colSpan={5} className="text-xs font-medium">{copy(language, "线路机", "Entry nodes")} <span className="ml-1 text-muted-foreground">{instances.length}</span></TableCell></TableRow> : null}
           {instances.map((instance) => <InstalledInstanceRow instance={instance} key={instance.application.id} language={language} mutate={mutate} onManage={onManage} onUpgrade={onUpgrade} onReality={onReality} showSite={showSite} threeXUI={threeXUI} />)}
-          {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 5 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 Xray 节点", "No Xray nodes configured")}</TableCell></TableRow> : null}
+          {!instances.length ? <TableRow className="apps-instance-empty"><TableCell colSpan={threeXUI ? 5 : 4} className="py-8 text-center text-muted-foreground">{search ? copy(language, "没有匹配的节点", "No matching nodes") : threeXUI ? copy(language, "尚未配置 Xray 节点", "No Xray nodes configured") : copy(language, "暂无已安装节点", "No installed nodes")}</TableCell></TableRow> : null}
         </TableBody>
       </Table>
-    </Content>
-  </Container>;
+    </div>
+  </section>;
 }
 
 function ControllerConvergence({ group, language, onManage }: { group: InstalledAppGroup; language: Language; onManage: (application: Application) => void }) {
@@ -120,7 +121,7 @@ function ControllerBand({ instance, language, onClients, onManage, onUpgrade, ch
       <ApplicationUpdate instance={instance} language={language} onUpgrade={onUpgrade} />
       <Button disabled={locked} onClick={() => onClients(application)} size="sm" variant="secondary">{copy(language, "客户端与订阅", "Clients & subscriptions")}</Button>
       {children}
-      {panelPublication?.accessUrl ? <a className={buttonVariants({ size: "sm", variant: "ghost" })} href={panelPublication.accessUrl} rel="noreferrer" target="_blank">
+      {panelPublication?.accessUrl ? <a data-slot="button" data-variant="ghost" data-size="sm" className={buttonVariants({ size: "sm", variant: "ghost" })} href={panelPublication.accessUrl} rel="noreferrer" target="_blank">
         {copy(language, "打开面板", "Open panel")}<ExternalLinkIcon aria-hidden="true" data-icon="inline-end" />
       </a> : null}
       <Button aria-label={copy(language, `管理 ${agent?.name ?? application.nodeId} 订阅主机`, `Manage ${agent?.name ?? application.nodeId} subscription controller`)} onClick={() => onManage(application)} size="icon-sm" variant="ghost"><EllipsisIcon aria-hidden="true" /></Button>
@@ -148,9 +149,10 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
     }
   };
 
-  return <TableRow className="grid grid-cols-2 gap-x-4 gap-y-3 py-4 lg:table-row lg:py-0" data-application-id={application.id}>
-    <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+  return <TableRow className="apps-instance-row" data-application-id={application.id}>
+    <TableCell className="apps-instance-full min-w-0 whitespace-normal">
+      <div className="apps-instance-name">
+        {!threeXUI ? <MonitorIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /> : null}
         {threeXUI ? <RegionFlag code={instance.realityServices[0]?.regionCode} language={language} /> : null}
         <p className="min-w-0 break-words font-medium">{name}</p>
       </div>
@@ -160,28 +162,28 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
         {threeXUI && instance.realityServices[0] ? <span className="text-[11px] text-muted-foreground">{(instance.realityServices[0].protocols ?? ["vless"]).map((protocol) => protocol.toUpperCase()).join(" · ")}</span> : null}
       </div> : null}
     </TableCell>
-    {threeXUI ? <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
+    {threeXUI ? <TableCell className="apps-instance-full min-w-0 whitespace-normal">
       {instance.realityServices.length > 0 ? <IPQualityButton nodeId={application.nodeId} name={name} language={language} /> : <span className="text-muted-foreground">—</span>}
     </TableCell> : null}
-    <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
-      <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "应用状态", "Application")}</p>
+    <TableCell className="min-w-0 whitespace-normal">
+      <p className="apps-instance-label">{copy(language, "应用状态", "Application")}</p>
       <ApplicationStatus instance={instance} language={language} onUpgrade={onUpgrade} />
     </TableCell>
-    <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
-      <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{threeXUI ? copy(language, "公网入口", "Public access") : copy(language, "访问入口", "Access")}</p>
+    <TableCell className="min-w-0 whitespace-normal">
+      <p className="apps-instance-label">{threeXUI ? copy(language, "公网入口", "Public access") : copy(language, "访问入口", "Access")}</p>
       {hy2Only ? <Badge variant="outline">{copy(language, "HY2 已配置", "HY2 configured")}</Badge> : <AccessStatus language={language} publications={publications} services={services} threeXUI={threeXUI} />}
     </TableCell>
-    <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
+    <TableCell className="apps-instance-full min-w-0 whitespace-normal">
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {!threeXUI && instance.deployment?.accessUrl ? <a aria-label={copy(language, `打开 ${name} 的应用主页`, `Open the app homepage on ${name}`)} className={cn(buttonVariants({ size: "icon-sm", variant: "outline" }), "max-md:min-h-11 max-md:min-w-11")} href={instance.deployment.accessUrl} rel="noreferrer" target="_blank">
-          <ExternalLinkIcon aria-hidden="true" />
+        {!threeXUI && instance.deployment?.accessUrl ? <a data-slot="button" data-variant="outline" data-size="sm" aria-label={copy(language, `打开 ${name} 的应用主页`, `Open the app homepage on ${name}`)} className={cn(buttonVariants({ size: "sm", variant: "outline" }), "max-md:min-h-11 max-md:min-w-11")} href={instance.deployment.accessUrl} rel="noreferrer" target="_blank">
+          {copy(language, "打开", "Open")}<ExternalLinkIcon aria-hidden="true" data-icon="inline-end" />
         </a> : null}
         {pendingPublication && !hy2Only ? <Button aria-label={copy(language, `检查 ${name} 的入口`, `Check ${name} access`)} className="max-md:min-h-11" disabled={locked || checking} onClick={() => void check()} size="sm" variant="outline">
           {checking ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{copy(language, "检查", "Check")}
         </Button> : null}
         {needsVLESS ? <Button className="max-md:min-h-11" disabled={!canCreateRealityNode(instance)} onClick={() => onReality(application)} size="sm" variant="outline"><RadioTowerIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "创建 VLESS", "Create VLESS")}</Button> : null}
-        <Button aria-label={copy(language, `管理 ${name} 应用`, `Manage ${name} application`)} className="max-lg:min-h-11 max-lg:min-w-11" onClick={() => onManage(application)} size="icon-sm" variant="ghost">
-          <EllipsisIcon aria-hidden="true" />
+        <Button aria-label={copy(language, `管理 ${name} 应用`, `Manage ${name} application`)} className="max-lg:min-h-11 max-lg:min-w-11" onClick={() => onManage(application)} size={threeXUI ? "icon-sm" : "sm"} variant={threeXUI ? "ghost" : "outline"}>
+          {threeXUI ? <EllipsisIcon aria-hidden="true" /> : copy(language, "管理", "Manage")}
         </Button>
       </div>
     </TableCell>

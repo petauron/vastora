@@ -46,12 +46,11 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
     const background = isBackgroundApplication(group.app);
     const showUpdate = section === "updates" && group.instances.some((instance) => instance.application.updateAvailable);
     const openVariant = showUpdate ? "outline" : "default";
-    return <div className="flex flex-wrap gap-2">
-      {!background && !(compact && showUpdate) ? url
-        ? <Button className="min-h-9" nativeButton={false} render={<a href={url} target="_blank" rel="noreferrer" />} aria-label={copy(language, `在新标签页打开 ${name(group)}`, `Open ${name(group)} in a new tab`)} size="sm" variant={openVariant}>{copy(language, "打开", "Open")}<ArrowUpRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
-        : <Button className="min-h-9" onClick={() => onOpen(group.appKey)} size="sm" variant={openVariant}>{copy(language, "打开", "Open")}</Button> : null}
-      {!compact || background || showUpdate ? <Button className="min-h-9" aria-label={copy(language, `${showUpdate ? "查看更新" : "管理"} ${name(group)}`, `${showUpdate ? "View updates for" : "Manage"} ${name(group)}`)} onClick={() => setManagedGroupKey(group.id)} size="sm" variant={background || showUpdate ? "default" : "outline"}>{showUpdate ? copy(language, "查看更新", "View updates") : copy(language, "管理", "Manage")}</Button> : null}
-    </div>;
+    const openAction = !background && !(compact && showUpdate) ? url
+      ? <Button className="min-h-9" nativeButton={false} render={<a href={url} target="_blank" rel="noreferrer" />} aria-label={copy(language, `在新标签页打开 ${name(group)}`, `Open ${name(group)} in a new tab`)} size="sm" variant={openVariant}>{copy(language, "打开", "Open")}<ArrowUpRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
+      : <Button className="min-h-9" onClick={() => onOpen(group.appKey)} size="sm" variant={openVariant}>{copy(language, "打开", "Open")}</Button> : null;
+    const manageAction = !compact || background || showUpdate ? <Button className="min-h-9" aria-label={copy(language, `${showUpdate ? "查看更新" : "管理"} ${name(group)}`, `${showUpdate ? "View updates for" : "Manage"} ${name(group)}`)} onClick={() => setManagedGroupKey(group.id)} size="sm" variant={background || showUpdate ? "default" : "outline"}>{showUpdate ? copy(language, "查看更新", "View updates") : copy(language, "管理", "Manage")}</Button> : null;
+    return <div className="flex flex-wrap gap-2">{showUpdate ? <>{openAction}{manageAction}</> : <>{manageAction}{openAction}</>}</div>;
   };
   return <div className="store-layout">
     <nav aria-label={copy(language, "应用商店分类", "App Store categories")} className="store-navigation">

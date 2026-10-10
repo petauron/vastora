@@ -145,7 +145,7 @@ function ExecutionDetail({ execution, name, language, onClose, onSaved, onNaviga
     catch (cause) { setError(userError(language, cause)); }
     finally { setBusy(false); }
   };
-  return <Sheet open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><SheetContent showCloseButton={!busy} className="data-[side=right]:w-[calc(100%-1rem)] data-[side=right]:sm:max-w-lg">
+  return <Sheet open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><SheetContent showCloseButton={!busy} className="sm:max-w-lg">
     <SheetHeader><SheetTitle>{name}</SheetTitle><SheetDescription>{stateLabel(language, execution)} · {kindLabel(language, execution.kind)}</SheetDescription></SheetHeader>
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4">
       {!execution.disposition && ["failed", "unknown"].includes(execution.state) ? <Alert><AlertTitle>{copy(language,"先核对实际状态","Check the actual state first")}</AlertTitle><AlertDescription><p>{taskError(language, execution.lastError)}</p><p>{copy(language,"如果不确定是否已完成，请保留任务，交由维护人员核对。放弃任务不会撤销服务器上已经发生的修改。","If the outcome is unclear, leave the task for an administrator to review. Abandoning it does not undo changes on the server.")}</p>{onNavigate ? <Button variant="outline" size="sm" onClick={() => onNavigate(execution.kind.startsWith("agent.") ? "nodes" : "apps")}>{execution.kind.startsWith("agent.") ? copy(language,"查看节点","View nodes") : copy(language,"查看应用","View apps")}</Button> : null}</AlertDescription></Alert> : null}

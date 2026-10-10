@@ -1,3 +1,4 @@
+import { useConfirmation } from "../hooks/use-confirmation";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { GaugeIcon, PencilIcon, RefreshCwIcon, ShieldAlertIcon } from "lucide-react";
 import { api } from "../api";
@@ -16,6 +17,7 @@ import { hasObservedThreeXUIState, mergeCachedCommand, mergeCommandUpdate } from
 type TrafficDraft = { quota: string; resetDay: string; nextResetAt: string };
 
 export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone, language, onClose }: { controller: Application | null; service: Service | null; siteTimezone?: string; language: Language; onClose: () => void }) {
+  const { confirm, confirmation } = useConfirmation(language);
   const [command, setCommand] = useState<ApplicationCommand | null>(null);
   const [editing, setEditing] = useState(false);
   const [quota, setQuota] = useState("");
@@ -82,16 +84,16 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
     setNextResetAt(baseline.current.nextResetAt);
   };
 
-  const discardEdit = () => {
-    if (dirty && !window.confirm(copy(language, "放弃尚未保存的修改？", "Discard unsaved changes?"))) return false;
+  const discardEdit = async () => {
+    if (dirty && !await confirm({ title: copy(language, "放弃尚未保存的修改？", "Discard unsaved changes?"), description: copy(language, "继续后，本次未保存的内容将丢失。", "Your unsaved changes will be lost."), confirmLabel: copy(language, "放弃修改", "Discard changes"), destructive: true })) return false;
     restoreDraft();
     setEditing(false);
     setError("");
     return true;
   };
 
-  const requestClose = () => {
-    if (editing && !discardEdit()) return;
+  const requestClose = async () => {
+    if (editing && !await discardEdit()) return;
     onClose();
   };
 
@@ -120,7 +122,8 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
   };
 
   return <Sheet onOpenChange={(open) => { if (!open) requestClose(); }} open={Boolean(controller && service)}>
-    <SheetContent className="w-full sm:max-w-lg">
+    <SheetContent className="sm:max-w-lg">
+      {confirmation}
       <SheetHeader>
         <SheetTitle>{copy(language, "VLESS 节点套餐", "VLESS node plan")}</SheetTitle>
         <SheetDescription>{copy(language, `按 VPS 服务商的账单管理“${service?.displayName || service?.name || ""}”；上传和下载合计计费，不会修改其他节点。`, `Manage “${service?.displayName || service?.name || ""}” against its VPS provider bill; upload and download count together without changing other nodes.`)}</SheetDescription>

@@ -740,7 +740,6 @@ describe("network and app views", () => {
     const current: ApplicationCommand = { id: "traffic-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", displayName: "🇺🇸 美国Provider A", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDay: 22, nextResetAt: "2026-09-22T00:00:00Z", planStatus: "active" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
     const updated = { ...current, id: "traffic-update", action: "update_inbound" as const, inbounds: [{ ...current.inbounds![0], totalBytes: 300 * 1024 ** 3, resetDay: 31 }] };
     const command = vi.spyOn(api, "createThreeXUIClientCommand").mockImplementation(async (input) => input.action === "update_inbound" ? updated : current);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("节点套餐"))?.click();
@@ -759,6 +758,8 @@ describe("network and app views", () => {
       resetDay.dispatchEvent(new Event("input", { bubbles: true }));
     });
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("取消"))?.click());
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("放弃尚未保存的修改");
+    await act(async () => { [...document.querySelectorAll('[role="alertdialog"] button')].find((button) => button.textContent === "放弃修改")?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("修改节点套餐"))?.click());
     const restoredQuota = document.querySelector<HTMLInputElement>("#inbound-plan-quota")!;
     const restoredResetDay = document.querySelector<HTMLInputElement>("#inbound-plan-reset-day")!;

@@ -732,7 +732,6 @@ describe("network and app views", () => {
     data.sources = [{ id: "private-source", displayName: "Private source", url: "https://private.example/catalog", publicKey: "public-key", customCASet: true, bearerTokenSet: true, enabled: true, status: "healthy", refreshIntervalSeconds: 3600, fetchedAt: "2026-08-30T00:00:00Z", checkedAt: "2026-08-30T00:00:00Z" }];
     const update = vi.spyOn(api, "updateSource").mockResolvedValue({ id: "private-source" });
     const remove = vi.spyOn(api, "deleteSource").mockResolvedValue(undefined);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const mutate = async (operation: () => Promise<unknown>) => { await operation(); };
     const container = render(<SettingsView data={data} language="en" mutate={mutate} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
     act(() => container.querySelector<HTMLButtonElement>('[aria-controls="settings-catalog"]')?.click());
@@ -748,7 +747,10 @@ describe("network and app views", () => {
     await act(async () => { await [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Disable"))?.click(); });
     expect(update).toHaveBeenCalledWith("private-source", { enabled: false });
     await act(async () => { await [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Delete"))?.click(); });
-    expect(window.confirm).toHaveBeenCalledOnce();
+    expect(remove).not.toHaveBeenCalled();
+    const dialog = document.querySelector('[role="alertdialog"]');
+    expect(dialog?.textContent).toContain('Delete “Private source”?');
+    await act(async () => { [...(dialog?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "Delete catalog")?.click(); });
     expect(remove).toHaveBeenCalledWith("private-source");
   });
 
