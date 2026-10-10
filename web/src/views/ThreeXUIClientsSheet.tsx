@@ -1,3 +1,4 @@
+import { useConfirmation } from "../hooks/use-confirmation";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { CheckIcon, CopyIcon, ExternalLinkIcon, LinkIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, ServerIcon, Trash2Icon, UsersIcon } from "lucide-react";
 import { api } from "../api";
@@ -22,6 +23,7 @@ type Editor = { client?: ThreeXUIClient } | null;
 type RevealedLink = { title: string; value: string; commandId: string; operationKey: string; scope: string } | null;
 
 export function ThreeXUIClientsSheet({ application, advancedURL, language, onClose, siteTimezone }: { application: Application | null; advancedURL?: string; language: Language; onClose: () => void; siteTimezone?: string }) {
+  const { confirm, confirmation } = useConfirmation(language);
   const [command, setCommand] = useState<ApplicationCommand | null>(null);
   const [error, setError] = useState("");
   const [refreshError, setRefreshError] = useState("");
@@ -41,14 +43,14 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
   const pageCount = Math.max(1, Math.ceil(filteredClients.length / 25));
   const visibleClients = filteredClients.slice((Math.min(page, pageCount) - 1) * 25, Math.min(page, pageCount) * 25);
   const openEditor = (next: NonNullable<Editor>) => { setEditorDirty(false); setEditor(next); };
-  const discardEditor = () => {
-    if (editorDirty && !window.confirm(copy(language, "放弃尚未保存的修改？", "Discard unsaved changes?"))) return false;
+  const discardEditor = async () => {
+    if (editorDirty && !await confirm({ title: copy(language, "放弃尚未保存的修改？", "Discard unsaved changes?"), description: copy(language, "继续后，本次未保存的内容将丢失。", "Your unsaved changes will be lost."), confirmLabel: copy(language, "放弃修改", "Discard changes"), destructive: true })) return false;
     setEditorDirty(false);
     setEditor(null);
     return true;
   };
-  const requestClose = () => {
-    if (!discardEditor()) return;
+  const requestClose = async () => {
+    if (!await discardEditor()) return;
     onClose();
   };
 
@@ -124,11 +126,12 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
       if (client?.hasLanding && ["update", "set_enabled", "reset_traffic", "delete"].includes(input.action)) {
         const affectedIds = new Set([...client.inboundIds, ...(input.action === "update" ? input.inboundIds ?? [] : [])]);
         const names = [...new Set(inbounds.filter((inbound) => affectedIds.has(inbound.id)).map((inbound) => inbound.nodeName || inbound.name))].join("、");
-        if (!window.confirm(copy(language, `这会同步处理该账号及所有组合节点，并短暂中断以下入口实例的现有连接：${names}。是否继续？`, `This updates the account and all its combinations, briefly disconnecting existing sessions on these entry instances: ${names}. Continue?`))) return;
+        if (!await confirm({ title: copy(language, "确认更新关联节点", "Update linked nodes?"), description: copy(language, `这会同步处理该账号及所有组合节点，并短暂中断以下入口实例的现有连接：${names}。`, `This updates the account and all its combinations, briefly disconnecting existing sessions on these entry instances: ${names}.`) })) return false;
         input = { ...input, confirmSessionReset: true };
       }
       const next = await runCommand(input);
       if (next && input.action !== "list" && input.action !== "reveal_link" && input.action !== "reveal_subscription") setNotice(copy(language, "更改已同步到所选节点。", "The change was synced to the selected nodes."));
+      return true;
     } catch (operationError) {
       setError(userError(language, operationError));
       throw operationError;
@@ -166,13 +169,14 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
 	};
 
   return <Sheet onOpenChange={(open) => { if (!open) requestClose(); }} open={Boolean(application)}>
-    <SheetContent className="w-full sm:max-w-3xl">
+    <SheetContent className="sm:max-w-3xl">
+      {confirmation}
       <SheetHeader>
         <SheetTitle>{copy(language, "管理 Vastora Proxy 客户端", "Manage Vastora Proxy clients")}</SheetTitle>
         <SheetDescription>{copy(language, "在这里管理客户端、订阅与套餐；节点运行时由 Vastora 自动维护。", "Manage clients, subscriptions, and plans here. Vastora maintains the node runtime automatically.")}</SheetDescription>
       </SheetHeader>
 
-      {editor ? <ClientEditor busy={busy} editor={editor} inbounds={inbounds} language={language} onCancel={discardEditor} onDirtyChange={setEditorDirty} onSave={async (input) => { await run(input); setEditorDirty(false); setEditor(null); }} siteTimezone={siteTimezone} /> : <>
+      {editor ? <ClientEditor busy={busy} editor={editor} inbounds={inbounds} language={language} onCancel={discardEditor} onDirtyChange={setEditorDirty} onSave={async (input) => { if (await run(input)) { setEditorDirty(false); setEditor(null); } }} siteTimezone={siteTimezone} /> : <>
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-2">
           <div className="flex flex-wrap items-center gap-2">
             <Button disabled={busy || inbounds.length === 0} onClick={() => openEditor({})} size="sm"><PlusIcon data-icon="inline-start" />{copy(language, "添加客户端", "Add client")}</Button>
@@ -210,8 +214,8 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
               onReset={() => { setDeleteClient(null); setResetClient(client); }}
               onDelete={() => { setResetClient(null); setDeleteClient(client); }}
             >
-              {resetClient?.email === client.email ? <Alert><RotateCcwIcon /><AlertTitle>{copy(language, `重置“${client.email}”的订阅用量？`, `Reset subscription usage for “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "这会把该客户端在所有 VLESS 节点上的合计用量清零，相当于立即开始一个新套餐周期，且不能撤销。", "This clears the client's combined usage across every VLESS node, immediately starting a new allowance cycle. It cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setResetClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "reset_traffic", email: client.email }).then(() => setResetClient(null)).catch(() => undefined)} size="sm">{copy(language, "确认重置", "Reset usage")}</Button></div></AlertDescription></Alert> : null}
-              {deleteClient?.email === client.email ? <Alert variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, `删除“${client.email}”？`, `Delete “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "该客户端会立即无法连接，此操作不能撤销。", "This client will stop connecting immediately. This cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setDeleteClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "delete", email: client.email }).then(() => setDeleteClient(null)).catch(() => undefined)} size="sm" variant="destructive">{copy(language, "确认删除", "Delete client")}</Button></div></AlertDescription></Alert> : null}
+              {resetClient?.email === client.email ? <Alert><RotateCcwIcon /><AlertTitle>{copy(language, `重置“${client.email}”的订阅用量？`, `Reset subscription usage for “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "这会把该客户端在所有 VLESS 节点上的合计用量清零，相当于立即开始一个新套餐周期，且不能撤销。", "This clears the client's combined usage across every VLESS node, immediately starting a new allowance cycle. It cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setResetClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "reset_traffic", email: client.email }).then((completed) => { if (completed) setResetClient(null); }).catch(() => undefined)} size="sm">{copy(language, "确认重置", "Reset usage")}</Button></div></AlertDescription></Alert> : null}
+              {deleteClient?.email === client.email ? <Alert variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, `删除“${client.email}”？`, `Delete “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "该客户端会立即无法连接，此操作不能撤销。", "This client will stop connecting immediately. This cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setDeleteClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "delete", email: client.email }).then((completed) => { if (completed) setDeleteClient(null); }).catch(() => undefined)} size="sm" variant="destructive">{copy(language, "确认删除", "Delete client")}</Button></div></AlertDescription></Alert> : null}
             </ThreeXUIClientCard>)}
           </div>
           {pageCount > 1 ? <div className="flex items-center justify-between"><Button disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} size="sm" variant="outline">{copy(language, "上一页", "Previous")}</Button><span className="text-xs tabular-nums text-muted-foreground">{Math.min(page, pageCount)} / {pageCount}</span><Button disabled={page >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} size="sm" variant="outline">{copy(language, "下一页", "Next")}</Button></div> : null}

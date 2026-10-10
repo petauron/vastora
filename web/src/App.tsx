@@ -1,24 +1,20 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { CircleAlertIcon, CircleCheckIcon, LanguagesIcon, LogOutIcon, RefreshCwIcon, WifiOffIcon } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { CircleAlertIcon, CircleCheckIcon, LogOutIcon, RefreshCwIcon } from "lucide-react";
+import { AuthShell } from "@/components/auth/AuthShell";
+import { CredentialPage } from "./views/CredentialPage";
 import { APIError, api } from "./api";
 import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
-import { administratorPasswordMinLength } from "./lib/security";
 import type { AppData, CenterUpdateStatus, Screen, SetupStatus } from "./types";
 import type { Language } from "./translations";
-import { Brand, PageHeading, copy, userError } from "./views/shared";
+import { PageHeading, copy, userError } from "./views/shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { ThemeToggle } from "@/components/theme";
 import { DesktopShell } from "@/components/desktop/DesktopShell";
 import { systemApplications, workspaceFromURL, workspacePath } from "@/components/desktop/navigation";
 import { localized } from "./views/appAccess";
 import { desktopApplications } from "./views/applicationLaunch";
 import { Spinner } from "@/components/ui/spinner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Turnstile } from "@/components/Turnstile";
 
 export type { AppData, Screen } from "./types";
 type Phase = "loading" | "setup-admin" | "setup-wizard" | "login" | "ready" | "unavailable";
@@ -45,7 +41,7 @@ export function App() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [screen, setScreen] = useState<Screen>(screenFromPath);
   const [workspaceKey, setWorkspaceKey] = useState<string | null>(workspaceFromURL);
-  const [recentAppKeys, setRecentAppKeys] = useState<string[]>(() => { const key = workspaceFromURL(); return key ? [key] : []; });
+  const [openAppKeys, setOpenAppKeys] = useState<string[]>(() => { const key = workspaceFromURL(); return key ? [key] : []; });
   const [data, setData] = useState<AppData | null>(null);
   const [loadedScreens, setLoadedScreens] = useState<Set<Screen>>(() => new Set());
   const [loadingScreen, setLoadingScreen] = useState<Screen | null>(null);
@@ -58,6 +54,7 @@ export function App() {
   const mainRef = useRef<HTMLDivElement>(null);
   const focusAfterNavigation = useRef(false);
   const activeScreen = useRef(screen);
+  const initializationController = useRef<AbortController | null>(null);
   const screenLoadGeneration = useRef(0);
   const screenLoadController = useRef<AbortController | null>(null);
 
@@ -81,7 +78,7 @@ export function App() {
     setLoadingScreen(target);
     try {
       const patch = await loadScreenData(target, controller.signal);
-      if (screenLoadGeneration.current !== generation || activeScreen.current !== target) return;
+      if (screenLoadGeneration.current !== generation || activeScreen.current !== target) return false;
       setData((current) => ({ ...(current ?? emptyAppData(patch.status)), ...patch }));
       setLoadedScreens((current) => {
         if (current.has(target)) return current;
@@ -90,8 +87,9 @@ export function App() {
       setConnection("connected");
       setConnectionError(null);
       setLastSync(new Date());
+      return true;
     } catch (error) {
-      if (controller.signal.aborted || screenLoadGeneration.current !== generation || activeScreen.current !== target) return;
+      if (controller.signal.aborted || screenLoadGeneration.current !== generation || activeScreen.current !== target) return false;
       if (!(error instanceof APIError && error.status === 401)) {
         setConnection("reconnecting");
         setConnectionError(error);
@@ -118,7 +116,7 @@ export function App() {
       window.history[replace ? "replaceState" : "pushState"]({}, "", path);
     }
     setWorkspaceKey(selectedApp);
-    if (selectedApp) setRecentAppKeys((current) => [selectedApp, ...current.filter((key) => key !== selectedApp)].slice(0, 4));
+    if (selectedApp) setOpenAppKeys((current) => current.includes(selectedApp) ? current : [...current, selectedApp]);
     focusAfterNavigation.current = true;
     setNotice(null);
     activeScreen.current = target;
@@ -127,66 +125,69 @@ export function App() {
   }, [handleLoadError, loadScreen]);
 
   const initialize = useCallback(async () => {
+    initializationController.current?.abort();
+    const controller = new AbortController();
+    initializationController.current = controller;
+    screenLoadGeneration.current += 1;
+    screenLoadController.current?.abort();
+    setNotice(null);
     setPhase("loading");
     try {
-      const setup = await api.setupStatus();
+      const setup = await api.setupStatus(controller.signal);
+      if (controller.signal.aborted) return;
       setSetupStatus(setup);
       if (!setup.administratorConfigured) {
         setPhase("setup-admin");
         return;
       }
       if (!setup.onboardingComplete) {
-        try {
-          await api.organizations();
-          setPhase("setup-wizard");
-        } catch (error) {
-          if (error instanceof APIError && error.status === 401) {
-            setPhase("login");
-            return;
-          }
-          throw error;
-        }
+        await api.organizations(controller.signal);
+        if (!controller.signal.aborted) setPhase("setup-wizard");
         return;
       }
-      try {
-        const target = screenFromPath();
-        activeScreen.current = target;
-        await loadScreen(target);
-        setScreen(target);
-        setPhase("ready");
-      } catch (error) {
-        if (error instanceof APIError && error.status === 401) {
-          setPhase("login");
-          return;
-        }
-        throw error;
-      }
+      const target = screenFromPath();
+      activeScreen.current = target;
+      const loaded = await loadScreen(target);
+      if (controller.signal.aborted || !loaded) return;
+      setScreen(target);
+      setPhase("ready");
     } catch (error) {
+      // Effect cleanup, another initialization or a refresh invalidates this run.
+      // Only the current request may decide whether to show login or an error.
+      if (controller.signal.aborted) return;
+      if (error instanceof APIError && error.status === 401) {
+        setPhase("login");
+        return;
+      }
       setNotice({ message: userError(preferredLanguage(), error), detail: error instanceof Error ? error.message : undefined, error: true });
       setPhase("unavailable");
     }
   }, [loadScreen]);
 
-  useEffect(() => { void initialize(); }, [initialize]);
-  useEffect(() => () => {
-    screenLoadGeneration.current += 1;
-    screenLoadController.current?.abort();
-  }, []);
+  useEffect(() => {
+    void initialize();
+    return () => {
+      initializationController.current?.abort();
+      screenLoadGeneration.current += 1;
+      screenLoadController.current?.abort();
+    };
+  }, [initialize]);
   useEffect(() => { document.documentElement.lang = language; }, [language]);
   useEffect(() => {
     const onPopState = () => {
       const target = screenFromPath();
       const selectedApp = workspaceFromURL();
       setWorkspaceKey(selectedApp);
-      if (selectedApp) setRecentAppKeys((current) => [selectedApp, ...current.filter((key) => key !== selectedApp)].slice(0, 4));
+      if (selectedApp) setOpenAppKeys((current) => current.includes(selectedApp) ? current : [...current, selectedApp]);
       focusAfterNavigation.current = true;
       activeScreen.current = target;
       setScreen(target);
       if (phase === "ready") void loadScreen(target).catch(handleLoadError);
+      else if (phase === "loading") void initialize();
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [phase, handleLoadError, loadScreen]);
+  }, [phase, handleLoadError, initialize, loadScreen]);
   useEffect(() => {
     if (phase !== "ready" || !focusAfterNavigation.current || !loadedScreens.has(screen)) return;
     focusAfterNavigation.current = false;
@@ -196,8 +197,13 @@ export function App() {
     const label = systemApplications.find((item) => item.id === screen)!;
     const app = data?.apps.find((value) => value.key === workspaceKey);
     const appName = app ? localized(app, language, "name") : data?.applications.find((value) => value.appKey === workspaceKey)?.name;
-    document.title = `${workspaceKey ? appName ?? copy(language, "应用", "Application") : copy(language, label.zh, label.en)} · Vastora`;
-  }, [language, screen, workspaceKey, data?.apps, data?.applications]);
+    const title = phase === "login" ? copy(language, "登录 Center", "Sign in to Center")
+      : phase === "setup-admin" ? copy(language, "创建管理员", "Create administrator")
+      : phase === "loading" ? copy(language, "正在连接…", "Connecting…")
+      : phase === "unavailable" ? copy(language, "无法连接 Center", "Center unavailable")
+      : workspaceKey ? appName ?? copy(language, "应用", "Application") : copy(language, label.zh, label.en);
+    document.title = `${title} · Vastora`;
+  }, [phase, language, screen, workspaceKey, data?.apps, data?.applications]);
   useEffect(() => {
     if (phase !== "ready") return;
     let cancelled = false;
@@ -250,16 +256,16 @@ export function App() {
     setLoadingScreen(null);
     setData((current) => current ? { ...current, centerUpdate, status: { ...current.status, version: centerUpdate.currentVersion } } : current);
   }, []);
-  const refreshSettings = useCallback(() => activeScreen.current === "settings" ? loadScreen("settings") : Promise.resolve(), [loadScreen]);
+  const refreshSettings = useCallback(async () => { if (activeScreen.current === "settings") await loadScreen("settings"); }, [loadScreen]);
 
-  if (phase === "loading") return <CenteredState language={language} loading />;
+  if (phase === "loading") return <StartupState language={language} desktop={screen === "home"} />;
   if (phase === "unavailable") return <CenteredState language={language} message={notice?.message} onRetry={initialize} />;
   if (phase === "setup-admin") return <CredentialPage language={language} mode="setup" onLanguage={setLanguage} onSubmit={async (username, password) => {
     await api.setupAdmin(username, password);
     setSetupStatus(await api.setupStatus());
     setPhase("setup-wizard");
   }} />;
-  if (phase === "setup-wizard") return <Suspense fallback={<CenteredState language={language} loading />}><SetupWizard
+  if (phase === "setup-wizard") return <Suspense fallback={<StartupState language={language} desktop={screen === "home"} />}><SetupWizard
     builtinHeadscaleAvailable={setupStatus?.builtinHeadscaleAvailable ?? false}
     cloudflareConfigured={setupStatus?.cloudflareConfigured ?? false}
     cloudflareTurnstileConfigured={setupStatus?.cloudflareTurnstileConfigured ?? false}
@@ -292,21 +298,21 @@ export function App() {
     }}
   /></Suspense>;
   if (phase === "login") return <CredentialPage language={language} loginProtection={setupStatus?.loginProtection} mode="login" onLanguage={setLanguage} onSubmit={async (username, password, turnstileToken) => { await api.login(username, password, turnstileToken); const setup = await api.setupStatus(); setSetupStatus(setup); if (!setup.onboardingComplete) { setPhase("setup-wizard"); return; } const target = screenFromPath(); activeScreen.current = target; await loadScreen(target); setScreen(target); setPhase("ready"); }} />;
-  if (!data) return <CenteredState language={language} onRetry={initialize} />;
+  if (!data) return <StartupState language={language} desktop={screen === "home"} />;
 
   const appName = (key: string) => { const app = data.apps.find((value) => value.key === key); return app ? localized(app, language, "name") : data.applications.find((value) => value.appKey === key)?.name ?? copy(language, "应用", "Application"); };
   const desktopApps = desktopApplications(data, language);
-  const recentApps = recentAppKeys.flatMap((key) => { const app = desktopApps.find((app) => app.key === key); return app ? [app] : []; });
+  const openApps = openAppKeys.flatMap((key) => { const app = desktopApps.find((app) => app.key === key); return app ? [app] : []; });
   const openApp = (key: string) => navigate("apps", false, key);
   return (
     <TooltipProvider>
       <a className="fixed left-4 top-4 z-50 -translate-y-24 rounded-lg bg-background px-3 py-2 text-sm font-medium shadow-lg transition-transform focus:translate-y-0" href="#main-content">{copy(language, "跳到主要内容", "Skip to main content")}</a>
-      <DesktopShell screen={screen} language={language} connected={connection === "connected"} loading={loadingScreen === screen} workspace={workspaceKey ? { key: workspaceKey, name: appName(workspaceKey) } : null} apps={desktopApps} recentApps={recentApps} onNavigate={navigate} onOpenApp={openApp} onCloseWorkspace={() => { if (workspaceKey) setRecentAppKeys((keys) => keys.filter((key) => key !== workspaceKey)); navigate("home"); }} onLanguage={setLanguage}>
+      <DesktopShell screen={screen} language={language} loading={loadingScreen === screen} workspace={workspaceKey ? { key: workspaceKey, name: appName(workspaceKey) } : null} apps={desktopApps} openApps={openApps} onNavigate={navigate} onOpenApp={openApp} onCloseWorkspace={() => { if (workspaceKey) setOpenAppKeys((keys) => keys.filter((key) => key !== workspaceKey)); navigate("home"); }} onLanguage={setLanguage}>
           <div className={screen === "home" ? "desktop-home-content" : `desktop-window-content${screen === "settings" ? " desktop-settings-window" : ""}${screen === "apps" && !workspaceKey ? " desktop-store-window" : ""}`} id="main-content" role="main" ref={mainRef} tabIndex={-1}>
-            {connection === "reconnecting" ? <Alert aria-live="assertive" variant="destructive"><WifiOffIcon /><AlertTitle>{copy(language, "与 Center 的连接已中断", "Connection to Center was interrupted")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, `${userError(language, connectionError)} 页面保留的是上次成功同步的数据${lastSync ? `（${lastSync.toLocaleTimeString(language)}）` : ""}。`, `${userError(language, connectionError)} This page is showing the last successful data${lastSync ? ` from ${lastSync.toLocaleTimeString(language)}` : ""}.`)}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
+            {connection === "reconnecting" ? <Alert aria-live="assertive" variant="destructive"><CircleAlertIcon /><AlertTitle>{copy(language, "与 Center 的连接已中断", "Connection to Center was interrupted")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, `${userError(language, connectionError)} 页面保留的是上次成功同步的数据${lastSync ? `（${lastSync.toLocaleTimeString(language)}）` : ""}。`, `${userError(language, connectionError)} This page is showing the last successful data${lastSync ? ` from ${lastSync.toLocaleTimeString(language)}` : ""}.`)}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
             {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}>{notice.error ? <CircleAlertIcon /> : <CircleCheckIcon />}<AlertTitle className="flex items-start justify-between gap-3"><span>{notice.message}</span><Button aria-label={copy(language, "关闭提示", "Dismiss notice")} onClick={() => setNotice(null)} size="xs" variant="ghost">{copy(language, "关闭", "Dismiss")}</Button></AlertTitle>{notice.detail && notice.detail !== notice.message ? <AlertDescription><details><summary className="cursor-pointer">{copy(language, "查看技术详情", "Technical details")}</summary><code className="mt-2 block break-all text-xs">{notice.detail}</code></details></AlertDescription> : null}</Alert> : null}
-            <Suspense fallback={<ScreenLoading language={language} />}>
-              {!loadedScreens.has(screen) ? <ScreenLoading language={language} /> : null}
+            <Suspense fallback={<ScreenLoading language={language} desktop={screen === "home"} />}>
+              {!loadedScreens.has(screen) ? <ScreenLoading language={language} desktop={screen === "home"} /> : null}
               {loadedScreens.has(screen) && screen === "home" ? <DesktopView data={data} language={language} onNavigate={navigate} onOpenApp={openApp} /> : null}
               {loadedScreens.has(screen) && screen === "overview" ? <HomeView data={data} language={language} onNavigate={navigate} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "nodes" ? <NodesView data={data} language={language} mutate={mutate} onAddFirstNodeHandled={() => setAddFirstNode(false)} onNavigate={navigate} startAdding={addFirstNode} /> : null}
@@ -314,7 +320,7 @@ export function App() {
               {loadedScreens.has(screen) && screen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} onNavigate={navigate} /> : null}
               {loadedScreens.has(screen) && screen === "assistant" ? <AssistantView language={language} /> : null}
-              {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setRecentAppKeys([]); setPhase("login"); }} onNavigate={navigate} onRefresh={refreshSettings} /> : null}
+              {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setOpenAppKeys([]); setPhase("login"); }} onNavigate={navigate} onRefresh={refreshSettings} /> : null}
             </Suspense>
           </div>
       </DesktopShell>
@@ -322,61 +328,23 @@ export function App() {
   );
 }
 
-function CredentialPage({ language, loginProtection, mode, onLanguage, onSubmit }: { language: Language; loginProtection?: SetupStatus["loginProtection"]; mode: "setup" | "login"; onLanguage: (language: Language) => void; onSubmit: (username: string, password: string, turnstileToken: string) => Promise<void> }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [turnstileError, setTurnstileError] = useState("");
-  const [turnstileToken, setTurnstileToken] = useState("");
-  const [turnstileReset, setTurnstileReset] = useState(0);
-  const captchaRequired = mode === "login" && loginProtection?.captchaRequired === true;
-  const reportTurnstileError = useCallback(() => setTurnstileError(copy(language, "安全验证没有加载成功，请检查网络后重试。", "The security check did not load. Check your connection and retry.")), [language]);
-  const acceptTurnstileToken = useCallback((token: string) => { setTurnstileToken(token); if (token) setTurnstileError(""); }, []);
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (busy || captchaRequired && !turnstileToken) return;
-    setBusy(true); setError(""); setTurnstileError("");
-    try {
-      await onSubmit(username, password, turnstileToken);
-    } catch (submitError) {
-      if (submitError instanceof APIError) {
-        if (submitError.code === "captcha_failed" && captchaRequired) {
-          setTurnstileError(copy(language, "安全验证失败，请完成新的验证后再试。", "The security check failed. Complete a new check and try again."));
-        } else if (submitError.code === "login_throttled" || submitError.code === "login_protection_unavailable" || submitError.code === "captcha_failed") {
-          setError(copy(language, "暂时无法登录，请稍后再试。", "Unable to sign in right now. Try again later."));
-        } else if (submitError.code === "invalid_credentials") {
-          setError(copy(language, "账号或密码不正确。", "The username or password is incorrect."));
-        } else {
-          setError(userError(language, submitError));
-        }
-        if (captchaRequired || submitError.captchaRequired) setTurnstileReset((current) => current + 1);
-      } else {
-        setError(userError(language, submitError));
-      }
-    } finally { setBusy(false); }
-  };
-  return (
-    <main className="grid min-h-svh place-items-center bg-muted/35 p-5">
-      <div className="flex w-full max-w-sm flex-col gap-5">
-        <div className="flex items-center justify-between"><Brand /><div className="flex items-center gap-1"><ThemeToggle language={language} /><Button aria-label={copy(language, "切换语言", "Change language")} onClick={() => onLanguage(language === "zh-CN" ? "en" : "zh-CN")} size="icon" variant="ghost"><LanguagesIcon /></Button></div></div>
-        <Card>
-          <CardHeader><CardTitle>{mode === "setup" ? copy(language, "创建管理员", "Create administrator") : copy(language, "登录 Center", "Sign in to Center")}</CardTitle><CardDescription>{mode === "setup" ? copy(language, "创建账号后即可继续设置。", "Create an account to continue setup.") : copy(language, "使用管理员账号继续。", "Continue with your administrator account.")}</CardDescription></CardHeader>
-          <CardContent>
-            <form onSubmit={(event) => void submit(event)}><FieldGroup><Field data-invalid={Boolean(error)}><FieldLabel htmlFor="username">{copy(language, "账号", "Username")}</FieldLabel><Input aria-invalid={Boolean(error)} autoComplete="username" id="username" minLength={3} onChange={(event) => setUsername(event.target.value)} required value={username} /></Field><Field data-invalid={Boolean(error)}><FieldLabel htmlFor="password">{copy(language, "密码", "Password")}</FieldLabel><Input aria-describedby={error ? "credential-error" : undefined} aria-invalid={Boolean(error)} autoComplete={mode === "setup" ? "new-password" : "current-password"} id="password" minLength={mode === "setup" ? administratorPasswordMinLength : undefined} onChange={(event) => setPassword(event.target.value)} required type="password" value={password} />{mode === "setup" ? <FieldDescription>{copy(language, "至少 10 个字符。", "At least 10 characters.")}</FieldDescription> : null}{error ? <FieldError id="credential-error" role="alert">{error}</FieldError> : null}</Field>{captchaRequired && loginProtection?.turnstileSiteKey ? <Field data-invalid={Boolean(turnstileError)}><FieldLabel htmlFor="center-login-turnstile">{copy(language, "安全验证", "Security check")}</FieldLabel><Turnstile language={language} onError={reportTurnstileError} onToken={acceptTurnstileToken} resetKey={turnstileReset} siteKey={loginProtection.turnstileSiteKey} />{turnstileError ? <><FieldError role="alert">{turnstileError}</FieldError><Button onClick={() => { setTurnstileError(""); setTurnstileReset((current) => current + 1); }} size="sm" type="button" variant="outline">{copy(language, "重新加载验证", "Reload security check")}</Button></> : null}</Field> : null}<Button disabled={busy || captchaRequired && !turnstileToken} size="lg" type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{mode === "setup" ? copy(language, "创建并继续", "Create and continue") : copy(language, "登录", "Sign in")}</Button></FieldGroup></form>
-          </CardContent>
-        </Card>
-      </div>
-    </main>
-  );
+function StartupState({ language, desktop }: { language: Language; desktop: boolean }) {
+  return <main className="desktop-shell desktop-startup"><ScreenLoading language={language} desktop={desktop} /></main>;
 }
 
-function CenteredState({ language, loading, message, onRetry }: { language: Language; loading?: boolean; message?: string; onRetry?: () => Promise<void> }) {
-  return <main className="grid min-h-svh place-items-center p-6"><div className="flex w-full max-w-sm flex-col gap-5"><Brand /><Card><CardHeader><CardTitle>{loading ? copy(language, "正在连接…", "Connecting…") : copy(language, "无法连接 Center", "Center unavailable")}</CardTitle><CardDescription>{message}</CardDescription></CardHeader>{onRetry ? <CardContent><Button onClick={() => void onRetry()} variant="outline">{copy(language, "重试", "Retry")}</Button></CardContent> : null}</Card></div></main>;
+function CenteredState({ language, message, onRetry }: { language: Language; message?: string; onRetry: () => Promise<void> }) {
+  return <AuthShell language={language} title={copy(language, "无法连接 Center", "Center unavailable")} description={message}>
+    <Button className="auth-submit" onClick={() => void onRetry()}><RefreshCwIcon aria-hidden="true" />{copy(language, "重试", "Retry")}</Button>
+  </AuthShell>;
 }
 
-function ScreenLoading({ language }: { language: Language }) {
-  return <div aria-live="polite" className="flex min-h-48 items-center justify-center gap-3 rounded-2xl border bg-card text-sm text-muted-foreground"><Spinner />{copy(language, "正在准备页面…", "Preparing this page…")}</div>;
+function ScreenLoading({ language, desktop }: { language: Language; desktop: boolean }) {
+  return <div className="screen-loading" role="status" aria-live="polite" aria-atomic="true">
+    <div className="screen-loading-indicator">
+      <Spinner aria-hidden="true" role="presentation" className="motion-reduce:animate-none" />
+      <span>{desktop ? copy(language, "正在载入桌面…", "Loading desktop…") : copy(language, "正在载入…", "Loading…")}</span>
+    </div>
+  </div>;
 }
 
 export function EmptyPage({ language, title, description }: { language: Language; title?: string; description?: string }) {

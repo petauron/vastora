@@ -159,5 +159,12 @@ export function useDesktopSelection() {
     }
   }
 
-  return { surfaceRef, selected, rectangle, surfaceProps: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onLostPointerCapture: onPointerCancel, onClickCapture, onKeyDown } };
+  function beginItemDrag(key: string) {
+    suppressClick.current = true;
+    const moving = selected.has(key) ? selected : new Set([key]);
+    setSelected(moving);
+    return [...moving];
+  }
+
+  return { surfaceRef, selected, rectangle, beginItemDrag, surfaceProps: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onLostPointerCapture: onPointerCancel, onClickCapture, onKeyDown } };
 }

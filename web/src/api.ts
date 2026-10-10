@@ -98,7 +98,7 @@ export const api = {
   selectLanding: (nodeIds: string[], revision: number, landingRegionCodes: Record<string, string>, signal?: AbortSignal, landingNameSuffixes?: Record<string, string>) => request<LandingView>("/api/v1/meridian/landing", {
     method: "PUT", body: JSON.stringify({ nodeIds, revision, landingRegionCodes, landingNameSuffixes }), signal
   }),
-  setupStatus: () => request<SetupStatus>("/api/v1/setup/status"),
+  setupStatus: (signal?: AbortSignal) => request<SetupStatus>("/api/v1/setup/status", { signal }),
   setupAdmin: (username: string, password: string) =>
     request<{ administratorConfigured: boolean }>("/api/v1/setup/admin", {
       method: "POST",
@@ -162,7 +162,7 @@ export const api = {
   continueAgentReinstallIsolation: (agentId: string, input: { operationId: string; expectedAttempt: number; confirmIsolation: boolean }) => request<AgentEnrollment>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-isolation/continue`, { method: "POST", body: JSON.stringify(input) }),
   deployments: (signal?: AbortSignal) => request<{ deployments: Deployment[] }>("/api/v1/deployments", { signal }),
 	sites: (signal?: AbortSignal) => request<{ sites: Site[] }>("/api/v1/sites", { signal }),
-	organizations: () => request<{ organizations: Organization[] }>("/api/v1/organizations"),
+	organizations: (signal?: AbortSignal) => request<{ organizations: Organization[] }>("/api/v1/organizations", { signal }),
 	createSite: (input: SiteInput) => request<Site>("/api/v1/sites", { method: "POST", body: JSON.stringify(input) }),
 	updateSite: (site: Site, input: SiteInput) => request<Site>(`/api/v1/sites/${encodeURIComponent(site.id)}`, { method: "PUT", body: JSON.stringify(input) }),
 	updateAgent: (agentId: string, name: string, siteId: string) => request<{ updated: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "PATCH", body: JSON.stringify({ name, siteId }) }),

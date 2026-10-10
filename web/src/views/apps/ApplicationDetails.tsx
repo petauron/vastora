@@ -62,7 +62,7 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
       setAdopting(false);
     }
   };
-  return <SheetContent className="apps-workspace data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+  return <SheetContent className="apps-workspace sm:max-w-xl">
     <SheetHeader className="pr-12">
       <SheetTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app ? <AppIdentityBadge app={app} language={language} /> : null}{isController ? <Badge>{copy(language, "全局订阅主机", "Global subscription controller")}</Badge> : null}{isLegacyController ? <Badge variant="outline">{copy(language, "待替换为 Xray", "Converting to Xray")}</Badge> : null}{isWorker ? <Badge variant="outline">{copy(language, "Xray 节点", "Xray node")}</Badge> : null}</SheetTitle>
       <SheetDescription>{agent?.name ?? application.nodeId} · {application.runtime}{application.installedVersion ? ` · v${application.installedVersion}` : ""}</SheetDescription>
