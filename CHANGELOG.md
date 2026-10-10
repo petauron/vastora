@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.304](https://github.com/petauron/vastora/compare/v0.1.0-alpha.303...v0.1.0-alpha.304) (2026-10-10)
+
+
+### Bug Fixes
+
+* **web:** keep desktop mounted with independent application windows ([#870](https://github.com/petauron/vastora/issues/870)) ([97e9050](https://github.com/petauron/vastora/commit/97e90504b41944dc652492b234be3ab3e7a1f7f0))
+
 ## [0.1.0-alpha.303](https://github.com/petauron/vastora/compare/v0.1.0-alpha.302...v0.1.0-alpha.303) (2026-10-10)
 
 
