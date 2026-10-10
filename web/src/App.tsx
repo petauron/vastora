@@ -9,7 +9,9 @@ import type { Language } from "./translations";
 import { PageHeading, copy, userError } from "./views/shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { dismissWindow, emptyWindows, frontWindow, openWindow, windowID, type DesktopWindowEntry } from "@/components/desktop/windowState";
 import { DesktopShell } from "@/components/desktop/DesktopShell";
+import { DesktopView } from "./views/DesktopView";
 import { systemApplications, workspaceFromURL, workspacePath } from "@/components/desktop/navigation";
 import { localized } from "./views/appAccess";
 import { desktopApplications } from "./views/applicationLaunch";
@@ -29,7 +31,6 @@ const preferredLanguage = (): Language => {
 const ActivityView = lazy(() => import("./views/ActivityView").then((module) => ({ default: module.ActivityView })));
 const AssistantView = lazy(() => import("./views/AssistantView").then((module) => ({ default: module.AssistantView })));
 const AppsView = lazy(() => import("./views/AppsView").then((module) => ({ default: module.AppsView })));
-const DesktopView = lazy(() => import("./views/DesktopView").then((module) => ({ default: module.DesktopView })));
 const HomeView = lazy(() => import("./views/HomeView").then((module) => ({ default: module.HomeView })));
 const NetworkView = lazy(() => import("./views/NetworkView").then((module) => ({ default: module.NetworkView })));
 const NodesView = lazy(() => import("./views/NodesView").then((module) => ({ default: module.NodesView })));
@@ -41,7 +42,7 @@ export function App() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [screen, setScreen] = useState<Screen>(screenFromPath);
   const [workspaceKey, setWorkspaceKey] = useState<string | null>(workspaceFromURL);
-  const [openAppKeys, setOpenAppKeys] = useState<string[]>(() => { const key = workspaceFromURL(); return key ? [key] : []; });
+  const [windows, setWindows] = useState(() => openWindow(emptyWindows(), screenFromPath(), workspaceFromURL()));
   const [data, setData] = useState<AppData | null>(null);
   const [loadedScreens, setLoadedScreens] = useState<Set<Screen>>(() => new Set());
   const [loadingScreen, setLoadingScreen] = useState<Screen | null>(null);
@@ -109,20 +110,35 @@ export function App() {
     }
   }, []);
 
-  const navigate = useCallback((target: Screen, replace = false, appKey: string | null = null) => {
+  const selectRoute = useCallback((target: Screen, replace = false, appKey: string | null = null, focusContent = true) => {
     const selectedApp = target === "apps" ? appKey : null;
     const path = selectedApp ? workspacePath(selectedApp) : pathForScreen(target);
     if (`${window.location.pathname}${window.location.search}` !== path) {
       window.history[replace ? "replaceState" : "pushState"]({}, "", path);
     }
     setWorkspaceKey(selectedApp);
-    if (selectedApp) setOpenAppKeys((current) => current.includes(selectedApp) ? current : [...current, selectedApp]);
-    focusAfterNavigation.current = true;
+    focusAfterNavigation.current = focusContent;
     setNotice(null);
     activeScreen.current = target;
     setScreen(target);
     void loadScreen(target).catch(handleLoadError);
   }, [handleLoadError, loadScreen]);
+  const navigate = useCallback((target: Screen, replace = false, appKey: string | null = null) => {
+    setWindows((current) => openWindow(current, target, target === "apps" ? appKey : null));
+    selectRoute(target, replace, appKey);
+  }, [selectRoute]);
+  const focusWindow = (entry: DesktopWindowEntry) => {
+    if (windowID(activeScreen.current, workspaceFromURL()) === entry.id) return;
+    setWindows((current) => openWindow(current, entry.screen, entry.workspaceKey));
+    // Clicking a field in a background window must not move focus to its heading.
+    selectRoute(entry.screen, false, entry.workspaceKey, false);
+  };
+  const dismiss = (id: string, close: boolean) => {
+    const next = dismissWindow(windows, id, close);
+    setWindows(next);
+    const front = frontWindow(next);
+    selectRoute(front?.screen ?? "home", false, front?.workspaceKey ?? null);
+  };
 
   const initialize = useCallback(async () => {
     initializationController.current?.abort();
@@ -178,7 +194,7 @@ export function App() {
       const target = screenFromPath();
       const selectedApp = workspaceFromURL();
       setWorkspaceKey(selectedApp);
-      if (selectedApp) setOpenAppKeys((current) => current.includes(selectedApp) ? current : [...current, selectedApp]);
+      setWindows((current) => openWindow(current, target, selectedApp));
       focusAfterNavigation.current = true;
       activeScreen.current = target;
       setScreen(target);
@@ -288,6 +304,7 @@ export function App() {
         activeScreen.current = "nodes";
         setScreen("nodes");
         setWorkspaceKey(null);
+        setWindows(openWindow(emptyWindows(), "nodes"));
         await loadScreen("nodes");
         setAddFirstNode(true);
         setPhase("ready");
@@ -297,33 +314,45 @@ export function App() {
       }
     }}
   /></Suspense>;
-  if (phase === "login") return <CredentialPage language={language} loginProtection={setupStatus?.loginProtection} mode="login" onLanguage={setLanguage} onSubmit={async (username, password, turnstileToken) => { await api.login(username, password, turnstileToken); const setup = await api.setupStatus(); setSetupStatus(setup); if (!setup.onboardingComplete) { setPhase("setup-wizard"); return; } const target = screenFromPath(); activeScreen.current = target; await loadScreen(target); setScreen(target); setPhase("ready"); }} />;
+  if (phase === "login") return <CredentialPage language={language} loginProtection={setupStatus?.loginProtection} mode="login" onLanguage={setLanguage} onSubmit={async (username, password, turnstileToken) => { await api.login(username, password, turnstileToken); const setup = await api.setupStatus(); setSetupStatus(setup); if (!setup.onboardingComplete) { setPhase("setup-wizard"); return; } const target = screenFromPath(); activeScreen.current = target; await loadScreen(target); setScreen(target); setWorkspaceKey(workspaceFromURL()); setWindows(openWindow(emptyWindows(), target, workspaceFromURL())); setPhase("ready"); }} />;
   if (!data) return <StartupState language={language} desktop={screen === "home"} />;
 
   const appName = (key: string) => { const app = data.apps.find((value) => value.key === key); return app ? localized(app, language, "name") : data.applications.find((value) => value.appKey === key)?.name ?? copy(language, "应用", "Application"); };
   const desktopApps = desktopApplications(data, language);
-  const openApps = openAppKeys.flatMap((key) => { const app = desktopApps.find((app) => app.key === key); return app ? [app] : []; });
+  const windowTitle = (entry: DesktopWindowEntry) => { const item = systemApplications.find((app) => app.id === entry.screen)!; return entry.workspaceKey ? appName(entry.workspaceKey) : copy(language, item.zh, item.en); };
   const openApp = (key: string) => navigate("apps", false, key);
+  const statusAlerts = <>
+    {connection === "reconnecting" ? <Alert aria-live="assertive" variant="destructive"><CircleAlertIcon /><AlertTitle>{copy(language, "与 Center 的连接已中断", "Connection to Center was interrupted")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, `${userError(language, connectionError)} 页面保留的是上次成功同步的数据${lastSync ? `（${lastSync.toLocaleTimeString(language)}）` : ""}。`, `${userError(language, connectionError)} This page is showing the last successful data${lastSync ? ` from ${lastSync.toLocaleTimeString(language)}` : ""}.`)}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
+    {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}>{notice.error ? <CircleAlertIcon /> : <CircleCheckIcon />}<AlertTitle className="flex items-start justify-between gap-3"><span>{notice.message}</span><Button aria-label={copy(language, "关闭提示", "Dismiss notice")} onClick={() => setNotice(null)} size="xs" variant="ghost">{copy(language, "关闭", "Dismiss")}</Button></AlertTitle>{notice.detail && notice.detail !== notice.message ? <AlertDescription><details><summary className="cursor-pointer">{copy(language, "查看技术详情", "Technical details")}</summary><code className="mt-2 block break-all text-xs">{notice.detail}</code></details></AlertDescription> : null}</Alert> : null}
+  </>;
   return (
     <TooltipProvider>
       <a className="fixed left-4 top-4 z-50 -translate-y-24 rounded-lg bg-background px-3 py-2 text-sm font-medium shadow-lg transition-transform focus:translate-y-0" href="#main-content">{copy(language, "跳到主要内容", "Skip to main content")}</a>
-      <DesktopShell screen={screen} language={language} loading={loadingScreen === screen} workspace={workspaceKey ? { key: workspaceKey, name: appName(workspaceKey) } : null} apps={desktopApps} openApps={openApps} onNavigate={navigate} onOpenApp={openApp} onCloseWorkspace={() => { if (workspaceKey) setOpenAppKeys((keys) => keys.filter((key) => key !== workspaceKey)); navigate("home"); }} onLanguage={setLanguage}>
-          <div className={screen === "home" ? "desktop-home-content" : `desktop-window-content${screen === "settings" ? " desktop-settings-window" : ""}${screen === "apps" && !workspaceKey ? " desktop-store-window" : ""}`} id="main-content" role="main" ref={mainRef} tabIndex={-1}>
-            {connection === "reconnecting" ? <Alert aria-live="assertive" variant="destructive"><CircleAlertIcon /><AlertTitle>{copy(language, "与 Center 的连接已中断", "Connection to Center was interrupted")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, `${userError(language, connectionError)} 页面保留的是上次成功同步的数据${lastSync ? `（${lastSync.toLocaleTimeString(language)}）` : ""}。`, `${userError(language, connectionError)} This page is showing the last successful data${lastSync ? ` from ${lastSync.toLocaleTimeString(language)}` : ""}.`)}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
-            {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}>{notice.error ? <CircleAlertIcon /> : <CircleCheckIcon />}<AlertTitle className="flex items-start justify-between gap-3"><span>{notice.message}</span><Button aria-label={copy(language, "关闭提示", "Dismiss notice")} onClick={() => setNotice(null)} size="xs" variant="ghost">{copy(language, "关闭", "Dismiss")}</Button></AlertTitle>{notice.detail && notice.detail !== notice.message ? <AlertDescription><details><summary className="cursor-pointer">{copy(language, "查看技术详情", "Technical details")}</summary><code className="mt-2 block break-all text-xs">{notice.detail}</code></details></AlertDescription> : null}</Alert> : null}
-            <Suspense fallback={<ScreenLoading language={language} desktop={screen === "home"} />}>
-              {!loadedScreens.has(screen) ? <ScreenLoading language={language} desktop={screen === "home"} /> : null}
-              {loadedScreens.has(screen) && screen === "home" ? <DesktopView data={data} language={language} onNavigate={navigate} onOpenApp={openApp} /> : null}
-              {loadedScreens.has(screen) && screen === "overview" ? <HomeView data={data} language={language} onNavigate={navigate} mutate={mutate} /> : null}
-              {loadedScreens.has(screen) && screen === "nodes" ? <NodesView data={data} language={language} mutate={mutate} onAddFirstNodeHandled={() => setAddFirstNode(false)} onNavigate={navigate} startAdding={addFirstNode} /> : null}
-              {loadedScreens.has(screen) && screen === "apps" ? <AppsView data={data} language={language} mutate={mutate} workspaceKey={workspaceKey} onOpenApp={openApp} onStore={() => navigate("apps")} onSettings={() => { navigate("settings"); window.history.replaceState({}, "", "/settings#catalog"); }} /> : null}
-              {loadedScreens.has(screen) && screen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
-              {loadedScreens.has(screen) && screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} onNavigate={navigate} /> : null}
-              {loadedScreens.has(screen) && screen === "assistant" ? <AssistantView language={language} /> : null}
-              {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setOpenAppKeys([]); setPhase("login"); }} onNavigate={navigate} onRefresh={refreshSettings} /> : null}
+      <DesktopShell screen={screen} language={language} loading={loadingScreen === screen} workspace={workspaceKey ? { key: workspaceKey, name: appName(workspaceKey) } : null} apps={desktopApps} windows={windows} windowTitle={windowTitle} onFocusWindow={focusWindow} onDismissWindow={dismiss} onNavigate={navigate} onOpenApp={openApp} onLanguage={setLanguage} desktop={
+        <div className="desktop-home-content" id={screen === "home" ? "main-content" : undefined} role={screen === "home" ? "main" : undefined} ref={screen === "home" ? mainRef : undefined} tabIndex={screen === "home" ? -1 : undefined}>
+          {screen === "home" ? statusAlerts : null}
+          <DesktopView data={data} language={language} onNavigate={navigate} onOpenApp={openApp} />
+        </div>
+      } renderWindow={(entry) => {
+        const active = entry.id === windowID(screen, workspaceKey);
+        const { screen: windowScreen, workspaceKey: windowWorkspace } = entry;
+        // Each keyed frame keeps its own view instance and local form/scroll state.
+        return (
+          <div className={`desktop-window-content${windowScreen === "settings" ? " desktop-settings-window" : ""}${windowScreen === "apps" && !windowWorkspace ? " desktop-store-window" : ""}`} id={active ? "main-content" : undefined} role={active ? "main" : undefined} ref={active ? mainRef : undefined} tabIndex={-1}>
+            {active ? statusAlerts : null}
+            <Suspense fallback={<ScreenLoading language={language} desktop={false} />}>
+              {!loadedScreens.has(windowScreen) ? <ScreenLoading language={language} desktop={false} /> : null}
+              {loadedScreens.has(windowScreen) && windowScreen === "overview" ? <HomeView data={data} language={language} onNavigate={navigate} mutate={mutate} /> : null}
+              {loadedScreens.has(windowScreen) && windowScreen === "nodes" ? <NodesView data={data} language={language} mutate={mutate} onAddFirstNodeHandled={() => setAddFirstNode(false)} onNavigate={navigate} startAdding={addFirstNode} /> : null}
+              {loadedScreens.has(windowScreen) && windowScreen === "apps" ? <AppsView active={active} data={data} language={language} mutate={mutate} workspaceKey={windowWorkspace} onOpenApp={openApp} onStore={() => navigate("apps")} onSettings={() => { navigate("settings"); window.history.replaceState({}, "", "/settings#catalog"); window.dispatchEvent(new HashChangeEvent("hashchange")); }} /> : null}
+              {loadedScreens.has(windowScreen) && windowScreen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
+              {loadedScreens.has(windowScreen) && windowScreen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} onNavigate={navigate} /> : null}
+              {loadedScreens.has(windowScreen) && windowScreen === "assistant" ? <AssistantView language={language} /> : null}
+              {loadedScreens.has(windowScreen) && windowScreen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setWindows(emptyWindows()); setPhase("login"); }} onNavigate={navigate} onRefresh={refreshSettings} /> : null}
             </Suspense>
           </div>
-      </DesktopShell>
+        );
+      }} />
     </TooltipProvider>
   );
 }

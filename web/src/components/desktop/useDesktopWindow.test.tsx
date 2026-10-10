@@ -31,13 +31,12 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("application window interaction", () => {
-  it("moves the window, restores its exact geometry after maximize and keeps each app independent", () => {
+  it("moves the window and restores its exact geometry after maximize", () => {
     render(); const original = rect();
     pointer(title(), "pointerdown", 400, 95); pointer(title(), "pointermove", 350, 195); pointer(title(), "pointerup", 350, 195);
     const moved = rect(); expect(moved).toEqual([original[0] - 50, original[1] + 100, original[2], original[3]]);
     act(() => container.querySelector("button")!.click()); expect(frame().dataset.maximized).toBe("true"); expect(rect()).toEqual([8, 42, 1560, 1078]);
     act(() => container.querySelector("button")!.click()); expect(rect()).toEqual(moved);
-    render("settings"); expect(rect()[2]).toBe(1080); render(); expect(rect()).toEqual(moved);
   });
   it.each(["Escape", "blur", "pointercancel", "lostpointercapture", "resize"])("cancels an in-progress gesture on %s", (reason) => {
     render(); const original = rect();

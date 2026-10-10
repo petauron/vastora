@@ -15,10 +15,10 @@ export function fitWindow(rect: WindowRect, viewport: Viewport): WindowRect {
   const height = clamp(rect.height, Math.min(360, bounds.height), bounds.height);
   return { width, height, x: clamp(rect.x, bounds.x, bounds.x + bounds.width - width), y: clamp(rect.y, bounds.y, bounds.y + bounds.height - height) };
 }
-function initialRect(key: string, viewport: Viewport): WindowRect {
+function initialRect(key: string, viewport: Viewport, launchIndex: number): WindowRect {
   const width = Math.min(key === "settings" ? 1080 : 1340, viewport.width - 80);
   const height = Math.min(key === "settings" ? 720 : 880, viewport.height - 180);
-  return fitWindow({ x: (viewport.width - width) / 2, y: 74, width, height }, viewport);
+  return fitWindow({ x: (viewport.width - width) / 2 + (launchIndex % 5) * 28, y: 74 + (launchIndex % 5) * 28, width, height }, viewport);
 }
 export function resizeWindow(rect: WindowRect, edge: ResizeEdge, dx: number, dy: number, viewport: Viewport): WindowRect {
   const bounds = area(viewport);
@@ -33,30 +33,25 @@ export function resizeWindow(rect: WindowRect, edge: ResizeEdge, dx: number, dy:
 
 // Pointer Capture provides both drag and eight-edge resize without an extra DnD
 // dependency. Base UI handles dialogs, but does not supply movable app windows.
-export function useDesktopWindow(key: string) {
+export function useDesktopWindow(key: string, launchIndex = 0) {
   const [viewport, setViewport] = useState(viewportSize);
-  const [windows, setWindows] = useState<Record<string, WindowState>>({});
+  const [saved, setSaved] = useState<WindowState | undefined>(undefined);
   const [interacting, setInteracting] = useState(false);
   const gesture = useRef<{
-    key: string; pointerId: number; element: HTMLElement; edge?: ResizeEdge;
+    pointerId: number; element: HTMLElement; edge?: ResizeEdge;
     startX: number; startY: number; origin: WindowRect; restore: WindowRect;
     previous: WindowState | undefined; maximized: boolean; moved: boolean; viewport: Viewport;
   } | null>(null);
   const compact = viewport.width <= 767;
-  const saved = windows[key];
-  const normalRect = fitWindow(saved?.rect ?? initialRect(key, viewport), viewport);
+  const initialIndex = useRef(launchIndex);
+  const normalRect = fitWindow(saved?.rect ?? initialRect(key, viewport, initialIndex.current), viewport);
   const maximized = !compact && (saved?.maximized ?? false);
   const rect = maximized ? area(viewport) : normalRect;
   const finish = useCallback((commit: boolean) => {
     const active = gesture.current;
     if (!active) return;
     gesture.current = null;
-    if (!commit && active.moved) setWindows((current) => {
-      const next = { ...current };
-      if (active.previous) next[active.key] = active.previous;
-      else delete next[active.key];
-      return next;
-    });
+    if (!commit && active.moved) setSaved(active.previous);
     if (active.element.hasPointerCapture(active.pointerId)) active.element.releasePointerCapture(active.pointerId);
     setInteracting(false);
   }, []);
@@ -69,15 +64,12 @@ export function useDesktopWindow(key: string) {
     window.addEventListener("keydown", escaped);
     return () => { window.removeEventListener("resize", resized); window.removeEventListener("blur", cancel); window.removeEventListener("keydown", escaped); };
   }, [finish]);
-  useEffect(() => () => finish(false), [key, finish]);
+  useEffect(() => () => finish(false), [finish]);
 
   const toggleMaximize = () => {
     if (compact) return;
     finish(false);
-    setWindows((current) => {
-      const prior = current[key];
-      return { ...current, [key]: { rect: prior?.rect ?? normalRect, maximized: !prior?.maximized } };
-    });
+    setSaved((current) => ({ rect: current?.rect ?? normalRect, maximized: !current?.maximized }));
   };
   const start = (event: PointerEvent<HTMLElement>, edge?: ResizeEdge) => {
     if (compact || event.button !== 0 || event.isPrimary === false || gesture.current || (edge && maximized)) return;
@@ -85,7 +77,7 @@ export function useDesktopWindow(key: string) {
     event.preventDefault();
     event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
-    gesture.current = { key, pointerId: event.pointerId, element: event.currentTarget, edge, startX: event.clientX, startY: event.clientY, origin: rect, restore: normalRect, previous: saved, maximized, moved: false, viewport };
+    gesture.current = { pointerId: event.pointerId, element: event.currentTarget, edge, startX: event.clientX, startY: event.clientY, origin: rect, restore: normalRect, previous: saved, maximized, moved: false, viewport };
   };
   const move = (event: PointerEvent<HTMLElement>) => {
     const active = gesture.current;
@@ -100,7 +92,7 @@ export function useDesktopWindow(key: string) {
       next = fitWindow({ ...active.restore, x: event.clientX - anchor * active.restore.width, y: event.clientY - (active.startY - active.origin.y) }, active.viewport);
     } else next = fitWindow({ ...active.origin, x: active.origin.x + dx, y: active.origin.y + dy }, active.viewport);
     setInteracting(true);
-    setWindows((current) => ({ ...current, [active.key]: { rect: next, maximized: false } }));
+    setSaved({ rect: next, maximized: false });
   };
   const pointerHandlers = {
     onPointerMove: move,
@@ -115,7 +107,7 @@ export function useDesktopWindow(key: string) {
     const dx = event.key === "ArrowLeft" ? -16 : event.key === "ArrowRight" ? 16 : 0;
     const dy = event.key === "ArrowUp" ? -16 : event.key === "ArrowDown" ? 16 : 0;
     const next = event.shiftKey ? resizeWindow(normalRect, "se", dx, dy, viewport) : fitWindow({ ...normalRect, x: normalRect.x + dx, y: normalRect.y + dy }, viewport);
-    setWindows((current) => ({ ...current, [key]: { rect: next, maximized: false } }));
+    setSaved({ rect: next, maximized: false });
   };
   return {
     compact, maximized, interacting, toggleMaximize,
