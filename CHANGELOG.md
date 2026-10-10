@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.305](https://github.com/petauron/vastora/compare/v0.1.0-alpha.304...v0.1.0-alpha.305) (2026-10-10)
+
+
+### Bug Fixes
+
+* **web:** stabilize desktop surfaces during marquee selection ([#872](https://github.com/petauron/vastora/issues/872)) ([8773b61](https://github.com/petauron/vastora/commit/8773b6197edd2a5c6d7c88c067e04048354ad7c6))
+
 ## [0.1.0-alpha.304](https://github.com/petauron/vastora/compare/v0.1.0-alpha.303...v0.1.0-alpha.304) (2026-10-10)
 
 
