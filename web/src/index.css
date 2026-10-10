@@ -274,19 +274,41 @@
   --desktop-muted: #6e6e73;
   --desktop-line: rgb(255 255 255 / 58%);
   --desktop-hover: rgb(255 255 255 / 35%);
+  position: relative;
+  isolation: isolate;
   min-height: 100svh;
   padding: 34px 0 0;
-  background: #9cabc7 url('/images/desktop-coast.jpg') center center / cover fixed;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', sans-serif;
+}
+/* Keep the fixed wallpaper separate from the frequently repainted desktop. */
+.desktop-shell::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: #9cabc7 url('/images/desktop-coast.jpg') center center / cover;
 }
 .dark .desktop-shell {
   --desktop-ink: #f3f5fa;
   --desktop-muted: #b0b0b5;
   --desktop-line: rgb(255 255 255 / 18%);
   --desktop-hover: rgb(255 255 255 / 12%);
-  background-image: linear-gradient(#0910203b, #0910203b), url('/images/desktop-coast.jpg');
 }
-.desktop-system-bar { position: fixed; inset: 0 0 auto; z-index: 30; height: 34px; display: flex; align-items: center; gap: 2px; padding: 0 18px; color: var(--desktop-ink); background: var(--desktop-glass); backdrop-filter: blur(22px) saturate(140%); box-shadow: 0 1px 0 #00000006; font-size: 13px; }
+.dark .desktop-shell::before { background-image: linear-gradient(#0910203b, #0910203b), url('/images/desktop-coast.jpg'); }
+.desktop-system-bar { position: fixed; inset: 0 0 auto; z-index: 30; height: 34px; display: flex; align-items: center; gap: 2px; padding: 0 18px; color: var(--desktop-ink); box-shadow: 0 1px 0 #00000006; font-size: 13px; }
+/* Navigation glass is painted separately from its controls. */
+.desktop-system-bar::before, .desktop-dock::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  background: var(--desktop-glass);
+}
+.desktop-system-bar::before { backdrop-filter: blur(22px) saturate(140%); }
+.desktop-dock::before { backdrop-filter: blur(24px) saturate(160%); }
 .desktop-system-bar [data-slot="button"] { color: inherit; height: 28px; width: 32px; border-radius: 5px; }
 .desktop-system-bar [data-slot="button"]:hover, .desktop-menu-trigger:hover, .desktop-menu-brand:hover { background: var(--desktop-hover); }
 .desktop-menu-brand, .desktop-menu-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 9px; height: 30px; padding: 0 11px; border-radius: 5px; }
@@ -340,8 +362,9 @@
 .desktop-window-content { container-type: inline-size; min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 24px; padding: 28px; overflow: auto; background: var(--background); outline: none; }
 .desktop-home-content { min-width: 0; display: flex; flex-direction: column; gap: 16px; outline: none; }
 .desktop-home { position: relative; display: block; min-height: calc(100svh - 34px); padding: 24px 24px 106px; user-select: none; outline: none; }
-/* A light inner edge and dark outer edge stay distinct over both sky and sea. */
-.desktop-selection-box { position: absolute; z-index: 10; pointer-events: none; border: 1px solid var(--desktop-selection-border); background: var(--desktop-selection-fill); background-clip: padding-box; box-shadow: 0 0 0 1px var(--desktop-selection-outer-border); border-radius: 2px; }
+/* Keep marquee repaints in their own layer, below the system bar and Dock.
+   A light inner edge and dark outer edge stay distinct over both sky and sea. */
+.desktop-selection-box { position: absolute; z-index: 10; pointer-events: none; contain: strict; will-change: transform; border: 1px solid var(--desktop-selection-border); background: var(--desktop-selection-fill); background-clip: padding-box; box-shadow: 0 0 0 1px var(--desktop-selection-outer-border); border-radius: 2px; }
 @media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
   .desktop-selection-box { border: 2px solid #fff; background: transparent; box-shadow: 0 0 0 1px #1d1d1f; }
 }
@@ -364,7 +387,8 @@
 .desktop-shortcut-art { position: relative; display: inline-flex; }
 .desktop-shortcut-link { position: absolute; left: -1px; bottom: 1px; display: grid; place-items: center; width: 15px; height: 15px; border: 1px solid #b5b5bb; border-radius: 4px; background: #f7f7fa; color: #47474d; box-shadow: 0 1px 2px #00000030; }
 .desktop-shortcut-link svg { width: 11px; height: 11px; stroke-width: 2; }
-.desktop-widget { position: absolute; z-index: 1; left: 24px; top: 24px; flex-shrink: 0; width: 264px; padding: 14px 18px 18px; border: 1px solid var(--desktop-line); border-radius: 22px; background: var(--desktop-glass); backdrop-filter: blur(24px) saturate(130%); color: var(--desktop-ink); box-shadow: 0 6px 22px #14243b14; }
+/* The status card uses one opaque surface; no live backdrop sampling. */
+.desktop-widget { position: absolute; z-index: 1; left: 24px; top: 24px; flex-shrink: 0; width: 264px; padding: 14px 18px 18px; border: 1px solid var(--desktop-line); border-radius: 22px; background: var(--desktop-glass-strong); color: var(--desktop-ink); box-shadow: 0 6px 22px #14243b14; }
 .desktop-widget-heading { display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 600; }
 .desktop-widget-heading button { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; }
 .desktop-widget-heading button:hover { background: var(--desktop-hover); }
@@ -374,7 +398,7 @@
 .desktop-widget-stats small { font-size: 13px; letter-spacing: 0; color: var(--desktop-muted); }
 .desktop-widget-notice { display: flex; align-items: center; gap: 8px; min-height: 36px; margin-top: 8px; border-top: 1px solid color-mix(in srgb, var(--desktop-ink) 10%, transparent); text-align: left; font-size: 12px; }
 .desktop-widget-notice svg { margin-left: auto; width: 13px; height: 13px; flex-shrink: 0; }
-.desktop-dock { position: fixed; z-index: 30; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; align-items: center; gap: 5px; max-width: calc(100% - 24px); padding: 8px 10px; border: 1px solid var(--desktop-line); border-radius: 23px; background: var(--desktop-glass); backdrop-filter: blur(24px) saturate(160%); box-shadow: inset 0 1px 1px #ffffff5c, 0 10px 35px #17283830; color: var(--desktop-ink); }
+.desktop-dock { position: fixed; z-index: 30; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; align-items: center; gap: 5px; max-width: calc(100% - 24px); padding: 8px 10px; border: 1px solid var(--desktop-line); border-radius: 23px; box-shadow: inset 0 1px 1px #ffffff5c, 0 10px 35px #17283830; color: var(--desktop-ink); }
 .desktop-dock-item { position: relative; display: flex; width: 58px; height: 62px; flex-shrink: 0; align-items: flex-start; justify-content: center; padding: 2px 3px 8px; border-radius: 12px; }
 .desktop-dock-item .desktop-app-icon, .desktop-launchpad-icon { width: 50px; height: 50px; transition: transform .18s ease; transform-origin: center bottom; }
 .desktop-dock-item:hover .desktop-app-icon, .desktop-dock-item:hover .desktop-launchpad-icon, .desktop-dock-item:focus-visible .desktop-app-icon { transform: translateY(-4px) scale(1.09); }
@@ -485,7 +509,7 @@
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .store-navigation { background: var(--sidebar); }
-  .desktop-system-bar, .desktop-widget, .desktop-dock, .desktop-window { background: var(--desktop-glass-strong); backdrop-filter: none; }
+  .desktop-system-bar::before, .desktop-dock::before, .desktop-window { background: var(--desktop-glass-strong); backdrop-filter: none; }
   .desktop-shortcut > .desktop-shortcut-label { text-shadow: 0 1px 2px #101827, 0 0 3px #101827, 0 0 8px #101827; }
 }
 @media (prefers-reduced-motion: reduce) {
