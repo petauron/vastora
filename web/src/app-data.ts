@@ -52,64 +52,38 @@ async function loadCatalogSources(signal?: AbortSignal): Promise<Pick<AppData, "
   }
 }
 
-export async function loadScreenData(screen: Screen, signal?: AbortSignal): Promise<AppDataPatch> {
-  const statusPromise = api.status(signal);
+// Desktop shortcuts, launch targets and the status widget belong to the shell.
+// Load them once per refresh, including direct visits to application windows.
+async function loadDesktopData(signal?: AbortSignal): Promise<AppDataPatch> {
+  const [status, apps, agents, applications, services, publications] = await Promise.all([
+    api.status(signal), api.apps(signal), api.agents(signal), api.applications(signal), api.services(signal), api.publications(signal)
+  ]);
+  return { status, apps: apps.apps, agents: agents.agents, applications: applications.applications, services: services.services, publications: publications.publications };
+}
 
+export async function loadScreenData(screen: Screen, signal?: AbortSignal): Promise<AppDataPatch> {
+  const desktop = loadDesktopData(signal);
   switch (screen) {
-    case "home": {
-      const [status, apps, agents, applications, services, publications] = await Promise.all([
-        statusPromise, api.apps(signal), api.agents(signal), api.applications(signal), api.services(signal), api.publications(signal)
-      ]);
-      return { status, apps: apps.apps, agents: agents.agents, applications: applications.applications, services: services.services, publications: publications.publications };
-    }
+    case "home":
+    case "assistant":
+      return desktop;
     case "overview": {
-      const [status, centerUpdate, sites, agents, applications, publications, actions] = await Promise.all([
-        statusPromise,
-        api.centerUpdate(false, signal),
-        api.sites(signal),
-        api.agents(signal),
-        api.applications(signal),
-        api.publications(signal),
-        api.actions(10, signal)
+      const [shared, centerUpdate, sites, actions] = await Promise.all([
+        desktop, api.centerUpdate(false, signal), api.sites(signal), api.actions(10, signal)
       ]);
-      return {
-        status,
-        centerUpdate,
-        sites: sites.sites,
-        agents: agents.agents,
-        applications: applications.applications,
-        publications: publications.publications,
-        actions: actions.actions
-      };
+      return { ...shared, centerUpdate, sites: sites.sites, actions: actions.actions };
     }
     case "nodes": {
-      const [status, sites, agents, integrations, publications, meridian] = await Promise.all([
-        statusPromise,
-        api.sites(signal),
-        api.agents(signal),
-        api.integrations(signal),
-        api.publications(signal),
-        api.meridian(signal)
+      const [shared, sites, integrations, meridian] = await Promise.all([
+        desktop, api.sites(signal), api.integrations(signal), api.meridian(signal)
       ]);
-      return {
-        status,
-        sites: sites.sites,
-        agents: agents.agents,
-        integrations: integrations.integrations,
-        publications: publications.publications,
-        meridian
-      };
+      return { ...shared, sites: sites.sites, integrations: integrations.integrations, meridian };
     }
     case "apps": {
-      const [status, apps, registryCredentials, agents, deployments, applications, services, publications, integrations, sites, migrations, meridian, remoteAccess, catalogSources] = await Promise.all([
-        statusPromise,
-        api.apps(signal),
+      const [shared, registryCredentials, deployments, integrations, sites, migrations, meridian, remoteAccess, catalogSources] = await Promise.all([
+        desktop,
         api.registryCredentials(signal),
-        api.agents(signal),
         api.deployments(signal),
-        api.applications(signal),
-        api.services(signal),
-        api.publications(signal),
         api.integrations(signal),
         api.sites(signal),
         api.threeXUIControllerMigrations(signal),
@@ -118,14 +92,9 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
         loadCatalogSources(signal)
       ]);
       return {
-        status,
-        apps: apps.apps,
+        ...shared,
         registryCredentials: registryCredentials.credentials,
-        agents: agents.agents,
         deployments: deployments.deployments,
-        applications: applications.applications,
-        services: services.services,
-        publications: publications.publications,
         integrations: integrations.integrations,
         sites: sites.sites,
         threeXUIControllerMigrations: migrations.migrations,
@@ -135,45 +104,20 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
       };
     }
     case "network": {
-      const [status, agents, integrations, tailscaleFixedEndpoint, centerRemoteAccess] = await Promise.all([
-        statusPromise,
-        api.agents(signal),
-        api.integrations(signal),
-        api.tailscaleFixedEndpoint(signal),
-        api.centerRemoteAccess(signal)
+      const [shared, integrations, tailscaleFixedEndpoint, centerRemoteAccess] = await Promise.all([
+        desktop, api.integrations(signal), api.tailscaleFixedEndpoint(signal), api.centerRemoteAccess(signal)
       ]);
-      return { status, agents: agents.agents, integrations: integrations.integrations, tailscaleFixedEndpoint, centerRemoteAccess, centerRemoteAccessError: undefined };
+      return { ...shared, integrations: integrations.integrations, tailscaleFixedEndpoint, centerRemoteAccess, centerRemoteAccessError: undefined };
     }
     case "activity": {
-      const [status, actions, agents] = await Promise.all([
-        statusPromise,
-        api.actions(100, signal),
-        api.agents(signal)
-      ]);
-      return { status, actions: actions.actions, agents: agents.agents };
-    }
-    case "assistant": {
-      const status = await statusPromise;
-      return { status };
+      const [shared, actions] = await Promise.all([desktop, api.actions(100, signal)]);
+      return { ...shared, actions: actions.actions };
     }
     case "settings": {
-      const [status, centerUpdate, sources, applications, agents, systemDomain] = await Promise.all([
-        statusPromise,
-        api.centerUpdate(false, signal),
-        api.sources(signal),
-        api.applications(signal),
-        api.agents(signal),
-        api.systemDomain(signal)
+      const [shared, centerUpdate, sources, systemDomain] = await Promise.all([
+        desktop, api.centerUpdate(false, signal), api.sources(signal), api.systemDomain(signal)
       ]);
-      return {
-        status,
-        centerUpdate,
-        sources: sources.sources,
-        catalogSourcesError: undefined,
-        applications: applications.applications,
-        agents: agents.agents,
-        systemDomain
-      };
+      return { ...shared, centerUpdate, sources: sources.sources, catalogSourcesError: undefined, systemDomain };
     }
   }
 }

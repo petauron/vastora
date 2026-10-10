@@ -28,7 +28,7 @@ import { OfficialAppManagerHost } from "@/app-workspaces/OfficialAppWorkspaceHos
 
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
 
-export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onStore, onSettings }: { data: AppData; language: Language; mutate: Mutate; workspaceKey: string | null; onOpenApp: (key: string) => void; onStore: () => void; onSettings: () => void }) {
+export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onStore, onSettings, active = true }: { data: AppData; language: Language; mutate: Mutate; active?: boolean; workspaceKey: string | null; onOpenApp: (key: string) => void; onStore: () => void; onSettings: () => void }) {
   const [deploymentEditor, setDeploymentEditor] = useState<DeploymentEditor>(null);
   const [publicationService, setPublicationService] = useState<Service | null>(null);
   const [uninstallApplication, setUninstallApplication] = useState<Application | null>(null);
@@ -70,7 +70,8 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
   };
 
 	useEffect(() => {
-		if (credentials) return;
+		if (!active || credentials) return;
+		let cancelled = false;
 		for (const deployment of data.deployments) {
 			if (!deployment.oneTimeCredentialsAvailable) continue;
 			const scope = deploymentSecretScope(deployment.agentId, deployment.appKey, deployment.operation);
@@ -80,13 +81,13 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
 			if (credentialRecovery.current === recoveryKey) return;
 			credentialRecovery.current = recoveryKey;
 			void api.revealDeploymentCredentials(deployment.id, operationKey).then((value) => {
-				setCredentials({ ...value, deploymentId: deployment.id, operationKey, scope });
+				if (!cancelled) setCredentials({ ...value, deploymentId: deployment.id, operationKey, scope });
 			}).catch(() => { /* The next screen refresh may retry the same durable delivery. */ }).finally(() => {
 				if (credentialRecovery.current === recoveryKey) credentialRecovery.current = "";
 			});
-			return;
+			return () => { cancelled = true; };
 		}
-	}, [credentials, data.deployments]);
+	}, [active, credentials, data.deployments]);
 
 	const acknowledgeCredentials = async () => {
 		if (!credentials) return;

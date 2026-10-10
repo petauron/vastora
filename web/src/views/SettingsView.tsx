@@ -47,7 +47,7 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
   const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
   const [diagnosticsError, setDiagnosticsError] = useState("");
   useEffect(() => {
-    const syncSection = () => setSection(sectionFromHash());
+    const syncSection = () => { if (window.location.pathname === "/settings" && window.location.hash) setSection(sectionFromHash()); };
     window.addEventListener("hashchange", syncSection);
     window.addEventListener("popstate", syncSection);
     return () => {

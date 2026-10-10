@@ -71,6 +71,114 @@ async function renderReadyApp() {
 }
 
 describe("application shell", () => {
+  it("keeps desktop selection and the same surface mounted behind an opened and minimized window", async () => {
+    mockReadyCenter();
+    const container = await renderReadyApp();
+    const desktop = container.querySelector(".desktop-home");
+    const shortcut = container.querySelector<HTMLButtonElement>('[data-desktop-item="system:nodes"]')!;
+    act(() => shortcut.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 })));
+    expect(shortcut.dataset.selected).toBe("true");
+    act(() => {
+      window.history.pushState({}, "", "/overview");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await vi.waitFor(() => expect(container.querySelector(".desktop-window")).not.toBeNull());
+    expect(container.querySelector(".desktop-home")).toBe(desktop);
+    expect(shortcut.dataset.selected).toBe("true");
+    expect(container.querySelectorAll('[role="main"]')).toHaveLength(1);
+    expect(container.querySelector(".desktop-window .desktop-home")).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Minimize window"]')?.click());
+    expect(container.querySelector<HTMLElement>(".desktop-window")?.style.display).toBe("none");
+    expect(container.querySelector(".desktop-home")).toBe(desktop);
+    expect(shortcut.dataset.selected).toBe("true");
+    expect(container.querySelectorAll('[role="main"]')).toHaveLength(1);
+  });
+
+  it("renders installed shortcuts on a direct non-desktop visit and keeps the mobile background inert", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    window.history.replaceState({}, "", "/overview");
+    mockReadyCenter();
+    vi.mocked(api.applications).mockResolvedValue({ applications: [{ id: "sample-app", name: "Sample app", nodeId: "sample-node", siteId: "sample-site", appKey: "example/sample", installedVersion: "1.0.0", image: "example/sample:1", status: "running", runtime: "docker", updateAvailable: false, createdAt: "", updatedAt: "" }] });
+    const container = await renderReadyApp();
+    const desktop = container.querySelector(".desktop-home");
+    expect(desktop?.querySelector('[data-desktop-item="app:example/sample"]')?.textContent).toContain("Sample app");
+    expect(container.querySelector(".desktop-surface")?.hasAttribute("inert")).toBe(true);
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Minimize window"]')?.click());
+    expect(container.querySelector(".desktop-home")).toBe(desktop);
+    expect(container.querySelector(".desktop-surface")?.hasAttribute("inert")).toBe(false);
+  });
+
+  it("keeps independent windows, geometry and local input across focus, minimize and close", async () => {
+    window.history.replaceState({}, "", "/overview");
+    mockReadyCenter();
+    vi.mocked(api.agents).mockResolvedValue({ agents: [{ id: "test-node", name: "Test host", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 0, enrolledAt: "", lastSeenAt: "", siteId: "test-site", roles: ["worker"], connected: true, credentialRevoked: false, capabilities: { docker: false, gateway: false, tunnel: false, metrics: true, logs: false, executorVersions: { systemd: 1 }, runtimeCapabilities: [] }, networkCandidates: [], networkProfile: { serviceAddress: "10.0.0.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: false, remoteUpdateSupported: true }] });
+    const container = await renderReadyApp();
+    const overview = container.querySelector<HTMLElement>('[data-window-id="overview"]')!;
+    const title = overview.querySelector<HTMLElement>('.desktop-window-bar')!;
+    const initialLeft = parseFloat(overview.style.left);
+    act(() => title.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", altKey: true, bubbles: true, cancelable: true })));
+    const movedLeft = overview.style.left;
+    expect(parseFloat(movedLeft)).toBeGreaterThan(initialLeft);
+    const nodesButton = container.querySelector<HTMLButtonElement>('.desktop-dock button[aria-label="Hosts"]')!;
+    await act(async () => nodesButton.click());
+    const nodes = container.querySelector<HTMLElement>('[data-window-id="nodes"]')!;
+    expect(container.querySelectorAll(".desktop-window")).toHaveLength(2);
+    expect(overview.style.display).not.toBe("none");
+    expect(nodes.dataset.active).toBe("true");
+    expect(overview.style.left).toBe(movedLeft);
+    await vi.waitFor(() => expect(nodes.querySelector('input[aria-label="Search nodes"]')).not.toBeNull());
+    const search = nodes.querySelector<HTMLInputElement>('input[aria-label="Search nodes"]')!;
+    expect(search).not.toBeNull();
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "keep this query");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const dockOrder = [...container.querySelectorAll('.desktop-dock button')].map((button) => button.getAttribute("aria-label"));
+    await act(async () => overview.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    expect(overview.dataset.active).toBe("true");
+    expect(Number(overview.style.zIndex)).toBeGreaterThan(Number(nodes.style.zIndex));
+    expect([...container.querySelectorAll('.desktop-dock button')].map((button) => button.getAttribute("aria-label"))).toEqual(dockOrder);
+    await act(async () => nodesButton.click());
+    expect(container.querySelectorAll(".desktop-window")).toHaveLength(2);
+    expect(nodes.querySelector("input")).toBe(search);
+    expect(search.value).toBe("keep this query");
+    await act(async () => nodes.querySelector<HTMLButtonElement>('[aria-label="Minimize window"]')!.click());
+    expect(nodes.style.display).toBe("none");
+    expect(overview.dataset.active).toBe("true");
+    expect(window.location.pathname).toBe("/overview");
+    await act(async () => nodesButton.click());
+    expect(nodes.style.display).not.toBe("none");
+    expect(search.value).toBe("keep this query");
+    await act(async () => nodes.querySelector<HTMLButtonElement>('[aria-label="Close window"]')!.click());
+    expect(container.querySelector('[data-window-id="nodes"]')).toBeNull();
+    expect(container.querySelector('[data-window-id="overview"]')).toBe(overview);
+    expect(overview.style.left).toBe(movedLeft);
+    expect(container.querySelectorAll('[role="main"]')).toHaveLength(1);
+    await act(async () => container.querySelector<HTMLButtonElement>('.desktop-dock button[aria-label="Desktop"]')!.click());
+    expect(overview.style.display).toBe("none");
+    expect(container.querySelector('.desktop-home')).not.toBeNull();
+  });
+
+  it("shows only the foreground window on mobile and restores background windows on desktop", async () => {
+    window.history.replaceState({}, "", "/overview");
+    mockReadyCenter();
+    const container = await renderReadyApp();
+    await act(async () => container.querySelector<HTMLButtonElement>('.desktop-dock button[aria-label="Hosts"]')!.click());
+    const overview = container.querySelector<HTMLElement>('[data-window-id="overview"]')!;
+    const nodes = container.querySelector<HTMLElement>('[data-window-id="nodes"]')!;
+    await act(async () => { vi.stubGlobal("innerWidth", 390); window.dispatchEvent(new Event("resize")); });
+    expect(overview.style.display).toBe("none");
+    expect(nodes.style.display).not.toBe("none");
+    expect(container.querySelector('.desktop-surface')?.hasAttribute("inert")).toBe(true);
+    await act(async () => container.querySelector<HTMLButtonElement>('.desktop-dock button[aria-label="Overview"]')!.click());
+    expect(overview.style.display).not.toBe("none");
+    expect(nodes.style.display).toBe("none");
+    await act(async () => { vi.stubGlobal("innerWidth", 1576); window.dispatchEvent(new Event("resize")); });
+    expect(overview.style.display).not.toBe("none");
+    expect(nodes.style.display).not.toBe("none");
+    expect(container.querySelector('[data-window-id="overview"]')).toBe(overview);
+  });
+
   it("keeps one neutral startup screen during StrictMode initialization and delayed session data", async () => {
     const status = mockReadyCenter();
     const pending = deferred<Awaited<ReturnType<typeof api.status>>>();

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APIError, api } from "./api";
 import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import type { CenterStatus } from "./types";
@@ -11,6 +11,12 @@ const status: CenterStatus = {
   agentConnectionMode: "lan",
   agentConnectUrl: "https://center.example.com"
 };
+
+beforeEach(() => {
+  vi.spyOn(api, "apps").mockResolvedValue({ apps: [] });
+  vi.spyOn(api, "applications").mockResolvedValue({ applications: [] });
+  vi.spyOn(api, "services").mockResolvedValue({ services: [] });
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -33,7 +39,7 @@ describe("screen-scoped data loading", () => {
     expect(loadMeridian).toHaveBeenCalledWith(undefined);
   });
 
-  it("loads only the overview summary resources", async () => {
+  it("loads the persistent desktop and overview summary without deployment history", async () => {
     const controller = new AbortController();
     vi.spyOn(api, "status").mockResolvedValue(status);
     vi.spyOn(api, "centerUpdate").mockResolvedValue({ currentVersion: "test", latestVersion: "test", updateAvailable: false, releaseCheckAvailable: true, automatic: true, state: "idle" });
@@ -50,7 +56,9 @@ describe("screen-scoped data loading", () => {
     expect(result.status).toEqual(status);
     expect(actions).toHaveBeenCalledWith(10, controller.signal);
     expect(api.status).toHaveBeenCalledWith(controller.signal);
-    expect(apps).not.toHaveBeenCalled();
+    expect(apps).toHaveBeenCalledOnce();
+    expect(apps).toHaveBeenCalledWith(controller.signal);
+    expect(result.services).toEqual([]);
     expect(deployments).not.toHaveBeenCalled();
   });
 
@@ -81,6 +89,7 @@ describe("screen-scoped data loading", () => {
     expect(result.centerRemoteAccess).toEqual({ available: true, enabled: true, status: "configured" });
     expect(centerRemoteAccess).toHaveBeenCalledWith(undefined);
     expect(actions).not.toHaveBeenCalled();
+    for (const endpoint of [api.status, api.apps, api.agents, api.applications, api.services, api.publications]) expect(endpoint).toHaveBeenCalledOnce();
   });
 
   it("keeps the application workspace fail closed when remote entry status cannot be loaded", async () => {
