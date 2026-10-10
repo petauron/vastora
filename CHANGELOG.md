@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.303](https://github.com/petauron/vastora/compare/v0.1.0-alpha.302...v0.1.0-alpha.303) (2026-10-10)
+
+
+### Bug Fixes
+
+* **deps:** update x/net for HTTP/2 security fixes ([#868](https://github.com/petauron/vastora/issues/868)) ([8d9d3ab](https://github.com/petauron/vastora/commit/8d9d3ab6b4fd036343378b17d8b7bf7c3f2eab73))
+* **web:** complete macOS desktop windows and workspace interactions ([#866](https://github.com/petauron/vastora/issues/866)) ([fa7a550](https://github.com/petauron/vastora/commit/fa7a5505ab81a48bdf290186dc1a59b839d63244))
+
 ## [0.1.0-alpha.302](https://github.com/petauron/vastora/compare/v0.1.0-alpha.301...v0.1.0-alpha.302) (2026-10-09)
 
 
