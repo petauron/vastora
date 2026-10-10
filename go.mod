@@ -12,7 +12,6 @@ require (
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.1
 	github.com/petauron/catalog v0.2.0
-	github.com/opencontainers/go-digest v1.0.0
 	github.com/petauron/meridian v0.0.0-20261007044131-62cd660b5e5e
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/projectdiscovery/cdncheck v1.2.51
@@ -50,7 +49,7 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
