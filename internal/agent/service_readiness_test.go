@@ -3,10 +3,23 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/petauron/catalog/catalog"
 )
+
+func TestWaitForServiceEndpointRejectsInvalidURLWithoutWaiting(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		err := waitForServiceEndpoint(context.Background(), "127.0.0.1", 80, catalog.Service{Protocol: "http", HealthPath: "/%zz"})
+		if err == nil || !strings.Contains(err.Error(), "invalid health endpoint") || time.Since(start) != 0 {
+			t.Fatalf("invalid endpoint retried: elapsed=%s err=%v", time.Since(start), err)
+		}
+	})
+}
 
 func TestServiceReadinessAllowsSlowStartup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {

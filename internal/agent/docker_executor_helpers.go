@@ -74,14 +74,14 @@ func waitForServiceEndpoint(ctx context.Context, address string, port int, servi
 		})
 	}
 	target := service.Protocol + "://" + net.JoinHostPort(address, strconv.Itoa(port)) + service.HealthPath
+	request, err := http.NewRequestWithContext(readyContext, http.MethodGet, target, nil)
+	if err != nil {
+		return fmt.Errorf("invalid health endpoint: %w", err)
+	}
 	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
 	defer client.CloseIdleConnections()
 	return waitForServiceReady(readyContext, func(ctx context.Context) error {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-		if err != nil {
-			return fmt.Errorf("invalid health endpoint: %w", err)
-		}
-		response, err := client.Do(request)
+		response, err := client.Do(request.Clone(ctx))
 		if err != nil {
 			return err
 		}
