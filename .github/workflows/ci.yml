@@ -58,6 +58,9 @@ jobs:
       - name: Verify Meridian destination and official UI migrations
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: go test ./internal/center -run '^(TestVersion(100|102)|TestOfficialUI|TestMeridianHost)' -count=1
+      - name: Verify product brand name migrations
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
+        run: go test ./internal/center -run '^TestProductBrandMigration' -count=1
       - name: Verify task triage pagination
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: go test ./internal/center -run '^TestExecutionPagesRetainOldUnresolvedHistory$' -count=1
