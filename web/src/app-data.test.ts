@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe("screen-scoped data loading", () => {
-  it("loads Meridian recovery state on a direct nodes visit", async () => {
+  it("loads Glivela recovery state on a direct nodes visit", async () => {
     vi.spyOn(api, "status").mockResolvedValue(status);
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
     vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });

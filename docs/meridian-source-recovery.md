@@ -1,13 +1,13 @@
-# Meridian entry identity recovery
+# Glivela entry identity recovery
 
 After an explicitly reenrolled node changes its managed private peer identity,
 ordinary authenticated reports withdraw its old landing authorization. They never
 replace the endpoint's pinned identity. Native runtime readiness alone does not
 make the fixed landing routes ready.
 
-Restore the native Meridian runtime first, settle any uncertain executions in
+Restore the native Glivela runtime first, settle any uncertain executions in
 Activity, and let the affected landings acknowledge removal of the old source.
-In Meridian's advanced entry settings, inspect the replacement identity and
+In Glivela's advanced entry settings, inspect the replacement identity and
 confirm that this is the reinstalled node and the previous node/tasks stopped.
 
 The admin-only `GET /api/v1/meridian/endpoints/{id}/source-recovery` returns the

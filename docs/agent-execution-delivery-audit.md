@@ -1,6 +1,6 @@
 # #412 / #428 交付盘点
 
-状态更新（2026-10-01）：MVP 实现已由 [PR #429](https://github.com/petauron/vastora/pull/429) 合并，已包含在 `v0.1.0-alpha.265`。#428 的调用点与连接生命周期定向回归已完成复核，见 [验收记录](agent-local-http-lifecycle.md)。#412 本轮补齐 Xray/Meridian 替换失败与进程重启的停止边界，当前契约和回归入口见 [执行策略](agent-execution-stop-on-error.md)；这部分新增修复须由后续版本发布，不能视为 alpha.265 已包含。
+状态更新（2026-10-01）：MVP 实现已由 [PR #429](https://github.com/petauron/vastora/pull/429) 合并，已包含在 `v0.1.0-alpha.265`。#428 的调用点与连接生命周期定向回归已完成复核，见 [验收记录](agent-local-http-lifecycle.md)。#412 本轮补齐 Xray/Glivela 替换失败与进程重启的停止边界，当前契约和回归入口见 [执行策略](agent-execution-stop-on-error.md)；这部分新增修复须由后续版本发布，不能视为 alpha.265 已包含。
 
 下文“固定范围”及五组盘点保留为当时的开发记录，其中“本轮”“仍需”“未提交”等描述对应当时状态，不代表当前发布状态。后续验收以以下 MVP 范围为准，不重新引入已经延后的发布门槛。
 
@@ -55,9 +55,9 @@ REALITY 创建的失败删除补偿、次数阈值回滚、响应丢失后继续
 
 旧 deferred 双错误类型、次数阈值和延后/阈值转人工判定已全部删除，所有调用点统一使用 uncertainTaskOutcome；不再保留旧名称别名。不确定结果的上报不依赖 attempt，第一次就需要处置。普通错误与不确定结果区分、原因解包及高次数不回滚测试保留；Agent 全包通过（6.335s），已删除符号无引用，diff 检查通过。
 
-探针 ApplyKomari/ApplyPulse 的失败回滚、取消后继续 stop/disable/reload/restart 已删除。变更前将已有受管文件保存在权限 0600 的 .previous 备份；已有备份未核对时拒绝覆盖；成功后清理备份，失败保留现状及 Pulse 身份。旧恢复测试断言改为保留备份/现场。按用户最新要求，本轮仅格式与 diff 检查，未重跑测试。
+探针 ApplyKomari/ApplyPulse 的失败回滚、取消后继续 stop/disable/reload/restart 已删除。变更前将已有受管文件保存在权限 0600 的 .previous 备份；已有备份未核对时拒绝覆盖；成功后清理备份，失败保留现状及 Senulun 身份。旧恢复测试断言改为保留备份/现场。按用户最新要求，本轮仅格式与 diff 检查，未重跑测试。
 
-补充：逐文件写入、备份建立/删除、Pulse token 清理前检查取消，取消后不再进入下一步。补充取消备份/清理的最小测试代码，但本轮未运行。
+补充：逐文件写入、备份建立/删除、Senulun token 清理前检查取消，取消后不再进入下一步。补充取消备份/清理的最小测试代码，但本轮未运行。
 
 另已修复部分结果丢失：容器配置已生成 API token 后的校验/晋升/清理错误保留 token，部署层继续带回 GeneratedSecrets；REALITY 部分结果在失败时进入加密结果证据，不被成功判断丢弃。相关定向验证已通过（用户减少测试要求之前）。
 

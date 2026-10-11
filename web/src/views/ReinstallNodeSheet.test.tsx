@@ -9,7 +9,7 @@ import { dashboard, render, rerender } from "./views.test-support";
 const review = (): AgentReinstallPlan => ({
   agentId: "agent", revision: "a".repeat(64), checkedAt: "2026-10-01T00:00:00Z", identityFingerprint: "b".repeat(64), credentialRevoked: false,
   privateNetwork: { ownership: "managed", serviceAddress: "100.64.0.2", privateAddress: "100.64.0.2", profileRetained: false, addressRecovery: "explicit_migration_required", landingRoutes: 1, publications: 2 },
-  applications: [{ applicationId: "app", name: "Meridian", appKey: "vastora-official/meridian", deploymentId: "deployment", version: "0.1.0-alpha.12", operation: "install", state: "succeeded", recovery: "rebuild_configuration", sharedEntry: false, requirements: [] }],
+  applications: [{ applicationId: "app", name: "Glivela", appKey: "vastora-official/meridian", deploymentId: "deployment", version: "0.1.0-alpha.12", operation: "install", state: "succeeded", recovery: "rebuild_configuration", sharedEntry: false, requirements: [] }],
   pendingWork: [{ agentId: "agent", kind: "application.apply", count: 1 }], unclaimedLocalWork: [], executions: [], monitoring: [], requirements: [],
 });
 const command = { token: "replacement-token", siteId: "site", centerUrl: "https://center.example.com", installerUrl: "https://center.example.com", expiresAt: "2099-01-01T00:00:00Z" };
@@ -42,7 +42,7 @@ describe("node reinstall review", () => {
     vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
     await show();
     const section = document.body.querySelector('[aria-label="恢复尚缺"]');
-    expect(section?.textContent).toContain("Meridian：待验收原生线路及已配置落地线路的真实客户端请求");
+    expect(section?.textContent).toContain("Glivela：待验收原生线路及已配置落地线路的真实客户端请求");
     expect(section?.textContent).toContain("由服务端核对全部证据后完成恢复");
     expect(button("完成恢复")).toBeUndefined();
   });
@@ -269,7 +269,7 @@ describe("original monitoring identity inspection", () => {
     const plan = monitorPlan(); plan.monitoring[0].serviceAgentId = "agent";
     vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
     await show();
-    expect(document.body.textContent).toContain("先恢复本机的 Pulse 服务和数据");
+    expect(document.body.textContent).toContain("先恢复本机的 Senulun 服务和数据");
     expect(button("核验原监控身份")).toBeUndefined();
   });
 });

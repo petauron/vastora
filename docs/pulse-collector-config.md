@@ -1,8 +1,8 @@
-# Pulse configuration
+# Senulun configuration
 
 ## Service authentication initialization
 
-The new Pulse Service requires both application fields before installation or
+The new Senulun Service requires both application fields before installation or
 the first upgrade from Alpha.2:
 
 | Configuration key | Behavior |
@@ -27,7 +27,7 @@ enabled because that would assign the protected parent to the container user too
 
 This is permission protection in the container's writable layer, **not a read-only
 mount** or immutable secret. The owner can change its own file mode, and a Docker
-administrator/root remains privileged. The root-owned parent prevents the Pulse
+administrator/root remains privileged. The root-owned parent prevents the Senulun
 user from replacing the path. No new secret volume, host-side secret directory,
 OAuth configuration, or webhook credential is introduced. A failed copy prevents
 container start and removes only the newly created container, never its data volume.
@@ -44,7 +44,7 @@ and retains the Alpha.3 native collector archives by their upstream SHA256.
 Alpha.4 Service storage changes do not require re-enrolling or upgrading existing
 collectors. Ensure a compatible Vastora executor is deployed before publishing
 the signed catalog revision. Neither publication
-automatically upgrades an installed Pulse Service or collector.
+automatically upgrades an installed Senulun Service or collector.
 Go regression tests cover configuration rejection, encrypted secret retention,
 archive ownership/modes, environment secrecy, data-volume preservation, and
 copy-failure cleanup. The following checks passed with Go 1.26.6 in an isolated
@@ -63,7 +63,7 @@ checks. No live container or browser acceptance test was performed.
 
 ## Collector configuration
 
-Vastora manages the Pulse Service URL, Service application ID, node name, and node
+Vastora manages the Senulun Service URL, Service application ID, node name, and node
 group. The application form accepts only the collector's country code and discovery
 provider; it cannot change enrollment credentials or redirect a retained identity
 to another monitoring Service.
@@ -73,13 +73,13 @@ to another monitoring Service.
 | `node_region` | Optional ISO 3166-1 alpha-2 country/territory code, such as `SG`, `US`, or `HK`. A manual code takes precedence over discovery. An explicit empty string clears a configured country. |
 | `geoip_provider` | `geojs` by default; `ipinfo` selects IPinfo; `disabled` disables lookup. |
 
-The metrics interval belongs to Pulse. Vastora does not expose an interval field
+The metrics interval belongs to Senulun. Vastora does not expose an interval field
 or send `PULSE_INTERVAL_SECONDS`; installation and upgrades use the collector's
-own default instead of overriding it. Any interval controls supported by Pulse
-remain managed in Pulse, not Vastora.
+own default instead of overriding it. Any interval controls supported by Senulun
+remain managed in Senulun, not Vastora.
 
 The default GeoJS lookup shares the node's public egress IP and Agent version
-with GeoJS, never Pulse credentials or host metrics. Choose `disabled` to opt out;
+with GeoJS, never Senulun credentials or host metrics. Choose `disabled` to opt out;
 set a manual country to keep the node positioned on the globe without discovery.
 
 Upgrades retain explicit `PULSE_NODE_REGION` and `PULSE_GEOIP_PROVIDER` assignments

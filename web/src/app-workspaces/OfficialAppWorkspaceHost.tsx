@@ -64,7 +64,7 @@ function useOfficialMeridianUI(version: string | undefined) {
       if (cancelled) return;
       const candidate = loaded as Partial<OfficialUIModule>;
       if (candidate.apiVersion !== 1 || typeof candidate.mount !== "function" || typeof candidate.mountManager !== "function") {
-        throw new Error("Unsupported Meridian UI contract");
+        throw new Error("Unsupported Glivela UI contract");
       }
       setModule(candidate as OfficialUIModule);
       setState("ready");
@@ -79,7 +79,7 @@ function useOfficialMeridianUI(version: string | undefined) {
 
 function LoadingOrError({ state, retry, language, runtimeFailed }: { state: "loading" | "ready" | "failed"; retry: () => void; language: AppWorkspaceProps["language"]; runtimeFailed: boolean }) {
   if (state === "loading") return <Spinner />;
-  if (state === "failed") return <Alert variant="destructive"><AlertTitle>{copy(language, "Meridian 界面未就绪", "Meridian interface unavailable")}</AlertTitle><AlertDescription>{runtimeFailed
+  if (state === "failed") return <Alert variant="destructive"><AlertTitle>{copy(language, "Glivela 界面未就绪", "Glivela interface unavailable")}</AlertTitle><AlertDescription>{runtimeFailed
     ? copy(language, "界面启动失败，请重试。", "The interface failed to start. Try again.")
     : copy(language, "请确认该版本的界面资源已发布并刷新官方应用目录。", "Confirm this version's interface was published and refresh the official catalog.")}
     <Button className="ml-2" onClick={retry} size="sm" variant="outline">{copy(language, "重试加载", "Retry")}</Button></AlertDescription></Alert>;
@@ -98,7 +98,7 @@ export function OfficialAppWorkspaceHost(props: AppWorkspaceProps) {
     setRuntimeFailed(false);
     try {
       const instance = module.mount(target.current, latest.current);
-      if (typeof instance?.update !== "function" || typeof instance?.unmount !== "function") throw new Error("Invalid Meridian UI mount contract");
+      if (typeof instance?.update !== "function" || typeof instance?.unmount !== "function") throw new Error("Invalid Glivela UI mount contract");
       mounted.current = instance;
     } catch {
       setRuntimeFailed(true);
@@ -116,9 +116,9 @@ export function OfficialAppWorkspaceHost(props: AppWorkspaceProps) {
     }
   }, [props]);
   const unavailable = runtimeFailed || state === "failed";
-  return <section aria-label="Meridian" data-app-workspace="vastora-official/meridian">
+  return <section aria-label="Glivela" data-app-workspace="vastora-official/meridian">
     <LoadingOrError state={runtimeFailed ? "failed" : state} retry={retry} language={props.language} runtimeFailed={runtimeFailed} />
-    {unavailable ? <div aria-label={copy(props.language, "已安装的 Meridian 节点", "Installed Meridian nodes")} className="mt-4 max-h-72 divide-y overflow-y-auto rounded-lg border">
+    {unavailable ? <div aria-label={copy(props.language, "已安装的 Glivela 节点", "Installed Glivela nodes")} className="mt-4 max-h-72 divide-y overflow-y-auto rounded-lg border">
       {props.group.instances.map((instance) => <div className="flex flex-wrap items-center gap-3 px-3 py-2" key={instance.application.id}>
         <span className="min-w-32 flex-1 text-sm">{instance.agent?.name ?? instance.application.nodeId}</span>
         <ApplicationStatus instance={instance} language={props.language} onUpgrade={props.onUpgrade} />
@@ -141,7 +141,7 @@ export function OfficialAppManagerHost(props: AppManagerProps & { version?: stri
     setRuntimeFailed(false);
     try {
       const instance = module.mountManager(target.current, latest.current);
-      if (typeof instance?.update !== "function" || typeof instance?.unmount !== "function") throw new Error("Invalid Meridian manager mount contract");
+      if (typeof instance?.update !== "function" || typeof instance?.unmount !== "function") throw new Error("Invalid Glivela manager mount contract");
       mounted.current = instance;
     } catch {
       setRuntimeFailed(true);
@@ -158,5 +158,5 @@ export function OfficialAppManagerHost(props: AppManagerProps & { version?: stri
       setRuntimeFailed(true);
     }
   }, [props]);
-  return <section aria-label="Meridian 管理"><LoadingOrError state={runtimeFailed ? "failed" : state} retry={retry} language={props.language} runtimeFailed={runtimeFailed} />{runtimeFailed || state === "failed" ? <Button className="mt-3" onClick={props.onClose} size="sm" variant="outline">{copy(props.language, "关闭", "Close")}</Button> : null}<div ref={target} /></section>;
+  return <section aria-label="Glivela 管理"><LoadingOrError state={runtimeFailed ? "failed" : state} retry={retry} language={props.language} runtimeFailed={runtimeFailed} />{runtimeFailed || state === "failed" ? <Button className="mt-3" onClick={props.onClose} size="sm" variant="outline">{copy(props.language, "关闭", "Close")}</Button> : null}<div ref={target} /></section>;
 }

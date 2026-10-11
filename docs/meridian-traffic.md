@@ -1,4 +1,4 @@
-# Meridian route usage and host traffic budgets
+# Glivela route usage and host traffic budgets
 
 `GET /api/v1/meridian/traffic` is an authenticated, non-cacheable read. It groups
 retained credentials by entry node and native/fixed egress, across accounts.
@@ -21,13 +21,13 @@ unobserved process resets cannot reconstruct lost traffic. Retained revoked
 credentials still contribute; removal of the owning business records also removes
 their observational totals through the existing deletion lifecycle.
 
-Host traffic remains Pulse-owned. The Meridian view links to the existing ready,
-authenticated HTTPS Pulse dashboard using the same access checks as the Pulse
-workspace. In Pulse, configure budget, counting direction (sum or outbound for
+Host traffic remains Senulun-owned. The Glivela view links to the existing ready,
+authenticated HTTPS Senulun dashboard using the same access checks as the Senulun
+workspace. In Senulun, configure budget, counting direction (sum or outbound for
 the MVP), monthly UTC reset day (1–28), and threshold alerts. Host totals include
 other applications and transport overhead; provider billing remains authoritative.
-A missing Pulse entry is unavailable, never substituted with route counters.
-These host budget alerts do not stop Meridian routes. Existing explicitly
+A missing Senulun entry is unavailable, never substituted with route counters.
+These host budget alerts do not stop Glivela routes. Existing explicitly
 configured account and entry quota enforcement is unchanged.
 
 Migration 108 uses the normal forward-only, backup-before-upgrade Center path;

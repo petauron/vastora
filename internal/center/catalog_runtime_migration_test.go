@@ -135,9 +135,9 @@ func verifyCatalogV4Migration(t *testing.T, sourceVersion int64) {
 	}
 	defer fresh.Close()
 	if !reflect.DeepEqual(databaseSchemaShape(t, fresh.db), databaseSchemaShape(t, migrated.db)) {
-		t.Fatal("migrated database differs from fresh schema109")
+		t.Fatal("migrated database differs from fresh schema")
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v%d-before-v109-*.db", sourceVersion)))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v%d-before-v%d-*.db", sourceVersion, centerSchemaVersion)))
 	if err != nil || len(backups) != 1 {
 		t.Fatal("migration did not preserve pre-upgrade backup", err)
 	}
@@ -145,7 +145,7 @@ func verifyCatalogV4Migration(t *testing.T, sourceVersion int64) {
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatal("migration backup permissions", err)
 	}
-	if version, err := sqliteSchemaVersion(ctx, migrated.db); err != nil || version != 109 {
+	if version, err := sqliteSchemaVersion(ctx, migrated.db); err != nil || version != centerSchemaVersion {
 		t.Fatal("schema version", version, err)
 	}
 }

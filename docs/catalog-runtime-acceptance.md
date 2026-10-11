@@ -2,7 +2,7 @@
 
 This is an implementation checkpoint, not production approval. Vastora changes
 are reviewed in PR #716. Catalog publication is triggered manually after a
-successful application release; the Pulse notification PR #25 was closed. The shared
+successful application release; the Senulun notification PR #25 was closed. The shared
 module is published as petauron/catalog v0.2.0 and pinned without a development
 workspace replacement. The earlier local-verification bullets below predate this
 dependency update and the schema 102 merge; current CI and the bounded historical
@@ -20,7 +20,7 @@ The focused Center `TestAgentReinstall` suite passes after carrying the saved
 package revision, canonical manifest digest, and approved capabilities into
 replacement deployments. The preparation claim/projection checks also reject
 changed digests, revisions, and capability grants. This is local recovery
-coverage, not live deployment or adoption evidence. Focused package lifecycle, catalog admission, and Pulse restore tests pass; the
+coverage, not live deployment or adoption evidence. Focused package lifecycle, catalog admission, and Senulun restore tests pass; the
 command entry point compiles. Migration fixtures cover both schema 100 and the
 released schema 108, retain backups/trust/application identity, and reject
 unfinished or uncertain work without advancing the source schema. An online-backup copy of the released schema 108 database also passed
@@ -31,11 +31,11 @@ created its pre-upgrade backup. The test copies its input again before migration
 it does not start Center or contact Agents. Current CI and A1 rollout remain
 pending; this is not evidence of live adoption or application restart behavior.
 
-The historical Pulse Docker adoption rehearsal also passed against a private
+The historical Senulun Docker adoption rehearsal also passed against a private
 Agent database/key snapshot and the existing runtime. A read-only HTTP proxy
 rejected Docker write methods, and the package receipt was written only into
 a temporary directory. Container ID, StartedAt, mounts, container configuration
-and host configuration were unchanged. This proves the sampled Pulse service
+and host configuration were unchanged. This proves the sampled Senulun service
 adoption path; it does not claim fleet-wide or systemd historical adoption.
 
 ## Earlier local checkpoint
@@ -90,7 +90,7 @@ On 2026-09-27, `TestCatalogV4HistoricalCopyRehearsal` passed against a private,
 keyless copy of a historical production schema 100 backup on the earlier branch
 revision targeting schema 101. It checked copy integrity, the pre-migration
 backup, preserved historical row digests and catalog evidence, and pending-only
-adoption records. After `main` independently introduced the Meridian UI schema
+adoption records. After `main` independently introduced the Glivela UI schema
 101 migration, the combined target is schema 102. The earlier rehearsal does
 not validate this final two-step migration and must be repeated on a new copy.
 The live Center database stayed on schema 100. This is database-migration
@@ -124,12 +124,12 @@ transferred to A1 and verified by SHA-256 before running only
 The test created a pre-migration backup, preserved the checked historical row
 digests, 37 applications and 16 manifest identities, and left the copied database
 at schema 102 with `quick_check=ok`. The live database remained at schema 100;
-Center/Pulse container IDs and start times and the Agent MainPID/InvocationID
+Center/Senulun container IDs and start times and the Agent MainPID/InvocationID
 were unchanged before and after. This exercises the two-step migration against
 a full historical database copy, but does not prove actual Agent resource
 adoption, application-volume recovery, or a live no-restart cutover.
 
-On 2026-09-27, a read-only preflight resolved the already published Pulse
+On 2026-09-27, a read-only preflight resolved the already published Senulun
 `v0.1.0-alpha.5` against its protected source commit and successful release run.
 GitHub artifact attestations, `SHA256SUMS`, both native architectures and the
 multi-platform OCI index passed the catalog source verifier. Applying those
@@ -147,7 +147,7 @@ the production migration and single-writer cutover must be completed separately.
   behavior, beyond the generic process/data lifecycle already exercised.
 - Rehearse adoption with copied historical state and real runtime resources;
   compare container ID/StartedAt, MainPID/InvocationID, mounts, ports, config
-  digests and pairing before/after. For an unconfigured Meridian instance,
+  digests and pairing before/after. For an unconfigured Glivela instance,
   verify no endpoint, Agent runtime row, local configuration artifacts or
   reserved container before accepting an explicit dormant receipt, and verify
   no resource appeared afterward. Mock receipts do not prove no restart.
@@ -162,7 +162,7 @@ the production migration and single-writer cutover must be completed separately.
   uncertain tasks and independently back up Center, Agents and application data.
 - After rehearsal and the agreed maintenance window, establish a single writer,
   retain trust/high-water history, and verify manual publication of a released
-  Pulse version becomes visible without a Vastora source change or an automatic
+  Senulun version becomes visible without a Vastora source change or an automatic
   application upgrade.
 
 The default Docker context on the development machine must not be used as an

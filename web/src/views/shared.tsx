@@ -78,7 +78,7 @@ export function userError(language: Language, error: unknown) {
     return copy(language, "节点仍在线，请先确认原机器已停止接入。", detail);
   }
   if (normalized === "center: restore the native meridian runtime and wait for a fresh authenticated private identity report before recovering landing access") {
-    return copy(language, "请先恢复本机 Meridian，并等待节点上报最新私网身份，再恢复落地线路。", detail);
+    return copy(language, "请先恢复本机 Glivela，并等待节点上报最新私网身份，再恢复落地线路。", detail);
   }
   if (normalized === "center: this meridian entry has no replacement private identity to recover") {
     return copy(language, "当前私网身份与原授权一致，无需进行重装恢复。", detail);

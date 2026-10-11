@@ -1,12 +1,12 @@
-# Meridian host runtime
+# Glivela host runtime
 
-Refs #394. This change implements the host data plane for managed Meridian
+Refs #394. This change implements the host data plane for managed Glivela
 entries. Account billing and finite-quota policy changes remain deferred under
 the current unlimited-account MVP scope.
 
 ## Runtime and ownership
 
-- Center owns complete, versioned Meridian configurations. Agent validates,
+- Center owns complete, versioned Glivela configurations. Agent validates,
   replaces, journals and observes the pinned Xray container. No node panel or
   second configuration writer is added.
 - Xray uses Docker host networking with no published ports, bridge attachment
@@ -60,7 +60,7 @@ A private-address or listener mismatch fails closed. HY2-only entries do not
 publish a TCP REALITY route.
 
 Only retained bridge journals and leases are read for migration/recovery; new
-Meridian containers cannot be created in bridge mode. Closed old leases are
+Glivela containers cannot be created in bridge mode. Closed old leases are
 removed by their recorded ownership after handover. The obsolete
 `preserveLegacyAliases` task field and alias-creation branch are removed.
 Failure restores the known configuration/runtime through the existing atomic

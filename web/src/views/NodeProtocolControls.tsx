@@ -73,9 +73,9 @@ export function NodeProtocolControls({ serviceId, language, onUpdated, requireVL
         <FieldLabel htmlFor={`${serviceId}-${protocol}`}>{protocol.toUpperCase()}</FieldLabel>
       </Field>)}
       {draft.hy2 ? <FieldDescription>{copy(language, "HY2 需要放行节点的 UDP 443。TLS 证书由系统自动申请并续期。", "HY2 needs UDP 443 allowed on the node. TLS certificates are requested and renewed automatically.")}</FieldDescription> : null}
-      {requireVLESS ? <FieldDescription>{copy(language, "Meridian 使用 VLESS 作为公网 TCP 443 的基础入口，因此不能关闭。", "Meridian uses VLESS as its public TCP 443 anchor, so it cannot be disabled.")}</FieldDescription> : null}
+      {requireVLESS ? <FieldDescription>{copy(language, "Glivela 使用 VLESS 作为公网 TCP 443 的基础入口，因此不能关闭。", "Glivela uses VLESS as its public TCP 443 anchor, so it cannot be disabled.")}</FieldDescription> : null}
       {draft.hy2 ? <FieldDescription>{requireVLESS
-        ? copy(language, "VLESS 与 HY2 会计入同一个 Meridian 账号共享流量。", "VLESS and HY2 count toward the same shared Meridian account quota.")
+        ? copy(language, "VLESS 与 HY2 会计入同一个 Glivela 账号共享流量。", "VLESS and HY2 count toward the same shared Glivela account quota.")
         : copy(language, "HY2 使用客户端套餐；原 VLESS 节点套餐仍只计算 VLESS 流量。", "HY2 uses client quotas. The existing VLESS node plan counts VLESS traffic only.")}</FieldDescription> : null}
       {empty ? <FieldError>{copy(language, "至少选择一种协议。", "Select at least one protocol.")}</FieldError> : null}
       <Button className="w-fit" disabled={active || empty || (!changed && saved.state !== "failed" && command?.state !== "failed")} onClick={() => void save()} type="button" variant="outline">

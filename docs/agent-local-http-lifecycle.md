@@ -30,7 +30,7 @@
 | `beginMeridianLandingHandover` | 一次性身份核查完成后立即 Close，错误返回前同样释放 |
 | `startMeridianLandingMonitor` | 替换前停止并等待旧组；每个 peer 独占 checker，Monitor.Run 退出时释放 |
 
-相邻路径复核：Center 请求和备份传输先释放响应体，再释放自建的 pinned Transport；两处 `CenterHTTPClient` 命令调用均 defer CloseIdleConnections。Docker 部署拥有的客户端 defer Close，镜像拉取流 defer Close；Pulse ExecAttach 在返回和 context 取消时关闭。以上是源码所有权核对，不代表真实 Docker 故障注入已完成。
+相邻路径复核：Center 请求和备份传输先释放响应体，再释放自建的 pinned Transport；两处 `CenterHTTPClient` 命令调用均 defer CloseIdleConnections。Docker 部署拥有的客户端 defer Close，镜像拉取流 defer Close；Senulun ExecAttach 在返回和 context 取消时关闭。以上是源码所有权核对，不代表真实 Docker 故障注入已完成。
 
 本次在当前源码上复用已有测试，以下定向回归通过：
 

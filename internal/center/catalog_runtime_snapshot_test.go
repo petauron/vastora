@@ -62,9 +62,9 @@ func TestCatalogV4MigrationSnapshot(t *testing.T) {
 	if before != after || after != pending {
 		t.Fatalf("application preservation mismatch: %d %d %d", before, after, pending)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v108-before-v109-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v108-before-v110-*.db"))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("backup not created: %v", err)
 	}
-	t.Logf("schema 108 to 109 verified; %d application records retained pending explicit adoption", after)
+	t.Logf("schema 108 to %d verified; %d application records retained pending explicit adoption", centerSchemaVersion, after)
 }
