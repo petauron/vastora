@@ -23,13 +23,13 @@ Center 持久保存任务、一次性授权、任务摘要、尝试、进程会�
 
 缺少结果、遗留候选容器或备份时，先在维护窗口核对运行时、配置和凭据，再进行处置。按钮不能替代现场核对；不能直接删除数据库或把 unknown 改成成功。
 
-## Xray / Meridian 替换失败
+## Xray / Glivela 替换失败
 
 正常替换依次创建候选、准备配置交接、停止旧实例、保留旧实例、启动并验证候选、晋升，最后清理旧实例。各步骤仍使用当前任务 context。
 
 首次变更开始后，创建、停止、改名、启动、校验或清理失败均按不确定结果返回并立即停止。即使错误来自响应丢失，也不继续删除候选、改回旧名称、写回旧配置或重启旧容器。已有容器、加密配置记录、数据库快照和阶段证据保留。重复调用发现中断标记时拒绝继续。
 
-Agent 重启发现 Meridian pending 配置、未完成交接、待退役 gate，或旧 Xray 的 desired/applied revision 不一致时，只报告需要显式恢复，不自动推进配置、启动候选或清理中断容器。恢复已完整应用的健康运行时和监控仍保留；明确卸载但保留数据的应用不会复活。
+Agent 重启发现 Glivela pending 配置、未完成交接、待退役 gate，或旧 Xray 的 desired/applied revision 不一致时，只报告需要显式恢复，不自动推进配置、启动候选或清理中断容器。恢复已完整应用的健康运行时和监控仍保留；明确卸载但保留数据的应用不会复活。
 
 这意味着失败发生在旧实例已停止之后时，受影响应用可能需要人工恢复才能重新可用。系统不承诺回滚，也不会绕过执行屏障进行自动恢复。
 
@@ -45,11 +45,11 @@ Agent 旧回执只在任务循环进入时按加密证据归档，Center 确認�
 
 ```sh
 go test ./internal/agent ./internal/center \
-  -run 'Test(XrayReplacement|XrayConfigurationRestartFailure|RuntimeRestart|Execution|LegacyReceipt|Meridian.*Recovery|ReplaceMeridian|CompletedMeridian|ResumeXray|ControllerConvergenceStops)' \
+  -run 'Test(XrayReplacement|XrayConfigurationRestartFailure|RuntimeRestart|Execution|LegacyReceipt|Glivela.*Recovery|ReplaceMeridian|CompletedMeridian|ResumeXray|ControllerConvergenceStops)' \
   -count=1 -timeout=90s
 ```
 
-- `TestXrayReplacementStopsAtFirstFailure`：旧面板迁移、Xray、Meridian 三种路径，在创建、停止、改名、启动、校验、取消、清理和响应丢失窗口逐项核对变更序列；失败后保留现场，重复调用无后续副作用；成功流程继续完成。
+- `TestXrayReplacementStopsAtFirstFailure`：旧面板迁移、Xray、Glivela 三种路径，在创建、停止、改名、启动、校验、取消、清理和响应丢失窗口逐项核对变更序列；失败后保留现场，重复调用无后续副作用；成功流程继续完成。
 - `TestXrayConfigurationRestartFailureDoesNotRollback`：通过模拟 Docker HTTP API 注入重启响应失败，确认只发出一次重启请求、不写回旧配置、不生成成功应用回执。
 - `TestRuntimeRestartKeepsUncertainRevisionBlocked`：重新打开持久 Store 后不推进待处理配置或交接，保留原始证据并上报恢复状态。
 - 现有 Execution / LegacyReceipt 测试：授权提交失败、响应丢失、断联、旧会话与 attempt 隔离、失败屏障、人工处置、加密归档、投影原子性及协议前向迁移。

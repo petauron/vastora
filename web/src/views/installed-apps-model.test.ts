@@ -38,11 +38,11 @@ describe("installed application grouping", () => {
     expect(installedAppGroups(input)[0].instances.filter(showInstalledNode)).toHaveLength(2);
   });
 
-  it("separates the Meridian subscription host from native entry nodes", () => {
+  it("separates the Glivela subscription host from native entry nodes", () => {
     const input = data();
     input.applications = [
-      application("meridian-controller", { appKey: meridianAppKey, name: "Meridian", role: undefined }),
-      application("meridian-entry", { appKey: meridianAppKey, name: "Meridian", role: undefined }),
+      application("meridian-controller", { appKey: meridianAppKey, name: "Glivela", role: undefined }),
+      application("meridian-entry", { appKey: meridianAppKey, name: "Glivela", role: undefined }),
     ];
     input.services = [
       service("meridian-subscription", "meridian-controller", { protocol: "http", appProtocol: "meridian/subscription", name: "subscription" }),

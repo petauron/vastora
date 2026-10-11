@@ -1,6 +1,6 @@
 # IP quality diagnostics
 
-The unified Meridian node list and exit chooser expose the same manual
+The unified Glivela node list and exit chooser expose the same manual
 node-diagnostics panel. The IP tab separates IPv4 and IPv6 and, when a host has
 multiple addresses in one family, offers an exact-address selector. Landing
 rows show the report for their configured exit; entry rows use their observed
@@ -16,10 +16,10 @@ so testing IPv6 preserves IPv4 results and two IPv6 exits never share a report.
 Removing an address from the node's eligible targets makes its retained report
 stale; changing the selected exit simply selects that exit's own report.
 
-Meridian owns the on-demand diagnostic container on both entry and managed
+Glivela owns the on-demand diagnostic container on both entry and managed
 landing nodes. The Agent only supervises its lifecycle and relays the bounded
 result through the authenticated, encrypted execution channel. A managed
-landing node does not need a separate Meridian Xray installation merely to
+landing node does not need a separate Glivela Xray installation merely to
 measure its own exit. The current task contract still requires a Linux Agent
 advertising `ipQuality` and Docker. The `node.ip-quality` task uses a lease.
 Only one check per node can be pending/running. Ordinary detection failures
@@ -49,14 +49,14 @@ normal Activity workflow. Nothing automatically retries or starts a check.
   factors, provider-specific risk values, unlock status/region/type and
   completion time.
   Missing values are not zero. The UI preserves provider-specific evidence
-  alongside the explicitly versioned Meridian selection policy described below.
+  alongside the explicitly versioned Glivela selection policy described below.
 - Schemas 78, 80 and 99 use Center's forward-only migration backup/fail-closed
   flow. Schema 99 preserves existing reports and task ownership while changing
   the diagnostic key to node plus IP. Agent deletion cascades its diagnostics.
 - All IP-sensitive upstream self-lookups use the requested local binding,
   including DB-IP. Reference-file downloads do not contribute exit evidence.
 
-## Meridian exit suitability v5
+## Glivela exit suitability v5
 
 `meridian-v5` is a product selection policy, **not** an industry standard,
 fraud probability, or network-performance measurement. NodeQuality/IPQuality
@@ -105,7 +105,7 @@ The [official FAQ](https://ippure.com/faq) confirms higher means more risk and
 explicitly excludes IPv6 risk calculation. Verified on 2026-09-25; the API is
 labelled beta by the provider. No third-party alias is used.
 
-After the pinned IPQuality check, the same Meridian-owned temporary container
+After the pinned IPQuality check, the same Glivela-owned temporary container
 binds an HTTPS request to the same local address, forces IPv4, disables
 inherited proxies and redirects, and limits it to 12 seconds and 16 KiB.
 Agent verifies the returned IP before relaying the bounded fields. The whole
@@ -167,7 +167,7 @@ candidates are listed separately from complete scores. Other incomplete
 candidates never enter ranking.
 
 Comparison checks source and destination readiness, private-network enrollment,
-blocked/paused state, and existing source-to-egress health (Meridian route
+blocked/paused state, and existing source-to-egress health (Glivela route
 grants or VLESS landing peers). A configuration-eligible new pair can be
 recommended by IP quality before a route exists, but is labelled connection
 pending verification. This never creates grants or changes routes. The actual
@@ -232,13 +232,13 @@ verified against Leaseweb's own documentation. A Linux Agent advertises the
 bandwidth capability only when `iperf3` is already installed; Vastora does not
 silently install or modify host packages.
 
-### Meridian entry-to-landing bandwidth
+### Glivela entry-to-landing bandwidth
 
-The Meridian node Network tab can start a separate two-host TCP iPerf3 check
+The Glivela node Network tab can start a separate two-host TCP iPerf3 check
 against a selected, ready managed landing server. It measures the authenticated
 private-peer path, not the public entry address, proxy application throughput,
 or a guarantee about client experience. The Center checks that the source has
-a running Meridian installation, both Agents are online and Docker-capable,
+a running Glivela installation, both Agents are online and Docker-capable,
 the landing is selected and ready, and both peer addresses are in the managed
 100.64.0.0/10 range. The caller cannot supply an arbitrary host or port.
 

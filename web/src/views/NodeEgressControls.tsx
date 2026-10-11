@@ -67,7 +67,7 @@ export function NodeEgressControls({ nodeId, language }: { nodeId: string; langu
   };
   return <FieldSet>
     <FieldLegend>{copy(language, "出口 IP 策略", "Egress IP policy")}</FieldLegend>
-    <FieldDescription>{copy(language, "仅控制本节点 Meridian 原生直连。订阅入口不变，远程落地仍由落地端控制。", "Controls this node’s native Meridian traffic. Subscription entry stays unchanged; remote landing servers control their own egress.")}</FieldDescription>
+    <FieldDescription>{copy(language, "仅控制本节点 Glivela 原生直连。订阅入口不变，远程落地仍由落地端控制。", "Controls this node’s native Glivela traffic. Subscription entry stays unchanged; remote landing servers control their own egress.")}</FieldDescription>
     {!saved && !error ? <FieldDescription role="status">{copy(language, "正在读取…", "Loading…")}</FieldDescription> : null}
     {saved ? <>
       <SelectControl aria-label={copy(language, "出口 IP 策略", "Egress IP policy")} disabled={active || !saved.available || command?.reconciliationRequired} options={options} value={draft} onValueChange={(value) => setDraft(value as EgressPolicy)} />

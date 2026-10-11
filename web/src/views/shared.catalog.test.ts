@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { userError } from "./shared";
 
 it("shows the recovery action needed instead of the generic conflict message", () => {
-  const error = Object.assign(new Error("center: Meridian replacement identity or configuration changed; inspect it again before confirming"), { code: "conflict" });
+  const error = Object.assign(new Error("center: Glivela replacement identity or configuration changed; inspect it again before confirming"), { code: "conflict" });
   expect(userError("zh-CN", error)).toBe("节点身份或配置已变化，请重新检查并确认。");
   expect(userError("en", error)).toBe(error.message);
 });

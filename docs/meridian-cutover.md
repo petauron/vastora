@@ -1,4 +1,4 @@
-# Meridian cutover
+# Glivela cutover
 
 The first production cutover is native-entry only. It preserves the existing
 subscription token, parent account plan, and VLESS/Hysteria credentials, but
@@ -7,10 +7,10 @@ checks every child against the Agent ownership journal before excluding it, so
 an unknown client cannot be silently treated as a native subscriber. The
 parent quota retains consumption recorded by those child credentials. The
 encrypted pre-cutover backup retains the old landing configuration. Landing
-routes may be configured in Meridian after native entries are verified; they
+routes may be configured in Glivela after native entries are verified; they
 are not a prerequisite for this MVP migration.
 
-Meridian replaces the remaining 3x-ui control and subscription ownership in
+Glivela replaces the remaining 3x-ui control and subscription ownership in
 Vastora. It is a Petauron product module, not a renamed 3x-ui package and not a
 general-purpose proxy panel.
 
@@ -18,13 +18,13 @@ general-purpose proxy panel.
 
 | Concern | Authority | Runtime executor |
 | --- | --- | --- |
-| Account plan, expiry, enable state | Meridian domain persisted by Center | Center |
-| Stable native and routed credentials | Meridian domain persisted encrypted by Center | Agent-managed Xray |
-| Entry and egress grants | Meridian domain persisted by Center | Agent-managed Xray and landing gate |
-| Shared usage ledger and reset boundary | Meridian domain persisted by Center | Agent reports monotonic counters |
-| Entry-wide traffic cap and monthly reset | Meridian endpoint state persisted by Center | Agent applies the shared entry gate |
+| Account plan, expiry, enable state | Glivela domain persisted by Center | Center |
+| Stable native and routed credentials | Glivela domain persisted encrypted by Center | Agent-managed Xray |
+| Entry and egress grants | Glivela domain persisted by Center | Agent-managed Xray and landing gate |
+| Shared usage ledger and reset boundary | Glivela domain persisted by Center | Agent reports monotonic counters |
+| Entry-wide traffic cap and monthly reset | Glivela endpoint state persisted by Center | Agent applies the shared entry gate |
 | Desired/applied revision and runtime health | Center | Agent confirms Xray apply separately from short-lived entry-to-egress transport evidence |
-| VLESS/base64 and Mihomo subscriptions | Meridian renderer | Center subscription listener |
+| VLESS/base64 and Mihomo subscriptions | Glivela renderer | Center subscription listener |
 | Application and host lifecycle | Vastora | Vastora Agent |
 
 3x-ui is not an authority in the final system. There is no panel database,
@@ -38,14 +38,14 @@ credential, route-grant, usage-ledger, and subscription rules. It must not
 import Vastora packages or know about Center HTTP handlers, Agent task queues,
 Docker, Headscale, HAProxy, or landing probes.
 
-Vastora imports the Meridian module and owns persistence and orchestration.
+Vastora imports the Glivela module and owns persistence and orchestration.
 The Agent receives complete versioned desired state; it does not infer an
-account or fetch mutable configuration from Meridian or 3x-ui.
+account or fetch mutable configuration from Glivela or 3x-ui.
 
 ## Target topology
 
 - Center is the single subscription authority.
-- A Meridian installation owns either one Xray entry runtime or the single
+- A Glivela installation owns either one Xray entry runtime or the single
   Center-colocated subscription service; there is no `master` or `worker`
   product role. The subscription-only installation deliberately has no local
   Xray revision and reports no proxy endpoint inventory.
@@ -55,7 +55,7 @@ account or fetch mutable configuration from Meridian or 3x-ui.
 - The existing Center subscription URL remains stable. During the bounded
   cutover, the handler renders the immutable imported snapshot before any
   runtime replacement starts; after completion it resolves the token to a
-  Meridian account and renders only applied healthy credentials whose
+  Glivela account and renders only applied healthy credentials whose
   shared-443 public listener and DNS verification are also applied. A later
   pending entry is omitted without taking already-ready entries offline.
 - Before rebuilding a shared entry, preserve the last applied subscription
@@ -88,7 +88,7 @@ revision, and configuration digest.
 
 Agent monitors require a fresh direct Tailscale path and a successful TCP
 exchange through the selected landing that observes a public IPv4 exit.
-Fixed Meridian routes are TCP-only; Xray explicitly blocks their UDP traffic.
+Fixed Glivela routes are TCP-only; Xray explicitly blocks their UDP traffic.
 Permission is a short-lived kernel lease, currently bounded by fifteen seconds,
 not a persistent healthy flag. Peer-bearing runtimes report on a five-second
 heartbeat cadence, but slow or absent reports do not extend the lease. Center
@@ -98,8 +98,8 @@ no peer evidence and are not made unavailable by a landing outage.
 
 The imported legacy subscription exception is per endpoint, not per fleet:
 while the cutover has a verified import digest and that endpoint has never
-applied Meridian, its existing legacy routes stay published. After its first
-Meridian apply, both live output and saved snapshots require fresh peer
+applied Glivela, its existing legacy routes stay published. After its first
+Glivela apply, both live output and saved snapshots require fresh peer
 evidence. A snapshot cannot revive an expired or blocked route.
 
 An operator-requested skip, including a node with a known network outage,
@@ -113,7 +113,7 @@ the route set to make the migration pass.
 
 ### Landing source authorization
 
-Meridian uses the existing native landing service and its single
+Glivela uses the existing native landing service and its single
 `landing.server.apply` queue. A route's pinned entry identity determines its
 source authorization. Current capability observations never replace that pin;
 an explicitly different authenticated identity removes the old source rather
@@ -154,7 +154,7 @@ confirmed.
      decreasing counters, or ambiguous in-flight operations.
    - Stop with an explicit incompatibility if an old client has a simultaneous
      IP limit, or an old entry's traffic cap or reset schedule differs from
-     Center's converged plan. Meridian preserves the entry-wide cap separately
+     Center's converged plan. Glivela preserves the entry-wide cap separately
      from each account's shared quota. Xray has no equivalent built-in
      per-client IP policy, so silently discarding that restriction is forbidden.
 2. **Back up**
@@ -168,7 +168,7 @@ confirmed.
    - Ask the controller Agent for one final encrypted 3x-ui database snapshot
      and record its digest. Do not use the snapshot as a runtime fallback.
 3. **Import**
-   - Insert Meridian accounts, native credentials, watermarks, and deployment
+   - Insert Glivela accounts, native credentials, watermarks, and deployment
      revisions without changing public identities or active Xray state.
    - Store subscription tokens and authentication material through existing
      encrypted Center secret storage.
@@ -183,24 +183,24 @@ confirmed.
      does not create a gap.
    - While the cutover is incomplete, Center serves only identities rooted in
      the encrypted import digest. Automatic quota and private-peer revisions
-     may still converge, but normal Meridian management remains locked so the
+     may still converge, but normal Glivela management remains locked so the
      imported identity set cannot become a second mutable authority.
 5. **Project**
    - Send complete per-entry desired state directly to each owning Agent.
-   - Install the audited Meridian package on the Center-colocated subscription
+   - Install the audited Glivela package on the Center-colocated subscription
      host as well. When that host owns no entry, package presence and Xray
      runtime presence remain distinct: its heartbeat stays healthy without
      inventing an empty authoritative proxy inventory.
    - Prepare and validate the pinned Xray image and required landing firewall
      tools before crossing the runtime handover boundary. Preparation must
      leave the existing runtime and its routing authority unchanged.
-   - Persist the one-way Meridian handover journal, quiesce the old mutable
+   - Persist the one-way Glivela handover journal, quiesce the old mutable
      writer and monitor, close the old and new peer gates, and recheck the
      captured configuration before promotion. A concurrent legacy change is
      a conflict, not permission to overwrite a newer configuration.
    - Atomically replace the old Xray process and confirm its applied revision
      and configuration digest. Only then transfer gate ownership and start
-     Meridian's monitors. Remove superseded closed gate tables by exact peer,
+     Glivela's monitors. Remove superseded closed gate tables by exact peer,
      bridge or runtime group, and revision so an old DROP rule cannot strand a new revision.
      Every host runtime uses no automatic Docker restart: Agent startup
      installs closed gates before starting the journaled container.
@@ -217,15 +217,15 @@ confirmed.
    - Recovery retains the failed execution evidence, requires an administrator
      to confirm that the previous executor stopped, and then permits exactly
      one replacement of the Agent pending journal with the current complete
-     Center projection. Meridian never imports an unknown runtime Xray config
+     Center projection. Glivela never imports an unknown runtime Xray config
      back into account, credential, or route authority.
 6. **Verify the projected data plane**
    - Require every VLESS entry's runtime, service, shared-443 listener, DNS,
      and public reachability receipt to be ready. Runtime health alone is not
      sufficient to switch authority.
    - The native-entry MVP has no imported fixed routes; entry-to-egress
-     evidence is required only for routes created later in Meridian.
-   - Render both ordinary and Mihomo output from Meridian state at the existing
+     evidence is required only for routes created later in Glivela.
+   - Render both ordinary and Mihomo output from Glivela state at the existing
      URL and token, and compare identities and names to the imported inventory.
    - The subscription authority marker is already durable from the publication
      phase; verification advances only after every new runtime and public entry
@@ -238,12 +238,12 @@ confirmed.
 	- Recheck the Center publication and every entry revision before each
 	  remaining retirement task and before marking the
 	  cutover complete. A landing or entry change during this phase first applies
-	  as an ordinary Meridian revision while retaining migration evidence; cleanup
+	  as an ordinary Glivela revision while retaining migration evidence; cleanup
 	  resumes only after that revision is healthy.
    - Verify the host runtime identity before deleting legacy recovery journals
      or receipts, then wait a bounded time for fresh evidence from every required peer again. On failure,
      retain the legacy recovery evidence and report incomplete retirement
-     without stopping the already running Meridian runtime or repeatedly
+     without stopping the already running Glivela runtime or repeatedly
      restarting its monitors.
    - A subscription-only controller host retires its old 3x-ui container,
      volume, local journal, and installation receipt through a separate
@@ -251,12 +251,12 @@ confirmed.
      attach the normal runtime retirement step.
    - The transition release keeps the legacy schema and read-only export path
      solely as forward-migration input; they are unreachable after the durable
-     Meridian authority marker is written.
+     Glivela authority marker is written.
    - Preserve the encrypted final snapshot according to the explicit migration
      retention policy; do not keep an executable fallback.
 8. **Schema cleanup release**
    - After production cutover evidence confirms every installation is on
-     Meridian, ship a separate tested forward-only migration that drops the
+     Glivela, ship a separate tested forward-only migration that drops the
      legacy tables, export task, routes, source paths, and compatibility tests.
    - Do not mix this irreversible database cleanup into the runtime cutover
      release and do not provide a downgrade or dual-runtime path.
@@ -264,7 +264,7 @@ confirmed.
 Released databases never migrate backward. A failed schema migration leaves
 the existing release untouched and reports the backup path. Failure before the
 durable handover leaves the old routing authority intact. After that boundary,
-recovery is Meridian-only: uncertain fixed routes can remain behind closed
+recovery is Glivela-only: uncertain fixed routes can remain behind closed
 gates, and verification and legacy retirement stop. Do not resurrect a legacy
 writer or publish an expired route as a fallback. The Center subscription URL
 and eligible native or independently healthy entries remain available.
@@ -291,7 +291,7 @@ migration; they are not translated by guesswork.
 ## Interface target
 
 - Catalog ID and app key: `meridian` / `vastora-official/meridian`
-- User-visible name: `Meridian`
+- User-visible name: `Glivela`
 - Command prefix: `meridian.*`
 - API prefix: `/api/v1/meridian`
 - Xray container: `meridian-xray`
@@ -313,7 +313,7 @@ Completion requires all of the following, not merely a successful build:
   only allowed dependency is the one-time read-only migration input;
 - a released Center database migrates forward from the last 3x-ui schema with
   a usable backup and preserved identities, tokens, counters, and URLs;
-- fresh install creates Meridian entry nodes without ever installing 3x-ui;
+- fresh install creates Glivela entry nodes without ever installing 3x-ui;
 - ordinary and Mihomo subscriptions parse and contain only applied healthy
   credentials;
 - one finite account with a native route and two fixed egress routes consumes

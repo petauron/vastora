@@ -1,6 +1,6 @@
 # Landing source IP selection
 
-Meridian's landing manager supports automatic IPv4 routing (empty selection)
+Glivela's landing manager supports automatic IPv4 routing (empty selection)
 and one explicit IPv4 or global IPv6 address assigned to the landing host.
 The edit is revision-fenced and preserves existing source/account grants.
 Agents report a separate dual-stack egress inventory on each heartbeat. The UI
@@ -15,7 +15,7 @@ selection cannot reach IPv4-only targets. No preferred-family fallback is
 implemented. Dante binds the source and family; the dedicated UID firewall
 also constrains source, destination family and management-port exclusions.
 The only cross-family exception is DNS to the two fixed public resolvers.
-IPv6 requires TCP-only Meridian source grants. It does not add UDP support.
+IPv6 requires TCP-only Glivela source grants. It does not add UDP support.
 
 Agent verifies local interface ownership and routing at application time. It
 stops the previous daemon before validating an explicit replacement, so an

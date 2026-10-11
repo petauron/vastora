@@ -432,8 +432,8 @@ export function DeploymentSheet({
                   <AlertTitle>
                     {copy(
                       language,
-                      "Pulse 设置自动补齐",
-                      "Pulse settings are filled automatically",
+                      "Senulun 设置自动补齐",
+                      "Senulun settings are filled automatically",
                     )}
                   </AlertTitle>
                   <AlertDescription>

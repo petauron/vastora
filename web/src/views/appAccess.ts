@@ -162,7 +162,7 @@ export function operationLabel(language: Language, operation: Deployment["operat
 
 export function installBlocker(data: AppData, appKey: string, language: Language) {
   if (appKey === "vastora-official/pulse" && data.applications.some((app) => app.appKey === appKey && (isInstalledApplication(app) || isActiveApplication(app.status)))) return copy(language, "已有全局监控主机，各地区无需重复安装。", "A global monitoring service already exists; regions share it.");
-  if (appKey === "vastora-official/pulse-agent" && !pulsePrivateAccess(data)) return copy(language, "先为 Pulse 监控主机添加私网 HTTPS 入口。", "Add a private HTTPS access point to the Pulse service first.");
+  if (appKey === "vastora-official/pulse-agent" && !pulsePrivateAccess(data)) return copy(language, "先为 Senulun 监控主机添加私网 HTTPS 入口。", "Add a private HTTPS access point to the Senulun service first.");
   if (data.agents.length === 0) return copy(language, "先添加一台节点，再安装应用。", "Add a node before installing apps.");
   if (!data.agents.some((agent) => agent.connected)) return copy(language, "没有在线节点。请检查 Agent 服务。", "No node is online. Check the Agent service.");
   const manifest = data.apps.find((app) => app.key === appKey);
