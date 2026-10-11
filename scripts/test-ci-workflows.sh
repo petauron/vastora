@@ -60,6 +60,7 @@ alpha_job="$(sed -n '/^  alpha-minimal:/,/^  go-race:/p' "$ci_workflow")"
 if ! printf '%s\n' "$alpha_job" | grep -Fq 'uses: ./.github/actions/setup-go-cached' ||
    ! printf '%s\n' "$alpha_job" | grep -Fq 'run: make go-format-check' ||
    ! printf '%s\n' "$alpha_job" | grep -Fq "run: go test ./internal/center -run '^TestProductBrandMigration' -count=1" ||
+   ! printf '%s\n' "$alpha_job" | grep -Fq 'src/views/shared.catalog.test.ts' ||
    printf '%s\n' "$alpha_job" | grep -Fv \
      -e "run: go test ./internal/center -run '^TestExecutionPagesRetainOldUnresolvedHistory$' -count=1" \
      -e "run: go test ./internal/center -run '^(TestVersion(100|102)|TestOfficialUI|TestMeridianHost)' -count=1" \

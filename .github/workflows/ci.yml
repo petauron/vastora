@@ -89,9 +89,9 @@ jobs:
       - name: Compile frontend
         if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
         run: cd web && npm ci --ignore-scripts && npm run build
-      - name: Verify task triage interface
+      - name: Verify task triage and product brand guidance
         if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
-        run: cd web && npx vitest run src/execution-api.test.ts src/views/ExecutionSettings.test.tsx src/views/HomeTaskSummary.test.tsx src/views/ActivityView.test.tsx
+        run: cd web && npx vitest run src/execution-api.test.ts src/views/ExecutionSettings.test.tsx src/views/HomeTaskSummary.test.tsx src/views/ActivityView.test.tsx src/views/shared.catalog.test.ts
 
   privacy:
     name: Privacy fixtures
