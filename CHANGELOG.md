@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.306](https://github.com/petauron/vastora/compare/v0.1.0-alpha.305...v0.1.0-alpha.306) (2026-10-11)
+
+
+### Features
+
+* migrate Glivela and Senulun product display names ([#874](https://github.com/petauron/vastora/issues/874)) ([0484c5f](https://github.com/petauron/vastora/commit/0484c5f3bdad78a504283cc3f98c1f67ad9b9923))
+
+
+### Bug Fixes
+
+* **apps:** bound startup readiness and review recovery executions ([b9db2f6](https://github.com/petauron/vastora/commit/b9db2f6bfdca1185b5176cc8cf1b5ea95f143759))
+
 ## [0.1.0-alpha.305](https://github.com/petauron/vastora/compare/v0.1.0-alpha.304...v0.1.0-alpha.305) (2026-10-10)
 
 
