@@ -254,6 +254,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/execution-session", s.handleExecutionSession)
 	mux.HandleFunc("POST /api/v1/agents/{id}/legacy-receipts", s.handleImportLegacyReceipt)
 	mux.HandleFunc("GET /api/v1/executions", s.requireAuth(false, s.handleListExecutions))
+	mux.HandleFunc("GET /api/v1/tasks/{id}/execution", s.requireAuth(false, s.handleTaskExecution))
 	mux.HandleFunc("GET /api/v1/execution-claim-control", s.requireAuth(false, s.handleGetExecutionClaimControl))
 	mux.HandleFunc("PUT /api/v1/execution-claim-control", s.requireAuth(true, s.handleSetExecutionClaimControl))
 	mux.HandleFunc("GET /api/v1/executions/{executionID}/legacy-receipt", s.requireAuth(false, s.handleInspectLegacyReceipt))

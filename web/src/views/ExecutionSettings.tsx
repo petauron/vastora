@@ -125,7 +125,7 @@ function ClaimControlConfirmation({ paused, language, onClose, onSaved }: { paus
   </SheetContent></Sheet>;
 }
 
-function ExecutionDetail({ execution, name, language, onClose, onSaved, onNavigate }: { execution: ExecutionView; name: string; language: Language; onClose: () => void; onSaved: () => void; onNavigate?: (screen: Screen) => void }) {
+export function ExecutionDetail({ execution, name, language, onClose, onSaved, onNavigate }: { execution: ExecutionView; name: string; language: Language; onClose: () => void; onSaved: () => void; onNavigate?: (screen: Screen) => void }) {
   const [action, setAction] = useState<ExecutionAction | null>(null);
   const [stopped, setStopped] = useState(false);
   const [note, setNote] = useState("");

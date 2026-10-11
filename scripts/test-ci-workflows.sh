@@ -61,8 +61,11 @@ if ! printf '%s\n' "$alpha_job" | grep -Fq 'uses: ./.github/actions/setup-go-cac
    ! printf '%s\n' "$alpha_job" | grep -Fq 'run: make go-format-check' ||
    ! printf '%s\n' "$alpha_job" | grep -Fq "run: go test ./internal/center -run '^TestProductBrandMigration' -count=1" ||
    ! printf '%s\n' "$alpha_job" | grep -Fq 'src/views/shared.catalog.test.ts' ||
+   ! printf '%s\n' "$alpha_job" | grep -Fq 'src/views/TaskRecoverySheet.test.tsx' ||
+   ! printf '%s\n' "$alpha_job" | grep -Fq 'src/views/views.network-app.test.tsx' ||
    printf '%s\n' "$alpha_job" | grep -Fv \
      -e "run: go test ./internal/center -run '^TestExecutionPagesRetainOldUnresolvedHistory$' -count=1" \
+     -e "run: go test ./internal/agent ./internal/center -run '^(TestServiceReadiness|TestWaitForServiceEndpoint|TestTaskExecutionLookup|TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically)' -count=1" \
      -e "run: go test ./internal/center -run '^(TestVersion(100|102)|TestOfficialUI|TestMeridianHost)' -count=1" \
      -e "run: go test ./internal/center -run '^TestProductBrandMigration' -count=1" \
      -e "run: go test ./internal/meridianruntime ./internal/agent ./internal/center -run '^(TestShared443KeepsCaddyOnItsPrivateContainerSocket|TestNativeEgress|TestNodeEgress|TestVersion106|TestVersion107|TestVersion108|TestMeridianTraffic)' -count=1" \
@@ -70,6 +73,7 @@ if ! printf '%s\n' "$alpha_job" | grep -Fq 'uses: ./.github/actions/setup-go-cac
   echo 'Alpha CI must restore the Go cache without duplicating release builds/full checks.' >&2
   exit 1
 fi
+require_line "$ci_workflow" "run: go test ./internal/agent ./internal/center -run '^(TestServiceReadiness|TestWaitForServiceEndpoint|TestTaskExecutionLookup|TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically)' -count=1"
 require_line "$ci_workflow" "run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1"
 for job in go-race go-quality go-build web deployment security container-image-security; do
   condition="$(sed -n "/^  $job:/,/^    needs:/p" "$ci_workflow" | grep '^    if:')"
