@@ -13140,6 +13140,105 @@
         ]
       }
     },
+    "/api/v1/tasks/{id}/execution": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Task Execution",
+        "operationId": "taskExecution_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "attempt": {
+                      "type": "integer"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "phase": {
+                      "type": "string"
+                    },
+                    "lastError": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "disposition": {
+                      "type": "string"
+                    },
+                    "canConfirm": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Administrator-only read of the exact task's latest execution attempt, including completed or disposed attempts. Independent of history pagination; never falls back to an older unresolved attempt or queues a command. Returns redacted execution metadata and retained-evidence confirmation eligibility, never sealed task or result contents."
+      }
+    },
     "/api/v1/execution-claim-control": {
       "get": {
         "tags": [

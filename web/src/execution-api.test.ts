@@ -47,3 +47,15 @@ it("keeps the selected task filter while paging", async () => {
   await api.executions(25, undefined, "attention");
   expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/executions?filter=attention&before=25");
 });
+
+it("looks up an exact task with an authenticated cancellable read, without retrying it", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "latest" })));
+  vi.stubGlobal("fetch", fetchMock);
+  const controller = new AbortController();
+  await api.taskExecution("task/a", controller.signal);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/tasks/task%2Fa/execution");
+  expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+  expect(fetchMock.mock.calls[0][1].method ?? "GET").toBe("GET");
+  expect(fetchMock.mock.calls[0][1].credentials).toBe("same-origin");
+});

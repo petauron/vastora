@@ -58,40 +58,58 @@ func reportedServices(ctx context.Context, task DeploymentTask, bindAddress stri
 }
 
 func waitForServiceEndpoint(ctx context.Context, address string, port int, service catalog.Service) error {
-	if err := waitForEndpoint(ctx, address, port); err != nil {
-		return err
-	}
-	if service.HealthPath == "" {
-		return nil
-	}
-	readyContext, cancel := context.WithTimeout(ctx, 60*time.Second)
+	// Migrations and their mandatory backups may run before the listener opens.
+	// TCP and HTTP share one bounded startup budget, including parent cancellation.
+	readyContext, cancel := context.WithTimeout(ctx, serviceStartupTimeout)
 	defer cancel()
+	if service.HealthPath == "" {
+		target := net.JoinHostPort(address, strconv.Itoa(port))
+		dialer := net.Dialer{Timeout: time.Second}
+		return waitForServiceReady(readyContext, func(ctx context.Context) error {
+			connection, err := dialer.DialContext(ctx, "tcp", target)
+			if err == nil {
+				_ = connection.Close()
+			}
+			return err
+		})
+	}
 	target := service.Protocol + "://" + net.JoinHostPort(address, strconv.Itoa(port)) + service.HealthPath
 	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	var lastErr error
-	for {
-		request, err := http.NewRequestWithContext(readyContext, http.MethodGet, target, nil)
+	defer client.CloseIdleConnections()
+	return waitForServiceReady(readyContext, func(ctx context.Context) error {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 		if err != nil {
 			return fmt.Errorf("invalid health endpoint: %w", err)
 		}
 		response, err := client.Do(request)
-		if err == nil {
-			_ = response.Body.Close()
-			if response.StatusCode < http.StatusInternalServerError {
-				return nil
-			}
-			lastErr = fmt.Errorf("health endpoint returned %s", response.Status)
-		} else {
-			lastErr = err
+		if err != nil {
+			return err
+		}
+		_ = response.Body.Close()
+		if response.StatusCode >= http.StatusInternalServerError {
+			return fmt.Errorf("health endpoint returned %s", response.Status)
+		}
+		return nil
+	})
+}
+
+const serviceStartupTimeout = 5 * time.Minute
+
+func waitForServiceReady(ctx context.Context, probe func(context.Context) error) error {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("service startup readiness stopped: %w", errors.Join(err, lastErr))
+		}
+		lastErr = probe(ctx)
+		if lastErr == nil && ctx.Err() == nil {
+			return nil
 		}
 		select {
-		case <-readyContext.Done():
-			if lastErr != nil {
-				return lastErr
-			}
-			return readyContext.Err()
+		case <-ctx.Done():
+			return fmt.Errorf("service startup readiness stopped: %w", errors.Join(ctx.Err(), lastErr))
 		case <-ticker.C:
 		}
 	}
@@ -110,27 +128,6 @@ func serviceHostPort(raw json.RawMessage, service catalog.Service) (int, error) 
 		return 0, fmt.Errorf("agent: invalid service port field %q", service.HostPortField)
 	}
 	return port, nil
-}
-
-func waitForEndpoint(ctx context.Context, address string, port int) error {
-	readyContext, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	target := net.JoinHostPort(address, strconv.Itoa(port))
-	dialer := net.Dialer{Timeout: time.Second}
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		connection, err := dialer.DialContext(readyContext, "tcp", target)
-		if err == nil {
-			_ = connection.Close()
-			return nil
-		}
-		select {
-		case <-readyContext.Done():
-			return readyContext.Err()
-		case <-ticker.C:
-		}
-	}
 }
 
 func declaredImage(manifest catalog.AppManifest, name string) (string, error) {

@@ -7,7 +7,7 @@ import type { IPQualityPreferences, IPQualityResponse } from "./ip-quality-types
 import type { NodeDiagnosticCheck } from "./node-diagnostics-types";
 import type { NodeProtocols } from "./types";
 import type { MeridianTraffic, MeridianAccountCreated, MeridianAccountInput, MeridianAccount, MeridianEndpoint, MeridianInventory, MeridianRouteGrant, MeridianSourceRecovery } from "./meridian-types";
-import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type LegacyReceiptView } from "./execution-types";
+import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type ExecutionView, type LegacyReceiptView } from "./execution-types";
 
 export class APIError extends Error {
   constructor(
@@ -80,6 +80,7 @@ export const api = {
   inspectXrayConfiguration: (id: string, signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery/inspect`, { method: "POST", body: "{}", signal }),
   applyXrayConfigurationRecovery: (id: string, source: "runtime" | "agent_state", signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery/apply`, { method: "POST", body: JSON.stringify({ source }), signal }),
   executions: (before = 0, signal?: AbortSignal, filter: "all" | "attention" | "running" = "all") => request<ExecutionPage>(`/api/v1/executions?filter=${filter}${before ? `&before=${before}` : ""}`, { signal }),
+  taskExecution: (taskId: string, signal?: AbortSignal) => request<ExecutionView>(`/api/v1/tasks/${encodeURIComponent(taskId)}/execution`, { signal }),
   executionClaimControl: (signal?: AbortSignal) => request<ExecutionClaimControl>("/api/v1/execution-claim-control", { signal }),
   setExecutionClaimControl: (paused: boolean) => request<{ recorded: boolean }>("/api/v1/execution-claim-control", { method: "PUT", body: JSON.stringify({ paused }) }),
   inspectLegacyReceipt: (id: string, signal?: AbortSignal) => request<LegacyReceiptView>(`/api/v1/executions/${encodeURIComponent(id)}/legacy-receipt`, { signal }),

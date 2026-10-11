@@ -538,9 +538,13 @@ for (const route of routes) {
       operation.requestBody.content["application/json"].schema.properties.paused = {type:"boolean"};
     }
   }
-  if (["handleExecutionSession", "handleExecutionTransition", "handleReexecuteExecution", "handleAbandonExecution", "handleConfirmExecution", "handleDisposeHelperExecution", "handleDisposeLegacyReceipt", "handleListExecutions", "handleInspectLegacyReceipt"].includes(route.handler)) {
+  if (["handleExecutionSession", "handleExecutionTransition", "handleReexecuteExecution", "handleAbandonExecution", "handleConfirmExecution", "handleDisposeHelperExecution", "handleDisposeLegacyReceipt", "handleListExecutions", "handleTaskExecution", "handleInspectLegacyReceipt"].includes(route.handler)) {
     operation.responses[status].headers = noStoreHeaders;
-    if (route.handler === "handleInspectLegacyReceipt") {
+    if (route.handler === "handleTaskExecution") {
+      operation.description = "Administrator-only read of the exact task's latest execution attempt, including completed or disposed attempts. Independent of history pagination; never falls back to an older unresolved attempt or queues a command. Returns redacted execution metadata and retained-evidence confirmation eligibility, never sealed task or result contents.";
+      operation.responses[status].content["application/json"].schema = schemaForGoType("ExecutionView");
+      operation.responses["404"] = { $ref: "#/components/responses/Error" };
+    } else if (route.handler === "handleInspectLegacyReceipt") {
       operation.description = "Administrator-only inspection of one bounded legacy receipt archive. Returns original task identity and evidence availability, never completion contents or credentials. Does not resolve, replay or delete evidence.";
       operation.responses[status].content["application/json"].schema = schemaForGoType("LegacyReceiptView");
       operation.responses["409"] = { $ref: "#/components/responses/Error" };

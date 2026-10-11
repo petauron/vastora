@@ -569,7 +569,7 @@ func (b *SystemdPackageBackend) Healthy(ctx context.Context, task DeploymentTask
 			return err
 		}
 		if err := check(ctx, address, port, service); err != nil {
-			return errors.New("agent: package service health check failed")
+			return fmt.Errorf("agent: package service %s health check failed: %w", service.Name, err)
 		}
 	}
 	return nil

@@ -97,6 +97,10 @@ func TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically(t *testi
 				if !confirmable {
 					t.Fatal("retained successful result was not offered for confirmation")
 				}
+				view, lookupErr := store.TaskExecution(ctx, deployment.ID)
+				if lookupErr != nil || view.ID != task.Authorization.ID || !view.CanConfirm {
+					t.Fatalf("task lookup lost retained confirmation evidence: %+v %v", view, lookupErr)
+				}
 				payload, marshalErr := json.Marshal(input)
 				if marshalErr != nil {
 					t.Fatal(marshalErr)

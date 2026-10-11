@@ -1,6 +1,7 @@
 package center
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/url"
@@ -104,6 +105,20 @@ func (s *Server) handleListExecutions(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, values)
+}
+
+func (s *Server) handleTaskExecution(w http.ResponseWriter, r *http.Request) {
+	value, err := s.store.TaskExecution(r.Context(), r.PathValue("id"))
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("center: task execution not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, value)
 }
 
 func (s *Server) handleInspectLegacyReceipt(w http.ResponseWriter, r *http.Request) {
