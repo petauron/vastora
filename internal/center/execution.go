@@ -765,19 +765,37 @@ func (s *Store) ListExecutions(ctx context.Context, before int64, filter string)
 			page.NextCursor = last
 			break
 		}
-		var value ExecutionView
-		var sealedResult []byte
-		var identityRetiredAt string
-		if err := rows.Scan(&last, &value.ID, &value.AgentID, &value.TaskID, &value.Kind, &value.Attempt, &value.State, &value.Phase, &value.LastError, &value.UpdatedAt, &value.Disposition, &sealedResult, &identityRetiredAt); err != nil {
+		value, rowID, err := s.scanExecutionView(rows)
+		if err != nil {
 			return ExecutionPage{}, fmt.Errorf("center: read execution: %w", err)
 		}
-		if identityRetiredAt == "" && value.Disposition == "" && (value.State == "failed" || value.State == "unknown") && len(sealedResult) != 0 {
-			if raw, err := secret.Open(s.key, sealedResult, []byte("execution-result:"+value.ID)); err == nil {
-				var evidence executionResultEvidence
-				value.CanConfirm = json.Unmarshal(raw, &evidence) == nil && retainedResultSupportsConfirmation(value.Kind, evidence)
-			}
-		}
+		last = rowID
 		page.Executions = append(page.Executions, value)
 	}
 	return page, rows.Err()
+}
+
+// TaskExecution returns only the latest attempt, even when it has completed or
+// was disposed. Never offer an older unresolved attempt as a retry fallback.
+func (s *Store) TaskExecution(ctx context.Context, taskID string) (ExecutionView, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT rowid,id,agent_id,task_id,kind,attempt,state,phase,last_error,updated_at,disposition,sealed_result,identity_retired_at FROM task_executions WHERE task_id=? ORDER BY attempt DESC LIMIT 1`, taskID)
+	value, _, err := s.scanExecutionView(row)
+	return value, err
+}
+
+func (s *Store) scanExecutionView(row interface{ Scan(...any) error }) (ExecutionView, int64, error) {
+	var value ExecutionView
+	var rowID int64
+	var sealedResult []byte
+	var identityRetiredAt string
+	if err := row.Scan(&rowID, &value.ID, &value.AgentID, &value.TaskID, &value.Kind, &value.Attempt, &value.State, &value.Phase, &value.LastError, &value.UpdatedAt, &value.Disposition, &sealedResult, &identityRetiredAt); err != nil {
+		return ExecutionView{}, 0, err
+	}
+	if identityRetiredAt == "" && value.Disposition == "" && (value.State == "failed" || value.State == "unknown") && len(sealedResult) != 0 {
+		if raw, err := secret.Open(s.key, sealedResult, []byte("execution-result:"+value.ID)); err == nil {
+			var evidence executionResultEvidence
+			value.CanConfirm = json.Unmarshal(raw, &evidence) == nil && retainedResultSupportsConfirmation(value.Kind, evidence)
+		}
+	}
+	return value, rowID, nil
 }

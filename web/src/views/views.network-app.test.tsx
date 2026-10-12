@@ -422,12 +422,14 @@ describe("network and app views", () => {
     const data = dashboard();
     data.apps = [];
     data.deployments = [{ id: "recover", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", operation: "upgrade", deleteData: false, applicationId: "running", reconciliationRequired: true, createdAt: "2026-09-12T00:00:00Z", updatedAt: "2026-09-12T00:00:00Z" }];
-    const recover = vi.spyOn(api, "retryTaskReconciliation").mockResolvedValue({ taskId: "recover", kind: "application.apply", queued: true });
+    const recover = vi.spyOn(api, "taskExecution").mockResolvedValue({ id: "execution-recover", taskId: "recover", agentId: "agent", kind: "application.apply", attempt: 1, state: "unknown", phase: "reported", lastError: "", disposition: "", updatedAt: "" });
     const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ ...data.deployments[0], id: "uninstall", operation: "uninstall", state: "pending", reconciliationRequired: false });
     const mutate = async (action: () => Promise<unknown>) => { await action(); };
     const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
-    await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.includes("继续恢复"))?.click());
-    expect(recover).toHaveBeenCalledWith("recover");
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.includes("核对并恢复"))?.click());
+    expect(recover).toHaveBeenCalledWith("recover", expect.any(AbortSignal));
+    expect(create).not.toHaveBeenCalled();
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent === "返回")?.click());
     rerender(<AppsView data={{ ...data, deployments: [] }} language="zh-CN" mutate={mutate} />);
     openAppDetails(container, "running");
     act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.trim() === "卸载")?.click());
@@ -682,18 +684,20 @@ describe("network and app views", () => {
 		expect(container.textContent).not.toContain("操作未完成，请检查填写内容后重试");
 	});
 
-	it("requeues a quarantined deployment with the same task", async () => {
+	it("opens the exact quarantined deployment for operator review without replaying it", async () => {
 		const data = dashboard();
 		data.deployments = [{ id: "deploy-recovery", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", reconciliationRequired: true, operation: "upgrade", deleteData: false, error: "container outcome is unknown", applicationId: "running", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
-		const retry = vi.spyOn(api, "retryTaskReconciliation").mockResolvedValue({ taskId: "deploy-recovery", kind: "application.apply", queued: true });
+		const retry = vi.spyOn(api, "retryTaskReconciliation");
+		const inspect = vi.spyOn(api, "taskExecution").mockResolvedValue({ id: "execution-recovery", taskId: "deploy-recovery", agentId: "agent", kind: "application.apply", attempt: 1, state: "unknown", phase: "reported", lastError: "", disposition: "", updatedAt: "" });
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
 		expect(container.textContent).toContain("需恢复");
-		expect(container.textContent).toContain("不会重复安装");
+		expect(container.textContent).toContain("打开核对不会重试任务");
 		await act(async () => {
-			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续恢复"))?.click();
+			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("核对并恢复"))?.click();
 			await Promise.resolve();
 		});
-		expect(retry).toHaveBeenCalledWith("deploy-recovery");
+		expect(inspect).toHaveBeenCalledWith("deploy-recovery", expect.any(AbortSignal));
+		expect(retry).not.toHaveBeenCalled();
 	});
 
 	it("locks service changes during deployment recovery but still allows stopping an existing access point", async () => {

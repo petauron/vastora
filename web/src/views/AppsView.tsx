@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AppWindowIcon, KeyRoundIcon, RotateCcwIcon } from "lucide-react";
+import { AppWindowIcon, KeyRoundIcon } from "lucide-react";
 import { api } from "../api";
 import type { AppData, Mutate } from "../App";
 import type { Application, Deployment, Service } from "../types";
@@ -25,6 +25,7 @@ import { ApplicationCredentialsSheet, InstalledAppDetails } from "./apps/Applica
 import { DeploymentSheet, PublicationSheet, type DeploymentEditor } from "./apps/DeploymentSheets";
 import { RealityRenameSheet, SubscriptionSheet, UninstallSheet } from "./apps/SubscriptionSheets";
 import { OfficialAppManagerHost } from "@/app-workspaces/OfficialAppWorkspaceHost";
+import { TaskRecoverySheet } from "./TaskRecoverySheet";
 
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
 
@@ -45,7 +46,7 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
   const [migrationApplication, setMigrationApplication] = useState<Application | null>(null);
 	const [appManagerApplication, setAppManagerApplication] = useState<Application | null>(null);
 	const [managedApplicationID, setManagedApplicationID] = useState<string | null>(null);
-	const [recoveringTask, setRecoveringTask] = useState("");
+	const [recoveryTask, setRecoveryTask] = useState<Deployment | null>(null);
   const catalogByKey = useMemo(() => new Map(data.apps.map((app) => [app.key, app])), [data.apps]);
   const installedGroups = useMemo(() => installedAppGroups({
     applications: data.applications, apps: data.apps, agents: data.agents, sites: data.sites,
@@ -108,18 +109,11 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
       {credentials ? <Alert><KeyRoundIcon /><AlertTitle>{credentials.setupToken ? copy(language, "请保存 Senulun 初始化令牌", "Save the Senulun setup token") : copy(language, "请保存 Vastora Proxy 管理账号", "Save the Vastora Proxy administrator account")}</AlertTitle><AlertDescription><p>{copy(language, "确认保存前可在断线或刷新后重新领取；确认后 Center 会永久关闭再次显示。", "Until you acknowledge it, the same browser can recover these credentials after a disconnect or refresh. Acknowledgement permanently disables disclosure.")}</p>{credentials.setupToken ? <div className="mt-3 rounded-lg bg-muted p-3 text-sm"><p className="text-muted-foreground">{copy(language, "首次访问 Senulun /login 时使用", "Use for the first Senulun /login setup")}</p><div className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.setupToken}<CopyButton language={language} value={credentials.setupToken} /></div></div> : <dl className="mt-3 grid gap-2 rounded-lg bg-muted p-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "账号", "Username")}</dt><dd className="mt-1 flex items-center gap-2 font-mono">{credentials.username}<CopyButton language={language} value={credentials.username || ""} /></dd></div><div><dt className="text-muted-foreground">{copy(language, "密码", "Password")}</dt><dd className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.password}<CopyButton language={language} value={credentials.password || ""} /></dd></div></dl>}<Button className="mt-3" disabled={credentialAckBusy} onClick={() => void acknowledgeCredentials()} size="sm" variant="outline">{credentialAckBusy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "我已保存并关闭再次显示", "Saved — disable further disclosure")}</Button></AlertDescription></Alert> : null}
 
       {recentOperations.length ? <details className="rounded-xl border bg-muted/25 p-3" open={recentOperations.some((operation) => operation.reconciliationRequired)}><summary className="cursor-pointer text-sm font-medium">{copy(language, `进行中的任务 · ${recentOperations.length}`, `Active tasks · ${recentOperations.length}`)}</summary><div aria-live="polite" className="mt-3 flex flex-col gap-3">{recentOperations.map((deployment) => {
-        const app = catalogByKey.get(deployment.appKey); const agent = data.agents.find((value) => value.id === deployment.agentId); const application = data.applications.find((value) => value.id === deployment.applicationId);
-        const retry = () => { if (!app || !agent) return; if (deployment.operation === "uninstall" && application) setUninstallApplication(application); else if (deployment.operation === "upgrade" || deployment.operation === "configure") setDeploymentEditor({ app, agent, operation: deployment.operation }); else setDeploymentEditor({ app, agent, operation: "install" }); };
-	        const recover = async () => {
-	          setRecoveringTask(deployment.id);
-	          try {
-	            await mutate(() => api.retryTaskReconciliation(deployment.id), copy(language, "恢复任务已重新排队。", "The recovery task was queued again."));
-	          } finally {
-	            setRecoveringTask("");
-	          }
-	        };
-	        return <Card key={deployment.id} size="sm"><CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center"><StateBadge language={language} value={deployment.reconciliationRequired ? "recovery" : deployment.state} /><div className="min-w-0 flex-1"><p className="font-medium">{operationLabel(language, deployment.operation)} · {app ? localized(app, language, "name") : deployment.appKey}</p><p className="mt-1 text-xs text-muted-foreground">{agent?.name ?? deployment.agentId}</p>{deployment.reconciliationRequired ? <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">{copy(language, "节点状态未能完全确认。系统已锁定这项应用，继续恢复会复用原任务，不会重复安装。", "The node state could not be fully confirmed. This app is locked; continuing recovery reuses the original task and will not install a duplicate.")}</p> : null}{deployment.error ? <div className="mt-2"><TechnicalError error={deployment.error} language={language} /></div> : null}</div>{deployment.reconciliationRequired ? <Button disabled={recoveringTask === deployment.id} onClick={() => void recover()} size="sm" variant="outline">{recoveringTask === deployment.id ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{copy(language, "继续恢复", "Continue recovery")}</Button> : deployment.state === "failed" && app && agent ? <Button onClick={retry} size="sm" variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重试", "Retry")}</Button> : null}</CardContent></Card>;
+        const app = catalogByKey.get(deployment.appKey); const agent = data.agents.find((value) => value.id === deployment.agentId);
+        return <Card key={deployment.id} size="sm"><CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center"><StateBadge language={language} value={deployment.reconciliationRequired ? "recovery" : deployment.state} /><div className="min-w-0 flex-1"><p className="font-medium">{operationLabel(language, deployment.operation)} · {app ? localized(app, language, "name") : deployment.appKey}</p><p className="mt-1 text-xs text-muted-foreground">{agent?.name ?? deployment.agentId}</p>{deployment.reconciliationRequired ? <p className="mt-2 text-sm text-muted-foreground">{copy(language, "应用结果尚未确认，当前变更已锁定。先核对执行记录与实际资源，再决定是否重新执行；打开核对不会重试任务。", "The app outcome is unconfirmed and changes are locked. Review the execution and actual resources before deciding whether to execute again; opening review does not retry the task.")}</p> : null}{deployment.error ? <div className="mt-2"><TechnicalError error={deployment.error} language={language} /></div> : null}</div>{deployment.reconciliationRequired ? <Button onClick={() => setRecoveryTask(deployment)} size="sm" variant="outline">{copy(language, "核对并恢复", "Review and recover")}</Button> : null}</CardContent></Card>;
       })}</div></details> : null}
+
+      {recoveryTask ? <TaskRecoverySheet key={recoveryTask.id} taskId={recoveryTask.id} agentId={recoveryTask.agentId} name={data.agents.find((agent) => agent.id === recoveryTask.agentId)?.name ?? recoveryTask.agentId} language={language} onClose={() => setRecoveryTask(null)} onSaved={() => { setRecoveryTask(null); void mutate(async () => undefined, copy(language, "任务处置已记录。", "Task disposition recorded.")); }} /> : null}
 
       {workspaceKey ? selectedGroup ? <InstalledApps key={selectedGroup.id} group={selectedGroup} data={data} language={language} mutate={mutate} managerApplication={appManagerApplication?.appKey === "vastora-official/meridian" ? appManagerApplication : null} onManagerClose={() => setAppManagerApplication(null)} onClients={(application) => { if (application.appKey === "vastora-official/meridian") setAppManagerApplication(application); else setClientsApplication(application); }} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onReality={setRealityApplication} />
         : <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "此应用尚未安装或已移除", "This app is not installed")}</EmptyTitle><EmptyDescription>{copy(language, "在应用商店查看当前可用的应用。", "Visit the App Store to see available apps.")}</EmptyDescription><Button onClick={onStore}>{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty>
