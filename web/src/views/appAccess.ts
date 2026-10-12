@@ -115,6 +115,22 @@ export function pulsePrivateAccess(data: AppData) {
   return data.publications.find((value) => value.serviceId === dashboard?.id && value.status === "ready" && value.tlsEnabled && (value.kind === "headscale_gateway" || value.kind === "lan_gateway"));
 }
 
+// Browser links use an existing public tunnel when one is configured. Agent
+// enrollment continues to use pulsePrivateAccess and its private origin.
+export function pulseDashboardURL(data: AppData) {
+  const application = data.applications.find((app) => app.appKey === "vastora-official/pulse" && app.status === "running");
+  const dashboard = data.services.find((value) => value.applicationId === application?.id && value.name === "dashboard" && ["ready", "publishing"].includes(value.status));
+  if (!dashboard) return undefined;
+  const entries = data.publications.filter((value) => value.serviceId === dashboard.id && value.status === "ready" && value.tlsEnabled && !value.actionRequired && !value.lastError);
+  for (const kind of ["cloudflare_tunnel", "headscale_gateway", "lan_gateway"] as const) {
+    for (const entry of entries.filter((value) => value.kind === kind)) {
+      const url = secureDashboardURL(entry.accessUrl);
+      if (url) return url;
+    }
+  }
+  return undefined;
+}
+
 export function eligibleAppNodes(data: AppData, appKey: string) {
   if (appKey === "vastora-official/pulse" && data.applications.some((app) => app.appKey === appKey && (isInstalledApplication(app) || isActiveApplication(app.status)))) return [];
   if (appKey === "vastora-official/pulse-agent" && !pulsePrivateAccess(data)) return [];
