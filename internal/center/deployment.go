@@ -292,6 +292,11 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, errors.New("center: installed package requires an explicit upgrade to a reviewed schema 4 recipe before configuration")
 	}
 	if request.Operation == "upgrade" {
+		if request.AppKey == meridianAppKey {
+			if _, err := dormantMeridianUpgrade(ctx, s.db, active.ID); err != nil {
+				return DeploymentView{}, err
+			}
+		}
 		comparison := semver.Compare(canonicalAppVersion(manifest.Version), canonicalAppVersion(active.Version))
 		if comparison == 0 && manifest.PackageRevision == active.PackageRevision {
 			return DeploymentView{}, fmt.Errorf("center: app is already at version %s", active.Version)

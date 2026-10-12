@@ -82,12 +82,17 @@ func (c Client) abortExecutionOnError(err *error) {
 }
 
 func (c Client) doCenterRequest(request *http.Request, caFingerprint, caCertificatePEM string) (statusCode int, status string, content []byte, err error) {
-	client, release, err := c.clientFor(caFingerprint, caCertificatePEM, 15*time.Second)
-	if err != nil {
-		return 0, "", nil, err
+	var response *http.Response
+	if c.centerControl != nil {
+		response, err = c.centerControl.do(request, caFingerprint, caCertificatePEM)
+	} else {
+		client, release, clientErr := c.clientFor(caFingerprint, caCertificatePEM, 15*time.Second)
+		if clientErr != nil {
+			return 0, "", nil, clientErr
+		}
+		defer release()
+		response, err = client.Do(request)
 	}
-	defer release()
-	response, err := client.Do(request)
 	if err != nil {
 		return 0, "", nil, fmt.Errorf("agent: request Center: %w", err)
 	}

@@ -67,6 +67,9 @@ jobs:
       - name: Verify bounded startup and explicit application recovery
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: go test ./internal/agent ./internal/center -run '^(TestServiceReadiness|TestWaitForServiceEndpoint|TestTaskExecutionLookup|TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically)' -count=1
+      - name: Verify identity-preserving managed upgrades and helper authorization
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
+        run: go test ./internal/agent ./internal/center ./cmd/vastora -run '^(TestManagedUpgrade|TestHostUpdate|TestPulseRestore|TestDormantMeridian|TestPackageLifecycle|TestPackageRejects)' -count=1
       - name: Verify native egress policy
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: go test ./internal/meridianruntime ./internal/agent ./internal/center -run '^(TestShared443KeepsCaddyOnItsPrivateContainerSocket|TestNativeEgress|TestNodeEgress|TestVersion106|TestVersion107|TestVersion108|TestMeridianTraffic)' -count=1
