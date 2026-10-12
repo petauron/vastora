@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.309](https://github.com/petauron/vastora/compare/v0.1.0-alpha.308...v0.1.0-alpha.309) (2026-10-12)
+
+
+### Bug Fixes
+
+* preserve identity and control connectivity during managed upgrades ([4800e16](https://github.com/petauron/vastora/commit/4800e162da72bfaa79df8dfe4a38ac7eb4c17f87))
+
 ## [0.1.0-alpha.308](https://github.com/petauron/vastora/compare/v0.1.0-alpha.307...v0.1.0-alpha.308) (2026-10-12)
 
 
