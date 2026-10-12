@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 )
 
 func (s *Server) handleMeridianSubscription(writer http.ResponseWriter, request *http.Request) {

@@ -1,7 +1,7 @@
 package meridianruntime
 
 import (
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 	"testing"
 	"time"
 )

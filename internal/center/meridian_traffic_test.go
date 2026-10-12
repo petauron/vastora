@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 )
 
 func TestVersion108PreservesTotalsWithoutInventingDirectionalHistory(t *testing.T) {

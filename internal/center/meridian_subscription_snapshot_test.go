@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 )
 
 func TestMeridianRecoveryWithoutAvailableSubscriptionDoesNotInventSnapshot(t *testing.T) {

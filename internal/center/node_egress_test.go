@@ -2,7 +2,7 @@ package center
 
 import (
 	"context"
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"testing"
 	"time"

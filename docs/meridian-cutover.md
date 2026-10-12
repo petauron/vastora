@@ -33,7 +33,7 @@ fallback after cutover.
 
 ## Repository boundary
 
-`github.com/petauron/meridian` owns the runtime-independent account,
+`github.com/petauron/glivela` owns the runtime-independent account,
 credential, route-grant, usage-ledger, and subscription rules. It must not
 import Vastora packages or know about Center HTTP handlers, Agent task queues,
 Docker, Headscale, HAProxy, or landing probes.

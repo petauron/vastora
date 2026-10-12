@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/meridianruntime"
 )
 

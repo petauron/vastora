@@ -8,7 +8,7 @@ provide arbitrary JavaScript, CSS, or URL-based management views.
 Vastora's official applications own their product interfaces:
 
 - Glivela owns its node, network, landing, account, and subscription pages in
-  `petauron/meridian/ui`. Center passes authenticated platform data and actions
+  `petauron/glivela/ui`. Center passes authenticated platform data and actions
   through the versioned mount API. Center does not compile Glivela pages into
   its frontend.
 - Senulun serves its authenticated dashboard from the Senulun application. Center

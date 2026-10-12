@@ -14,7 +14,7 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 )
 
 // A dedicated primary group scopes host sockets without also gating Agent

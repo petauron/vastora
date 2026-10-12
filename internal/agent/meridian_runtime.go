@@ -18,7 +18,7 @@ import (
 
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/secret"

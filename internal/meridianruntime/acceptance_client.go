@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 )
 
 // AcceptanceClient carries the original business credential and public entry
