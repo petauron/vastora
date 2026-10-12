@@ -342,7 +342,7 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 		selection = LandingSelection{LandingRegionCodes: map[string]string{}}
 	}
 	snapshot := boolInt(cutoverSnapshot)
-	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.endpoint_id,grant_row.egress_node_id,grant_row.base_credential_id,grant_row.route_credential_id,
+	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.endpoint_id,grant_row.egress_node_id,COALESCE(grant_row.ipv4_egress_node_id,''),grant_row.base_credential_id,grant_row.route_credential_id,
 		grant_row.mode,grant_row.hide_native,grant_row.enabled,grant_row.desired_revision,grant_row.applied_revision,grant_row.runtime_healthy,grant_row.status,
 		endpoint.applied_revision,endpoint.source_peer_json,landing.applied_json,landing.desired_json,landing.peer_json,
 		landing.applied_revision,landing.desired_revision,landing.status
@@ -377,11 +377,19 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 		var hideNative, enabled, runtimeHealthy int
 		var endpointAppliedRevision, landingAppliedRevision, landingDesiredRevision uint64
 		var sourceJSON, landingAppliedJSON, landingDesiredJSON, landingPeerJSON []byte
-		if err := rows.Scan(&grant.ID, &endpointID, &grant.EgressID, &baseID, &routeID, &grant.Mode, &hideNative, &enabled, &grant.DesiredRev, &grant.AppliedRev, &runtimeHealthy, &status,
+		if err := rows.Scan(&grant.ID, &endpointID, &grant.EgressID, &grant.IPv4EgressID, &baseID, &routeID, &grant.Mode, &hideNative, &enabled, &grant.DesiredRev, &grant.AppliedRev, &runtimeHealthy, &status,
 			&endpointAppliedRevision, &sourceJSON, &landingAppliedJSON, &landingDesiredJSON, &landingPeerJSON, &landingAppliedRevision, &landingDesiredRevision, &landingStatus); err != nil {
 			return nil, err
 		}
 		legacySnapshot := cutoverSnapshot && endpointAppliedRevision == 0
+		if grant.IPv4EgressID != "" {
+			if legacySnapshot {
+				continue
+			}
+			if _, _, err := s.readCompositeRoutePeers(ctx, tx, endpointID, grant.EgressID, grant.IPv4EgressID, true); err != nil {
+				continue
+			}
+		}
 		if legacySnapshot {
 			// This historical snapshot retains the pre-switch read boundary; it
 			// cannot authorize a newly added source from an unapplied plan.
@@ -426,7 +434,11 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 					egressPrefix = regionPrefix(code)
 				}
 			}
-			routes = append(routes, meridian.PublishedRoute{Grant: grant, Protocol: meridian.VLESSReality, EntryName: base.EntryName, EgressRegionPrefix: egressPrefix, EgressNameSuffix: selection.LandingNameSuffixes[grant.EgressID], BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: base.Material.Credential.Identity, RouteProtocolIdentity: route.Material.Credential.Identity})
+			ipv4Prefix := ""
+			if code := selection.LandingRegionCodes[grant.IPv4EgressID]; code != "" {
+				ipv4Prefix = regionPrefix(code)
+			}
+			routes = append(routes, meridian.PublishedRoute{Grant: grant, Protocol: meridian.VLESSReality, EntryName: base.EntryName, EgressRegionPrefix: egressPrefix, IPv4EgressRegionPrefix: ipv4Prefix, EgressNameSuffix: selection.LandingNameSuffixes[grant.EgressID], BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: base.Material.Credential.Identity, RouteProtocolIdentity: route.Material.Credential.Identity})
 		}
 	}
 	if err := rows.Err(); err != nil {

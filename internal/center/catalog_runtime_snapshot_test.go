@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -62,7 +63,7 @@ func TestCatalogV4MigrationSnapshot(t *testing.T) {
 	if before != after || after != pending {
 		t.Fatalf("application preservation mismatch: %d %d %d", before, after, pending)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v108-before-v110-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v108-before-v"+strconv.Itoa(centerSchemaVersion)+"-*.db"))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("backup not created: %v", err)
 	}

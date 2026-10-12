@@ -160,7 +160,7 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 	if err := nativeRows.Close(); err != nil {
 		return meridianAppliedSubscriptionSnapshot{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.egress_node_id,grant_row.base_credential_id,grant_row.hide_native,grant_row.enabled,grant_row.status,
+	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.egress_node_id,COALESCE(grant_row.ipv4_egress_node_id,''),grant_row.endpoint_id,grant_row.base_credential_id,grant_row.hide_native,grant_row.enabled,grant_row.status,
 		CASE WHEN grant_row.enabled=1 AND grant_row.status NOT IN ('blocked','revoking','revoked')
 		 AND ((endpoint.applied_revision=0 AND length(cutover.import_sha256)=64
 			AND cutover.state IN ('publish','project','verify','retire'))
@@ -182,24 +182,32 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 		return meridianAppliedSubscriptionSnapshot{}, err
 	}
 	type routeState struct {
-		egressID string
-		live     bool
+		egressID    string
+		secondaryID string
+		live        bool
 	}
 	states := map[string]routeState{}
 	hiddenVLESSCredentials := map[string]bool{}
 	for rows.Next() {
-		var grantID, egressID, baseID, status, landingStatus string
+		var grantID, egressID, secondaryID, endpointID, baseID, status, landingStatus string
 		var hideNative, enabled, live int
 		var legacySnapshot bool
 		var landingAppliedRevision, landingDesiredRevision uint64
 		var sourceJSON, landingAppliedJSON, landingDesiredJSON, landingPeerJSON []byte
-		if err := rows.Scan(&grantID, &egressID, &baseID, &hideNative, &enabled, &status, &live, &legacySnapshot,
+		if err := rows.Scan(&grantID, &egressID, &secondaryID, &endpointID, &baseID, &hideNative, &enabled, &status, &live, &legacySnapshot,
 			&sourceJSON, &landingAppliedJSON, &landingDesiredJSON, &landingPeerJSON, &landingAppliedRevision, &landingDesiredRevision, &landingStatus); err != nil {
 			rows.Close()
 			return meridianAppliedSubscriptionSnapshot{}, err
 		}
 		if live == 1 {
-			if legacySnapshot {
+			if secondaryID != "" {
+				_, _, pairErr := s.readCompositeRoutePeers(ctx, tx, endpointID, egressID, secondaryID, true)
+				live = boolInt(!legacySnapshot && pairErr == nil)
+			}
+			if live != 1 {
+				// A missing secondary authorization cannot be overridden by the
+				// primary landing's otherwise healthy historical receipt.
+			} else if legacySnapshot {
 				live = boolInt(landingStatus == "ready" && landingDesiredRevision == landingAppliedRevision)
 			} else {
 				var source, peer landing.PeerIdentity
@@ -208,7 +216,7 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 			}
 		}
 		mustHide := enabled == 1 && hideNative == 1 && status != "revoking" && status != "revoked" && live != 1
-		states[grantID] = routeState{egressID: egressID, live: live == 1}
+		states[grantID] = routeState{egressID: egressID, secondaryID: secondaryID, live: live == 1}
 		if mustHide {
 			hiddenVLESSCredentials[baseID] = true
 		}
@@ -224,7 +232,7 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 	routes := make([]meridian.PublishedRoute, 0, len(value.Routes))
 	for _, route := range value.Routes {
 		state, exists := states[route.Grant.ID]
-		if exists && state.live && state.egressID == route.Grant.EgressID {
+		if exists && state.live && state.egressID == route.Grant.EgressID && state.secondaryID == route.Grant.IPv4EgressID {
 			routes = append(routes, route)
 			continue
 		}

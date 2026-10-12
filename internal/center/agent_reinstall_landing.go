@@ -62,7 +62,11 @@ func (s *Store) reinstallLandingIdentity(ctx context.Context, tx *sql.Tx, agentI
 }
 
 func reinstallLandingTargets(ctx context.Context, tx *sql.Tx, endpointID string) ([]AgentReinstallLandingTarget, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT g.egress_node_id,s.desired_revision,s.peer_json FROM meridian_route_grants g LEFT JOIN landing_server_states s ON s.node_id=g.egress_node_id WHERE g.endpoint_id=? AND ((g.enabled=1 AND g.status<>'revoked') OR g.status='revoking') ORDER BY g.egress_node_id`, endpointID)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT target.node_id,s.desired_revision,s.peer_json
+		FROM meridian_route_grants g JOIN (SELECT id,egress_node_id AS node_id FROM meridian_route_grants
+		UNION SELECT id,ipv4_egress_node_id FROM meridian_route_grants WHERE ipv4_egress_node_id IS NOT NULL) target ON target.id=g.id
+		LEFT JOIN landing_server_states s ON s.node_id=target.node_id
+		WHERE g.endpoint_id=? AND ((g.enabled=1 AND g.status<>'revoked') OR g.status='revoking') ORDER BY target.node_id`, endpointID)
 	if err != nil {
 		return nil, err
 	}

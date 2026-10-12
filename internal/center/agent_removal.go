@@ -104,7 +104,7 @@ func validateAgentRemovalDependencies(ctx context.Context, tx *sql.Tx, id string
 		`SELECT COUNT(*) FROM landing_proxy_states WHERE landing_node_id=? AND node_id<>landing_node_id AND (status<>'stopped' OR desired_revision<>applied_revision OR json_extract(desired_json,'$.proxy') IS NOT NULL OR json_extract(desired_json,'$.clients') IS NOT NULL)`,
 		`SELECT COUNT(*) FROM landing_proxy_retirements WHERE landing_node_id=? AND node_id<>landing_node_id`,
 		`SELECT COUNT(*) FROM landing_client_grants g JOIN applications a ON a.id=g.application_id WHERE g.landing_node_id=? AND a.node_id<>g.landing_node_id AND g.status<>'revoked'`,
-		`SELECT COUNT(*) FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id JOIN applications a ON a.id=e.application_id WHERE g.egress_node_id=? AND a.node_id<>g.egress_node_id AND g.status<>'revoked'`,
+		`SELECT COUNT(*) FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id JOIN applications a ON a.id=e.application_id WHERE ? IN (g.egress_node_id,g.ipv4_egress_node_id) AND a.node_id<>g.egress_node_id AND g.status<>'revoked'`,
 		`SELECT COUNT(*) FROM meridian_credentials c JOIN meridian_endpoints e ON e.id=c.endpoint_id JOIN applications a ON a.id=e.application_id WHERE c.egress_node_id=? AND a.node_id<>c.egress_node_id AND c.enabled=1`,
 		`SELECT COUNT(*) FROM three_x_ui_migrations m JOIN applications a ON a.id=m.source_application_id OR a.id=m.target_application_id WHERE a.node_id=? AND m.state IN ('backing_up','restoring','switching')`,
 		`SELECT COUNT(*) FROM applications a WHERE a.node_id=? AND a.app_key='vastora-official/pulse' AND EXISTS(SELECT 1 FROM applications p WHERE p.node_id<>a.node_id AND p.app_key='vastora-official/pulse-agent' AND p.status<>'stopped')`,

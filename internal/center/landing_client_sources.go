@@ -121,7 +121,7 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 		JOIN applications application ON application.id=endpoint.application_id
 		JOIN agents agent ON agent.id=application.node_id
 		LEFT JOIN agent_private_peer_capabilities capability ON capability.node_id=agent.id
-		WHERE grant_row.egress_node_id=?
+		WHERE ? IN (grant_row.egress_node_id,grant_row.ipv4_egress_node_id)
 		AND ((grant_row.enabled=1 AND grant_row.status<>'revoked') OR grant_row.status='revoking')
 		AND agent.status='active' AND agent.credential_revoked_at='' AND agent.tailscale_ownership='managed'`, landingID)
 	if err != nil {

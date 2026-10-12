@@ -114,7 +114,7 @@ func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID s
 	}
 	var refreshRequired bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state='complete')
- OR EXISTS(SELECT 1 FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id JOIN applications a ON a.id=e.application_id JOIN agent_reinstall_operations op ON op.agent_id=a.node_id WHERE g.egress_node_id=? AND ((g.enabled=1 AND g.status<>'revoked') OR g.status='revoking') AND op.state NOT IN ('completed','superseded'))`, nodeID).Scan(&refreshRequired); err != nil {
+ OR EXISTS(SELECT 1 FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id JOIN applications a ON a.id=e.application_id JOIN agent_reinstall_operations op ON op.agent_id=a.node_id WHERE ? IN (g.egress_node_id,g.ipv4_egress_node_id) AND ((g.enabled=1 AND g.status<>'revoked') OR g.status='revoking') AND op.state NOT IN ('completed','superseded'))`, nodeID).Scan(&refreshRequired); err != nil {
 		return nil, err
 	}
 	if refreshRequired {
@@ -125,7 +125,7 @@ func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID s
 		var appliedJSON []byte
 		var stillReferenced bool
 		if err := tx.QueryRowContext(ctx, `SELECT applied_json,EXISTS(SELECT 1 FROM meridian_route_grants
-			WHERE egress_node_id=? AND ((enabled=1 AND status<>'revoked') OR status='revoking'))
+			WHERE ? IN (egress_node_id,ipv4_egress_node_id) AND ((enabled=1 AND status<>'revoked') OR status='revoking'))
 			FROM landing_server_states WHERE node_id=?`, nodeID, nodeID).Scan(&appliedJSON, &stillReferenced); err != nil {
 			return nil, err
 		}

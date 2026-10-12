@@ -32,8 +32,10 @@ require_line "$ci_workflow" '        run: make privacy-check'
 require_line "$ci_workflow" "    if: github.event_name == 'pull_request' && vars.VASTORA_CI_MODE == 'alpha'"
 require_line "$ci_workflow" '          ALPHA_RESULT: ${{ needs.alpha-minimal.result }}'
 require_line "$ci_workflow" '          PRIVACY_RESULT: ${{ needs.privacy.result }}'
-require_line "$ci_workflow" '    needs: [changes, alpha-minimal, privacy, go-race, go-quality, go-build, web, deployment, security, release-metadata, container-image-security]'
-require_line "$ci_workflow" '          for result in "$CHANGES_RESULT" "$ALPHA_RESULT" "$PRIVACY_RESULT"'
+require_line "$ci_workflow" '    needs: [changes, alpha-minimal, composite-runtime, privacy, go-race, go-quality, go-build, web, deployment, security, release-metadata, container-image-security]'
+require_line "$ci_workflow" '          COMPOSITE_RESULT: ${{ needs.composite-runtime.result }}'
+require_line "$ci_workflow" '          sh scripts/run-composite-runtime-lab.sh "$RUNNER_TEMP/glivela-xray"'
+require_line "$ci_workflow" '          for result in "$CHANGES_RESULT" "$ALPHA_RESULT" "$COMPOSITE_RESULT" "$PRIVACY_RESULT"'
 require_line "$ci_workflow" "vars.VASTORA_CI_MODE != 'alpha'"
 require_line "$ci_workflow" '    name: Release metadata'
 require_line "$ci_workflow" '        run: scripts/validate-release-metadata.sh "$BASE_SHA"'
@@ -56,7 +58,7 @@ require_line "$codeql_workflow" "  cancel-in-progress: \${{ github.event_name ==
 
 # Alpha normally validates shape; forward-only migrations also need their
 # targeted regression before release. Full checks remain outside this job.
-alpha_job="$(sed -n '/^  alpha-minimal:/,/^  go-race:/p' "$ci_workflow")"
+alpha_job="$(awk '/^  alpha-minimal:/{inside=1; print; next} inside && /^  [a-z][a-z-]*:/{exit} inside{print}' "$ci_workflow")"
 if ! printf '%s\n' "$alpha_job" | grep -Fq 'uses: ./.github/actions/setup-go-cached' ||
    ! printf '%s\n' "$alpha_job" | grep -Fq 'run: make go-format-check' ||
    ! printf '%s\n' "$alpha_job" | grep -Fq "run: go test ./internal/center -run '^TestProductBrandMigration' -count=1" ||
@@ -68,6 +70,7 @@ if ! printf '%s\n' "$alpha_job" | grep -Fq 'uses: ./.github/actions/setup-go-cac
      -e "run: go test ./internal/agent ./internal/center -run '^(TestServiceReadiness|TestWaitForServiceEndpoint|TestTaskExecutionLookup|TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically)' -count=1" \
      -e "run: go test ./internal/center -run '^(TestVersion(100|102)|TestOfficialUI|TestMeridianHost)' -count=1" \
      -e "run: go test ./internal/center -run '^TestProductBrandMigration' -count=1" \
+     -e "run: go test ./internal/agent ./internal/center -run '^TestComposite' -count=1" \
      -e "run: go test ./internal/meridianruntime ./internal/agent ./internal/center -run '^(TestShared443KeepsCaddyOnItsPrivateContainerSocket|TestNativeEgress|TestNodeEgress|TestVersion106|TestVersion107|TestVersion108|TestMeridianTraffic)' -count=1" \
      -e "run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1" | grep -Eq '(go test|go build|go-static-check|web-check|docker build)'; then
   echo 'Alpha CI must restore the Go cache without duplicating release builds/full checks.' >&2

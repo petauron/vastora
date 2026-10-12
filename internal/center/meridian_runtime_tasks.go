@@ -20,15 +20,16 @@ import (
 )
 
 type meridianRuntimeProjection struct {
-	backendAddress     string
-	backendPort        int
-	task               meridianruntime.Task
-	agentID            string
-	serviceID          string
-	materials          []meridian.CredentialMaterial
-	readyRouteGrantIDs []string
-	routePeerIDs       map[string]string
-	blockedRouteGrants map[string]string
+	backendAddress        string
+	backendPort           int
+	task                  meridianruntime.Task
+	agentID               string
+	serviceID             string
+	materials             []meridian.CredentialMaterial
+	readyRouteGrantIDs    []string
+	routePeerIDs          map[string]string
+	routeSecondaryPeerIDs map[string]string
+	blockedRouteGrants    map[string]string
 }
 
 const (
@@ -415,7 +416,8 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 			materials[index].Credential.Enabled = false
 		}
 	}
-	if err := applyNativeEgressProjection(ctx, tx, &projection, endpoint, hysteriaEndpoint, vlessEnabled, hy2Enabled, materials); err != nil {
+	composite := slices.ContainsFunc(routes.grants, func(grant meridian.RouteGrant) bool { return grant.IPv4EgressID != "" })
+	if err := applyNativeEgressProjection(ctx, tx, &projection, endpoint, hysteriaEndpoint, vlessEnabled, hy2Enabled, materials, composite); err != nil {
 		return projection, err
 	}
 	artifact, err := meridian.BuildDesiredArtifact(meridian.XrayPlan{
@@ -429,6 +431,7 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 	projection.backendAddress = endpoint.ListenAddress
 	projection.backendPort = endpoint.ListenPort
 	projection.task.Peers, projection.routePeerIDs = routes.runtimePeers, routes.routePeerIDs
+	projection.routeSecondaryPeerIDs = routes.routeSecondaryPeerIDs
 	if len(routes.runtimePeers) != 0 {
 		var source landing.PeerIdentity
 		if json.Unmarshal(sourcePeerJSON, &source) != nil || (meridianruntime.Peer{EgressID: projection.agentID, Identity: source}).Validate() != nil {
@@ -556,13 +559,14 @@ type meridianRuntimeRoutes struct {
 	peers                 []meridian.RoutePeer
 	runtimePeers          []meridianruntime.Peer
 	routePeerIDs          map[string]string
+	routeSecondaryPeerIDs map[string]string
 	readyGrantIDs         []string
 	blockedGrants         map[string]string
 	disabledCredentialIDs map[string]bool
 }
 
 func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointID, inboundTag string, credentials map[string]meridian.CredentialMaterial) (meridianRuntimeRoutes, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.account_id,grant_row.egress_node_id,grant_row.base_credential_id,grant_row.route_credential_id,
+	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.account_id,grant_row.egress_node_id,COALESCE(grant_row.ipv4_egress_node_id,''),grant_row.base_credential_id,grant_row.route_credential_id,
 		grant_row.mode,grant_row.hide_native,grant_row.enabled,grant_row.desired_revision,grant_row.applied_revision,grant_row.runtime_healthy,grant_row.status,
 		CASE WHEN agent.id IS NULL THEN NULL ELSE server.peer_json END,
 		server.applied_json,server.desired_json,COALESCE(server.applied_revision,0),endpoint.source_peer_json
@@ -575,7 +579,7 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 	if err != nil {
 		return meridianRuntimeRoutes{}, err
 	}
-	result := meridianRuntimeRoutes{blockedGrants: map[string]string{}, disabledCredentialIDs: map[string]bool{}, routePeerIDs: map[string]string{}}
+	result := meridianRuntimeRoutes{blockedGrants: map[string]string{}, disabledCredentialIDs: map[string]bool{}, routePeerIDs: map[string]string{}, routeSecondaryPeerIDs: map[string]string{}}
 	peersByID := map[string]meridian.RoutePeer{}
 	runtimePeersByID := map[string]meridianruntime.Peer{}
 	for rows.Next() {
@@ -584,7 +588,7 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		var hideNative, enabled, runtimeHealthy int
 		var peerJSON, appliedJSON, desiredJSON, sourceJSON []byte
 		var serverRevision uint64
-		if err := rows.Scan(&grant.ID, &grant.AccountID, &grant.EgressID, &baseID, &routeID, &mode, &hideNative, &enabled,
+		if err := rows.Scan(&grant.ID, &grant.AccountID, &grant.EgressID, &grant.IPv4EgressID, &baseID, &routeID, &mode, &hideNative, &enabled,
 			&grant.DesiredRev, &grant.AppliedRev, &runtimeHealthy, &status, &peerJSON, &appliedJSON, &desiredJSON, &serverRevision, &sourceJSON); err != nil {
 			rows.Close()
 			return meridianRuntimeRoutes{}, err
@@ -631,6 +635,24 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		// The landing inventory is keyed by Vastora Agent ID. The reported peer
 		// identity belongs to Tailscale and must retain its separate ID domain.
 		projectedPeer := meridian.RoutePeer{EgressID: grant.EgressID, Address: peer.Address, Port: landing.SOCKSPort}
+		if grant.IPv4EgressID != "" {
+			pair, runtimePair, pairErr := s.readCompositeRoutePeers(ctx, tx, endpointID, grant.EgressID, grant.IPv4EgressID, true)
+			if pairErr != nil {
+				result.blockedGrants[grant.ID] = pairErr.Error()
+				result.disabledCredentialIDs[grant.Route.ID] = true
+				continue
+			}
+			if err := meridian.ValidateCompositePeers(grant, pair[0], pair[1]); err != nil {
+				rows.Close()
+				return meridianRuntimeRoutes{}, err
+			}
+			projectedPeer = pair[0]
+			for i, exit := range pair {
+				peersByID[exit.EgressID] = exit
+				runtimePeersByID[exit.EgressID] = runtimePair[i]
+			}
+			result.routeSecondaryPeerIDs[grant.ID] = grant.IPv4EgressID
+		}
 		if grant.Validate() != nil || !grant.Deployable() || projectedPeer.Validate() != nil {
 			rows.Close()
 			return meridianRuntimeRoutes{}, errors.New("center: stored Meridian route is invalid")
@@ -638,7 +660,9 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		result.grants = append(result.grants, grant)
 		result.readyGrantIDs = append(result.readyGrantIDs, grant.ID)
 		result.routePeerIDs[grant.ID] = grant.EgressID
-		peersByID[projectedPeer.EgressID] = projectedPeer
+		if _, exists := peersByID[projectedPeer.EgressID]; !exists {
+			peersByID[projectedPeer.EgressID] = projectedPeer
+		}
 		runtimePeersByID[grant.EgressID] = meridianruntime.Peer{EgressID: grant.EgressID, Identity: peer}
 	}
 	if err := rows.Err(); err != nil {
@@ -1115,7 +1139,7 @@ func (s *Store) markMeridianQuotaBoundaryChanged(ctx context.Context, tx *sql.Tx
 // subscription query independently requires that peer to be live, so an
 // unavailable landing disappears without taking native entries offline.
 func (s *Store) markMeridianLandingPeerChanged(ctx context.Context, tx *sql.Tx, nodeID, nowText string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT endpoint_id FROM meridian_route_grants WHERE egress_node_id=? AND enabled=1 AND status<>'revoked' ORDER BY endpoint_id`, nodeID)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT endpoint_id FROM meridian_route_grants WHERE ? IN (egress_node_id,ipv4_egress_node_id) AND enabled=1 AND status<>'revoked' ORDER BY endpoint_id`, nodeID)
 	if err != nil {
 		return err
 	}
@@ -1141,12 +1165,12 @@ func (s *Store) markMeridianLandingPeerChanged(ctx context.Context, tx *sql.Tx, 
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=?
-		WHERE egress_node_id=? AND enabled=1 AND status<>'revoked'`, nowText, nodeID); err != nil {
+		WHERE ? IN (egress_node_id,ipv4_egress_node_id) AND enabled=1 AND status<>'revoked'`, nowText, nodeID); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=?
 		WHERE status<>'retired' AND id IN (
-		 SELECT DISTINCT endpoint_id FROM meridian_route_grants WHERE egress_node_id=? AND enabled=1 AND status<>'revoked'
+		 SELECT DISTINCT endpoint_id FROM meridian_route_grants WHERE ? IN (egress_node_id,ipv4_egress_node_id) AND enabled=1 AND status<>'revoked'
 		)`, nowText, nodeID)
 	return err
 }

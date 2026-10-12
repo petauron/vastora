@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -47,7 +48,7 @@ func TestProductBrandMigrationPreservesIdentityAndCustomNames(t *testing.T) {
 			if err := migrated.Close(); err != nil {
 				t.Fatal(err)
 			}
-			backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v109-before-v110-*.db"))
+			backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v109-before-v%d-*.db", centerSchemaVersion)))
 			if err != nil || len(backups) != 1 {
 				t.Fatalf("missing pre-brand migration backup: %v", err)
 			}

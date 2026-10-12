@@ -44,7 +44,11 @@ func (t Task) validateEgress() error {
 		}
 		return nil
 	}
-	if t.NativeEgress.Validate() != nil || t.ImageReference != EgressImage || len(t.EgressClients) > 2 {
+	// A digest-bound composite artifact requires the installed extension, not
+	// the stock native-policy image. Image authorization and core capability
+	// checks remain mandatory at the Agent before any runtime change.
+	composite := len(t.Desired.Files) != 0 && t.Desired.Validate() == nil
+	if t.NativeEgress.Validate() != nil || t.ImageReference != EgressImage && !composite || len(t.EgressClients) > 2 {
 		return errors.New("egress: unsupported policy, core or verification clients")
 	}
 	seen := map[meridian.ProtocolKind]bool{}

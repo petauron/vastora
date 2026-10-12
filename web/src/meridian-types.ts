@@ -86,6 +86,8 @@ export type MeridianRouteGrant = {
   endpointId: string;
   egressNodeId: string;
   egressNodeName: string;
+  ipv4EgressNodeId?: string;
+  ipv4EgressNodeName?: string;
   hideNative: boolean;
   enabled: boolean;
   desiredRevision: number;

@@ -104,26 +104,29 @@ type MeridianAccountCreated struct {
 }
 
 type MeridianRouteGrantInput struct {
-	AccountID    string `json:"accountId"`
-	EndpointID   string `json:"endpointId"`
-	EgressNodeID string `json:"egressNodeId"`
-	HideNative   bool   `json:"hideNative"`
+	AccountID        string `json:"accountId"`
+	EndpointID       string `json:"endpointId"`
+	EgressNodeID     string `json:"egressNodeId"`
+	IPv4EgressNodeID string `json:"ipv4EgressNodeId,omitempty"`
+	HideNative       bool   `json:"hideNative"`
 }
 
 type MeridianRouteGrantView struct {
-	ID              string `json:"id"`
-	AccountID       string `json:"accountId"`
-	EndpointID      string `json:"endpointId"`
-	EgressNodeID    string `json:"egressNodeId"`
-	EgressNodeName  string `json:"egressNodeName"`
-	HideNative      bool   `json:"hideNative"`
-	Enabled         bool   `json:"enabled"`
-	DesiredRevision int64  `json:"desiredRevision"`
-	AppliedRevision int64  `json:"appliedRevision"`
-	RuntimeHealthy  bool   `json:"runtimeHealthy"`
-	Status          string `json:"status"`
-	LastError       string `json:"lastError,omitempty"`
-	UpdatedAt       string `json:"updatedAt"`
+	ID                 string `json:"id"`
+	AccountID          string `json:"accountId"`
+	EndpointID         string `json:"endpointId"`
+	EgressNodeID       string `json:"egressNodeId"`
+	EgressNodeName     string `json:"egressNodeName"`
+	IPv4EgressNodeID   string `json:"ipv4EgressNodeId,omitempty"`
+	IPv4EgressNodeName string `json:"ipv4EgressNodeName,omitempty"`
+	HideNative         bool   `json:"hideNative"`
+	Enabled            bool   `json:"enabled"`
+	DesiredRevision    int64  `json:"desiredRevision"`
+	AppliedRevision    int64  `json:"appliedRevision"`
+	RuntimeHealthy     bool   `json:"runtimeHealthy"`
+	Status             string `json:"status"`
+	LastError          string `json:"lastError,omitempty"`
+	UpdatedAt          string `json:"updatedAt"`
 }
 
 type MeridianInventoryView struct {
@@ -397,8 +400,10 @@ func (s *Store) listMeridianAccounts(ctx context.Context) ([]MeridianAccountView
 func (s *Store) listMeridianRouteGrants(ctx context.Context) ([]MeridianRouteGrantView, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT grant_row.id,grant_row.account_id,grant_row.endpoint_id,grant_row.egress_node_id,agent.name,
 		grant_row.hide_native,grant_row.enabled,grant_row.desired_revision,grant_row.applied_revision,grant_row.runtime_healthy,
-		grant_row.status,grant_row.last_error,grant_row.updated_at,grant_row.health_expires_unix_ms
+		grant_row.status,grant_row.last_error,grant_row.updated_at,grant_row.health_expires_unix_ms,
+		COALESCE(grant_row.ipv4_egress_node_id,''),COALESCE(ipv4.name,'')
 		FROM meridian_route_grants grant_row JOIN agents agent ON agent.id=grant_row.egress_node_id
+		LEFT JOIN agents ipv4 ON ipv4.id=grant_row.ipv4_egress_node_id
 		WHERE grant_row.status<>'revoked' ORDER BY grant_row.account_id,agent.name,grant_row.id`)
 	if err != nil {
 		return nil, err
@@ -411,7 +416,7 @@ func (s *Store) listMeridianRouteGrants(ctx context.Context) ([]MeridianRouteGra
 		var healthExpires int64
 		if err := rows.Scan(&value.ID, &value.AccountID, &value.EndpointID, &value.EgressNodeID, &value.EgressNodeName,
 			&hideNative, &enabled, &value.DesiredRevision, &value.AppliedRevision, &healthy,
-			&value.Status, &value.LastError, &value.UpdatedAt, &healthExpires); err != nil {
+			&value.Status, &value.LastError, &value.UpdatedAt, &healthExpires, &value.IPv4EgressNodeID, &value.IPv4EgressNodeName); err != nil {
 			return nil, err
 		}
 		value.HideNative, value.Enabled = hideNative == 1, enabled == 1
@@ -845,8 +850,12 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 	input.AccountID = strings.TrimSpace(input.AccountID)
 	input.EndpointID = strings.TrimSpace(input.EndpointID)
 	input.EgressNodeID = strings.TrimSpace(input.EgressNodeID)
+	input.IPv4EgressNodeID = strings.TrimSpace(input.IPv4EgressNodeID)
 	if !meridian.ValidIdentifier(input.AccountID) || !meridian.ValidIdentifier(input.EndpointID) || !meridian.ValidIdentifier(input.EgressNodeID) {
 		return MeridianRouteGrantView{}, errors.New("center: invalid Meridian route grant")
+	}
+	if input.IPv4EgressNodeID != "" && (!meridian.ValidIdentifier(input.IPv4EgressNodeID) || input.IPv4EgressNodeID == input.EgressNodeID) {
+		return MeridianRouteGrantView{}, errors.New("center: choose a distinct IPv4 exit")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -877,7 +886,7 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 		return MeridianRouteGrantView{}, errors.New("center: adopt application resources before adding a Meridian route")
 	}
 	var previousGrantID, previousStatus string
-	err = tx.QueryRowContext(ctx, `SELECT id,status FROM meridian_route_grants WHERE account_id=? AND endpoint_id=? AND egress_node_id=?`, input.AccountID, input.EndpointID, input.EgressNodeID).Scan(&previousGrantID, &previousStatus)
+	err = tx.QueryRowContext(ctx, `SELECT id,status FROM meridian_route_grants WHERE account_id=? AND endpoint_id=? AND egress_node_id=? AND COALESCE(ipv4_egress_node_id,'')=?`, input.AccountID, input.EndpointID, input.EgressNodeID, input.IPv4EgressNodeID).Scan(&previousGrantID, &previousStatus)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return MeridianRouteGrantView{}, err
 	}
@@ -901,6 +910,11 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 	if err != nil {
 		return MeridianRouteGrantView{}, err
 	}
+	if input.IPv4EgressNodeID != "" {
+		if _, _, err := s.readCompositeRoutePeers(ctx, tx, input.EndpointID, input.EgressNodeID, input.IPv4EgressNodeID, false); err != nil {
+			return MeridianRouteGrantView{}, err
+		}
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	routeCredentialID, err := s.insertMeridianCredential(ctx, tx, input.AccountID, input.EndpointID, applicationID, meridian.RouteCredential, input.EgressNodeID, true, now)
 	if err != nil {
@@ -914,14 +928,19 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 			desired_revision=desired_revision+1,runtime_healthy=0,health_expires_unix_ms=0,status='pending',last_error='',updated_at=? WHERE id=? AND status='revoked'`,
 			baseCredentialID, routeCredentialID, boolInt(input.HideNative), now, grantID)
 	} else {
-		_, err = tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,mode,hide_native,enabled,status,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,'fixed',?,1,'pending',?,?)`, grantID, input.AccountID, input.EndpointID, input.EgressNodeID, baseCredentialID, routeCredentialID, boolInt(input.HideNative), now, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,ipv4_egress_node_id,base_credential_id,route_credential_id,mode,hide_native,enabled,status,created_at,updated_at)
+			VALUES(?,?,?,?,NULLIF(?,''),?,?,'fixed',?,1,'pending',?,?)`, grantID, input.AccountID, input.EndpointID, input.EgressNodeID, input.IPv4EgressNodeID, baseCredentialID, routeCredentialID, boolInt(input.HideNative), now, now)
 	}
 	if err != nil {
 		return MeridianRouteGrantView{}, fmt.Errorf("center: create Meridian route grant: %w", err)
 	}
 	if err := s.refreshClientLandingSources(ctx, tx, input.EgressNodeID); err != nil {
 		return MeridianRouteGrantView{}, err
+	}
+	if input.IPv4EgressNodeID != "" {
+		if err := s.refreshClientLandingSources(ctx, tx, input.IPv4EgressNodeID); err != nil {
+			return MeridianRouteGrantView{}, err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE id=?`, now, input.EndpointID); err != nil {
 		return MeridianRouteGrantView{}, err
