@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.311](https://github.com/petauron/vastora/compare/v0.1.0-alpha.310...v0.1.0-alpha.311) (2026-10-12)
+
+
+### Bug Fixes
+
+* **agent:** render native systemd directive paths correctly ([84d1760](https://github.com/petauron/vastora/commit/84d1760551612c8f99d8a124ace7932834214849))
+
 ## [0.1.0-alpha.310](https://github.com/petauron/vastora/compare/v0.1.0-alpha.309...v0.1.0-alpha.310) (2026-10-12)
 
 
