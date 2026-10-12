@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/platform"
@@ -229,13 +230,34 @@ func (b *SystemdPackageBackend) Prepare(ctx context.Context, task DeploymentTask
 	return nil
 }
 
-func unitQuote(value string) string {
+func unitExecQuote(value string) string {
 	// systemd is not a shell, but performs percent specifiers and $ expansion.
-	// Escape both for ordinary scalar data; only executor-generated directives
+	// Escape both for executable arguments; only executor-generated directives
 	// may use specifiers. Quoting prevents a newline becoming a new directive.
 	value = strings.ReplaceAll(value, "%", "%%")
 	value = strings.ReplaceAll(value, "$", "$$")
 	return strconv.Quote(value)
+}
+
+func unitDirectivePath(value string) (string, error) {
+	// EnvironmentFile and the source side of LoadCredential are literal scalar
+	// paths, not ExecStart words: neither unquotes nor unescapes shell/C strings.
+	// Reject paths that cannot be represented on one configuration line instead
+	// of silently pointing systemd at a different file. Only % is expanded here.
+	if !filepath.IsAbs(value) || filepath.Clean(value) != value || strings.TrimSpace(value) != value || strings.ContainsFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f || r == '\\' }) {
+		return "", errors.New("agent: unsafe systemd directive path")
+	}
+	return strings.ReplaceAll(value, "%", "%%"), nil
+}
+
+func unitCredentialPath(value string) (string, error) {
+	// Supported systemd 255 passes credentials to its executor as space-delimited
+	// fields. Reject whitespace instead of producing a unit that parses but then
+	// fails CREDENTIALS initialization. EnvironmentFile has no such restriction.
+	if strings.ContainsFunc(value, unicode.IsSpace) {
+		return "", errors.New("agent: whitespace in systemd credential path")
+	}
+	return unitDirectivePath(value)
 }
 
 func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executable, environmentPath string, credentials map[string]string, config map[string]any, secrets map[string]string, runtimeValues map[string]string) ([]byte, error) {
@@ -268,12 +290,20 @@ func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executa
 		fmt.Fprintf(&unit, "RuntimeDirectory=%s\nRuntimeDirectoryMode=0700\n", baseName)
 	}
 	for _, name := range credentialNames {
-		fmt.Fprintf(&unit, "LoadCredential=%s:%s\n", name, unitQuote(credentials[name]))
+		path, err := unitCredentialPath(credentials[name])
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(&unit, "LoadCredential=%s:%s\n", name, path)
 		// The executable and argv here are fixed executor machinery, never a
 		// catalog shell hook. Private copies accommodate consumers requiring 0600.
 		fmt.Fprintf(&unit, "ExecStartPre=/usr/bin/install -m 0600 \"%%d/%s\" \"/run/%s/%s\"\n", name, baseName, name)
 	}
-	fmt.Fprintf(&unit, "EnvironmentFile=%s\n", unitQuote(environmentPath))
+	environment, err := unitDirectivePath(environmentPath)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(&unit, "EnvironmentFile=%s\n", environment)
 	for _, name := range spec.StateDirectories {
 		directory := packageIdentity(task.ApplicationID) + "-" + name
 		if old := resourceNamed(receipt, "directory", name); old != nil {
@@ -295,9 +325,9 @@ func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executa
 			fmt.Fprintf(&unit, "TasksMax=%d\n", spec.Limits.Pids)
 		}
 	}
-	fmt.Fprintf(&unit, "ExecStart=%s", unitQuote(executable))
+	fmt.Fprintf(&unit, "ExecStart=%s", unitExecQuote(executable))
 	for _, arg := range arguments {
-		fmt.Fprintf(&unit, " %s", unitQuote(arg))
+		fmt.Fprintf(&unit, " %s", unitExecQuote(arg))
 	}
 	unit.WriteString("\n\n[Install]\nWantedBy=multi-user.target\n")
 	return []byte(unit.String()), nil
