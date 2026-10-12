@@ -67,7 +67,26 @@ func (b *SystemdPackageBackend) preparePulseInputs(task DeploymentTask, receipt 
 	} else {
 		secrets["enrollment_token"] = ""
 	}
-	task.Config, err = json.Marshal(settings)
+	// Retain every supplied key when merging host location overrides. The
+	// runtime boundary separates Center metadata and rejects undeclared inputs;
+	// preparation must not silently discard those inputs before validation.
+	var runtimeConfig map[string]json.RawMessage
+	if json.Unmarshal(task.Config, &runtimeConfig) != nil || runtimeConfig == nil {
+		return task, errors.New("agent: invalid Pulse configuration")
+	}
+	if settings.NodeRegion != nil {
+		runtimeConfig["node_region"], err = json.Marshal(*settings.NodeRegion)
+		if err != nil {
+			return task, err
+		}
+	}
+	if settings.GeoIPProvider != nil {
+		runtimeConfig["geoip_provider"], err = json.Marshal(*settings.GeoIPProvider)
+		if err != nil {
+			return task, err
+		}
+	}
+	task.Config, err = json.Marshal(runtimeConfig)
 	if err != nil {
 		return task, err
 	}
