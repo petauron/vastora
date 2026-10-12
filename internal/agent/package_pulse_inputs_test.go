@@ -62,7 +62,7 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 			}
 			receipt := &InstanceResources{Resources: []RuntimeResource{{Kind: "directory", LogicalName: "state", Path: "/var/lib/retained-collector"}, {Kind: "file", LogicalName: "environment", Path: "/etc/retained-collector.env"}}}
 			if task.Operation == "install" {
-				receipt = nil
+				receipt = &InstanceResources{}
 			}
 			if err := writeHostFileAtomic(manager.path("/etc/retained-collector.env"), []byte("PULSE_NODE_REGION=SG\nPULSE_GEOIP_PROVIDER=disabled\n"), 0600); err != nil {
 				t.Fatal(err)
