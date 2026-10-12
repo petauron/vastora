@@ -60,6 +60,13 @@ func runtimeInputs(task DeploymentTask) (map[string]any, map[string]string, erro
 	if config == nil || secrets == nil {
 		return nil, nil, errors.New("agent: package configuration must be objects")
 	}
+	// This association belongs to the collector's Center integration, not its
+	// signed runtime recipe. Keep the original task intact for product identity
+	// validation, enrollment and restoration. All other keys remain subject to
+	// the generic recipe validator, including for every other application.
+	if task.AppKey == pulse.AgentKey && task.Manifest.Runtime != nil && task.Manifest.Runtime.Kind == "systemd" {
+		delete(config, "service_application_id")
+	}
 	declared := map[string]catalog.ConfigField{}
 	for _, field := range task.Manifest.Config {
 		declared[field.Key] = field

@@ -20,17 +20,31 @@ import (
 )
 
 func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.T) {
-	for _, scenario := range []string{"upgrade", "configure", "missing-identity", "invalid-identity", "wrong-service", "insecure-identity", "install-without-token", "install-with-token"} {
+	var recipe catalog.AppManifest
+	for _, app := range officialContractFixture(t).Apps {
+		if app.ID == "pulse-agent" {
+			recipe = app
+		}
+	}
+	if recipe.Runtime == nil {
+		t.Fatal("reviewed collector recipe is missing")
+	}
+	for _, scenario := range []string{"upgrade", "configure", "missing-identity", "invalid-identity", "wrong-service", "insecure-identity", "install-without-token", "install-with-token", "undeclared-config", "missing-service-association"} {
 		t.Run(scenario, func(t *testing.T) {
 			task := packageTestTask(t)
-			task.AppKey, task.Manifest.ID, task.Operation = pulse.AgentKey, "pulse-agent", "upgrade"
+			task.AppKey, task.Manifest, task.Operation = pulse.AgentKey, recipe, "upgrade"
 			settings := pulse.AgentConfig{ServiceURL: "https://monitor.example.test/", ServiceApplicationID: "monitor", NodeName: "retained-node", NodeGroup: "retained-group"}
 			task.Config, _ = json.Marshal(settings)
 			task.Secrets = json.RawMessage(`{}`)
-			task.Manifest.Config = []catalog.ConfigField{{Key: "service_url", Type: "string", Required: true}, {Key: "service_application_id", Type: "string", Required: true}, {Key: "node_name", Type: "string", Required: true}, {Key: "node_group", Type: "string"}, {Key: "node_region", Type: "string"}, {Key: "geoip_provider", Type: "string"}, {Key: "enrollment_token", Type: "string", Secret: true, Required: true}}
-			for i := range task.Manifest.Config {
-				task.Manifest.Config[i].Label = catalog.LocalizedText{English: "Fixture setting", SimplifiedChinese: "测试设置"}
-				task.Manifest.Config[i].Description = task.Manifest.Config[i].Label
+			if scenario == "undeclared-config" || scenario == "missing-service-association" {
+				var config map[string]json.RawMessage
+				_ = json.Unmarshal(task.Config, &config)
+				if scenario == "undeclared-config" {
+					config["unknown_setting"] = json.RawMessage(`"must-not-be-discarded"`)
+				} else {
+					delete(config, "service_application_id")
+				}
+				task.Config, _ = json.Marshal(config)
 			}
 			binary := testArtifactELF(t, "amd64")
 			digest := sha256.Sum256(binary)
@@ -38,8 +52,9 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { downloads.Add(1); _, _ = w.Write(binary) }))
 			defer server.Close()
 			task.Manifest.Images = nil
-			task.Manifest.Artifacts = []catalog.Artifact{{Name: "app", OperatingSystem: "linux", Architecture: "amd64", URL: server.URL + "/collector", SHA256: hex.EncodeToString(digest[:]), Format: "raw"}}
-			task.Manifest.Runtime = &catalog.RuntimeSpec{Kind: "systemd", Version: 1, Storage: []catalog.Storage{{Name: "state", Persistent: true}}, Systemd: &catalog.SystemdRuntime{Artifact: "app", Executable: "app", Files: []catalog.ArtifactFile{{Path: "app", Executable: true}}, StateDirectories: []string{"state"}, Credentials: map[string]string{"enrollment-token": "enrollment_token"}, Environment: map[string]catalog.Value{"PULSE_NODE_REGION": {Config: "node_region"}, "PULSE_GEOIP_PROVIDER": {Config: "geoip_provider"}}}}
+			// Only replace the distribution artifact. Configuration, credentials,
+			// environment and service confinement come from the reviewed recipe.
+			task.Manifest.Artifacts = []catalog.Artifact{{Name: recipe.Runtime.Systemd.Artifact, OperatingSystem: "linux", Architecture: "amd64", URL: server.URL + "/collector", SHA256: hex.EncodeToString(digest[:]), Format: "raw"}}
 			if scenario == "configure" {
 				task.Operation = "configure"
 			}
@@ -50,10 +65,17 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 				task.Secrets = json.RawMessage(`{"enrollment_token":"fixture-one-time-enrollment-token"}`)
 			}
 			packageTaskDigest(t, &task)
-			if err := validatePackageTask(task); err != nil {
+			if err := validatePackageTask(task); scenario == "undeclared-config" {
+				if err == nil {
+					t.Fatal("preflight accepted undeclared collector configuration")
+				}
+			} else if err != nil {
 				t.Fatal(err)
 			}
-			manager := SystemdHostApplicationManager{RootDir: packageTestDirectory(t), HTTPClient: server.Client(), HostTarget: platform.Target{OS: "linux", Architecture: "amd64"}, RunCommand: func(context.Context, string, ...string) error {
+			manager := SystemdHostApplicationManager{RootDir: packageTestDirectory(t), HTTPClient: server.Client(), HostTarget: platform.Target{OS: "linux", Architecture: "amd64"}, RunCommand: func(_ context.Context, command string, _ ...string) error {
+				if command == "getent" {
+					return nil
+				}
 				t.Error("preparation mutated the service")
 				return errors.New("unexpected command")
 			}}
@@ -89,6 +111,20 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 				var retained pulse.AgentConfig
 				if err != nil || json.Unmarshal(prepared.Config, &retained) != nil || retained.NodeRegion == nil || *retained.NodeRegion != "SG" || retained.GeoIPProvider == nil || *retained.GeoIPProvider != "disabled" {
 					t.Fatalf("retained location settings were lost: %v", err)
+				}
+				if retained.ServiceApplicationID != settings.ServiceApplicationID {
+					t.Fatal("preparation lost the Center service association")
+				}
+				config, _, err := runtimeInputs(prepared)
+				if err != nil {
+					t.Fatalf("reviewed recipe rejected prepared collector inputs: %v", err)
+				}
+				if _, exists := config["service_application_id"]; exists {
+					t.Fatal("Center metadata reached the runtime configuration")
+				}
+				var original pulse.AgentConfig
+				if json.Unmarshal(task.Config, &original) != nil || original.ServiceApplicationID != settings.ServiceApplicationID {
+					t.Fatal("preparation changed the original control-plane association")
 				}
 			}
 			err := backend.Prepare(context.Background(), task, receipt)
@@ -127,5 +163,14 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 	ordinary.Manifest.Config = []catalog.ConfigField{{Key: "enrollment_token", Type: "string", Secret: true, Required: true}}
 	if _, _, err := runtimeInputs(ordinary); err == nil {
 		t.Fatal("another application's required secret was relaxed")
+	}
+	ordinary.Secrets = json.RawMessage(`{"enrollment_token":"fixture-required-secret"}`)
+	ordinary.Config = json.RawMessage(`{"service_application_id":"monitor"}`)
+	if _, _, err := runtimeInputs(ordinary); err == nil {
+		t.Fatal("another application's undeclared Center metadata was accepted")
+	}
+	ordinary.AppKey = pulse.AgentKey
+	if _, _, err := runtimeInputs(ordinary); err == nil {
+		t.Fatal("a non-systemd package accepted collector-only metadata")
 	}
 }
