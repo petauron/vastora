@@ -270,7 +270,7 @@ func TestCatalogRuntimeAdoptionOnlyChangesManagementRecords(t *testing.T) {
 	}
 }
 
-func TestDormantMeridianAdoptionRequiresExplicitEmptyReceipt(t *testing.T) {
+func TestManagedUpgradeDormantMeridianRequiresAdoptionAndOnlyStagesImage(t *testing.T) {
 	store, node, _ := independentRuntimeStore(t)
 	ctx := context.Background()
 	app := independentTestPackage(t)
@@ -322,5 +322,41 @@ func TestDormantMeridianAdoptionRequiresExplicitEmptyReceipt(t *testing.T) {
 	}
 	if state != "ready" || !strings.Contains(receipt, `"integrationState":"dormant"`) {
 		t.Fatalf("dormant adoption not recorded: %s %s", state, receipt)
+	}
+	app.Version = "1.1.0"
+	app.Images[0].Name = "xray-core"
+	app.Runtime.Docker.Containers[0].Image = "xray-core"
+	seedIndependentPackage(t, store, app)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: meridianAppKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	upgrade := claimTask(t, store, node)
+	for _, scenario := range []string{"empty", "activated", "wrong-image", "upgrade"} {
+		integration := "awaiting-configuration"
+		image := map[string]string{"kind": "image", "logicalName": "xray-core", "name": app.Images[0].Reference, "sha256": strings.Repeat("a", 64)}
+		resources := []any{image}
+		switch scenario {
+		case "empty":
+			resources = nil
+		case "activated":
+			integration = "active"
+			image["kind"] = "container"
+		case "wrong-image":
+			image["name"] = "registry.example.test/other@sha256:" + strings.Repeat("b", 64)
+		}
+		result, err := json.Marshal(map[string]any{"resources": map[string]any{"version": 1, "applicationId": upgrade.ApplicationID, "appKey": upgrade.AppKey, "taskId": upgrade.ID, "runtime": "docker", "integrationState": integration, "packageVersion": upgrade.Manifest.Version, "packageRevision": upgrade.PackageRevision, "manifestSha256": upgrade.ManifestSHA256, "authorizedCapabilities": upgrade.AuthorizedCapabilities, "state": "ready", "resources": resources}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = store.CompleteTask(ctx, node.ID, node.Credential, upgrade.ID, upgrade.Attempt, true, "", result, upgrade.RequiredRuntimeGeneration)
+		if (err == nil) != (scenario == "upgrade") {
+			t.Fatalf("scenario=%s error=%v", scenario, err)
+		}
+	}
+	if err := store.db.QueryRow(`SELECT resources_json FROM application_resources WHERE application_id=?`, deployment.ApplicationID).Scan(&receipt); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(receipt, `"integrationState":"awaiting-configuration"`) || !strings.Contains(receipt, `"kind":"image"`) {
+		t.Fatal("staged package identity was not retained")
 	}
 }

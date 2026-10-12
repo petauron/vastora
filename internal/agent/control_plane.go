@@ -28,6 +28,7 @@ const (
 )
 
 type Client struct {
+	centerControl      *centerControlSession
 	executionAbort     func(error)
 	executionSession   string
 	execution          controlplane.ExecutionAuthorization

@@ -24,6 +24,16 @@ type meridianPackageBackend struct {
 	image    string
 }
 
+func (b *meridianPackageBackend) Inspect(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
+	if err := b.DockerPackageBackend.Inspect(ctx, task, receipt); err != nil {
+		return err
+	}
+	if receipt.IntegrationState == "dormant" {
+		return b.Executor.inspectDormantMeridian(ctx, b.Docker)
+	}
+	return nil
+}
+
 func (b *meridianPackageBackend) Prepare(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
 	if task.Operation == "uninstall" {
 		return nil
@@ -144,6 +154,16 @@ func (b *meridianPackageBackend) prepareHandover(ctx context.Context) error {
 }
 
 func (b *meridianPackageBackend) Apply(ctx context.Context, task DeploymentTask, receipt *InstanceResources, persist func() error) error {
+	// A dormant upgrade stages the signed image for later explicit configuration.
+	// Recheck absence before committing; it must never create or adopt Xray.
+	if receipt.IntegrationState == "dormant" {
+		if b.state != nil {
+			return errors.New("agent: dormant Meridian acquired runtime state during upgrade")
+		}
+		if err := b.Executor.inspectDormantMeridian(ctx, b.Docker); err != nil {
+			return err
+		}
+	}
 	if err := b.prepareHandover(ctx); err != nil {
 		return err
 	}

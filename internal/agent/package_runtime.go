@@ -288,8 +288,9 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if task.Operation != "install" && receipt == nil {
 		return result, errors.New("agent: existing instance has no verified resource receipt; adopt it before mutation")
 	}
-	if receipt != nil && receipt.IntegrationState == "dormant" {
-		return result, errors.New("agent: dormant Meridian requires an explicit runtime activation or retirement; package operations cannot create it implicitly")
+	dormant := receipt != nil && receipt.IntegrationState == "dormant"
+	if dormant && (task.AppKey != meridianKey || task.Operation != "upgrade" || receipt.State != "ready" || receipt.Runtime != "docker" || task.Manifest.Runtime.Kind != "docker" || len(receipt.Resources) != 0) {
+		return result, errors.New("agent: dormant Meridian permits only a verified package upgrade without runtime activation")
 	}
 	if task.Operation == "install" && receipt != nil && receipt.State != "retained" {
 		return result, errors.New("agent: application is already installed")
@@ -302,7 +303,7 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if task.Operation == "uninstall" && (receipt.ManifestSHA256 != task.ManifestSHA256 || receipt.PackageRevision != task.PackageRevision || receipt.PackageVersion != task.Manifest.Version) {
 		return result, errors.New("agent: uninstall must identify the installed receipt, not a catalog replacement")
 	}
-	if len(receipt.Resources) > 0 {
+	if dormant || len(receipt.Resources) > 0 {
 		if err := e.Backend.Inspect(ctx, task, receipt); err != nil {
 			return result, err
 		}
