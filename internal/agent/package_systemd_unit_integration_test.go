@@ -60,7 +60,9 @@ func TestPackageSystemdDirectivePathsRealHost(t *testing.T) {
 	}
 	for _, args := range [][]string{{"daemon-reload"}, {"start", name}} {
 		if output, err := exec.CommandContext(ctx, "systemctl", args...).CombinedOutput(); err != nil {
-			t.Fatalf("systemctl %v: %v\n%s", args, err, output)
+			journal, _ := exec.Command("journalctl", "-u", name, "-n", "20", "--no-pager").CombinedOutput()
+			properties, _ := exec.Command("systemctl", "show", name, "-p", "LoadCredential", "-p", "EnvironmentFiles", "-p", "User", "-p", "Group", "-p", "RuntimeDirectory").CombinedOutput()
+			t.Fatalf("systemctl %v: %v\n%s\n%s\n%s", args, err, output, properties, journal)
 		}
 	}
 	for {
