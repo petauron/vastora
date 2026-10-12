@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.308](https://github.com/petauron/vastora/compare/v0.1.0-alpha.307...v0.1.0-alpha.308) (2026-10-12)
+
+
+### Bug Fixes
+
+* consume canonical glivela module after repository migration ([d45d731](https://github.com/petauron/vastora/commit/d45d7313eae1df155965432e8553d16b0d3b98b4))
+
 ## [0.1.0-alpha.307](https://github.com/petauron/vastora/compare/v0.1.0-alpha.306...v0.1.0-alpha.307) (2026-10-12)
 
 
