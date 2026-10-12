@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.310](https://github.com/petauron/vastora/compare/v0.1.0-alpha.309...v0.1.0-alpha.310) (2026-10-12)
+
+
+### Features
+
+* **glivela:** integrate composite exit authority and runtime ([09faf7a](https://github.com/petauron/vastora/commit/09faf7abc426d86ac799dcc8e28354a7ad7d2b4b))
+
+
+### Bug Fixes
+
+* separate collector control metadata from recipe inputs ([b1973af](https://github.com/petauron/vastora/commit/b1973af691074d19161ba369491974bc529dbb27))
+
 ## [0.1.0-alpha.309](https://github.com/petauron/vastora/compare/v0.1.0-alpha.308...v0.1.0-alpha.309) (2026-10-12)
 
 
