@@ -37,8 +37,11 @@ and verifies them again on observation and restart. Old files still referenced
 by an applied config are not removed during staging.
 
 The reviewed Glivela target-selection runtime is required, NOT merely an
-official Xray image with the same version. Its startup capability assertions
-fail before the active config is changed. It exposes the original destination
+official Xray image with the same or a newer version. The Agent requires its
+exact `GlivelaTargetSelectionRevision: 1` marker, and the reviewed core's
+`run -test` initializes routing Lua without starting inbound listeners. Script
+initialization and capability errors fail before the active config is changed.
+It exposes the original destination
 and directly pins one validated literal before SOCKS dispatch; no loopback,
 second dispatch, duplicated traffic accounting, remote re-resolution, or
 cross-exit retry is used. Existing fixed/native routes do not call these new

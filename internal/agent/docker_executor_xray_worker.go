@@ -595,8 +595,8 @@ func validateXrayWorkerConfigAs(ctx context.Context, docker *client.Client, imag
 			var decoded bytes.Buffer
 			_, readErr := stdcopy.StdCopy(&decoded, &decoded, io.LimitReader(logs, 64<<10))
 			_ = logs.Close()
-			if readErr != nil || !compositeXrayVersionSupported(decoded.Bytes()) {
-				return errors.New("agent: composite routes require Xray " + meridian.CompositeMinimumXrayVersion + " or newer")
+			if readErr != nil || !compositeXrayCapabilitiesSupported(decoded.Bytes()) {
+				return errors.New("agent: composite routes require the reviewed Glivela target-selection runtime; active configuration is unchanged")
 			}
 		}
 		return nil
@@ -605,7 +605,16 @@ func validateXrayWorkerConfigAs(ctx context.Context, docker *client.Client, imag
 	}
 }
 
-func compositeXrayVersionSupported(output []byte) bool {
+func compositeXrayCapabilitiesSupported(output []byte) bool {
+	capability := false
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.TrimSpace(line) == meridian.CompositeRuntimeCapability {
+			capability = true
+		}
+	}
+	if !capability {
+		return false
+	}
 	fields := strings.Fields(string(output))
 	for i, field := range fields {
 		if field != "Xray" || i+1 >= len(fields) {

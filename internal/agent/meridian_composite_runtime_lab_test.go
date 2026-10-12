@@ -44,6 +44,10 @@ func TestCompositeRuntimeLab(t *testing.T) {
 	if !filepath.IsAbs(binaryPath) {
 		t.Fatal("an explicit audited Xray binary is required")
 	}
+	version, err := exec.Command(binaryPath, "version").Output()
+	if err != nil || !compositeXrayCapabilitiesSupported(version) {
+		t.Fatal("controlled lab requires the reviewed target-selection runtime")
+	}
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +136,7 @@ func TestCompositeRuntimeLab(t *testing.T) {
 		}
 		isSix := name != "v4.example.com" && (name != "change.example.com" || changed.Load())
 		if q.Qtype == dns.TypeAAAA && isSix {
-			return compositeDNSReply(query, 0, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 1}, AAAA: net.ParseIP("2606:4700:4700::1111")}), nil
+			return compositeDNSReply(query, 0, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 1}, AAAA: net.ParseIP("2001:4860:4860::8888")}), nil
 		}
 		if q.Qtype == dns.TypeA {
 			return compositeDNSReply(query, 0, &dns.A{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: net.ParseIP("1.1.1.1")}), nil
@@ -273,7 +277,7 @@ func TestCompositeRuntimeLab(t *testing.T) {
 	if six.finished.Load() != 1 {
 		t.Fatal("counter observation did not finish")
 	}
-	for _, test := range []struct{ target, family string }{{"v6.example.com", "ipv6"}, {"v4.example.com", "ipv4"}, {"alias.example.com", "ipv6"}, {"1.1.1.1", "ipv4"}, {"2606:4700:4700::1111", "ipv6"}} {
+	for _, test := range []struct{ target, family string }{{"v6.example.com", "ipv6"}, {"v4.example.com", "ipv4"}, {"alias.example.com", "ipv6"}, {"1.1.1.1", "ipv4"}, {"2001:4860:4860::8888", "ipv6"}} {
 		request(test.target, "/", test.family, 200)
 	}
 	for _, status := range []int{401, 403, 404} {

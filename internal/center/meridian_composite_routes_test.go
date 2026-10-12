@@ -18,7 +18,7 @@ func compositeCenterFixture(t *testing.T) (*Store, string, string, string) {
 		t.Fatal(err)
 	}
 	desired, applied, _ := readMeridianAuthorizationServer(t, store, sixID)
-	desired.Plan.EgressIP = "2606:4700:4700::1111"
+	desired.Plan.EgressIP = "2001:4860:4860::8888"
 	applied.Plan.EgressIP = desired.Plan.EgressIP
 	writeMeridianAuthorizationServer(t, store, desired, applied, "ready")
 	four := enrollOrchestrationNode(t, store, "composite-v4", NodeCapabilities{Docker: true},
@@ -55,7 +55,7 @@ func TestCompositeHealthRequiresBothFamiliesAndUsesShortestLease(t *testing.T) {
 	result := meridianHealthResult(projection, now, true)
 	for i := range result.Peers {
 		if result.Peers[i].EgressID == six {
-			result.Peers[i].Status.ExitIP = "2606:4700:4700::1111"
+			result.Peers[i].Status.ExitIP = "2001:4860:4860::8888"
 		}
 		if result.Peers[i].EgressID == four {
 			result.Peers[i].Status.AllowedUntil = now.Add(5 * time.Second)
@@ -74,7 +74,7 @@ func TestCompositeHealthRequiresBothFamiliesAndUsesShortestLease(t *testing.T) {
 	}
 	for i := range result.Peers {
 		if result.Peers[i].EgressID == four {
-			result.Peers[i].Status.ExitIP = "2606:4700:4700::1001"
+			result.Peers[i].Status.ExitIP = "2001:4860:4860::8844"
 		}
 	}
 	if err := recordMeridianRouteHealth(ctx, tx, sharedSnapshotEndpointID, projection, result, now); err != nil {
@@ -200,10 +200,10 @@ func TestCompositeSecondaryAuthorizationAndFamilyFailClosed(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "wrong family":
-				desired.Plan.EgressIP = "2606:4700:4700::1001"
+				desired.Plan.EgressIP = "2001:4860:4860::8844"
 				applied.Plan.EgressIP = desired.Plan.EgressIP
 			case "desired family changed":
-				desired.Plan.EgressIP = "2606:4700:4700::1001"
+				desired.Plan.EgressIP = "2001:4860:4860::8844"
 			}
 			writeMeridianAuthorizationServer(t, store, desired, applied, "ready")
 			routes, err := readMeridianRuntimeIdentityRoutes(t, store, nil)

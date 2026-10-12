@@ -31,7 +31,7 @@ func TestCompositeDNSUsesAAAAEvidenceBeforeAnyAQuery(t *testing.T) {
 		wantA       bool
 		wantFailure bool
 	}{
-		{"dual stack", dns.RcodeSuccess, "2606:4700:4700::1111", false, false},
+		{"dual stack", dns.RcodeSuccess, "2001:4860:4860::8888", false, false},
 		{"A only", dns.RcodeSuccess, "", true, false},
 		{"SERVFAIL with A available", dns.RcodeServerFailure, "", false, true},
 		{"NXDOMAIN", dns.RcodeNameError, "", false, true},
@@ -71,7 +71,7 @@ func TestCompositeDNSCacheHonorsPositiveAndNegativeTTLAndFamilyChange(t *testing
 		queries++
 		q := query.Question[0]
 		if q.Qtype == dns.TypeAAAA && six {
-			return compositeDNSReply(query, 0, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 30}, AAAA: net.ParseIP("2606:4700:4700::1111")}), nil
+			return compositeDNSReply(query, 0, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 30}, AAAA: net.ParseIP("2001:4860:4860::8888")}), nil
 		}
 		if q.Qtype == dns.TypeAAAA {
 			return compositeDNSReply(query, 0), nil
@@ -102,7 +102,7 @@ func TestCompositeDNSCNAMEAndTimeoutAreNotFallback(t *testing.T) {
 		if q.Name == "www.example.com." {
 			return compositeDNSReply(query, 0, &dns.CNAME{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 10}, Target: "alias.example.com."}), nil
 		}
-		return compositeDNSReply(query, 0, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 30}, AAAA: net.ParseIP("2606:4700:4700::1111")}), nil
+		return compositeDNSReply(query, 0, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 30}, AAAA: net.ParseIP("2001:4860:4860::8888")}), nil
 	})
 	answer := server.lookup(context.Background(), "www.example.com")
 	if requests != 2 || answer.rcode != 0 || answer.expires.Sub(now) != 10*time.Second {
@@ -139,7 +139,7 @@ func TestCompositeDNSRejectsUnconfirmedNODATA(t *testing.T) {
 					reply.Answer = []dns.RR{&dns.CNAME{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 20}, Target: q.Name}}
 				case "unrelated answer":
 					reply.Ns = nil
-					reply.Answer = []dns.RR{&dns.AAAA{Hdr: dns.RR_Header{Name: "other.example.com.", Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 20}, AAAA: net.ParseIP("2606:4700:4700::1111")}}
+					reply.Answer = []dns.RR{&dns.AAAA{Hdr: dns.RR_Header{Name: "other.example.com.", Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 20}, AAAA: net.ParseIP("2001:4860:4860::8888")}}
 				}
 				return reply, nil
 			})
@@ -164,7 +164,7 @@ func TestCompositeDNSZeroTTLIsUsableButNeverCached(t *testing.T) {
 	queries := 0
 	server := compositeDNSFixture(&now, func(_ context.Context, query *dns.Msg, _ string) (*dns.Msg, error) {
 		queries++
-		return compositeDNSReply(query, 0, &dns.AAAA{Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 0}, AAAA: net.ParseIP("2606:4700:4700::1111")}), nil
+		return compositeDNSReply(query, 0, &dns.AAAA{Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 0}, AAAA: net.ParseIP("2001:4860:4860::8888")}), nil
 	})
 	for i := 0; i < 2; i++ {
 		answer := server.lookup(context.Background(), "www.example.com")
@@ -199,7 +199,7 @@ func TestCompositeDNSWireQueryCannotMergeChangedFamilies(t *testing.T) {
 	server := compositeDNSFixture(&now, func(_ context.Context, query *dns.Msg, _ string) (*dns.Msg, error) {
 		q := query.Question[0]
 		if q.Qtype == dns.TypeAAAA && six {
-			return compositeDNSReply(query, 0, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 1}, AAAA: net.ParseIP("2606:4700:4700::1111")}), nil
+			return compositeDNSReply(query, 0, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 1}, AAAA: net.ParseIP("2001:4860:4860::8888")}), nil
 		}
 		if q.Qtype == dns.TypeA {
 			aQueries++
@@ -233,11 +233,14 @@ func TestCompositeXrayCapabilityCheckFailsBeforeConfigSwitch(t *testing.T) {
 		banner    string
 		supported bool
 	}{
-		{"Xray 26.10.10 (Xray, Penetrates Everything.)", true},
-		{"Xray 26.10.11", true}, {"Xray 27.1.1", true},
+		{"Xray 26.10.10 (Xray, Penetrates Everything.)\nGlivelaTargetSelectionRevision: 1", true},
+		{"Xray 26.10.11\nGlivelaTargetSelectionRevision: 1", true}, {"Xray 27.1.1\nGlivelaTargetSelectionRevision: 1", true},
+		{"Xray 26.10.10", false}, {"Xray 27.1.1", false},
+		{"Xray 26.10.10\nGlivelaTargetSelectionRevision: 2", false},
+		{"Xray 26.9.8\nGlivelaTargetSelectionRevision: 1", false},
 		{"Xray 26.9.8", false}, {"Xray 26.10.9", false}, {"Xray 26.10", false}, {"", false},
 	} {
-		if compositeXrayVersionSupported([]byte(test.banner)) != test.supported {
+		if compositeXrayCapabilitiesSupported([]byte(test.banner)) != test.supported {
 			t.Fatalf("capability result for %q", test.banner)
 		}
 	}
