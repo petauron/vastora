@@ -246,6 +246,10 @@ jobs:
         run: |
           go test -c -o /tmp/vastora-systemd-decommission.test ./cmd/vastora
           sudo env VASTORA_SYSTEMD_DECOMMISSION_INTEGRATION=1 /tmp/vastora-systemd-decommission.test -test.run '^TestHostDecommissionRealSystemdEndToEnd$' -test.v
+      - name: Verify native package environment and credentials on real systemd
+        run: |
+          go test -c -tags=integration -o "$RUNNER_TEMP/package-systemd.test" ./internal/agent
+          sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" VASTORA_PACKAGE_HOST_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test" -test.run '^TestPackageSystemdDirectivePathsRealHost$' -test.v
       - if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
         run: make go-security-check
 
