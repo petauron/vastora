@@ -50,7 +50,7 @@ require (
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
