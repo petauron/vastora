@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/petauron/catalog/catalog"
@@ -27,14 +28,18 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 			task.Config, _ = json.Marshal(settings)
 			task.Secrets = json.RawMessage(`{}`)
 			task.Manifest.Config = []catalog.ConfigField{{Key: "service_url", Type: "string", Required: true}, {Key: "service_application_id", Type: "string", Required: true}, {Key: "node_name", Type: "string", Required: true}, {Key: "node_group", Type: "string"}, {Key: "node_region", Type: "string"}, {Key: "geoip_provider", Type: "string"}, {Key: "enrollment_token", Type: "string", Secret: true, Required: true}}
+			for i := range task.Manifest.Config {
+				task.Manifest.Config[i].Label = catalog.LocalizedText{English: "Fixture setting", SimplifiedChinese: "测试设置"}
+				task.Manifest.Config[i].Description = task.Manifest.Config[i].Label
+			}
 			binary := testArtifactELF(t, "amd64")
 			digest := sha256.Sum256(binary)
-			downloads := 0
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { downloads++; _, _ = w.Write(binary) }))
+			var downloads atomic.Int32
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { downloads.Add(1); _, _ = w.Write(binary) }))
 			defer server.Close()
 			task.Manifest.Images = nil
 			task.Manifest.Artifacts = []catalog.Artifact{{Name: "app", OperatingSystem: "linux", Architecture: "amd64", URL: server.URL + "/collector", SHA256: hex.EncodeToString(digest[:]), Format: "raw"}}
-			task.Manifest.Runtime = &catalog.RuntimeSpec{Kind: "systemd", Version: 1, Storage: []catalog.Storage{{Name: "state", Persistent: true}}, Systemd: &catalog.SystemdRuntime{Artifact: "app", Executable: "app", Files: []catalog.ArtifactFile{{Path: "app", Executable: true}}, StateDirectories: []string{"state"}, Credentials: map[string]string{"enrollment-token": "enrollment_token"}}}
+			task.Manifest.Runtime = &catalog.RuntimeSpec{Kind: "systemd", Version: 1, Storage: []catalog.Storage{{Name: "state", Persistent: true}}, Systemd: &catalog.SystemdRuntime{Artifact: "app", Executable: "app", Files: []catalog.ArtifactFile{{Path: "app", Executable: true}}, StateDirectories: []string{"state"}, Credentials: map[string]string{"enrollment-token": "enrollment_token"}, Environment: map[string]catalog.Value{"PULSE_NODE_REGION": {Config: "node_region"}, "PULSE_GEOIP_PROVIDER": {Config: "geoip_provider"}}}}
 			if scenario == "configure" {
 				task.Operation = "configure"
 			}
@@ -56,6 +61,9 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 				t.Fatal(err)
 			}
 			receipt := &InstanceResources{Resources: []RuntimeResource{{Kind: "directory", LogicalName: "state", Path: "/var/lib/retained-collector"}, {Kind: "file", LogicalName: "environment", Path: "/etc/retained-collector.env"}}}
+			if task.Operation == "install" {
+				receipt = nil
+			}
 			if err := writeHostFileAtomic(manager.path("/etc/retained-collector.env"), []byte("PULSE_NODE_REGION=SG\nPULSE_GEOIP_PROVIDER=disabled\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -85,8 +93,12 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 			}
 			err := backend.Prepare(context.Background(), task, receipt)
 			allowed := scenario == "upgrade" || scenario == "configure" || scenario == "install-with-token"
-			if (err == nil) != allowed || downloads != map[bool]int{true: 1, false: 0}[allowed] {
-				t.Fatalf("allowed=%v downloads=%d error=%v", allowed, downloads, err)
+			var expectedDownloads int32
+			if allowed {
+				expectedDownloads = 1
+			}
+			if (err == nil) != allowed || downloads.Load() != expectedDownloads {
+				t.Fatalf("allowed=%v downloads=%d error=%v", allowed, downloads.Load(), err)
 			}
 			if scenario == "upgrade" || scenario == "configure" {
 				foundCredential := false
@@ -100,6 +112,9 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 				}
 				if !foundCredential {
 					t.Fatal("retained enrollment source was not staged")
+				}
+				if !bytes.Contains(backend.files["/etc/retained-collector.env"], []byte(`PULSE_NODE_REGION="SG"`)) || !bytes.Contains(backend.files["/etc/retained-collector.env"], []byte(`PULSE_GEOIP_PROVIDER="disabled"`)) {
+					t.Fatal("staged environment lost location overrides")
 				}
 				retained, readErr := os.ReadFile(identityPath)
 				if readErr != nil || !bytes.Equal(retained, identity) {
