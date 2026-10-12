@@ -175,7 +175,13 @@ func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
 	if err != nil {
 		return err
 	}
-	return runPersistentHostUpdateWithEnvironment(ctx, operationPath, defaultHostUpdateActivationEnvironment(filepath.Dir(operationPath), operation), agent.Client{})
+	connection := agent.Connection{AgentID: operation.AgentID, CenterURL: operation.CenterURL, Credential: operation.Credential, CAFingerprint: operation.CAFingerprint, CACertificatePEM: operation.CACertificatePEM}
+	client, release, err := agent.NewCenterControlClient(connection, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return runPersistentHostUpdateWithEnvironment(ctx, operationPath, defaultHostUpdateActivationEnvironment(filepath.Dir(operationPath), operation), client)
 }
 
 func runPersistentHostUpdateWithEnvironment(ctx context.Context, operationPath string, environment hostUpdateActivationEnvironment, client agent.Client) error {

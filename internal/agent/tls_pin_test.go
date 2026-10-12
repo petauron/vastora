@@ -122,6 +122,7 @@ func testPrivateCenterTLSCertificate(t *testing.T) (tls.Certificate, *x509.Certi
 	}
 	leafTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(13), Subject: pkix.Name{CommonName: "127.0.0.1"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:  []string{"center.example.test"},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, issuer, leafPublic, issuerPrivate)

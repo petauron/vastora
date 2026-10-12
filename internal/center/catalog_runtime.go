@@ -194,6 +194,7 @@ func storePackageReceipt(ctx context.Context, tx *sql.Tx, taskID, applicationID,
 		return errors.New("center: missing or oversized package resource receipt")
 	}
 	var receipt struct {
+		IntegrationState       string            `json:"integrationState"`
 		Version                int               `json:"version"`
 		ApplicationID          string            `json:"applicationId"`
 		AppKey                 string            `json:"appKey"`
@@ -237,6 +238,23 @@ func storePackageReceipt(ctx context.Context, tx *sql.Tx, taskID, applicationID,
 	slices.Sort(receipt.AuthorizedCapabilities)
 	if version != receipt.PackageVersion || revision != receipt.PackageRevision || digest == "" || digest != receipt.ManifestSHA256 || !slices.Equal(grants, receipt.AuthorizedCapabilities) {
 		return errors.New("center: package resource receipt does not match the authorized deployment")
+	}
+	if appKey == meridianAppKey && operation == "upgrade" {
+		dormant, err := dormantMeridianUpgrade(ctx, tx, taskID)
+		if err != nil {
+			return err
+		}
+		if dormant {
+			var image struct {
+				Kind        string `json:"kind"`
+				LogicalName string `json:"logicalName"`
+				Name        string `json:"name"`
+				SHA256      string `json:"sha256"`
+			}
+			if receipt.IntegrationState != "awaiting-configuration" || len(receipt.Resources) != 1 || json.Unmarshal(receipt.Resources[0], &image) != nil || image.Kind != "image" || image.LogicalName != "xray-core" || len(manifest.Images) != 1 || manifest.Images[0].Name != image.LogicalName || manifest.Images[0].Reference != image.Name || !strings.HasSuffix(image.Name, "@sha256:"+image.SHA256) || len(image.SHA256) != 64 {
+				return errors.New("center: dormant Meridian upgrade must stage only its authorized image")
+			}
+		}
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO application_resources(application_id,manifest_sha256,package_revision,authorized_capabilities_json,resources_json,adoption_state,updated_at)
 		VALUES(?,?,?,?,?,'ready',?) ON CONFLICT(application_id) DO UPDATE SET manifest_sha256=excluded.manifest_sha256,package_revision=excluded.package_revision,

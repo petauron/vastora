@@ -25,24 +25,31 @@ func (e ApplicationExecutor) historicalDormantMeridianResources(ctx context.Cont
 	if task.AppKey != meridianKey || !task.DormantRuntime {
 		return nil, errors.New("agent: dormant adoption is reserved for Meridian")
 	}
-	var rows int
-	if err := e.Store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_runtime_state`).Scan(&rows); err != nil {
-		return nil, err
-	}
-	if rows != 0 {
-		return nil, errors.New("agent: Meridian runtime state exists; dormant adoption requires review")
-	}
-	if _, err := os.Lstat(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory)); err == nil {
-		return nil, errors.New("agent: Meridian configuration artifacts exist; dormant adoption requires review")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	if err := inspectDormantMeridianContainers(ctx, docker); err != nil {
+	if err := e.inspectDormantMeridian(ctx, docker); err != nil {
 		return nil, err
 	}
 	receipt := historicalReceipt(task, "docker")
 	receipt.IntegrationState = "dormant"
 	return receipt, nil
+}
+
+func (e ApplicationExecutor) inspectDormantMeridian(ctx context.Context, docker packageDockerEngine) error {
+	if e.Store == nil {
+		return errors.New("agent: dormant Meridian requires local runtime evidence")
+	}
+	var rows int
+	if err := e.Store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_runtime_state`).Scan(&rows); err != nil {
+		return err
+	}
+	if rows != 0 {
+		return errors.New("agent: Meridian runtime state exists; dormant package requires review")
+	}
+	if _, err := os.Lstat(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory)); err == nil {
+		return errors.New("agent: Meridian configuration artifacts exist; dormant package requires review")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return inspectDormantMeridianContainers(ctx, docker)
 }
 
 func inspectDormantMeridianContainers(ctx context.Context, docker packageDockerEngine) error {

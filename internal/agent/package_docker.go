@@ -28,6 +28,7 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/pulse"
 )
 
 type packageDockerEngine interface {
@@ -63,7 +64,12 @@ func runtimeInputs(task DeploymentTask) (map[string]any, map[string]string, erro
 	for _, field := range task.Manifest.Config {
 		declared[field.Key] = field
 		if field.Secret {
-			if field.Required && strings.TrimSpace(secrets[field.Key]) == "" {
+			// Enrollment is a one-time operation, not a runtime credential.
+			// The systemd product preparer verifies either an existing private
+			// identity, an explicit restoration, or a fresh enrollment token
+			// before staging anything. Other required secrets remain mandatory.
+			oneTimeEnrollment := task.AppKey == pulse.AgentKey && field.Key == "enrollment_token" && task.Manifest.Runtime != nil && task.Manifest.Runtime.Kind == "systemd"
+			if field.Required && !oneTimeEnrollment && strings.TrimSpace(secrets[field.Key]) == "" {
 				return nil, nil, fmt.Errorf("agent: required package secret %s is missing", field.Key)
 			}
 			if _, exists := secrets[field.Key]; !exists {
