@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/meridianruntime"
 )

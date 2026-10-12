@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/landing"
 )
 

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	m "github.com/petauron/meridian"
+	m "github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/meridianruntime"
 )
 

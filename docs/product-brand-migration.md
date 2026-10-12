@@ -9,7 +9,7 @@ This migration changes product labels, not installed application identity.
 | Senulun | `vastora-official/pulse` | Dashboard, settings, users, monitoring history and volumes |
 | Senulun Agent | `vastora-official/pulse-agent` | Node identity, enrollment credentials and owned host resources |
 
-Keep database table/JSON names, API routes, module paths, environment variables,
+Keep database table/JSON names, API routes, environment variables,
 executables, units, persisted paths and signed asset names as stable technical
 contracts. Do not add aliases, dual reads/writes, fallback routes or duplicate
 apps merely to remove an old spelling. Human-facing names are separate from
@@ -29,8 +29,8 @@ catalog entry's label does not install, enroll, restart or upgrade an instance.
 ## Review and rollout order
 
 1. Review the Glivela, Senulun, Vastora and catalog PRs together. PR creation is
-   not a production migration. Leave source repositories at their current URLs
-   while pinned consumers and Release Please still refer to those coordinates.
+   not a production migration. Canonical repositories are `petauron/glivela` and
+   `petauron/senulun`; update source consumers and local Git remotes together.
 2. Merge approved source PRs and use their Release Please version PRs and real
    CI on the exact immutable commits. Do not manually bump versions or tags.
 3. Before catalog publication, separately update the Glivela UI source pin and
@@ -41,8 +41,27 @@ catalog entry's label does not install, enroll, restart or upgrade an instance.
    upgrade are three separate operations.
 5. Verify names, subscription behavior, collector node IDs, history, traffic
    totals and custom site titles after an authorized rollout. Do not create a
-   second install. A repository rename requires a separate coordinated source,
-   provenance and link update; it is not performed by these code changes.
+   second install.
+
+## Canonical repository migration
+
+Vastora imports `github.com/petauron/glivela` at an immutable checked commit.
+The Go package name remains `meridian`; there is no old-module alias, `replace`
+fallback or parallel implementation. A pinned pseudo-version permits this
+dependency change without publishing a Glivela version solely for the rename.
+Historical tags retain their original module declarations and must not move.
+
+The catalog's future Senulun source and image registry are `petauron/senulun`
+and `ghcr.io/petauron/senulun`. New attestations must bind that exact repository.
+Old published images, native archive names, catalog fixtures, signatures and
+accepted release coordinates remain immutable. The Glivela UI source checkout
+uses the new repository URL but retains its reviewed source SHA until a separate
+UI release. Release Please keeps existing component keys and version history.
+
+Merging repository-migration PRs does not authorize a version PR merge, binary
+or image release, signed catalog publication, or production deployment. Installed
+apps retain their identities and currently accepted assets until a separately
+approved managed upgrade.
 
 Local tests/builds are not run unless explicitly requested. The PR workflows
 run genuine checks; no required-check results are synthesized.

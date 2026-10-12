@@ -70,7 +70,7 @@ never silently upgrades an older Senulun installation. Each requested record mus
 be returned exactly, without tokens or partial results. Consumed records must
 identify the same active monitor node; missing, inactive or ambiguous associations
 require review. Expired enrollment tokens may still identify historical nodes.
-The supported CLI prerequisite is merged in [Senulun PR26](https://github.com/petauron/pulse/pull/26);
+The supported CLI prerequisite is merged in [Senulun PR26](https://github.com/petauron/senulun/pull/26);
 that merge alone does not make the installed service support the command.
 
 The saved receipt survives Center restart. Identical requests return that receipt

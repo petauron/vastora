@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 )
 
 type AgentReinstallCompleteInput struct {

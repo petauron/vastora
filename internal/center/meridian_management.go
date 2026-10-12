@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/meridianruntime"
 )
 

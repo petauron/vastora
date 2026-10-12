@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 )
 
 func acceptanceFixture() AcceptanceClient {

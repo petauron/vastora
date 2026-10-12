@@ -15,7 +15,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/meridianruntime"
 )

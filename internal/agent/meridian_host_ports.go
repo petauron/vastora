@@ -13,7 +13,7 @@ import (
 	"syscall"
 
 	"github.com/moby/moby/client"
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 )
 
 // Check before stopping the previous container. An occupied socket is allowed

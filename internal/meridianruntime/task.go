@@ -1,6 +1,6 @@
 // Package meridianruntime defines the secret-bearing Vastora-to-Agent
 // transport for one complete Meridian Xray revision. The durable account and
-// routing model remains in github.com/petauron/meridian; this package only
+// routing model remains in github.com/petauron/glivela; this package only
 // carries an already projected artifact across the authenticated task channel.
 package meridianruntime
 
@@ -9,7 +9,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/landing"
 )
 

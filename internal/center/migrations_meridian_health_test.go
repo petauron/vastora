@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 )
 
 func TestVersion89InvalidatesHealthBeforeLaterRendererMigration(t *testing.T) {

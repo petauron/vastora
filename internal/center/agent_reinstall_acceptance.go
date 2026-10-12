@@ -9,7 +9,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/petauron/meridian"
+	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
