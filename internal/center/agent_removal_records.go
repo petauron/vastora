@@ -50,7 +50,7 @@ func (s *Store) finishAgentRemoval(ctx context.Context, id string) error {
 		`DELETE FROM three_x_ui_client_accounts WHERE controller_id IN(SELECT id FROM applications WHERE node_id=?)`,
 		`DELETE FROM application_commands WHERE gateway_node_id=? AND state NOT IN('pending','running') AND reconciliation_required=0`,
 		`DELETE FROM publications WHERE entry_node_id=? AND status='stopped' AND cleanup_pending=0`,
-		`DELETE FROM meridian_route_grants WHERE status='revoked' AND (egress_node_id=? OR endpoint_id IN(SELECT e.id FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=?))`,
+		`DELETE FROM meridian_route_grants WHERE status='revoked' AND (? IN (egress_node_id,ipv4_egress_node_id) OR endpoint_id IN(SELECT e.id FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=?))`,
 		`DELETE FROM meridian_credentials WHERE enabled=0 AND (egress_node_id=? OR endpoint_id IN(SELECT e.id FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=?))`,
 		`DELETE FROM meridian_endpoints WHERE status='retired' AND application_id IN(SELECT id FROM applications WHERE node_id=?)`,
 		`DELETE FROM applications WHERE node_id=?`,

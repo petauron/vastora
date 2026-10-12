@@ -52,7 +52,7 @@ func (s *Store) markMeridianLandingAuthorizationChanged(ctx context.Context, tx 
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.endpoint_id,endpoint.source_peer_json
 		FROM meridian_route_grants grant_row JOIN meridian_endpoints endpoint ON endpoint.id=grant_row.endpoint_id
-		WHERE grant_row.egress_node_id=? AND grant_row.enabled=1 AND grant_row.status NOT IN ('revoked','revoking') AND endpoint.status<>'retired'
+		WHERE ? IN (grant_row.egress_node_id,grant_row.ipv4_egress_node_id) AND grant_row.enabled=1 AND grant_row.status NOT IN ('revoked','revoking') AND endpoint.status<>'retired'
 		ORDER BY grant_row.id`, nodeID)
 	if err != nil {
 		return err

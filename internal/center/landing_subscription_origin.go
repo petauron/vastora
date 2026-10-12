@@ -67,9 +67,11 @@ func (s *Store) reconcileClientLandingSourcesForNode(ctx context.Context, tx *sq
 	// resulting authorization plan.
 	rows, err := tx.QueryContext(ctx, `SELECT g.landing_node_id FROM landing_client_grants g
 		JOIN applications a ON a.id=g.application_id WHERE a.node_id=? OR g.landing_node_id=?
-		UNION SELECT g.egress_node_id FROM meridian_route_grants g
+		UNION SELECT target.node_id FROM meridian_route_grants g
+		JOIN (SELECT id,egress_node_id AS node_id FROM meridian_route_grants
+		UNION SELECT id,ipv4_egress_node_id FROM meridian_route_grants WHERE ipv4_egress_node_id IS NOT NULL) target ON target.id=g.id
 		JOIN meridian_endpoints endpoint ON endpoint.id=g.endpoint_id
-		JOIN applications a ON a.id=endpoint.application_id WHERE a.node_id=? OR g.egress_node_id=?`, nodeID, nodeID, nodeID, nodeID)
+		JOIN applications a ON a.id=endpoint.application_id WHERE a.node_id=? OR target.node_id=?`, nodeID, nodeID, nodeID, nodeID)
 	if err != nil {
 		return err
 	}

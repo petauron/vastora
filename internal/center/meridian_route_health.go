@@ -5,13 +5,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"time"
+
+	"github.com/petauron/glivela"
 
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
-const meridianRouteEvidenceUnavailable = "Waiting for fresh verified entry-to-egress transport; this fixed egress remains blocked."
+const meridianRouteEvidenceUnavailable = "Waiting for fresh verified entry-to-egress transport; this route remains blocked."
 
 // Pin the private entry identity only as part of explicit first-route creation.
 // Later heartbeats and task rebuilds must not authorize a replacement machine
@@ -57,7 +60,9 @@ func recordMeridianRouteHealth(ctx context.Context, tx *sql.Tx, endpointID strin
 		return err
 	}
 	expires := make(map[string]int64, len(result.Peers))
+	exits := make(map[string]netip.Addr, len(result.Peers))
 	for _, peer := range result.Peers {
+		exits[peer.EgressID], _ = netip.ParseAddr(peer.Status.ExitIP)
 		if health[peer.EgressID] {
 			expires[peer.EgressID] = peer.Status.AllowedUntil.UnixMilli()
 		}
@@ -69,13 +74,19 @@ func recordMeridianRouteHealth(ctx context.Context, tx *sql.Tx, endpointID strin
 			return errors.New("center: Meridian route has no bound egress observation")
 		}
 		status, healthy, message := "blocked", 0, meridianRouteEvidenceUnavailable
-		if health[egressID] {
+		secondaryID := projection.routeSecondaryPeerIDs[grantID]
+		deadline := expires[egressID]
+		if secondaryID != "" {
+			deadline = min(deadline, expires[secondaryID])
+		}
+		familiesVerified := secondaryID == "" || exits[egressID].Is6() && meridian.CompositePublicIP(exits[egressID]) && exits[secondaryID].Is4() && meridian.CompositePublicIP(exits[secondaryID])
+		if health[egressID] && (secondaryID == "" || health[secondaryID]) && familiesVerified {
 			status, healthy, message = "ready", 1, ""
 		}
 		updated, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants
 			SET applied_revision=desired_revision,runtime_healthy=?,health_expires_unix_ms=?,status=?,last_error=?,updated_at=?
-			WHERE id=? AND endpoint_id=? AND egress_node_id=? AND enabled=1 AND status NOT IN ('revoked','revoking')`,
-			healthy, expires[egressID], status, message, stamp, grantID, endpointID, egressID)
+			WHERE id=? AND endpoint_id=? AND egress_node_id=? AND COALESCE(ipv4_egress_node_id,'')=? AND enabled=1 AND status NOT IN ('revoked','revoking')`,
+			healthy, deadline, status, message, stamp, grantID, endpointID, egressID, secondaryID)
 		if err != nil {
 			return err
 		}

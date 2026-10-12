@@ -24,6 +24,9 @@ var errNoAppliedGatewayState = errors.New("agent: no applied gateway state")
 var errNoAppliedNodeListenerState = errors.New("agent: no applied node listener state")
 
 type Store struct {
+	compositeDNSMu             sync.Mutex
+	compositeDNS               *compositeDNSServer
+	compositeDNSClosed         bool
 	executionMu                sync.Mutex
 	activeExecution            *activeExecution
 	linkChecker                *landing.LinkChecker
@@ -113,6 +116,7 @@ func CurrentSchemaVersion() int {
 }
 
 func (s *Store) Close() error {
+	dnsErr := s.stopCompositeDNS()
 	s.stopActiveExecution(errors.New("agent: store is closing"))
 	s.linkChecker.Close()
 	xrayContext, xrayCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -123,7 +127,7 @@ func (s *Store) Close() error {
 	err := s.stopLandingMonitor(ctx)
 	cancel()
 	s.landingMutationMu.Unlock()
-	return errors.Join(xrayErr, err, s.db.Close())
+	return errors.Join(dnsErr, xrayErr, err, s.db.Close())
 }
 
 // RecordApplied stores a configuration only after a deployment executor has

@@ -17,8 +17,8 @@ func reinstallMeridianEvidence(ctx context.Context, tx *sql.Tx, agentID string) 
 	digest := sha256.New()
 	encoder := json.NewEncoder(digest)
 	for _, query := range []string{
-		`SELECT json_array(g.id,g.endpoint_id,g.egress_node_id,g.enabled,g.status='revoking',s.desired_revision,s.applied_revision,s.status,CAST(s.desired_json AS TEXT),CAST(s.applied_json AS TEXT),CAST(s.peer_json AS TEXT))
- FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id JOIN applications a ON a.id=e.application_id LEFT JOIN landing_server_states s ON s.node_id=g.egress_node_id WHERE a.node_id=? AND ((g.enabled=1 AND g.status<>'revoked') OR g.status='revoking') ORDER BY g.id`,
+		`SELECT json_array(g.id,g.endpoint_id,g.egress_node_id,g.ipv4_egress_node_id,g.enabled,g.status='revoking',s.desired_revision,s.applied_revision,s.status,CAST(s.desired_json AS TEXT),CAST(s.applied_json AS TEXT),CAST(s.peer_json AS TEXT),v4.desired_revision,v4.applied_revision,v4.status,CAST(v4.desired_json AS TEXT),CAST(v4.applied_json AS TEXT),CAST(v4.peer_json AS TEXT))
+ FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id JOIN applications a ON a.id=e.application_id LEFT JOIN landing_server_states s ON s.node_id=g.egress_node_id LEFT JOIN landing_server_states v4 ON v4.node_id=g.ipv4_egress_node_id WHERE a.node_id=? AND ((g.enabled=1 AND g.status<>'revoked') OR g.status='revoking') ORDER BY g.id`,
 
 		`SELECT json_array(p.id,p.service_id,p.kind,p.ingress_owner,p.entry_node_id,p.hostname,p.sni_hostname,
  p.dns_provider,p.dns_record_id,

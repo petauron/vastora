@@ -125,7 +125,7 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 		plan.Requirements = append(plan.Requirements, "identify_previous_private_identity", "withdraw_previous_private_identity", "review_address_and_dependencies")
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id
-		JOIN applications a ON a.id=e.application_id WHERE (a.node_id=? OR g.egress_node_id=?) AND (g.enabled=1 OR g.status='revoking')`, plan.AgentID, plan.AgentID).
+		JOIN applications a ON a.id=e.application_id WHERE (a.node_id=? OR ? IN (g.egress_node_id,g.ipv4_egress_node_id)) AND (g.enabled=1 OR g.status='revoking')`, plan.AgentID, plan.AgentID).
 		Scan(&plan.PrivateNetwork.LandingRoutes); err != nil {
 		return plan, err
 	}

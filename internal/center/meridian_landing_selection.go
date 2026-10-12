@@ -134,7 +134,7 @@ func (s *Store) SelectMeridianLanding(ctx context.Context, input LandingSelectio
 			continue
 		}
 		var grants int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_route_grants WHERE egress_node_id=? AND status<>'revoked'`, id).Scan(&grants); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_route_grants WHERE ? IN (egress_node_id,ipv4_egress_node_id) AND status<>'revoked'`, id).Scan(&grants); err != nil {
 			return err
 		}
 		if grants != 0 {
@@ -181,7 +181,7 @@ func (s *Store) finalizeMeridianLandingRetirements(ctx context.Context, tx *sql.
 		var stopped bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM landing_server_states
 			WHERE node_id=? AND status='stopped' AND applied_revision=desired_revision)
-			AND NOT EXISTS(SELECT 1 FROM meridian_route_grants WHERE egress_node_id=? AND status<>'revoked')`, id, id).Scan(&stopped); err != nil {
+			AND NOT EXISTS(SELECT 1 FROM meridian_route_grants WHERE ? IN (egress_node_id,ipv4_egress_node_id) AND status<>'revoked')`, id, id).Scan(&stopped); err != nil {
 			return err
 		}
 		if !stopped {

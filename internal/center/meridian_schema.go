@@ -121,6 +121,7 @@ CREATE TABLE meridian_route_grants (
  account_id TEXT NOT NULL REFERENCES meridian_accounts(id) ON DELETE RESTRICT,
  endpoint_id TEXT NOT NULL REFERENCES meridian_endpoints(id) ON DELETE RESTRICT,
  egress_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
+ ipv4_egress_node_id TEXT REFERENCES agents(id) ON DELETE RESTRICT,
  base_credential_id TEXT NOT NULL REFERENCES meridian_credentials(id) ON DELETE RESTRICT,
  route_credential_id TEXT NOT NULL UNIQUE REFERENCES meridian_credentials(id) ON DELETE RESTRICT,
  mode TEXT NOT NULL DEFAULT 'fixed' CHECK(mode='fixed'),
@@ -135,8 +136,9 @@ CREATE TABLE meridian_route_grants (
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
  CHECK(base_credential_id<>route_credential_id),
- UNIQUE(account_id,endpoint_id,egress_node_id)
+ CHECK(ipv4_egress_node_id IS NULL OR ipv4_egress_node_id<>egress_node_id)
 );
+CREATE UNIQUE INDEX meridian_route_grants_identity ON meridian_route_grants(account_id,endpoint_id,egress_node_id,COALESCE(ipv4_egress_node_id,''));
 CREATE INDEX meridian_route_grants_endpoint ON meridian_route_grants(endpoint_id,status);
 CREATE TABLE meridian_line_usage (
  credential_id TEXT PRIMARY KEY REFERENCES meridian_credentials(id) ON DELETE CASCADE,

@@ -3390,6 +3390,9 @@
                   "egressNodeId": {
                     "type": "string"
                   },
+                  "ipv4EgressNodeId": {
+                    "type": "string"
+                  },
                   "hideNative": {
                     "type": "boolean"
                   }

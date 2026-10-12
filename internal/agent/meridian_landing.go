@@ -435,6 +435,12 @@ func removeClosedMeridianGateConflicts(ctx context.Context, state meridianRuntim
 // A peer-bearing runtime cannot auto-start after reboot before nft gates exist.
 // Only an exact, journaled Meridian container may be started behind closed gates.
 func (e ApplicationExecutor) prepareMeridianRuntimeStart(ctx context.Context, docker *client.Client, state meridianRuntimeState, artifact meridian.DesiredArtifact, peers []meridianruntime.Peer) error {
+	if err := e.Store.verifyMeridianFiles(artifact); err != nil {
+		return err
+	}
+	if err := e.Store.ensureCompositeDNS(artifact); err != nil {
+		return err
+	}
 	if err := closeMeridianGates(ctx, state.knownLandingGates(), meridianTrafficGateFactory); err != nil {
 		return err
 	}

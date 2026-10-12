@@ -77,7 +77,7 @@ func (s *Store) SetLandingEgress(ctx context.Context, nodeID string, input Landi
  JOIN meridian_endpoints endpoint ON endpoint.id=grant.endpoint_id
  JOIN applications application ON application.id=endpoint.application_id
  JOIN agents agent ON agent.id=application.node_id
- WHERE grant.egress_node_id=? AND grant.status<>'revoked'
+ WHERE ? IN (grant.egress_node_id,grant.ipv4_egress_node_id) AND grant.status<>'revoked'
  AND COALESCE(json_extract(agent.capabilities_json,'$.landingEgressIP'),0)<>1`, nodeID).Scan(&outdated); err != nil {
 		return err
 	}
