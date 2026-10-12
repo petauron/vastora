@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.307](https://github.com/petauron/vastora/compare/v0.1.0-alpha.306...v0.1.0-alpha.307) (2026-10-12)
+
+
+### Bug Fixes
+
+* **web:** open Senulun through its configured browser entry ([694e1f9](https://github.com/petauron/vastora/commit/694e1f99f30fe122bdeb2ae60d2a448abcd2e8a9))
+
 ## [0.1.0-alpha.306](https://github.com/petauron/vastora/compare/v0.1.0-alpha.305...v0.1.0-alpha.306) (2026-10-11)
 
 
