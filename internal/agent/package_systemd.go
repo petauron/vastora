@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/platform"
@@ -249,6 +250,16 @@ func unitDirectivePath(value string) (string, error) {
 	return strings.ReplaceAll(value, "%", "%%"), nil
 }
 
+func unitCredentialPath(value string) (string, error) {
+	// Supported systemd 255 passes credentials to its executor as space-delimited
+	// fields. Reject whitespace instead of producing a unit that parses but then
+	// fails CREDENTIALS initialization. EnvironmentFile has no such restriction.
+	if strings.ContainsFunc(value, unicode.IsSpace) {
+		return "", errors.New("agent: whitespace in systemd credential path")
+	}
+	return unitDirectivePath(value)
+}
+
 func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executable, environmentPath string, credentials map[string]string, config map[string]any, secrets map[string]string, runtimeValues map[string]string) ([]byte, error) {
 	spec := task.Manifest.Runtime.Systemd
 	arguments, err := runtimeStrings(spec.Arguments, config, secrets, runtimeValues)
@@ -279,7 +290,7 @@ func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executa
 		fmt.Fprintf(&unit, "RuntimeDirectory=%s\nRuntimeDirectoryMode=0700\n", baseName)
 	}
 	for _, name := range credentialNames {
-		path, err := unitDirectivePath(credentials[name])
+		path, err := unitCredentialPath(credentials[name])
 		if err != nil {
 			return nil, err
 		}

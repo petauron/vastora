@@ -26,15 +26,26 @@ func TestPackageSystemdDirectivePaths(t *testing.T) {
 	}
 }
 
+func TestPackageSystemdCredentialPathsRejectExecutorWhitespace(t *testing.T) {
+	for _, path := range []string{"/etc/example file", "/etc/example\tfile", "/etc/example\nfile", "/etc/example\u00a0file"} {
+		if _, err := unitCredentialPath(path); err == nil {
+			t.Fatalf("accepted credential path %q", path)
+		}
+	}
+	if got, err := unitCredentialPath("/etc/example%$file"); err != nil || got != "/etc/example%%$file" {
+		t.Fatalf("credential path: got %q, error %v", got, err)
+	}
+}
+
 func TestPackageSystemdUnitSeparatesPathsAndExecWords(t *testing.T) {
 	task := packageTestTask(t)
 	task.Manifest.Runtime = &catalog.RuntimeSpec{Kind: "systemd", Systemd: &catalog.SystemdRuntime{}}
 	receipt := &InstanceResources{}
-	unit, err := compilePackageUnit(task, receipt, "/opt/example/app", "/etc/example % $ file.env", map[string]string{"token": "/etc/example % $ credential"}, nil, nil, nil)
+	unit, err := compilePackageUnit(task, receipt, "/opt/example/app", "/etc/example % $ file.env", map[string]string{"token": "/etc/example%$credential"}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range []string{"EnvironmentFile=/etc/example %% $ file.env\n", "LoadCredential=token:/etc/example %% $ credential\n", "ExecStart=\"/opt/example/app\"\n"} {
+	for _, line := range []string{"EnvironmentFile=/etc/example %% $ file.env\n", "LoadCredential=token:/etc/example%%$credential\n", "ExecStart=\"/opt/example/app\"\n"} {
 		if !strings.Contains(string(unit), line) {
 			t.Fatalf("missing directive %q in unit:\n%s", line, unit)
 		}

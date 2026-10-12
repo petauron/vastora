@@ -25,7 +25,7 @@ func TestPackageSystemdDirectivePathsRealHost(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	environment := filepath.Join(root, "environment % $ file.env")
-	credential := filepath.Join(root, "credential % $ file")
+	credential := filepath.Join(root, "credential-%-$-file")
 	for path, data := range map[string]string{environment: "FIXTURE_VALUE=fixture-environment\n", credential: "fixture-credential"} {
 		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 			t.Fatal(err)
@@ -39,14 +39,6 @@ func TestPackageSystemdDirectivePathsRealHost(t *testing.T) {
 		t.Fatalf("create isolated fixture service user: %v\n%s", err, output)
 	}
 	t.Cleanup(func() { _ = exec.Command("userdel", user).Run() })
-	level, err := exec.Command("systemd-analyze", "log-level").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := exec.Command("systemd-analyze", "log-level", "debug").Run(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = exec.Command("systemd-analyze", "log-level", strings.TrimSpace(string(level))).Run() })
 	result := "/var/lib/" + identity + "-state/result"
 	// The running unprivileged process must actually receive its environment and
 	// private 0600 credential copy, not merely pass systemd's permissive parser.
