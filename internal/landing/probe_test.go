@@ -15,7 +15,7 @@ import (
 )
 
 func TestTCPProbeDeadlineCoversSOCKSAndTLSHandshake(t *testing.T) {
-	for _, stage := range []string{"socks_connect", "tls_handshake"} {
+	for _, stage := range []string{"socks_handshake", "tls_handshake"} {
 		t.Run(stage, func(t *testing.T) {
 			listener, err := net.Listen("tcp4", "127.0.0.1:0")
 			if err != nil {
@@ -67,6 +67,24 @@ func TestTCPProbeDeadlineCoversSOCKSAndTLSHandshake(t *testing.T) {
 				t.Fatal("probe returned but its handshake remained alive")
 			}
 		})
+	}
+}
+
+func TestTCPProbeReportsConnectionRefusedBeforeSOCKSHandshake(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err = (Probe{}).CheckClientTCP(ctx, endpoint)
+	stage, reason, status := probeDiagnostic(err)
+	if stage != "socks_connect" || reason != "connection_refused" || status != 0 {
+		t.Fatalf("connection failure misclassified as handshake: %v", err)
 	}
 }
 

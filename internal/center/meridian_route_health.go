@@ -93,6 +93,13 @@ func recordMeridianRouteHealth(ctx context.Context, tx *sql.Tx, endpointID strin
 		if changed, _ := updated.RowsAffected(); changed != 1 {
 			return errors.New("center: Meridian route changed before its transport observation was committed")
 		}
+		diagnostic := routeHealthDiagnostic(result, egressID, secondaryID, status, now)
+		if !familiesVerified {
+			diagnostic.Reason = "exit_family_mismatch"
+		}
+		if err := recordRouteHealthDiagnostics(ctx, tx, grantID, diagnostic); err != nil {
+			return err
+		}
 	}
 	for grantID, message := range projection.blockedRouteGrants {
 		updated, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET applied_revision=desired_revision,runtime_healthy=0,health_expires_unix_ms=0,status='blocked',last_error=?,updated_at=?
@@ -102,6 +109,9 @@ func recordMeridianRouteHealth(ctx context.Context, tx *sql.Tx, endpointID strin
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
 			return errors.New("center: Meridian blocked route changed before its observation was committed")
+		}
+		if err := recordRouteHealthDiagnostics(ctx, tx, grantID, MeridianHealthDiagnostics{Status: "blocked", Reason: "authorization_unavailable", ReceivedAt: now.UTC(), ObservedAt: now.UTC(), Legs: []MeridianHealthLeg{}}); err != nil {
+			return err
 		}
 	}
 	return nil

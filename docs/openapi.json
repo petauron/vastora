@@ -2724,6 +2724,217 @@
         }
       }
     },
+    "/api/v1/meridian/routes/{id}/health": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Meridian Route Health",
+        "operationId": "meridianRouteHealth_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "current": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "status": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "receivedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "observedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "legs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "role": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "type": "string"
+                              },
+                              "linkState": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "durationMs": {
+                                "type": "integer"
+                              },
+                              "httpStatus": {
+                                "type": "integer"
+                              },
+                              "exitFamily": {
+                                "type": "integer"
+                              },
+                              "startedAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "checkedAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "lastHealthyAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "allowedUntil": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "history": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "receivedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "observedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "legs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "role": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "string"
+                                },
+                                "linkState": {
+                                  "type": "string"
+                                },
+                                "stage": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "durationMs": {
+                                  "type": "integer"
+                                },
+                                "httpStatus": {
+                                  "type": "integer"
+                                },
+                                "exitFamily": {
+                                  "type": "integer"
+                                },
+                                "startedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "checkedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "lastHealthyAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "allowedUntil": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "checkedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Read current route verification evidence and at most 20 state changes from the last seven days. Does not launch probes or tasks, extend leases, or change traffic authorization. Exit information is limited to the address family; credentials and arbitrary remote error text are excluded."
+      }
+    },
     "/api/v1/meridian/cutover": {
       "get": {
         "tags": [
@@ -12484,6 +12695,19 @@
                                     "checkedAt": {
                                       "type": "string",
                                       "format": "date-time"
+                                    },
+                                    "startedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "durationMs": {
+                                      "type": "integer"
+                                    },
+                                    "stage": {
+                                      "type": "string"
+                                    },
+                                    "httpStatus": {
+                                      "type": "integer"
                                     },
                                     "lastHealthyAt": {
                                       "type": "string",

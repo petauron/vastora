@@ -15,7 +15,16 @@ import (
 // credentials or an arbitrary error string supplied by a remote endpoint.
 type probeError struct {
 	stage, reason string
+	httpStatus    int
 	cause         error
+}
+
+func probeDiagnostic(err error) (stage, reason string, httpStatus int) {
+	var diagnostic *probeError
+	if errors.As(probeFailure("business_check", err), &diagnostic) {
+		return diagnostic.stage, diagnostic.reason, diagnostic.httpStatus
+	}
+	return "business_check", "check_failed", 0
 }
 
 func (e *probeError) Error() string { return "landing: " + e.stage + " failed (" + e.reason + ")" }

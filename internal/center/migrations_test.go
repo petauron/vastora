@@ -526,6 +526,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE meridian_subscription_snapshots`,
 		`DROP TABLE meridian_line_usage`,
 		`DROP TABLE meridian_usage_watermarks`,
+		`DROP TABLE meridian_route_health_events`,
 		`DROP TABLE meridian_route_grants`,
 		`DROP TABLE meridian_credentials`,
 		`DROP TABLE meridian_accounts`,

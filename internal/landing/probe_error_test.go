@@ -57,3 +57,14 @@ func TestProbeLogsNeverIncludeArbitraryErrorText(t *testing.T) {
 		t.Fatalf("unexpected diagnostic: %s", text)
 	}
 }
+
+func TestProbeDiagnosticReportsStageStatusWithoutCause(t *testing.T) {
+	stage, reason, status := probeDiagnostic(&probeError{stage: "http_response", reason: "unexpected_http_status", httpStatus: 403, cause: errors.New("secret response body")})
+	if stage != "http_response" || reason != "unexpected_http_status" || status != 403 {
+		t.Fatal("HTTP rejection was collapsed into TLS failure")
+	}
+	stage, reason, status = probeDiagnostic(probeFailure("socks_handshake", context.DeadlineExceeded))
+	if stage != "socks_handshake" || reason != "timeout" || status != 0 {
+		t.Fatal("SOCKS negotiation timeout was lost")
+	}
+}

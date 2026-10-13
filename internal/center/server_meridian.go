@@ -1,6 +1,10 @@
 package center
 
-import "net/http"
+import (
+	"database/sql"
+	"errors"
+	"net/http"
+)
 
 func (s *Server) handleMeridianSourceRecovery(writer http.ResponseWriter, request *http.Request) {
 	view, err := s.store.MeridianSourceRecovery(request.Context(), request.PathValue("id"))
@@ -36,6 +40,20 @@ func (s *Server) handleMeridianInventory(writer http.ResponseWriter, request *ht
 		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
+	writeJSON(writer, http.StatusOK, view)
+}
+
+func (s *Server) handleMeridianRouteHealth(writer http.ResponseWriter, request *http.Request) {
+	view, err := s.store.MeridianRouteHealth(request.Context(), request.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(writer, http.StatusNotFound, errors.New("center: route not found"))
+		} else {
+			writeError(writer, http.StatusInternalServerError, errors.New("center: route health unavailable"))
+		}
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusOK, view)
 }
 

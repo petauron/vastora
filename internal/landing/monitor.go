@@ -31,6 +31,10 @@ type MonitorStatus struct {
 	UDP           bool      `json:"udp"`
 	ExitIP        string    `json:"exitIp,omitempty"`
 	CheckedAt     time.Time `json:"checkedAt"`
+	StartedAt     time.Time `json:"startedAt"`
+	DurationMS    int64     `json:"durationMs"`
+	Stage         string    `json:"stage"`
+	HTTPStatus    int       `json:"httpStatus,omitempty"`
 	LastHealthyAt time.Time `json:"lastHealthyAt,omitempty"`
 	AllowedUntil  time.Time `json:"allowedUntil,omitempty"`
 }
@@ -66,19 +70,22 @@ func (m *Monitor) Run(ctx context.Context) error {
 	var lastHealthy time.Time
 	lastProbeFailure := ""
 	for {
-		status := MonitorStatus{Revision: m.Gate.revision, State: "blocked", LinkState: "unknown", Reason: "check_failed", LastHealthyAt: lastHealthy}
+		started := time.Now()
+		status := MonitorStatus{Revision: m.Gate.revision, State: "blocked", LinkState: "unknown", Stage: "private_link_before", Reason: "check_failed", StartedAt: started.UTC(), LastHealthyAt: lastHealthy}
 		before := m.Links.Check(ctx, m.Gate.peer)
 		status.LinkState, status.Reason = before.State, before.Reason
 		var business BusinessResult
 		var after LinkResult
 		var checkErr error
 		if before.State == "direct" {
+			status.Stage = "business_check"
 			businessCtx, cancel := context.WithTimeout(ctx, businessCheckTimeout(m.TCPOnly))
 			business, checkErr = m.CheckBusiness(businessCtx, m.Gate.peer, m.Gate.revision)
 			if businessCtx.Err() != nil && checkErr == nil {
 				checkErr = probeFailure("business_check", businessCtx.Err())
 			}
 			if checkErr != nil {
+				status.Stage, status.Reason, status.HTTPStatus = probeDiagnostic(checkErr)
 				if checkErr.Error() != lastProbeFailure {
 					logProbeFailure(ctx, m.Gate.revision, 0, before.CheckedAt, checkErr)
 				}
@@ -87,20 +94,24 @@ func (m *Monitor) Run(ctx context.Context) error {
 				lastProbeFailure = ""
 			}
 			cancel()
+			status.TCP, status.UDP = business.TCP, business.UDP
 			if checkErr == nil {
+				status.HTTPStatus = 200
 				after = m.Links.Check(ctx, m.Gate.peer)
-				status.LinkState = after.State
+				status.Stage, status.LinkState, status.Reason = "private_link_after", after.State, after.Reason
 			}
 		}
 		until, healthy := leaseDeadlineForTransport(m.Gate, before, business, after, time.Now(), m.TCPOnly)
 		if healthy && checkErr == nil && ctx.Err() == nil {
 			checkErr = m.Gate.renew(ctx, until)
 			if checkErr == nil {
-				status.State, status.Reason = "healthy", "direct_and_business_ready"
+				status.State, status.Stage, status.Reason = "healthy", "complete", "direct_and_business_ready"
 				status.TCP, status.UDP, status.ExitIP = business.TCP, business.UDP, business.ExitIP
 				status.AllowedUntil = until.UTC()
 				lastHealthy = time.Now().UTC()
 				status.LastHealthyAt = lastHealthy
+			} else {
+				status.Stage, status.Reason = "gate", "renewal_failed"
 			}
 		}
 		if status.State != "healthy" {
@@ -110,11 +121,12 @@ func (m *Monitor) Run(ctx context.Context) error {
 			if err := m.close(); err != nil {
 				return err
 			}
-			if before.State == "direct" {
-				status.Reason = "business_or_link_check_failed"
+			if before.State == "direct" && checkErr == nil && after.State == "direct" {
+				status.Stage, status.Reason = "verification", "evidence_invalid_or_expired"
 			}
 		}
 		status.CheckedAt = time.Now().UTC()
+		status.DurationMS = time.Since(started).Milliseconds()
 		if m.Report != nil {
 			m.Report(status)
 		}
