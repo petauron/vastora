@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.314](https://github.com/petauron/vastora/compare/v0.1.0-alpha.313...v0.1.0-alpha.314) (2026-10-13)
+
+
+### Bug Fixes
+
+* **deps:** refresh secure dependencies and update Glivela ([290b674](https://github.com/petauron/vastora/commit/290b6748f6d7ca9789f48dbe3135ef142a797fbe))
+
 ## [0.1.0-alpha.313](https://github.com/petauron/vastora/compare/v0.1.0-alpha.312...v0.1.0-alpha.313) (2026-10-13)
 
 
