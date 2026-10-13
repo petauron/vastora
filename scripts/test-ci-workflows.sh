@@ -112,8 +112,21 @@ for profile in ci codeql; do
   classified="$(printf '%s\n' CHANGELOG.md version.txt .release-please-manifest.json | "$classifier" --files "$profile")"
   printf '%s\n' "$classified" | grep -Fxq 'full=true'
 done
-require_line "$ci_workflow" '--platform linux/amd64 --output "type=local,dest=$RUNNER_TEMP/dante"'
-require_line "$ci_workflow" 'cp "$RUNNER_TEMP/dante/"* internal/dantebundle/assets/'
+require_line "$ci_workflow" '--platform linux/amd64 --output "type=local,dest=$RUNNER_TEMP/dante-bundle"'
+require_line "$ci_workflow" 'cp danted-linux-amd64.gz Dante-LICENSE Dante-NOTICE "$GITHUB_WORKSPACE/internal/dantebundle/assets/"'
+require_line "$ci_workflow" 'sha256sum --check danted-linux-amd64.gz.sha256'
+require_line "$ci_workflow" "hashFiles('deploy/landing/Dockerfile', 'scripts/build-landing-dante.sh', 'scripts/install-landing-build-deps.sh')"
+for step in 'Set up native landing artifact builder' 'Build native landing artifact on cache miss'; do
+  step_block="$(sed -n "/^      - name: $step$/,/^      - name:/p" "$ci_workflow")"
+  printf '%s\n' "$step_block" | grep -Fq "if: steps.dante.outputs.cache-hit != 'true'"
+done
+# Caching may skip compilation, never the kernel or lifecycle tests.
+integration_block="$(sed -n '/^  integration:/,/^  go-build:/p' "$ci_workflow")"
+test_block="$(printf '%s\n' "$integration_block" | sed -n '/^      - name: Verify landing kernel lease/,/^      - name:/p')"
+if printf '%s\n' "$test_block" | grep -Fq 'cache-hit'; then
+  echo 'Cache hits must still execute integration tests.' >&2
+  exit 1
+fi
 require_line "$ci_workflow" 'sudo -- "$RUNNER_TEMP/package-systemd.test" -test.run '\''^TestMeridianHostKernelPreflight$'\'' -test.v'
 require_line "$ci_workflow" 'sudo env VASTORA_NATIVE_LANDING_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test"'
 if [ "$(grep -c 'go test -c -tags=integration .* ./internal/agent' "$ci_workflow")" -ne 1 ] ||
@@ -194,10 +207,18 @@ if grep -Fq 'target=/go/pkg/mod' "$center_dockerfile"; then
   echo 'Center image dependency downloads must live in an exportable layer, not an unexported cache mount.' >&2
   exit 1
 fi
-if grep -Eq '^  push:' "$ci_workflow"; then
-  echo 'Main-branch dependency cache warming must use the path-filtered cache workflow.' >&2
-  exit 1
-fi
+# Only the integration job warms compiled caches on main; dependency downloads
+# retain their existing path-filtered workflow. Never run the whole PR matrix.
+require_line "$ci_workflow" '    branches: [main]'
+require_line "$ci_workflow" "      - 'deploy/landing/Dockerfile'"
+require_line "$ci_workflow" "      - '.github/workflows/ci.yml'"
+for job in go-tests go-quality go-build web deployment security composite-runtime; do
+  condition="$(sed -n "/^  $job:/,/^    needs:/p" "$ci_workflow" | grep '^    if:')"
+  if printf '%s\n' "$condition" | grep -Fq "github.event_name == 'push'"; then
+    echo "$job must not duplicate PR checks on main pushes." >&2
+    exit 1
+  fi
+done
 for workflow in "$ci_workflow" "$codeql_workflow" "$cache_workflow"; do
   if ! grep -Fq 'timeout-minutes:' "$workflow"; then
     echo "$workflow has no job timeouts." >&2

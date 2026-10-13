@@ -3,6 +3,20 @@ name: CI
 on:
   workflow_dispatch:
   pull_request:
+  # Populate trusted default-branch build caches for subsequent PRs. Only the
+  # integration job runs on these pushes, not the complete PR test matrix.
+  push:
+    branches: [main]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'deploy/landing/Dockerfile'
+      - 'scripts/build-landing-dante.sh'
+      - 'scripts/install-landing-build-deps.sh'
+      - '.github/actions/setup-go-cached/action.yml'
+      - '.github/workflows/ci.yml'
   schedule:
     - cron: "41 3 * * 1"
 
@@ -29,15 +43,15 @@ jobs:
       release_metadata: ${{ steps.filter.outputs.release_metadata }}
       full: ${{ steps.filter.outputs.full }}
     steps:
-      - if: github.event_name == 'pull_request'
+      - if: github.event_name == 'pull_request' || github.event_name == 'push'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - id: filter
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: scripts/classify-ci-changes.sh --git ci "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
   composite-runtime:
@@ -65,6 +79,7 @@ jobs:
 
   privacy:
     name: Privacy fixtures
+    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -112,7 +127,7 @@ jobs:
 
   integration:
     name: Host and network integration
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.integration == 'true' || needs.changes.outputs.full == 'true'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event_name == 'push' || needs.changes.outputs.integration == 'true' || needs.changes.outputs.full == 'true'
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -121,9 +136,25 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-go-cached
+      - name: Cache native landing build output
+        id: dante
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/dante-bundle
+          key: dante-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deploy/landing/Dockerfile', 'scripts/build-landing-dante.sh', 'scripts/install-landing-build-deps.sh') }}
       - name: Set up native landing artifact builder
-        if: ${{ !cancelled() }}
+        if: steps.dante.outputs.cache-hit != 'true'
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.0.0
+      - name: Build native landing artifact on cache miss
+        if: steps.dante.outputs.cache-hit != 'true'
+        run: docker buildx build --file deploy/landing/Dockerfile --platform linux/amd64 --output "type=local,dest=$RUNNER_TEMP/dante-bundle" .
+      - name: Verify and stage cached landing artifact
+        run: |
+          cd "$RUNNER_TEMP/dante-bundle"
+          sha256sum --check danted-linux-amd64.gz.sha256
+          test -s Dante-LICENSE && test -s Dante-NOTICE
+          gzip -t danted-linux-amd64.gz
+          cp danted-linux-amd64.gz Dante-LICENSE Dante-NOTICE "$GITHUB_WORKSPACE/internal/dantebundle/assets/"
       - name: Verify landing kernel lease in an isolated network
         if: ${{ !cancelled() }}
         run: |
@@ -131,14 +162,12 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends nftables
           fi
-          # This runner executes amd64 only; release builds cover both architectures.
-          docker buildx build --file deploy/landing/Dockerfile --platform linux/amd64 --output "type=local,dest=$RUNNER_TEMP/dante" .
-          cp "$RUNNER_TEMP/dante/"* internal/dantebundle/assets/
           # Compile after staging the real embedded Dante bundle; reuse below.
           go test -c -tags=integration -o "$RUNNER_TEMP/package-systemd.test" ./internal/agent
           sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" VASTORA_PACKAGE_HOST_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test" -test.run '^TestPackageSystemdDirectivePathsRealHost$' -test.v
           VASTORA_DANTE_BUNDLE_INTEGRATION=1 go test ./internal/dantebundle -count=1
-          gzip -dc "$RUNNER_TEMP/dante/danted-linux-amd64.gz" > "$RUNNER_TEMP/dante/danted"
+          mkdir -p "$RUNNER_TEMP/dante"
+          gzip -dc "$RUNNER_TEMP/dante-bundle/danted-linux-amd64.gz" > "$RUNNER_TEMP/dante/danted"
           chmod 0755 "$RUNNER_TEMP/dante/danted"
           go test -c -tags=integration -o "$RUNNER_TEMP/landing.test" ./internal/landing
           sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestBridgeGateKernelPolicyAndExpiry$' -test.v
