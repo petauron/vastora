@@ -24,7 +24,8 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       deployment: ${{ steps.filter.outputs.deployment }}
       security: ${{ steps.filter.outputs.security }}
-      container: ${{ steps.filter.outputs.container }}
+      integration: ${{ steps.filter.outputs.integration }}
+      dependencies: ${{ steps.filter.outputs.dependencies }}
       release_metadata: ${{ steps.filter.outputs.release_metadata }}
       full: ${{ steps.filter.outputs.full }}
     steps:
@@ -39,77 +40,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: scripts/classify-ci-changes.sh --git ci "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
-  alpha-minimal:
-    name: Alpha minimal checks
-    if: github.event_name == 'pull_request' && vars.VASTORA_CI_MODE == 'alpha'
-    needs: changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # Keep the release migration regression in the alpha gate too.
-      - uses: ./.github/actions/setup-go-cached
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-      - name: Check Go formatting and API contract
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: make go-format-check
-      - name: Verify Meridian destination and official UI migrations
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/center -run '^(TestVersion(100|102)|TestOfficialUI|TestMeridianHost)' -count=1
-      - name: Verify product brand name migrations
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/center -run '^TestProductBrandMigration' -count=1
-      - name: Verify composite route authority, DNS and migration
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/agent ./internal/center -run '^TestComposite' -count=1
-      - name: Verify bounded route health diagnostics and migration
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: |
-          go test -race ./internal/landing -run '^(TestProbeDiagnostic|TestTCPProbe|TestMonitorBlocks|TestRecoveredMonitor)' -count=1
-          go test ./internal/center -run '^(TestMeridianHealthDiagnostics|TestMeridianRouteHealthRead|TestVersion112)' -count=1
-      - name: Verify task triage pagination
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/center -run '^TestExecutionPagesRetainOldUnresolvedHistory$' -count=1
-      - name: Verify bounded startup and explicit application recovery
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/agent ./internal/center -run '^(TestServiceReadiness|TestWaitForServiceEndpoint|TestTaskExecutionLookup|TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically)' -count=1
-      - name: Verify identity-preserving managed upgrades and helper authorization
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/agent ./internal/center ./cmd/vastora -run '^(TestManagedUpgrade|TestHostUpdate|TestPulseRestore|TestDormantMeridian|TestPackageLifecycle|TestPackageRejects)' -count=1
-      - name: Verify native egress policy
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/meridianruntime ./internal/agent ./internal/center -run '^(TestShared443KeepsCaddyOnItsPrivateContainerSocket|TestNativeEgress|TestNodeEgress|TestVersion106|TestVersion107|TestVersion108|TestMeridianTraffic)' -count=1
-      - name: Verify Agent reconnect execution boundary
-        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
-        run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1
-      - name: Check deployment syntax and release workflow contracts
-        if: needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'
-        run: |
-          sh -n install.sh
-          for script in deploy/center/*.sh scripts/*.sh; do sh -n "$script"; done
-          scripts/test-ci-workflows.sh
-          scripts/test-release-workflow.sh
-      - name: Check frontend dependency manifests
-        if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
-        run: jq -e 'type == "object"' web/package.json web/package-lock.json >/dev/null
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
-        with:
-          node-version: "24.19.0"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Compile frontend
-        if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
-        run: cd web && npm ci --ignore-scripts && npm run build
-      - name: Verify task triage, product guidance and application entry
-        if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
-        run: cd web && npx vitest run src/execution-api.test.ts src/views/ExecutionSettings.test.tsx src/views/TaskRecoverySheet.test.tsx src/views/views.network-app.test.tsx src/views/HomeTaskSummary.test.tsx src/views/ActivityView.test.tsx src/views/shared.catalog.test.ts src/views/applicationLaunch.test.tsx
-
   composite-runtime:
     name: Composite target-side runtime
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.integration == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -144,42 +77,28 @@ jobs:
       - name: Check privacy-safe public fixtures
         run: make privacy-check
 
-  go-race:
-    name: Go race tests (${{ matrix.shard }}/8)
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+  go-tests:
+    name: Go tests (${{ matrix.shard }}/4)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-go-cached
-      - name: Run all Center race tests across deterministic shards
+      - name: Run complete Go suite with version-based race policy
         env:
           SHARD: ${{ matrix.shard }}
-        run: |
-          # Discover the compiled suite, including examples and fuzz seed tests.
-          # Sorted round-robin assignment covers every top-level test exactly once.
-          go test -race ./internal/center -list '^(Test|Example|Fuzz)' > "$RUNNER_TEMP/center-tests.txt"
-          tests=$(grep -E '^(Test|Example|Fuzz)[^[:space:]]*$' "$RUNNER_TEMP/center-tests.txt" | LC_ALL=C sort)
-          selected=$(printf '%s\n' "$tests" | awk -v shard="$SHARD" '(NR - 1) % 8 == shard - 1')
-          test -n "$selected"
-          pattern=$(printf '%s\n' "$selected" | paste -sd '|' -)
-          printf 'Center race shard %s/8: %s tests\n' "$SHARD" "$(printf '%s\n' "$selected" | wc -l)"
-          go test -race -timeout=20m ./internal/center -run "^($pattern)$"
-      - name: Run remaining package race tests
-        if: matrix.shard == 1
-        run: |
-          packages=$(go list ./cmd/... ./internal/... | grep -v '^github.com/petauron/vastora/internal/center$')
-          test -n "$packages"
-          go test -race -timeout=20m $packages
+          SHARDS: 4
+        run: sh scripts/run-ci-go-tests.sh
 
   go-quality:
     name: Go quality and security
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -187,32 +106,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-go-cached
       - run: make go-format-check go-static-check
+      - name: Check Go dependency vulnerabilities
+        if: github.event_name != 'pull_request' || needs.changes.outputs.dependencies == 'true' || needs.changes.outputs.full == 'true'
+        run: make go-security-check
+
+  integration:
+    name: Host and network integration
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.integration == 'true' || needs.changes.outputs.full == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-go-cached
       - name: Verify native package environment and credentials on real systemd
         run: |
           go test -c -tags=integration -o "$RUNNER_TEMP/package-systemd.test" ./internal/agent
           sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" VASTORA_PACKAGE_HOST_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test" -test.run '^TestPackageSystemdDirectivePathsRealHost$' -test.v
-      - name: Verify Agent update recovery invariants
-        run: go test ./cmd/vastora ./internal/agent ./internal/center -run '^(TestHostUpdate|TestAgentUpdate|TestUninstall.*Updater|TestCancelledUpdater)' -count=1
-      - name: Verify offline Agent access revocation
-        run: go test ./internal/center -run '^(TestStop.*AgentAccess|TestRevocation|TestRemoveOfflineAgent|TestOfflineNodeRemovalMigration)' -count=1
-      - name: Verify Cloudflare Access session configuration
-        run: go test ./internal/center -run 'Test.*(AccessSession|CenterRemoteAccess|CloudflareIntegration)' -count=1
-      - name: Verify network recovery availability
-        run: go test ./cmd/vastora ./internal/center -run 'Test(TailscaleIsolation|PublicationAddress|PublicationDatabase|MissingPublicationAddress)' -count=1
-      - name: Verify recovery and REALITY invariants
-        run: |
-          ci_test_status=0
-          go test ./internal/recovery ./internal/landing ./internal/realitytarget ./internal/dockerruntime ./internal/tailscalehost -count=1 || ci_test_status=$?
-          go test ./internal/agent ./internal/center -run 'Test.*(Landing|Recovery|Recover|Reality|REALITY|HAProxy|AdminRuntimeDirectory|Migration|Migrated|Backup|ExternalVolume|Heartbeat|TaskReceipt)' -count=1 || ci_test_status=$?
-          exit "$ci_test_status"
-      - name: Verify node protocols and HY2 subscriptions
-        run: |
-          go test ./internal/nodeprotocol -count=1
-          go test ./internal/agent ./internal/center -run 'Test.*(Protocol|HY2)' -count=1
-      - name: Verify Pulse enrollment and native lifecycle
-        run: |
-          go test ./internal/pulse -count=1
-          go test ./internal/agent ./internal/center -run '^TestPulse' -count=1
       - name: Set up native landing artifact builder
         if: ${{ !cancelled() }}
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.0.0
@@ -245,21 +157,17 @@ jobs:
           docker pull "$VASTORA_LANDING_XRAY_IMAGE"
           go test -tags=integration ./internal/landing -run '^TestLandingRoutesAcceptedByCatalogXray$' -count=1
       - name: Validate generated Headscale config with pinned binary
-        if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
         env:
           VASTORA_HEADSCALE_CONFIG_INTEGRATION: "1"
         run: go test ./internal/deployer -run '^TestGeneratedHeadscaleConfigAcceptedByPinnedBinary$' -count=1
       - name: Verify Agent decommission on real systemd
-        if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
         run: |
           go test -c -o /tmp/vastora-systemd-decommission.test ./cmd/vastora
           sudo env VASTORA_SYSTEMD_DECOMMISSION_INTEGRATION=1 /tmp/vastora-systemd-decommission.test -test.run '^TestHostDecommissionRealSystemdEndToEnd$' -test.v
-      - if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
-        run: make go-security-check
 
   go-build:
     name: Go cross-compile
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -270,7 +178,7 @@ jobs:
         run: make agent-binaries
 
   web:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -283,10 +191,11 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: cd web && npm ci --ignore-scripts
       - run: make web-check
-      - run: make web-security-check
+      - if: github.event_name != 'pull_request' || needs.changes.outputs.dependencies == 'true' || needs.changes.outputs.full == 'true'
+        run: make web-security-check
 
   deployment:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -299,7 +208,7 @@ jobs:
         run: scripts/check-runtime-image-platforms.sh
 
   security:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && needs.changes.outputs.security == 'true')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && needs.changes.outputs.security == 'true')
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -312,15 +221,16 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup-go-cached
-      - name: Scan Git history for secrets
-        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --verbose .
-      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
+      - name: Scan changed commits for secrets
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # PRs scan their new commits. Scheduled/manual checks scan the exact
+          # checked commit; historic commits do not need rescanning on every PR.
+          log_opts="-1 $HEAD_SHA"
+          if [ -n "$BASE_SHA" ]; then log_opts="$BASE_SHA..$HEAD_SHA"; fi
+          go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --log-opts="$log_opts" .
 
   release-metadata:
     name: Release metadata
@@ -337,83 +247,28 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: scripts/validate-release-metadata.sh "$BASE_SHA"
 
-  container-image-security:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.container == 'true' || needs.changes.outputs.full == 'true'))
-    needs: changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        architecture: [amd64, arm64]
-    permissions:
-      contents: read
-      packages: read
-      security-events: write
-    env:
-      DOCKER_BUILD_RECORD_UPLOAD: "false"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.0.0
-      - name: Log in to GitHub Container Registry for build cache
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.0.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-      - name: Build Center image for scanning
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.0.0
-        with:
-          context: .
-          file: Dockerfile.center
-          platforms: linux/${{ matrix.architecture }}
-          load: true
-          push: false
-          build-args: VASTORA_VERSION=0.0.0-ci
-          tags: local/vastora-center:${{ github.sha }}-${{ matrix.architecture }}
-          cache-from: type=registry,ref=ghcr.io/petauron/vastora-center:buildcache
-      - name: Scan Center image for vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: local/vastora-center:${{ github.sha }}-${{ matrix.architecture }}
-          format: sarif
-          output: trivy-center-image-${{ matrix.architecture }}.sarif
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          limit-severities-for-sarif: true
-          exit-code: "1"
-      - name: Upload Center image scan results
-        if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
-        with:
-          sarif_file: trivy-center-image-${{ matrix.architecture }}.sarif
-          category: trivy-vastora-center-ci-${{ matrix.architecture }}
-
   gate:
     name: CI / gate
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
-    needs: [changes, alpha-minimal, composite-runtime, privacy, go-race, go-quality, go-build, web, deployment, security, release-metadata, container-image-security]
+    if: always()
+    needs: [changes, composite-runtime, privacy, go-tests, go-quality, integration, go-build, web, deployment, security, release-metadata]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every applicable CI job
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          ALPHA_RESULT: ${{ needs.alpha-minimal.result }}
           COMPOSITE_RESULT: ${{ needs.composite-runtime.result }}
           PRIVACY_RESULT: ${{ needs.privacy.result }}
-          GO_RACE_RESULT: ${{ needs.go-race.result }}
+          GO_TEST_RESULT: ${{ needs.go-tests.result }}
           GO_QUALITY_RESULT: ${{ needs.go-quality.result }}
           GO_BUILD_RESULT: ${{ needs.go-build.result }}
           WEB_RESULT: ${{ needs.web.result }}
           DEPLOYMENT_RESULT: ${{ needs.deployment.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
           RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}
-          CONTAINER_RESULT: ${{ needs.container-image-security.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
         run: |
-          for result in "$CHANGES_RESULT" "$ALPHA_RESULT" "$COMPOSITE_RESULT" "$PRIVACY_RESULT" "$GO_RACE_RESULT" "$GO_QUALITY_RESULT" "$GO_BUILD_RESULT" "$WEB_RESULT" "$DEPLOYMENT_RESULT" "$SECURITY_RESULT" "$RELEASE_METADATA_RESULT" "$CONTAINER_RESULT"; do
+          for result in "$CHANGES_RESULT" "$COMPOSITE_RESULT" "$PRIVACY_RESULT" "$GO_TEST_RESULT" "$GO_QUALITY_RESULT" "$GO_BUILD_RESULT" "$WEB_RESULT" "$DEPLOYMENT_RESULT" "$SECURITY_RESULT" "$RELEASE_METADATA_RESULT" "$INTEGRATION_RESULT"; do
             case "$result" in
               success|skipped) ;;
               *) echo "Required CI job did not succeed: $result" >&2; exit 1 ;;
