@@ -42,3 +42,19 @@ Alpha release housekeeping stays in the separate reconciliation workflow.
 
 Branch protection is unchanged. No checks are replaced with synthetic success.
 Program releases, signed catalog publication and production upgrades stay separate.
+
+## Integration build reuse
+
+- Cache only the small native Dante build output (compressed binary, checksum
+  and distribution notices), keyed by OS/architecture and all three build inputs.
+  There are no fallback keys. Cache hits skip both BuildKit setup and compilation;
+  checksum/gzip validation and all kernel, systemd and network tests still run.
+  Cached data is a build cache, not a downloadable Actions artifact or a release.
+- Related source/build changes on protected main run only the integration job
+  plus classification/gate, populating its Go build cache and Dante output cache
+  in the default-branch scope. Other PR suites do not repeat on these pushes.
+- PR caches remain isolated. We do not export untrusted PR caches into main or
+  give pull requests write access to a shared registry. GitHub evicts old build
+  caches; no workflow stores production data, credentials or test logs in them.
+- Compare cold and warm runs on the same commit, including whole-workflow time:
+  a faster integration job does not necessarily shorten an unrelated bottleneck.
