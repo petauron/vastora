@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.316](https://github.com/petauron/vastora/compare/v0.1.0-alpha.315...v0.1.0-alpha.316) (2026-10-13)
+
+
+### Bug Fixes
+
+* **security:** harden probe credentials and recovery file boundaries ([303d034](https://github.com/petauron/vastora/commit/303d03417c1add7b0b463a3fbf4c91483ff57f10))
+
 ## [0.1.0-alpha.315](https://github.com/petauron/vastora/compare/v0.1.0-alpha.314...v0.1.0-alpha.315) (2026-10-13)
 
 
