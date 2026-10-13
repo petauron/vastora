@@ -121,10 +121,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-go-cached
-      - name: Verify native package environment and credentials on real systemd
-        run: |
-          go test -c -tags=integration -o "$RUNNER_TEMP/package-systemd.test" ./internal/agent
-          sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" VASTORA_PACKAGE_HOST_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test" -test.run '^TestPackageSystemdDirectivePathsRealHost$' -test.v
       - name: Set up native landing artifact builder
         if: ${{ !cancelled() }}
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.0.0
@@ -135,10 +131,14 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends nftables
           fi
-          docker buildx build --file deploy/landing/Dockerfile --platform linux/amd64,linux/arm64 --output "type=local,dest=$RUNNER_TEMP/dante" .
-          cp "$RUNNER_TEMP/dante/linux_amd64/"* internal/dantebundle/assets/
+          # This runner executes amd64 only; release builds cover both architectures.
+          docker buildx build --file deploy/landing/Dockerfile --platform linux/amd64 --output "type=local,dest=$RUNNER_TEMP/dante" .
+          cp "$RUNNER_TEMP/dante/"* internal/dantebundle/assets/
+          # Compile after staging the real embedded Dante bundle; reuse below.
+          go test -c -tags=integration -o "$RUNNER_TEMP/package-systemd.test" ./internal/agent
+          sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" VASTORA_PACKAGE_HOST_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test" -test.run '^TestPackageSystemdDirectivePathsRealHost$' -test.v
           VASTORA_DANTE_BUNDLE_INTEGRATION=1 go test ./internal/dantebundle -count=1
-          gzip -dc "$RUNNER_TEMP/dante/linux_amd64/danted-linux-amd64.gz" > "$RUNNER_TEMP/dante/danted"
+          gzip -dc "$RUNNER_TEMP/dante/danted-linux-amd64.gz" > "$RUNNER_TEMP/dante/danted"
           chmod 0755 "$RUNNER_TEMP/dante/danted"
           go test -c -tags=integration -o "$RUNNER_TEMP/landing.test" ./internal/landing
           sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestBridgeGateKernelPolicyAndExpiry$' -test.v
@@ -146,9 +146,8 @@ jobs:
           sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestNativeServerKernelPolicy$' -test.v
           VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteConfiguration$' -test.v
           VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteTransfersTCPAndUDP$' -test.v
-          go test -c -tags=integration -o "$RUNNER_TEMP/landing-host.test" ./internal/agent
-          sudo -- "$RUNNER_TEMP/landing-host.test" -test.run '^TestMeridianHostKernelPreflight$' -test.v
-          sudo env VASTORA_NATIVE_LANDING_INTEGRATION=1 "$RUNNER_TEMP/landing-host.test" -test.run '^TestLandingNativeHostLifecycle$' -test.v
+          sudo -- "$RUNNER_TEMP/package-systemd.test" -test.run '^TestMeridianHostKernelPreflight$' -test.v
+          sudo env VASTORA_NATIVE_LANDING_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test" -test.run '^TestLandingNativeHostLifecycle$' -test.v
       - name: Validate native landing routes with catalog Xray
         if: ${{ !cancelled() }}
         run: |
