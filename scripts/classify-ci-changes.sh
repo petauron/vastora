@@ -40,7 +40,7 @@ while IFS= read -r path; do
   [ -n "$path" ] || continue
 
   case "$path" in
-    cmd/*|internal/*|go.mod|go.sum|docs/openapi.json|scripts/generate-openapi.mjs) go=true ;;
+    cmd/*|internal/*|go.mod|go.sum|docs/openapi.json|scripts/generate-openapi.mjs|scripts/run-ci-go-tests.sh) go=true ;;
   esac
   case "$path" in
     web/*) web=true ;;
@@ -52,17 +52,17 @@ while IFS= read -r path; do
     go.mod|go.sum|web/package.json|web/package-lock.json) dependencies=true ;;
   esac
   case "$path" in
-    internal/agent/*|internal/landing/*|internal/recovery/*|internal/dantebundle/*|internal/deployer/*|internal/meridianruntime/*|internal/center/*composite*|internal/center/*landing*|cmd/*|deploy/*|scripts/*|catalog/*|internal/center/testdata/reviewed-catalog-v4.json|go.mod|go.sum|Dockerfile*) integration=true ;;
+    internal/agent/*|internal/landing/*|internal/recovery/*|internal/dantebundle/*|internal/deployer/*|internal/meridianruntime/*|internal/center/*composite*|internal/center/*landing*|cmd/*|deploy/center/*.sh|deploy/center/compose.yaml|deploy/landing/Dockerfile|scripts/run-composite-runtime-lab.sh|scripts/build-landing-dante.sh|scripts/install-landing-build-deps.sh|scripts/meridian-recovery-lab/*|catalog/*|internal/center/testdata/reviewed-catalog-v4.json|go.mod|go.sum|Dockerfile*) integration=true ;;
   esac
   case "$path" in
-    CHANGELOG.md|.release-please-manifest.json|version.txt) release_metadata=true; full=true ;;
+    .release-please-manifest.json|version.txt) release_metadata=true; full=true ;;
     *) security=true ;;
   esac
   case "$path" in
     web/*|deploy/installer-worker/*|scripts/*.mjs|scripts/*.js) javascript=true ;;
   esac
   case "$path" in
-    .github/workflows/*|.github/dependabot.yml|Makefile|release-please-config.json) full=true ;;
+    .github/workflows/*|.github/actions/*|.github/dependabot.yml|Makefile|release-please-config.json|scripts/classify-ci-changes.sh) full=true ;;
   esac
 
   case "$path" in

@@ -13,6 +13,13 @@ use the same test runner with race detection enabled.
 - Frontend changes run lint, tests and build.
 - Host/network integration runs for relevant runtime, installer, dependency and
   workflow changes. It is not run for every unrelated Center change.
+- Release/upload tooling, installer-worker changes and plain changelog edits do
+  not trigger host/network experiments. Version/manifest changes still trigger
+  real full checks. Changes to the Go test entry point run the Go suite; changes
+  to the shared classifier or composite Actions trigger full verification.
+- The amd64 integration runner builds only the Dante artifact it executes, and
+  reuses one compiled Agent integration test binary. Release image builds retain
+  amd64 and arm64 coverage.
 - CodeQL analyzes affected languages. Privacy fixtures and incremental commit
   secret detection remain enabled. PR secret scanning covers base..head, not the
   repository's entire history.

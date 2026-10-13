@@ -12,7 +12,7 @@ classifier="$project_dir/scripts/classify-ci-changes.sh"
 require_line() {
   file="$1"
   expected="$2"
-  if ! grep -Fq "$expected" "$file"; then
+  if ! grep -Fq -- "$expected" "$file"; then
     echo "$file is missing: $expected" >&2
     exit 1
   fi
@@ -87,6 +87,40 @@ ci_release="$(printf '%s\n' 'version.txt' | "$classifier" --files ci)"
 printf '%s\n' "$ci_release" | grep -Fxq 'full=true'
 codeql_release="$(printf '%s\n' 'version.txt' | "$classifier" --files codeql)"
 printf '%s\n' "$codeql_release" | grep -Fxq 'full=true'
+
+# Lightweight edits must not start host experiments or full release checks.
+for path in CHANGELOG.md scripts/publish-installer-r2.sh scripts/verify-installer-release.sh deploy/installer-worker/worker.js deploy/center/README.md; do
+  classified="$(printf '%s\n' "$path" | "$classifier" --files ci)"
+  printf '%s\n' "$classified" | grep -Fxq 'full=false'
+  printf '%s\n' "$classified" | grep -Fxq 'integration=false'
+  printf '%s\n' "$classified" | grep -Fxq 'release_metadata=false'
+done
+for path in scripts/run-composite-runtime-lab.sh scripts/build-landing-dante.sh scripts/install-landing-build-deps.sh deploy/landing/Dockerfile deploy/center/update-center.sh deploy/center/compose.yaml; do
+  classified="$(printf '%s\n' "$path" | "$classifier" --files ci)"
+  printf '%s\n' "$classified" | grep -Fxq 'integration=true'
+done
+ci_runner="$(printf '%s\n' scripts/run-ci-go-tests.sh | "$classifier" --files ci)"
+printf '%s\n' "$ci_runner" | grep -Fxq 'go=true'
+printf '%s\n' "$ci_runner" | grep -Fxq 'deployment=true'
+printf '%s\n' "$ci_runner" | grep -Fxq 'integration=false'
+for path in scripts/classify-ci-changes.sh .github/actions/setup-go-cached/action.yml; do
+  classified="$(printf '%s\n' "$path" | "$classifier" --files ci)"
+  printf '%s\n' "$classified" | grep -Fxq 'full=true'
+done
+# A genuine version PR still runs real checks in both workflows.
+for profile in ci codeql; do
+  classified="$(printf '%s\n' CHANGELOG.md version.txt .release-please-manifest.json | "$classifier" --files "$profile")"
+  printf '%s\n' "$classified" | grep -Fxq 'full=true'
+done
+require_line "$ci_workflow" '--platform linux/amd64 --output "type=local,dest=$RUNNER_TEMP/dante"'
+require_line "$ci_workflow" 'cp "$RUNNER_TEMP/dante/"* internal/dantebundle/assets/'
+require_line "$ci_workflow" 'sudo -- "$RUNNER_TEMP/package-systemd.test" -test.run '\''^TestMeridianHostKernelPreflight$'\'' -test.v'
+require_line "$ci_workflow" 'sudo env VASTORA_NATIVE_LANDING_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test"'
+if [ "$(grep -c 'go test -c -tags=integration .* ./internal/agent' "$ci_workflow")" -ne 1 ] ||
+   grep -Fq 'dante/linux_amd64/' "$ci_workflow"; then
+  echo 'Host integration must reuse one Agent test binary and single-platform output.' >&2
+  exit 1
+fi
 # Retired specialist workflows must not return through a stale reference.
 if [ -e "$project_dir/.github/workflows/catalog-check.yml" ] ||
    [ -d "$project_dir/scripts/meridian-fullcone-lab" ]; then
