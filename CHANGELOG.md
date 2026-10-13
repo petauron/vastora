@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.312](https://github.com/petauron/vastora/compare/v0.1.0-alpha.311...v0.1.0-alpha.312) (2026-10-13)
+
+
+### Bug Fixes
+
+* **meridian:** run composite routes on official Xray with Glivela alpha.17 ([ee4e355](https://github.com/petauron/vastora/commit/ee4e35516979951b93e94089e520094f08d2c141))
+
 ## [0.1.0-alpha.311](https://github.com/petauron/vastora/compare/v0.1.0-alpha.310...v0.1.0-alpha.311) (2026-10-12)
 
 
