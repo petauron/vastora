@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -49,6 +50,28 @@ func TestMeridianLinkAuthIsSeparateEncryptedAndTaskBound(t *testing.T) {
 		}
 		if _, err := store.openMeridianLinkAuth("other-probe", string(stored)); err == nil {
 			t.Fatal("ciphertext replay accepted for another task")
+		}
+	}
+}
+
+func TestMeridianLinkAuthUsesIndependent256BitProtocolTokens(t *testing.T) {
+	seen := map[string]bool{}
+	for range 3 {
+		client, server, err := newMeridianLinkAuth()
+		if err != nil {
+			t.Fatal(err)
+		}
+		token, err := base64.RawURLEncoding.Strict().DecodeString(client.Password)
+		if err != nil || len(token) != nodediagnostics.LinkBandwidthCredentialBytes || base64.RawURLEncoding.EncodeToString(token) != client.Password {
+			t.Fatal("probe credential is not a canonical 256-bit random token")
+		}
+		if seen[client.Password] {
+			t.Fatal("independent probes reused a credential")
+		}
+		seen[client.Password] = true
+		hash := sha256.Sum256([]byte("{meridian}" + client.Password))
+		if server.PasswordHash != hex.EncodeToString(hash[:]) || server.Password != "" || client.PasswordHash != "" {
+			t.Fatal("fixed-entropy credentials no longer match the iperf3 wire format")
 		}
 	}
 }

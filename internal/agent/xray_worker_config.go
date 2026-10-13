@@ -24,8 +24,7 @@ func renderXrayWorkerConfig(state xrayWorkerState) ([]byte, error) {
 	if decoder.Decode(&config) != nil {
 		return nil, errors.New("agent: invalid Xray worker settings")
 	}
-	runtimeInbounds := make([]any, 0, len(state.Inbounds)+1)
-	runtimeInbounds = append(runtimeInbounds, map[string]any{"listen": "127.0.0.1", "port": 10085, "protocol": "dokodemo-door", "settings": map[string]any{"address": "127.0.0.1"}, "tag": "api"})
+	runtimeInbounds := []any{map[string]any{"listen": "127.0.0.1", "port": 10085, "protocol": "dokodemo-door", "settings": map[string]any{"address": "127.0.0.1"}, "tag": "api"}}
 	for _, raw := range state.Inbounds {
 		var source map[string]any
 		decoder := json.NewDecoder(strings.NewReader(string(raw)))
