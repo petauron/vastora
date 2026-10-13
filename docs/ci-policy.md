@@ -9,7 +9,8 @@ use the same test runner with race detection enabled.
 ## Pull requests
 
 - Backend changes run formatting, API contract checks, vet/staticcheck, the full
-  ordinary Go suite in four shards and cross-compilation.
+  ordinary Go suite (four Center shards plus all other packages in parallel)
+  and cross-compilation.
 - Frontend changes run lint, tests and build.
 - Host/network integration runs for relevant runtime, installer, dependency and
   workflow changes. It is not run for every unrelated Center change.
@@ -58,3 +59,18 @@ Program releases, signed catalog publication and production upgrades stay separa
   caches; no workflow stores production data, credentials or test logs in them.
 - Compare cold and warm runs on the same commit, including whole-workflow time:
   a faster integration job does not necessarily shorten an unrelated bottleneck.
+
+## Go test placement
+
+- Center shards use the live `go test -list` inventory, including examples and
+  fuzz seeds. A small checked-in timing table weights slower tests; deterministic
+  longest-first placement balances four shards. Unknown/new tests receive a
+  positive default weight and always run. Stale timing entries cannot add tests.
+- All non-Center packages run independently instead of after shard 1, with a
+  separate job-scoped build cache. Center shards share only their Center cache;
+  the first shard saving it no longer prevents other-package output being saved.
+- Verbose Go output records per-test timing in normal CI logs, not downloadable
+  artifacts. Timing data changes placement only, never assertions or timeouts.
+  Review/update slow-test weights from actual CI when the distribution drifts.
+- The required gate waits for both Center and other-package jobs. Alpha still
+  omits race, while beta/stable run the same complete inventory with race.

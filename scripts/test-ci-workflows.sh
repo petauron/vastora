@@ -30,7 +30,8 @@ require_line "$ci_workflow" '    name: Host and network integration'
 require_line "$ci_workflow" '    name: Go cross-compile'
 require_line "$ci_workflow" '    name: Privacy fixtures'
 require_line "$ci_workflow" '        run: make privacy-check'
-require_line "$ci_workflow" '    needs: [changes, composite-runtime, privacy, go-tests, go-quality, integration, go-build, web, deployment, security, release-metadata]'
+require_line "$ci_workflow" '    needs: [changes, composite-runtime, privacy, go-tests, go-packages, go-quality, integration, go-build, web, deployment, security, release-metadata]'
+require_line "$ci_workflow" '          GO_PACKAGES_RESULT: ${{ needs.go-packages.result }}'
 require_line "$ci_workflow" '          sh scripts/run-composite-runtime-lab.sh "$RUNNER_TEMP/glivela-xray"'
 require_line "$ci_workflow" '          docker pull "$GLIVELA_XRAY_IMAGE"'
 require_line "$ci_workflow" '    name: Release metadata'
@@ -69,6 +70,8 @@ for version in 0.1.0-alpha.317 0.1.0-alpha 0.1.0-beta.1 0.1.0; do
   printf '%s\n' "$version" > "$policy_dir/version.txt"
   : > "$policy_dir/go.log"
   (cd "$policy_dir" && PATH="$policy_dir/bin:$PATH" CI_GO_LOG="$policy_dir/go.log" RUNNER_TEMP="$policy_dir" SHARD=1 SHARDS=4 sh "$project_dir/scripts/run-ci-go-tests.sh")
+  if grep -Fq 'internal/agent' "$policy_dir/go.log"; then echo 'Other packages must not run inside Center shards' >&2; exit 1; fi
+  (cd "$policy_dir" && PATH="$policy_dir/bin:$PATH" CI_GO_LOG="$policy_dir/go.log" RUNNER_TEMP="$policy_dir" SUITE=packages sh "$project_dir/scripts/run-ci-go-tests.sh")
   case "$version" in
     *-alpha*)
       if grep -Fq -- '-race' "$policy_dir/go.log"; then echo 'Alpha executed race' >&2; exit 1; fi ;;
@@ -77,6 +80,33 @@ for version in 0.1.0-alpha.317 0.1.0-alpha 0.1.0-beta.1 0.1.0; do
   esac
   grep -Fq 'internal/center -run' "$policy_dir/go.log"
   grep -Fq 'internal/agent' "$policy_dir/go.log"
+done
+
+# Placement may change, coverage may not. Include new tests, examples and fuzz
+# seeds absent from the timing file, plus a removed timing entry.
+printf '%s\n' 'TestSlow 12' 'TestMedium 6' 'TestRemoved 99' > "$policy_dir/weights"
+printf '%s\n' TestSlow TestMedium TestNew TestNewTwo ExampleNew FuzzNew > "$policy_dir/list"
+: > "$policy_dir/selected"
+for shard in 1 2 3 4; do
+  SHARD="$shard" SHARDS=4 sh "$project_dir/scripts/select-center-tests.sh" "$policy_dir/weights" < "$policy_dir/list" > "$policy_dir/shard-$shard"
+  test -s "$policy_dir/shard-$shard"
+  cat "$policy_dir/shard-$shard" >> "$policy_dir/selected"
+done
+LC_ALL=C sort "$policy_dir/list" > "$policy_dir/expected"
+LC_ALL=C sort "$policy_dir/selected" > "$policy_dir/actual"
+cmp "$policy_dir/expected" "$policy_dir/actual"
+grep -Fxq TestSlow "$policy_dir/shard-1"
+grep -Fxq TestMedium "$policy_dir/shard-2"
+if SHARD=0 SHARDS=4 sh "$project_dir/scripts/select-center-tests.sh" "$policy_dir/weights" < "$policy_dir/list"; then
+  echo 'Invalid shard was accepted' >&2; exit 1
+fi
+
+# Both suites must propagate Go test failure without a logging pipeline hiding it.
+printf '%s\n' '#!/bin/sh' 'exit 17' > "$policy_dir/bin/go"
+for suite in center packages; do
+  if (cd "$policy_dir" && PATH="$policy_dir/bin:$PATH" RUNNER_TEMP="$policy_dir" SUITE="$suite" SHARD=1 SHARDS=4 sh "$project_dir/scripts/run-ci-go-tests.sh"); then
+    echo 'Go failure was swallowed' >&2; exit 1
+  fi
 done
 ci_backend="$(printf '%s\n' 'internal/center/server.go' | "$classifier" --files ci)"
 printf '%s\n' "$ci_backend" | grep -Fxq 'go=true'
@@ -103,6 +133,11 @@ ci_runner="$(printf '%s\n' scripts/run-ci-go-tests.sh | "$classifier" --files ci
 printf '%s\n' "$ci_runner" | grep -Fxq 'go=true'
 printf '%s\n' "$ci_runner" | grep -Fxq 'deployment=true'
 printf '%s\n' "$ci_runner" | grep -Fxq 'integration=false'
+for path in scripts/select-center-tests.sh scripts/center-test-timings.txt; do
+  classified="$(printf '%s\n' "$path" | "$classifier" --files ci)"
+  printf '%s\n' "$classified" | grep -Fxq 'go=true'
+  printf '%s\n' "$classified" | grep -Fxq 'deployment=true'
+done
 for path in scripts/classify-ci-changes.sh .github/actions/setup-go-cached/action.yml; do
   classified="$(printf '%s\n' "$path" | "$classifier" --files ci)"
   printf '%s\n' "$classified" | grep -Fxq 'full=true'
@@ -212,7 +247,7 @@ fi
 require_line "$ci_workflow" '    branches: [main]'
 require_line "$ci_workflow" "      - 'deploy/landing/Dockerfile'"
 require_line "$ci_workflow" "      - '.github/workflows/ci.yml'"
-for job in go-tests go-quality go-build web deployment security composite-runtime; do
+for job in go-tests go-packages go-quality go-build web deployment security composite-runtime; do
   condition="$(sed -n "/^  $job:/,/^    needs:/p" "$ci_workflow" | grep '^    if:')"
   if printf '%s\n' "$condition" | grep -Fq "github.event_name == 'push'"; then
     echo "$job must not duplicate PR checks on main pushes." >&2

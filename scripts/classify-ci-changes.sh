@@ -40,7 +40,7 @@ while IFS= read -r path; do
   [ -n "$path" ] || continue
 
   case "$path" in
-    cmd/*|internal/*|go.mod|go.sum|docs/openapi.json|scripts/generate-openapi.mjs|scripts/run-ci-go-tests.sh) go=true ;;
+    cmd/*|internal/*|go.mod|go.sum|docs/openapi.json|scripts/generate-openapi.mjs|scripts/run-ci-go-tests.sh|scripts/select-center-tests.sh|scripts/center-test-timings.txt) go=true ;;
   esac
   case "$path" in
     web/*) web=true ;;
