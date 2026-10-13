@@ -115,13 +115,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-go-cached
-      - name: Build the exact dependency runtime and verify actual target selection
+      - name: Verify actual target selection with official Xray
+        env:
+          GLIVELA_XRAY_IMAGE: ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558
         run: |
-          go mod download github.com/petauron/glivela
-          domain_source=$(go list -m -f '{{.Dir}}' github.com/petauron/glivela)
-          test -f "$domain_source/runtime/Dockerfile"
-          docker build --file "$domain_source/runtime/Dockerfile" --tag glivela-selection-ci "$domain_source"
-          ci_container=$(docker create --network none glivela-selection-ci version)
+          docker pull "$GLIVELA_XRAY_IMAGE"
+          ci_container=$(docker create --network none "$GLIVELA_XRAY_IMAGE" version)
           trap 'docker rm "$ci_container" >/dev/null' EXIT
           docker cp "$ci_container:/usr/local/bin/xray" "$RUNNER_TEMP/glivela-xray"
           sh scripts/run-composite-runtime-lab.sh "$RUNNER_TEMP/glivela-xray"

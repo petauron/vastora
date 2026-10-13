@@ -416,8 +416,7 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 			materials[index].Credential.Enabled = false
 		}
 	}
-	composite := slices.ContainsFunc(routes.grants, func(grant meridian.RouteGrant) bool { return grant.IPv4EgressID != "" })
-	if err := applyNativeEgressProjection(ctx, tx, &projection, endpoint, hysteriaEndpoint, vlessEnabled, hy2Enabled, materials, composite); err != nil {
+	if err := applyNativeEgressProjection(ctx, tx, &projection, endpoint, hysteriaEndpoint, vlessEnabled, hy2Enabled, materials); err != nil {
 		return projection, err
 	}
 	artifact, err := meridian.BuildDesiredArtifact(meridian.XrayPlan{

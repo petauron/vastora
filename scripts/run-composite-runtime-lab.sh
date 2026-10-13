@@ -3,13 +3,13 @@
 set -eu
 
 if [ "$#" -ne 1 ]; then
-  printf '%s\n' 'Usage: scripts/run-composite-runtime-lab.sh /absolute/path/to/audited/xray' >&2
+  printf '%s\n' 'Usage: scripts/run-composite-runtime-lab.sh /absolute/path/to/official/xray' >&2
   exit 2
 fi
 core=$1
 case "$core" in
   /*) ;;
-  *) printf '%s\n' 'An absolute audited core path is required.' >&2; exit 2 ;;
+  *) printf '%s\n' 'An absolute official core path is required.' >&2; exit 2 ;;
 esac
 test -x "$core"
 test "$(uname -s)" = Linux

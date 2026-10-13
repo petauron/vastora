@@ -17,12 +17,10 @@ import (
 	"time"
 
 	"github.com/containerd/errdefs"
-	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
-	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/dockerruntime"
 )
@@ -549,9 +547,17 @@ func validateXrayWorkerConfigAs(ctx context.Context, docker *client.Client, imag
 	if err != nil {
 		return err
 	}
-	var features struct{ Routing struct{ Script string } }
+	var features struct {
+		Routing struct{ Script string }
+		DNS     struct{ Script string }
+	}
 	if json.Unmarshal(candidate, &features) != nil {
 		return errors.New("agent: invalid Xray candidate")
+	}
+	// Reject obsolete script artifacts at the host boundary too. An older
+	// module/core must not silently ignore them and install incomplete routing.
+	if features.Routing.Script != "" || features.DNS.Script != "" {
+		return errors.New("agent: only official script-free Xray configuration is supported; active configuration is unchanged")
 	}
 	pidsLimit := int64(128)
 	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
@@ -582,63 +588,12 @@ func validateXrayWorkerConfigAs(ctx context.Context, docker *client.Client, imag
 		return fmt.Errorf("agent: wait for Xray configuration validation: %w", err)
 	case result := <-wait.Result:
 		if result.Error != nil || result.StatusCode != 0 {
-			if features.Routing.Script != "" {
-				return errors.New("agent: composite configuration validation failed; the reviewed Glivela target-selection runtime is required; active configuration is unchanged")
-			}
 			return errors.New("agent: Xray rejected the candidate configuration")
-		}
-		if features.Routing.Script != "" {
-			logs, err := docker.ContainerLogs(ctx, created.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: "100"})
-			if err != nil {
-				return errors.New("agent: cannot verify Xray scripting capability")
-			}
-			var decoded bytes.Buffer
-			_, readErr := stdcopy.StdCopy(&decoded, &decoded, io.LimitReader(logs, 64<<10))
-			_ = logs.Close()
-			if readErr != nil || !compositeXrayCapabilitiesSupported(decoded.Bytes()) {
-				return errors.New("agent: composite routes require the reviewed Glivela target-selection runtime; active configuration is unchanged")
-			}
 		}
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-func compositeXrayCapabilitiesSupported(output []byte) bool {
-	capability := false
-	for _, line := range strings.Split(string(output), "\n") {
-		if strings.TrimSpace(line) == meridian.CompositeRuntimeCapability {
-			capability = true
-		}
-	}
-	if !capability {
-		return false
-	}
-	fields := strings.Fields(string(output))
-	for i, field := range fields {
-		if field != "Xray" || i+1 >= len(fields) {
-			continue
-		}
-		parts := strings.Split(fields[i+1], ".")
-		if len(parts) != 3 {
-			continue
-		}
-		var version [3]int
-		valid := true
-		for j, part := range parts {
-			value, err := strconv.Atoi(part)
-			if err != nil {
-				valid = false
-				break
-			}
-			version[j] = value
-		}
-		if valid {
-			return version[0] > 26 || version[0] == 26 && (version[1] > 10 || version[1] == 10 && version[2] >= 10)
-		}
-	}
-	return false
 }
 
 // ResumeXrayWorker selects recovery from the encrypted authority journal, not

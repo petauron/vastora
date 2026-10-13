@@ -79,8 +79,8 @@ github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJw
 github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
 github.com/petauron/catalog v0.2.0 h1:BfNUnTncNl3eI96f/fFWOTDOLBa+cC9x+ZrnOOIp3Ps=
 github.com/petauron/catalog v0.2.0/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
-github.com/petauron/glivela v0.1.0-alpha.16.0.20261012143214-8976ef02d290 h1:7aM+JHU1gLSG1X22ShxVql6/G0T1fHsC8BYWTNP1poI=
-github.com/petauron/glivela v0.1.0-alpha.16.0.20261012143214-8976ef02d290/go.mod h1:FQftrZdVkgelHse92MsZq85pAYTE6qZpAnT9jBIo4lY=
+github.com/petauron/glivela v0.1.0-alpha.17 h1:iw1oZ8AgWYo+IiWH2LbYz4vdcDlFwJajCeRGHOZ/n94=
+github.com/petauron/glivela v0.1.0-alpha.17/go.mod h1:FQftrZdVkgelHse92MsZq85pAYTE6qZpAnT9jBIo4lY=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pressly/goose/v3 v3.28.0 h1:D2M+iL31GmpZxSHOhX8mqyqAT3CXnokUmm0eKoSP+Vc=
