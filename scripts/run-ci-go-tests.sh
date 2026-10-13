@@ -18,7 +18,7 @@ if [ "${SUITE:-center}" = packages ]; then
   packages=$(go list ./cmd/... ./internal/... | grep -v '^github.com/petauron/vastora/internal/center$')
   test -n "$packages"
   # Word splitting here is intentional: go list emits package paths.
-  go test "$@" -v -timeout=20m $packages
+  go test "$@" -v -count=1 -timeout=20m $packages
   exit
 fi
 [ "${SUITE:-center}" = center ]
@@ -31,7 +31,8 @@ case "$shard:$shards" in *[!0-9:]*|:*|*:) exit 1 ;; esac
 # Deterministic partitioning covers all top-level tests, examples and fuzz seeds.
 go test "$@" ./internal/center -list '^(Test|Example|Fuzz)' > "$RUNNER_TEMP/center-tests.txt"
 tests=$(grep -E '^(Test|Example|Fuzz)[^[:space:]]*$' "$RUNNER_TEMP/center-tests.txt" | LC_ALL=C sort)
-selected=$(printf '%s\n' "$tests" | awk -v shard="$shard" -v shards="$shards" '(NR - 1) % shards == shard - 1')
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+selected=$(printf '%s\n' "$tests" | sh "$script_dir/select-center-tests.sh" "$script_dir/center-test-timings.txt")
 test -n "$selected"
 pattern=$(printf '%s\n' "$selected" | paste -sd '|' -)
-go test "$@" -v -timeout=20m ./internal/center -run "^($pattern)$"
+go test "$@" -v -count=1 -timeout=20m ./internal/center -run "^($pattern)$"
