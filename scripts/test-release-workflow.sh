@@ -122,14 +122,14 @@ for step in \
   'Verify immutable installer release after pruning' \
   'Verify public installer endpoint after pruning'; do
   step_block="$(printf '%s\n' "$publish_job" | sed -n "/^      - name: $step$/,/^      - name:/p")"
-  require_in "$step_block" "vars.VASTORA_CI_MODE != 'alpha' || !contains(needs.prepare.outputs.release_version, '-alpha.')"
+  require_in "$step_block" "!contains(needs.prepare.outputs.release_version, '-alpha.')"
 done
 
 for step in \
   'Scan released Center image for x64 vulnerabilities' \
   'Scan released Center image for ARM64 vulnerabilities'; do
   step_block="$(printf '%s\n' "$publish_job" | sed -n "/^      - name: $step$/,/^      - name:/p")"
-  require_in "$step_block" "vars.VASTORA_CI_MODE != 'alpha'"
+  require_in "$step_block" "if: needs.prepare.outputs.release_retry == 'false'"
 done
 
 if printf '%s\n' "$prepare_job" | grep -Fq 'skip-github-release: true'; then

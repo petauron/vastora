@@ -30,7 +30,8 @@ go=false
 web=false
 deployment=false
 security=false
-container=false
+integration=false
+dependencies=false
 release_metadata=false
 javascript=false
 full=false
@@ -48,10 +49,13 @@ while IFS= read -r path; do
     deploy/*|scripts/*|install.sh|catalog/*|internal/center/testdata/reviewed-catalog-v4.json|Dockerfile*|release-please-config.json) deployment=true ;;
   esac
   case "$path" in
-    Dockerfile.center|.dockerignore|catalog/trust/*|go.mod|go.sum|web/package.json|web/package-lock.json) container=true ;;
+    go.mod|go.sum|web/package.json|web/package-lock.json) dependencies=true ;;
   esac
   case "$path" in
-    CHANGELOG.md|.release-please-manifest.json|version.txt) release_metadata=true ;;
+    internal/agent/*|internal/landing/*|internal/recovery/*|internal/dantebundle/*|internal/deployer/*|internal/meridianruntime/*|internal/center/*composite*|internal/center/*landing*|cmd/*|deploy/*|scripts/*|catalog/*|internal/center/testdata/reviewed-catalog-v4.json|go.mod|go.sum|Dockerfile*) integration=true ;;
+  esac
+  case "$path" in
+    CHANGELOG.md|.release-please-manifest.json|version.txt) release_metadata=true; full=true ;;
     *) security=true ;;
   esac
   case "$path" in
@@ -74,5 +78,5 @@ if [ "$profile" = codeql ]; then
   exit 0
 fi
 
-printf 'go=%s\nweb=%s\ndeployment=%s\nsecurity=%s\ncontainer=%s\nrelease_metadata=%s\nfull=%s\n' \
-  "$go" "$web" "$deployment" "$security" "$container" "$release_metadata" "$full"
+printf 'go=%s\nweb=%s\ndeployment=%s\nsecurity=%s\nintegration=%s\ndependencies=%s\nrelease_metadata=%s\nfull=%s\n' \
+  "$go" "$web" "$deployment" "$security" "$integration" "$dependencies" "$release_metadata" "$full"

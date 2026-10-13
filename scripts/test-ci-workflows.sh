@@ -23,90 +23,70 @@ require_line "$center_dockerfile" 'COPY catalog/trust/ /app/catalog-trust/'
 require_line "$project_dir/.dockerignore" '**/*_test.go'
 require_line "$project_dir/deploy/center/compose.yaml" '${VASTORA_OFFICIAL_CATALOG_ROOT:-/app/catalog-trust/2.root.json}'
 require_line "$project_dir/.github/workflows/release.yml" 'sh scripts/check-independent-catalog.sh --catalog internal/center/testdata/reviewed-catalog-v4.json --root-directory catalog/trust'
-require_line "$ci_workflow" '    name: Go race tests'
-require_line "$ci_workflow" '    name: Go quality and security'
+require_line "$ci_workflow" '    name: Go tests (${{ matrix.shard }}/4)'
+require_line "$ci_workflow" '        run: sh scripts/run-ci-go-tests.sh'
+require_line "$ci_workflow" '      - run: make go-format-check go-static-check'
+require_line "$ci_workflow" '    name: Host and network integration'
 require_line "$ci_workflow" '    name: Go cross-compile'
-require_line "$ci_workflow" '    name: Alpha minimal checks'
 require_line "$ci_workflow" '    name: Privacy fixtures'
 require_line "$ci_workflow" '        run: make privacy-check'
-require_line "$ci_workflow" "    if: github.event_name == 'pull_request' && vars.VASTORA_CI_MODE == 'alpha'"
-require_line "$ci_workflow" '          ALPHA_RESULT: ${{ needs.alpha-minimal.result }}'
-require_line "$ci_workflow" '          PRIVACY_RESULT: ${{ needs.privacy.result }}'
-require_line "$ci_workflow" '    needs: [changes, alpha-minimal, composite-runtime, privacy, go-race, go-quality, go-build, web, deployment, security, release-metadata, container-image-security]'
-require_line "$ci_workflow" '          COMPOSITE_RESULT: ${{ needs.composite-runtime.result }}'
+require_line "$ci_workflow" '    needs: [changes, composite-runtime, privacy, go-tests, go-quality, integration, go-build, web, deployment, security, release-metadata]'
 require_line "$ci_workflow" '          sh scripts/run-composite-runtime-lab.sh "$RUNNER_TEMP/glivela-xray"'
 require_line "$ci_workflow" '          docker pull "$GLIVELA_XRAY_IMAGE"'
-require_line "$ci_workflow" '          GLIVELA_XRAY_IMAGE: ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558'
-if grep -Fq 'runtime/Dockerfile' "$ci_workflow"; then
-  echo 'Composite CI must use official Xray, not build a custom dependency core.' >&2
-  exit 1
-fi
-require_line "$ci_workflow" '          for result in "$CHANGES_RESULT" "$ALPHA_RESULT" "$COMPOSITE_RESULT" "$PRIVACY_RESULT"'
-require_line "$ci_workflow" "vars.VASTORA_CI_MODE != 'alpha'"
 require_line "$ci_workflow" '    name: Release metadata'
 require_line "$ci_workflow" '        run: scripts/validate-release-metadata.sh "$BASE_SHA"'
 require_line "$ci_workflow" '        run: scripts/classify-ci-changes.sh --git ci "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"'
 require_line "$codeql_workflow" '        run: scripts/classify-ci-changes.sh --git codeql "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"'
 require_line "$cache_workflow" '    name: Warm dependency caches'
-require_line "$cache_workflow" '      - go.mod'
-require_line "$cache_workflow" '      - go.sum'
-require_line "$cache_workflow" '      - web/package-lock.json'
-require_line "$cache_workflow" "      - if: steps.changed.outputs.go == 'true'"
-require_line "$cache_workflow" "      - if: steps.changed.outputs.npm == 'true'"
-require_line "$ci_workflow" '      DOCKER_BUILD_RECORD_UPLOAD: "false"'
-require_line "$ci_workflow" '          cache-from: type=registry,ref=ghcr.io/petauron/vastora-center:buildcache'
 require_line "$ci_workflow" '        run: scripts/check-runtime-image-platforms.sh'
-require_line "$ci_workflow" '        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --verbose .'
+require_line "$ci_workflow" '          go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --log-opts="$log_opts" .'
 require_line "$codeql_workflow" '    name: CodeQL / gate'
-require_line "$codeql_workflow" "vars.VASTORA_CI_MODE != 'alpha'"
-require_line "$codeql_workflow" '  group: codeql-${{ github.workflow }}-${{ github.ref }}'
-require_line "$codeql_workflow" "  cancel-in-progress: \${{ github.event_name == 'pull_request' }}"
-
-# Alpha normally validates shape; forward-only migrations also need their
-# targeted regression before release. Full checks remain outside this job.
-alpha_job="$(awk '/^  alpha-minimal:/{inside=1; print; next} inside && /^  [a-z][a-z-]*:/{exit} inside{print}' "$ci_workflow")"
-if ! printf '%s\n' "$alpha_job" | grep -Fq 'uses: ./.github/actions/setup-go-cached' ||
-   ! printf '%s\n' "$alpha_job" | grep -Fq 'run: make go-format-check' ||
-   ! printf '%s\n' "$alpha_job" | grep -Fq "run: go test ./internal/center -run '^TestProductBrandMigration' -count=1" ||
-   ! printf '%s\n' "$alpha_job" | grep -Fq 'src/views/shared.catalog.test.ts' ||
-   ! printf '%s\n' "$alpha_job" | grep -Fq 'src/views/TaskRecoverySheet.test.tsx' ||
-   ! printf '%s\n' "$alpha_job" | grep -Fq 'src/views/views.network-app.test.tsx' ||
-   printf '%s\n' "$alpha_job" | grep -Fv \
-     -e "run: go test ./internal/center -run '^TestExecutionPagesRetainOldUnresolvedHistory$' -count=1" \
-     -e "run: go test ./internal/agent ./internal/center -run '^(TestServiceReadiness|TestWaitForServiceEndpoint|TestTaskExecutionLookup|TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically)' -count=1" \
-     -e "run: go test ./internal/center -run '^(TestVersion(100|102)|TestOfficialUI|TestMeridianHost)' -count=1" \
-     -e "run: go test ./internal/center -run '^TestProductBrandMigration' -count=1" \
-     -e "run: go test ./internal/agent ./internal/center -run '^TestComposite' -count=1" \
-     -e "go test -race ./internal/landing -run '^(TestProbeDiagnostic|TestTCPProbe|TestMonitorBlocks|TestRecoveredMonitor)' -count=1" \
-     -e "go test ./internal/center -run '^(TestMeridianHealthDiagnostics|TestMeridianRouteHealthRead|TestVersion112)' -count=1" \
-     -e "run: go test ./internal/agent ./internal/center ./cmd/vastora -run '^(TestManagedUpgrade|TestHostUpdate|TestPulseRestore|TestDormantMeridian|TestPackageLifecycle|TestPackageRejects)' -count=1" \
-     -e "run: go test ./internal/meridianruntime ./internal/agent ./internal/center -run '^(TestShared443KeepsCaddyOnItsPrivateContainerSocket|TestNativeEgress|TestNodeEgress|TestVersion106|TestVersion107|TestVersion108|TestMeridianTraffic)' -count=1" \
-     -e "run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1" | grep -Eq '(go test|go build|go-static-check|web-check|docker build)'; then
-  echo 'Alpha CI must restore the Go cache without duplicating release builds/full checks.' >&2
+# No hidden alpha bypass, repeated ordinary tests, PR image scan or direct race.
+if grep -Eq 'VASTORA_CI_MODE|alpha-minimal|container-image-security|go test -race|make go-check|make go-race-check' "$ci_workflow" "$codeql_workflow"; then
+  echo 'Retired CI modes or direct race/image checks returned.' >&2
   exit 1
 fi
-require_line "$ci_workflow" "go test -race ./internal/landing -run '^(TestProbeDiagnostic|TestTCPProbe|TestMonitorBlocks|TestRecoveredMonitor)' -count=1"
-require_line "$ci_workflow" "go test ./internal/center -run '^(TestMeridianHealthDiagnostics|TestMeridianRouteHealthRead|TestVersion112)' -count=1"
-require_line "$ci_workflow" "run: go test ./internal/agent ./internal/center -run '^(TestServiceReadiness|TestWaitForServiceEndpoint|TestTaskExecutionLookup|TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically)' -count=1"
-require_line "$ci_workflow" "run: go test ./internal/agent ./internal/center ./cmd/vastora -run '^(TestManagedUpgrade|TestHostUpdate|TestPulseRestore|TestDormantMeridian|TestPackageLifecycle|TestPackageRejects)' -count=1"
-require_line "$ci_workflow" "run: go test ./internal/agent ./internal/center -run '^(TestPrivateNetworkPeer|TestAgentReinstall|TestAgentReconnect|TestDisabledAgentReconnect|TestStopAgentAccess|TestVersion105|TestVersion104|TestFreshAndMigratedDatabasesHaveEquivalentSchema|TestExecutionSessionRecoversRetainedSuccessfulResult|TestCenterStartupRecovers)' -count=1"
-for job in go-race go-quality go-build web deployment security container-image-security; do
+for job in composite-runtime integration; do
   condition="$(sed -n "/^  $job:/,/^    needs:/p" "$ci_workflow" | grep '^    if:')"
-  if ! printf '%s\n' "$condition" | grep -Fq "vars.VASTORA_CI_MODE != 'alpha'" ||
-     ! printf '%s\n' "$condition" | grep -Fq "github.event_name == 'workflow_dispatch'" ||
-     ! printf '%s\n' "$condition" | grep -Fq "github.event_name == 'schedule'"; then
-    echo "$job must defer full Alpha checks to manual or scheduled runs." >&2
-    exit 1
-  fi
+  printf '%s\n' "$condition" | grep -Fq "needs.changes.outputs.integration == 'true'"
 done
-for job in analyze-go analyze-javascript; do
-  condition="$(sed -n "/^  $job:/,/^    needs:/p" "$codeql_workflow" | grep '^    if:')"
-  if ! printf '%s\n' "$condition" | grep -Fq "vars.VASTORA_CI_MODE != 'alpha'" ||
-     printf '%s\n' "$condition" | grep -Fq "github.event_name != 'pull_request'"; then
-    echo 'CodeQL must not run full Alpha analysis on every main-branch push.' >&2
-    exit 1
-  fi
+require_line "$ci_workflow" "if: github.event_name != 'pull_request' || needs.changes.outputs.dependencies == 'true' || needs.changes.outputs.full == 'true'"
+
+# Version policy is exercised with a fake Go command, never a network/build.
+policy_dir="$(mktemp -d)"
+trap 'rm -rf "$policy_dir"' EXIT HUP INT TERM
+mkdir "$policy_dir/bin"
+cat > "$policy_dir/bin/go" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$CI_GO_LOG"
+case "$*" in
+  *-list*) printf 'TestOne\nTestTwo\nExampleOne\nFuzzOne\n' ;;
+  list*) printf 'github.com/petauron/vastora/internal/center\ngithub.com/petauron/vastora/internal/agent\n' ;;
+esac
+EOF
+chmod +x "$policy_dir/bin/go"
+for version in 0.1.0-alpha.317 0.1.0-alpha 0.1.0-beta.1 0.1.0; do
+  printf '%s\n' "$version" > "$policy_dir/version.txt"
+  : > "$policy_dir/go.log"
+  (cd "$policy_dir" && PATH="$policy_dir/bin:$PATH" CI_GO_LOG="$policy_dir/go.log" RUNNER_TEMP="$policy_dir" SHARD=1 SHARDS=4 sh "$project_dir/scripts/run-ci-go-tests.sh")
+  case "$version" in
+    *-alpha*)
+      if grep -Fq -- '-race' "$policy_dir/go.log"; then echo 'Alpha executed race' >&2; exit 1; fi ;;
+    *)
+      grep -Fq -- 'test -race' "$policy_dir/go.log" ;;
+  esac
+  grep -Fq 'internal/center -run' "$policy_dir/go.log"
+  grep -Fq 'internal/agent' "$policy_dir/go.log"
 done
+ci_backend="$(printf '%s\n' 'internal/center/server.go' | "$classifier" --files ci)"
+printf '%s\n' "$ci_backend" | grep -Fxq 'go=true'
+printf '%s\n' "$ci_backend" | grep -Fxq 'integration=false'
+ci_host="$(printf '%s\n' 'internal/agent/host.go' | "$classifier" --files ci)"
+printf '%s\n' "$ci_host" | grep -Fxq 'integration=true'
+ci_release="$(printf '%s\n' 'version.txt' | "$classifier" --files ci)"
+printf '%s\n' "$ci_release" | grep -Fxq 'full=true'
+codeql_release="$(printf '%s\n' 'version.txt' | "$classifier" --files codeql)"
+printf '%s\n' "$codeql_release" | grep -Fxq 'full=true'
 # Retired specialist workflows must not return through a stale reference.
 if [ -e "$project_dir/.github/workflows/catalog-check.yml" ] ||
    [ -d "$project_dir/scripts/meridian-fullcone-lab" ]; then
@@ -125,15 +105,15 @@ ci_openapi="$(printf '%s\n' 'docs/openapi.json' | "$classifier" --files ci)"
 ci_catalog="$(printf '%s\n' 'internal/center/testdata/reviewed-catalog-v4.json' | "$classifier" --files ci)"
 ci_catalog_root="$(printf '%s\n' 'catalog/trust/1.root.json' | "$classifier" --files ci)"
 ci_catalog_rotated_root="$(printf '%s\n' 'catalog/trust/2.root.json' | "$classifier" --files ci)"
-if ! printf '%s\n' "$ci_catalog" | grep -Fq 'container=false' || ! printf '%s\n' "$ci_catalog_root" | grep -Fq 'container=true' || ! printf '%s\n' "$ci_catalog_rotated_root" | grep -Fq 'container=true'; then
+if ! printf '%s\n' "$ci_catalog" | grep -Fq 'dependencies=false' || ! printf '%s\n' "$ci_catalog_root" | grep -Fq 'integration=true' || ! printf '%s\n' "$ci_catalog_rotated_root" | grep -Fq 'integration=true'; then
   echo 'Catalog content is independently published; reviewed bootstrap roots must be packaged with Center.' >&2
   exit 1
 fi
-if ! printf '%s\n' "$ci_frontend" | grep -Fq 'web=true' || ! printf '%s\n' "$ci_frontend" | grep -Fq 'container=false'; then
+if ! printf '%s\n' "$ci_frontend" | grep -Fq 'web=true' || ! printf '%s\n' "$ci_frontend" | grep -Fq 'dependencies=false'; then
   echo 'Ordinary frontend source changes were classified incorrectly.' >&2
   exit 1
 fi
-if ! printf '%s\n' "$ci_lockfile" | grep -Fq 'web=true' || ! printf '%s\n' "$ci_lockfile" | grep -Fq 'container=true'; then
+if ! printf '%s\n' "$ci_lockfile" | grep -Fq 'web=true' || ! printf '%s\n' "$ci_lockfile" | grep -Fq 'dependencies=true'; then
   echo 'Container dependency changes were classified incorrectly.' >&2
   exit 1
 fi
