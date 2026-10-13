@@ -73,6 +73,14 @@ func TestCompositeHealthRequiresBothFamiliesAndUsesShortestLease(t *testing.T) {
 	if healthy != 1 || expiry != now.Add(5*time.Second).UnixMilli() {
 		t.Fatal("composite published without two families or beyond its shorter lease")
 	}
+	var diagnosticRaw []byte
+	if err := tx.QueryRow(`SELECT health_diagnostics_json FROM meridian_route_grants WHERE id=?`, combo.ID).Scan(&diagnosticRaw); err != nil {
+		t.Fatal(err)
+	}
+	var diagnostic MeridianHealthDiagnostics
+	if err := json.Unmarshal(diagnosticRaw, &diagnostic); err != nil || len(diagnostic.Legs) != 2 || diagnostic.Legs[0].ExitFamily != 6 || diagnostic.Legs[1].ExitFamily != 4 {
+		t.Fatalf("composite diagnosis lost a leg: %#v %v", diagnostic, err)
+	}
 	for i := range result.Peers {
 		if result.Peers[i].EgressID == four {
 			result.Peers[i].Status.ExitIP = "2001:4860:4860::8844"

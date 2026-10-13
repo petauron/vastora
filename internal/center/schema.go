@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 111
+const centerSchemaVersion = 112
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -1072,6 +1072,9 @@ CREATE TABLE agent_reinstall_access_activations (
 	}
 	if _, err := tx.ExecContext(ctx, meridianSchema); err != nil {
 		return fmt.Errorf("center: initialize Meridian schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, meridianHealthDiagnosticsSchema); err != nil {
+		return fmt.Errorf("center: initialize route health diagnostics: %w", err)
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO organizations(id, name, created_at, updated_at) VALUES(?, 'Vastora', ?, ?)`, defaultOrganizationID, now, now); err != nil {

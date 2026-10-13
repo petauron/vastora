@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/netip"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -70,10 +69,15 @@ func (p Probe) check(ctx context.Context, peer PeerIdentity, revision uint64) (B
 
 func (p Probe) tcp(ctx context.Context, endpoint string) (exit string, err error) {
 	var stage atomic.Value
+	statusCode := 0
 	stage.Store("socks_connect")
 	defer func() {
 		if err != nil {
 			err = probeFailure(stage.Load().(string), err)
+			var diagnostic *probeError
+			if errors.As(err, &diagnostic) && diagnostic.httpStatus == 0 {
+				diagnostic.httpStatus = statusCode
+			}
 		}
 	}()
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
@@ -89,7 +93,7 @@ func (p Probe) tcp(ctx context.Context, endpoint string) (exit string, err error
 	// request deadline so a connection can normally be reused by other requests.
 	// A pending SOCKS handshake must not outlive this probe's 3s/8s budget.
 	transport := &http.Transport{DialContext: func(_ context.Context, network, address string) (net.Conn, error) {
-		return p.dialTCP(ctx, endpoint, network, address)
+		return p.dialTCP(ctx, endpoint, network, address, &stage)
 	}, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -104,9 +108,10 @@ func (p Probe) tcp(ctx context.Context, endpoint string) (exit string, err error
 		return "", err
 	}
 	defer response.Body.Close()
+	statusCode = response.StatusCode
 	stage.Store("http_response")
 	if response.StatusCode != http.StatusOK {
-		return "", &probeError{stage: "http_response", reason: "status_" + strconv.Itoa(response.StatusCode)}
+		return "", &probeError{stage: "http_response", reason: "unexpected_http_status", httpStatus: response.StatusCode}
 	}
 	stage.Store("http_body")
 	body, err := io.ReadAll(io.LimitReader(response.Body, 4097))
@@ -122,11 +127,27 @@ func (p Probe) tcp(ctx context.Context, endpoint string) (exit string, err error
 
 // Use the existing maintained SOCKS dialer; authorization is enforced by
 // exact source membership on the private Dante endpoint.
-func (p Probe) dialTCP(ctx context.Context, endpoint, network, address string) (net.Conn, error) {
+// The maintained SOCKS dialer still owns its handshake. Only its underlying
+// transport reports when TCP connect ends and SOCKS negotiation begins.
+type probeDialer struct{ stage *atomic.Value }
+
+func (d probeDialer) Dial(network, address string) (net.Conn, error) {
+	return d.DialContext(context.Background(), network, address)
+}
+
+func (d probeDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+	if err == nil {
+		d.stage.Store("socks_handshake")
+	}
+	return conn, err
+}
+
+func (p Probe) dialTCP(ctx context.Context, endpoint, network, address string, stage *atomic.Value) (net.Conn, error) {
 	if network != "tcp" || address != "www.cloudflare.com:443" {
 		return nil, errors.New("landing: invalid TCP probe destination")
 	}
-	dialer, err := proxy.SOCKS5("tcp", endpoint, nil, &net.Dialer{})
+	dialer, err := proxy.SOCKS5("tcp", endpoint, nil, probeDialer{stage: stage})
 	if err != nil {
 		return nil, err
 	}

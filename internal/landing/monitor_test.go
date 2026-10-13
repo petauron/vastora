@@ -192,6 +192,9 @@ func TestMonitorBlocksWithoutProxyLifecycleOnExit(t *testing.T) {
 			if status.State != "blocked" || writes == 0 {
 				t.Fatalf("unconfirmed route was not blocked: writes=%d status=%+v", writes, status)
 			}
+			if status.Stage != "private_link_before" || status.Reason != "local_status_unavailable" || status.StartedAt.IsZero() || status.CheckedAt.Before(status.StartedAt) {
+				t.Fatalf("private link diagnostic was lost: %+v", status)
+			}
 			cancel()
 		},
 	}
@@ -235,6 +238,9 @@ func TestRecoveredMonitorKeepsGateClosedOnUnconfirmedInitialRenewal(t *testing.T
 			reports++
 			if status.State != "blocked" {
 				t.Fatalf("startup renewal failure opened the gate: status=%+v", status)
+			}
+			if status.Stage != "gate" || status.Reason != "renewal_failed" {
+				t.Fatalf("gate renewal failure lost its stage: %+v", status)
 			}
 			cancel()
 		},

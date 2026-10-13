@@ -433,6 +433,11 @@ for (const route of routes) {
       schema: { type: "string", const: "no-store" },
     },
   };
+  if (route.handler === "handleMeridianRouteHealth") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.responses[status].content["application/json"].schema = schemaForGoType("MeridianRouteHealthView");
+    operation.description = "Read current route verification evidence and at most 20 state changes from the last seven days. Does not launch probes or tasks, extend leases, or change traffic authorization. Exit information is limited to the address family; credentials and arbitrary remote error text are excluded.";
+  }
   if (route.handler === "handleCreateAgentReconnectEnrollment") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallInput");

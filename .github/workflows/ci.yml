@@ -64,6 +64,11 @@ jobs:
       - name: Verify composite route authority, DNS and migration
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: go test ./internal/agent ./internal/center -run '^TestComposite' -count=1
+      - name: Verify bounded route health diagnostics and migration
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
+        run: |
+          go test -race ./internal/landing -run '^(TestProbeDiagnostic|TestTCPProbe|TestMonitorBlocks|TestRecoveredMonitor)' -count=1
+          go test ./internal/center -run '^(TestMeridianHealthDiagnostics|TestMeridianRouteHealthRead|TestVersion112)' -count=1
       - name: Verify task triage pagination
         if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
         run: go test ./internal/center -run '^TestExecutionPagesRetainOldUnresolvedHistory$' -count=1
