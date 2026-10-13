@@ -6,7 +6,7 @@ set -eu
 shard="${SHARD:?set SHARD}"
 shards="${SHARDS:?set SHARDS}"
 case "$shard:$shards" in *[!0-9:]*|:*|*:) exit 1 ;; esac
-[ "$shard" -ge 1 ] && [ "$shard" -le "$shards" ]
+if [ "$shard" -lt 1 ] || [ "$shard" -gt "$shards" ]; then exit 1; fi
 weights="${1:?timing file required}"
 awk '
   FILENAME == ARGV[1] { if ($1 !~ /^#/ && NF == 2) weight[$1] = $2; next }

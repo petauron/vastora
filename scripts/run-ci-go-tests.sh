@@ -26,7 +26,7 @@ fi
 shard="${SHARD:?set SHARD}"
 shards="${SHARDS:?set SHARDS}"
 case "$shard:$shards" in *[!0-9:]*|:*|*:) exit 1 ;; esac
-[ "$shard" -ge 1 ] && [ "$shard" -le "$shards" ]
+if [ "$shard" -lt 1 ] || [ "$shard" -gt "$shards" ]; then exit 1; fi
 
 # Deterministic partitioning covers all top-level tests, examples and fuzz seeds.
 go test "$@" ./internal/center -list '^(Test|Example|Fuzz)' > "$RUNNER_TEMP/center-tests.txt"
