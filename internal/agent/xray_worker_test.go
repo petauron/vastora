@@ -218,6 +218,58 @@ func TestRenderXrayWorkerConfigOwnsPrivateRealitySocket(t *testing.T) {
 	}
 }
 
+func TestRenderXrayWorkerConfigAppendsOnlyEnabledInbounds(t *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		enabled  bool
+		include  bool
+		hy2      bool
+		wantTags []string
+	}{
+		{name: "empty", wantTags: []string{"api"}},
+		{name: "disabled", include: true, wantTags: []string{"api"}},
+		{name: "reality", include: true, enabled: true, wantTags: []string{"api", "managed"}},
+		{name: "both protocols", include: true, enabled: true, hy2: true, wantTags: []string{"api", "managed", "managed-hy2"}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			state := testXrayWorkerState()
+			if !scenario.include {
+				state.Inbounds = nil
+			} else if !scenario.enabled {
+				var inbound map[string]any
+				if err := json.Unmarshal(state.Inbounds[0], &inbound); err != nil {
+					t.Fatal(err)
+				}
+				inbound["enable"] = false
+				state.Inbounds[0], _ = json.Marshal(inbound)
+			}
+			if scenario.hy2 {
+				state.Inbounds = append(state.Inbounds, json.RawMessage(`{"id":2,"enable":true,"tag":"managed-hy2","protocol":"hysteria","port":443,"settings":{"clients":[]},"streamSettings":{"network":"hysteria","security":"tls"}}`))
+				state.NextInboundID = 3
+			}
+			encoded, err := renderXrayWorkerConfig(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config struct {
+				Inbounds []struct {
+					Tag string `json:"tag"`
+				} `json:"inbounds"`
+			}
+			if err := json.Unmarshal(encoded, &config); err != nil {
+				t.Fatal(err)
+			}
+			var tags []string
+			for _, inbound := range config.Inbounds {
+				tags = append(tags, inbound.Tag)
+			}
+			if !slices.Equal(tags, scenario.wantTags) {
+				t.Fatalf("rendered inbound tags = %v, want %v", tags, scenario.wantTags)
+			}
+		})
+	}
+}
+
 func TestXrayWorkerTrafficOnlyStateDoesNotReloadConfig(t *testing.T) {
 	previous := testXrayWorkerState()
 	next := testXrayWorkerState()

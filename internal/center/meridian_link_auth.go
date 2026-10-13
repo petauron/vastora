@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -25,12 +26,18 @@ func newMeridianLinkAuth() (client, server nodediagnostics.LinkBandwidthAuth, er
 	if err != nil {
 		return client, server, err
 	}
-	password, err := randomToken(32)
-	if err != nil {
+	// Construct the protocol credential only from 256 bits of CSPRNG output;
+	// no caller-supplied or human-chosen password may reach this digest.
+	var entropy [nodediagnostics.LinkBandwidthCredentialBytes]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
 		return client, server, err
 	}
-	hash := sha256.Sum256([]byte("{meridian}" + password))
-	client = nodediagnostics.LinkBandwidthAuth{KeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public})), Password: password}
+	token := base64.RawURLEncoding.EncodeToString(entropy[:])
+	// iperf3 requires SHA256("{username}" + token). This is a digest of a
+	// random one-time token, not a password-storage KDF. Changing it to Argon2
+	// or bcrypt would make the upstream server reject every authenticated test.
+	hash := sha256.Sum256([]byte("{meridian}" + token))
+	client = nodediagnostics.LinkBandwidthAuth{KeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public})), Password: token}
 	server = nodediagnostics.LinkBandwidthAuth{KeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})), PasswordHash: hex.EncodeToString(hash[:])}
 	return client, server, nil
 }
