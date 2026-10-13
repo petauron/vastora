@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.313](https://github.com/petauron/vastora/compare/v0.1.0-alpha.312...v0.1.0-alpha.313) (2026-10-13)
+
+
+### Bug Fixes
+
+* **meridian:** preserve home names for IPv6 and IPv4 routes ([1654e72](https://github.com/petauron/vastora/commit/1654e7212f0677f95f805c2acff995723b94de95))
+
 ## [0.1.0-alpha.312](https://github.com/petauron/vastora/compare/v0.1.0-alpha.311...v0.1.0-alpha.312) (2026-10-13)
 
 
