@@ -12,6 +12,13 @@ updates:
       time: "04:00"
       timezone: Asia/Singapore
     open-pull-requests-limit: 10
+    # Sigstore 1.11 requires Go 1.27. Keep the maintained 1.10 patch line
+    # until a separately reviewed build-toolchain upgrade is accepted.
+    ignore:
+      - dependency-name: github.com/sigstore/sigstore
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
     allow:
       - dependency-name: "*"
         update-types:
@@ -113,6 +120,12 @@ updates:
     # Keep the builder on patch releases; evaluate Go feature releases manually.
     ignore:
       - dependency-name: golang
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      # Ubuntu release numbers are not SemVer compatibility boundaries.
+      # Keep the reviewed LTS baseline; do not switch to an interim release.
+      - dependency-name: ubuntu
         update-types:
           - version-update:semver-minor
           - version-update:semver-major
