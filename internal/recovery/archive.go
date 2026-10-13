@@ -173,7 +173,7 @@ func validateManifest(value Manifest) error {
 }
 
 func safeName(name string) bool {
-	return name != "." && name != ".." && name != "" && filepath.Base(name) == name && !strings.ContainsAny(name, `/\\`)
+	return filepath.IsLocal(name) && name != "." && filepath.Base(name) == name && !strings.ContainsAny(name, `/\\:`) && !strings.ContainsRune(name, '\x00')
 }
 
 func ReadRegularFile(path string, limit int64) ([]byte, error) {

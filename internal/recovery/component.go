@@ -362,17 +362,41 @@ func stageFiles(files map[string][]byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for name, data := range files {
-		if !safeName(name) {
-			os.RemoveAll(directory)
-			return "", errors.New("recovery: unsafe member path")
-		}
-		if err := os.WriteFile(filepath.Join(directory, name), data, 0o600); err != nil {
-			os.RemoveAll(directory)
-			return "", err
-		}
+	if err := writeArtifactFiles(directory, files); err != nil {
+		os.RemoveAll(directory)
+		return "", err
 	}
 	return directory, nil
+}
+
+// writeArtifactFiles confines every archive-supplied name to a fresh staging
+// directory. Root prevents path/symlink escapes; O_EXCL also prevents replacing
+// an existing file or following a pre-existing symlink within the directory.
+func writeArtifactFiles(directory string, files map[string][]byte) error {
+	for name := range files {
+		if !safeName(name) {
+			return errors.New("recovery: unsafe member path")
+		}
+	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	for name, data := range files {
+		file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		_, writeErr := file.Write(data)
+		if writeErr == nil {
+			writeErr = file.Sync()
+		}
+		if err := errors.Join(writeErr, file.Close()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Restore publishes one fresh directory. Headscale config and data members are
@@ -397,10 +421,8 @@ func Restore(ctx context.Context, input, destination, password, release, expecte
 		return Artifact{}, errors.New("recovery: restore parent must already exist")
 	}
 	defer os.RemoveAll(staging)
-	for name, data := range files {
-		if err := PublishPrivateFile(filepath.Join(staging, name), data); err != nil {
-			return Artifact{}, err
-		}
+	if err := writeArtifactFiles(staging, files); err != nil {
+		return Artifact{}, err
 	}
 	if err := validateComponent(ctx, artifact.Manifest, staging, files, release); err != nil {
 		return Artifact{}, err

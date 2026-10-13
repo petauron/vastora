@@ -74,6 +74,11 @@ type LinkBandwidthTask struct {
 	LandingPeer   landing.PeerIdentity `json:"landingPeer"`
 }
 
+// LinkBandwidthCredentialBytes is the entropy of each single-probe iperf3
+// credential. Password carries its canonical unpadded base64url encoding, not
+// a human-chosen password.
+const LinkBandwidthCredentialBytes = 32
+
 type LinkBandwidthAuth struct {
 	KeyPEM       string `json:"keyPem"`
 	Password     string `json:"password,omitempty"`
