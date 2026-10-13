@@ -111,6 +111,20 @@ jobs:
           SHARDS: 4
         run: sh scripts/run-ci-go-tests.sh
 
+  go-packages:
+    name: Go tests (other packages)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-go-cached
+      - name: Run all non-Center packages with version-based race policy
+        env:
+          SUITE: packages
+        run: sh scripts/run-ci-go-tests.sh
+
   go-quality:
     name: Go quality and security
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
@@ -278,7 +292,7 @@ jobs:
   gate:
     name: CI / gate
     if: always()
-    needs: [changes, composite-runtime, privacy, go-tests, go-quality, integration, go-build, web, deployment, security, release-metadata]
+    needs: [changes, composite-runtime, privacy, go-tests, go-packages, go-quality, integration, go-build, web, deployment, security, release-metadata]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -288,6 +302,7 @@ jobs:
           COMPOSITE_RESULT: ${{ needs.composite-runtime.result }}
           PRIVACY_RESULT: ${{ needs.privacy.result }}
           GO_TEST_RESULT: ${{ needs.go-tests.result }}
+          GO_PACKAGES_RESULT: ${{ needs.go-packages.result }}
           GO_QUALITY_RESULT: ${{ needs.go-quality.result }}
           GO_BUILD_RESULT: ${{ needs.go-build.result }}
           WEB_RESULT: ${{ needs.web.result }}
@@ -296,7 +311,7 @@ jobs:
           RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
         run: |
-          for result in "$CHANGES_RESULT" "$COMPOSITE_RESULT" "$PRIVACY_RESULT" "$GO_TEST_RESULT" "$GO_QUALITY_RESULT" "$GO_BUILD_RESULT" "$WEB_RESULT" "$DEPLOYMENT_RESULT" "$SECURITY_RESULT" "$RELEASE_METADATA_RESULT" "$INTEGRATION_RESULT"; do
+          for result in "$CHANGES_RESULT" "$COMPOSITE_RESULT" "$PRIVACY_RESULT" "$GO_TEST_RESULT" "$GO_PACKAGES_RESULT" "$GO_QUALITY_RESULT" "$GO_BUILD_RESULT" "$WEB_RESULT" "$DEPLOYMENT_RESULT" "$SECURITY_RESULT" "$RELEASE_METADATA_RESULT" "$INTEGRATION_RESULT"; do
             case "$result" in
               success|skipped) ;;
               *) echo "Required CI job did not succeed: $result" >&2; exit 1 ;;

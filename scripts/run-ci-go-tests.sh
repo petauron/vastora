@@ -14,6 +14,15 @@ case "${version%%+*}" in
   *) set -- -race; echo "Non-alpha CI: race enabled" ;;
 esac
 
+if [ "${SUITE:-center}" = packages ]; then
+  packages=$(go list ./cmd/... ./internal/... | grep -v '^github.com/petauron/vastora/internal/center$')
+  test -n "$packages"
+  # Word splitting here is intentional: go list emits package paths.
+  go test "$@" -v -timeout=20m $packages
+  exit
+fi
+[ "${SUITE:-center}" = center ]
+
 shard="${SHARD:?set SHARD}"
 shards="${SHARDS:?set SHARDS}"
 case "$shard:$shards" in *[!0-9:]*|:*|*:) exit 1 ;; esac
@@ -25,10 +34,4 @@ tests=$(grep -E '^(Test|Example|Fuzz)[^[:space:]]*$' "$RUNNER_TEMP/center-tests.
 selected=$(printf '%s\n' "$tests" | awk -v shard="$shard" -v shards="$shards" '(NR - 1) % shards == shard - 1')
 test -n "$selected"
 pattern=$(printf '%s\n' "$selected" | paste -sd '|' -)
-go test "$@" -timeout=20m ./internal/center -run "^($pattern)$"
-if [ "$shard" -eq 1 ]; then
-  packages=$(go list ./cmd/... ./internal/... | grep -v '^github.com/petauron/vastora/internal/center$')
-  test -n "$packages"
-  # Word splitting here is intentional: go list emits package paths.
-  go test "$@" -timeout=20m $packages
-fi
+go test "$@" -v -timeout=20m ./internal/center -run "^($pattern)$"

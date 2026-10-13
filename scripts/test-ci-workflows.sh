@@ -30,7 +30,8 @@ require_line "$ci_workflow" '    name: Host and network integration'
 require_line "$ci_workflow" '    name: Go cross-compile'
 require_line "$ci_workflow" '    name: Privacy fixtures'
 require_line "$ci_workflow" '        run: make privacy-check'
-require_line "$ci_workflow" '    needs: [changes, composite-runtime, privacy, go-tests, go-quality, integration, go-build, web, deployment, security, release-metadata]'
+require_line "$ci_workflow" '    needs: [changes, composite-runtime, privacy, go-tests, go-packages, go-quality, integration, go-build, web, deployment, security, release-metadata]'
+require_line "$ci_workflow" '          GO_PACKAGES_RESULT: ${{ needs.go-packages.result }}'
 require_line "$ci_workflow" '          sh scripts/run-composite-runtime-lab.sh "$RUNNER_TEMP/glivela-xray"'
 require_line "$ci_workflow" '          docker pull "$GLIVELA_XRAY_IMAGE"'
 require_line "$ci_workflow" '    name: Release metadata'
@@ -69,6 +70,8 @@ for version in 0.1.0-alpha.317 0.1.0-alpha 0.1.0-beta.1 0.1.0; do
   printf '%s\n' "$version" > "$policy_dir/version.txt"
   : > "$policy_dir/go.log"
   (cd "$policy_dir" && PATH="$policy_dir/bin:$PATH" CI_GO_LOG="$policy_dir/go.log" RUNNER_TEMP="$policy_dir" SHARD=1 SHARDS=4 sh "$project_dir/scripts/run-ci-go-tests.sh")
+  if grep -Fq 'internal/agent' "$policy_dir/go.log"; then echo 'Other packages must not run inside Center shards' >&2; exit 1; fi
+  (cd "$policy_dir" && PATH="$policy_dir/bin:$PATH" CI_GO_LOG="$policy_dir/go.log" RUNNER_TEMP="$policy_dir" SUITE=packages sh "$project_dir/scripts/run-ci-go-tests.sh")
   case "$version" in
     *-alpha*)
       if grep -Fq -- '-race' "$policy_dir/go.log"; then echo 'Alpha executed race' >&2; exit 1; fi ;;
@@ -212,7 +215,7 @@ fi
 require_line "$ci_workflow" '    branches: [main]'
 require_line "$ci_workflow" "      - 'deploy/landing/Dockerfile'"
 require_line "$ci_workflow" "      - '.github/workflows/ci.yml'"
-for job in go-tests go-quality go-build web deployment security composite-runtime; do
+for job in go-tests go-packages go-quality go-build web deployment security composite-runtime; do
   condition="$(sed -n "/^  $job:/,/^    needs:/p" "$ci_workflow" | grep '^    if:')"
   if printf '%s\n' "$condition" | grep -Fq "github.event_name == 'push'"; then
     echo "$job must not duplicate PR checks on main pushes." >&2
