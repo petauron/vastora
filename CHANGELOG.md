@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.315](https://github.com/petauron/vastora/compare/v0.1.0-alpha.314...v0.1.0-alpha.315) (2026-10-13)
+
+
+### Bug Fixes
+
+* **deps:** apply reviewed dependency follow-up updates ([423039e](https://github.com/petauron/vastora/commit/423039e2b4ae7418be9342a65f7b1b53ad071ae8))
+* **deps:** update go-humanize with reviewed dependency pins ([64397f8](https://github.com/petauron/vastora/commit/64397f86fbc7b5d9ab6d4d7cafb1e5d47a873813))
+
 ## [0.1.0-alpha.314](https://github.com/petauron/vastora/compare/v0.1.0-alpha.313...v0.1.0-alpha.314) (2026-10-13)
 
 
