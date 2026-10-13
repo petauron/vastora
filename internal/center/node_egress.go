@@ -127,7 +127,7 @@ func (s *Store) SetNodeEgress(ctx context.Context, nodeID string, input NodeEgre
 	return id, tx.Commit()
 }
 
-func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRuntimeProjection, endpoint meridian.RealityEndpoint, hy2 meridian.HysteriaEndpoint, vlessEnabled, hy2Enabled int, materials []meridian.CredentialMaterial, composite bool) error {
+func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRuntimeProjection, endpoint meridian.RealityEndpoint, hy2 meridian.HysteriaEndpoint, vlessEnabled, hy2Enabled int, materials []meridian.CredentialMaterial) error {
 	var policy meridian.EgressPolicy
 	var needsVerification bool
 	err := tx.QueryRowContext(ctx, `SELECT policy,revision<>verified_revision FROM node_egress_policies WHERE node_id=?`, p.agentID).Scan(&policy, &needsVerification)
@@ -138,11 +138,7 @@ func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRun
 		return err
 	}
 	p.task.NativeEgress = policy
-	// Composite target selection requires the installed, catalog-authorized
-	// extension. The Agent verifies its contract before switching configuration.
-	if !composite {
-		p.task.ImageReference = meridianruntime.EgressImage
-	}
+	p.task.ImageReference = meridianruntime.EgressImage
 	if !needsVerification {
 		return nil
 	}

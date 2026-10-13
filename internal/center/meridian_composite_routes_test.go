@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -85,7 +86,7 @@ func TestCompositeHealthRequiresBothFamiliesAndUsesShortestLease(t *testing.T) {
 	}
 }
 
-func TestCompositeNativePolicyRetainsAuthorizedExtensionImage(t *testing.T) {
+func TestCompositeNativePolicyUsesOfficialImage(t *testing.T) {
 	store, six, four, _ := compositeCenterFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateMeridianRouteGrant(ctx, MeridianRouteGrantInput{AccountID: sharedSnapshotAccountA, EndpointID: sharedSnapshotEndpointID, EgressNodeID: six, IPv4EgressNodeID: four}); err != nil {
@@ -103,17 +104,15 @@ func TestCompositeNativePolicyRetainsAuthorizedExtensionImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if projection.task.ImageReference != "example.test/xray:reviewed" || projection.task.NativeEgress != meridian.EgressIPv4Only || len(projection.task.Desired.Files) != 1 {
-		t.Fatal("native policy replaced the installed composite runtime")
+	if projection.task.ImageReference != meridianruntime.EgressImage || projection.task.NativeEgress != meridian.EgressIPv4Only {
+		t.Fatal("native policy must use the official core for composite routes too")
 	}
 	if err := projection.task.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for name := range projection.task.Desired.Files {
-		projection.task.Desired.Files[name] = []byte("unbound replacement")
-	}
+	projection.task.ImageReference = "example.test/xray:custom"
 	if projection.task.Validate() == nil {
-		t.Fatal("non-stock runtime accepted an unbound composite artifact")
+		t.Fatal("native policy accepted a custom core for composite routes")
 	}
 }
 

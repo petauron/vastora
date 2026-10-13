@@ -381,13 +381,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 		return result, err
 	}
 	defer os.Remove(staged)
-	if err := e.Store.stageMeridianFiles(task.Desired, meridianAppliedRuntimeUID(state)); err != nil {
-		return result, err
-	}
 	if err := validateXrayWorkerConfigAs(ctx, docker, task.ImageReference, staged, meridianAppliedRuntimeUID(state)); err != nil {
-		return result, err
-	}
-	if err := e.Store.ensureCompositeDNS(task.Desired); err != nil {
 		return result, err
 	}
 	if len(task.Peers) != 0 {
@@ -668,12 +662,6 @@ func (e ApplicationExecutor) observeAppliedMeridianRuntimeWithDocker(ctx context
 		return meridianruntime.Result{}, errors.New("agent: active Meridian configuration does not match its applied revision")
 	}
 	stats, err := runXrayWorkerCommand(ctx, docker, inspected.Container.ID, []string{"xray", "api", "statsquery", "--server=127.0.0.1:10085", "-pattern", "user>>>", "-reset=false"})
-	if fileErr := e.Store.verifyMeridianFiles(*state.Applied); fileErr != nil {
-		return meridianruntime.Result{}, fileErr
-	}
-	if dnsErr := e.Store.ensureCompositeDNS(*state.Applied); dnsErr != nil {
-		return meridianruntime.Result{}, dnsErr
-	}
 	if err != nil || !json.Valid(stats) {
 		return meridianruntime.Result{}, errors.Join(errors.New("agent: read Meridian Xray statistics"), err)
 	}

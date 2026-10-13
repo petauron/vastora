@@ -45,8 +45,8 @@ func TestCompositeRuntimeLab(t *testing.T) {
 		t.Fatal("an explicit audited Xray binary is required")
 	}
 	version, err := exec.Command(binaryPath, "version").Output()
-	if err != nil || !compositeXrayCapabilitiesSupported(version) {
-		t.Fatal("controlled lab requires the reviewed target-selection runtime")
+	if err != nil || !strings.HasPrefix(string(version), "Xray ") {
+		t.Fatal("controlled lab requires an explicitly supplied official Xray binary")
 	}
 	interfaces, err := net.Interfaces()
 	if err != nil {
@@ -63,7 +63,7 @@ func TestCompositeRuntimeLab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certificate := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "anonymous lab"}, DNSNames: []string{"*.example.com"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true}
+	certificate := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "anonymous lab"}, DNSNames: []string{"*.example.com"}, IPAddresses: []net.IP{net.ParseIP("1.1.1.1"), net.ParseIP("2001:4860:4860::8888")}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true}
 	der, err := x509.CreateCertificate(rand.Reader, certificate, certificate, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,11 @@ func TestCompositeRuntimeLab(t *testing.T) {
 	}
 	targetPort := targetListener.Addr().(*net.TCPAddr).Port
 	targetServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.TLS == nil || r.TLS.ServerName != "dual.example.com" {
+		expectedHost, _, _ := net.SplitHostPort(r.Host)
+		if _, err := netip.ParseAddr(expectedHost); err == nil {
+			expectedHost = ""
+		}
+		if r.TLS == nil || r.TLS.ServerName != expectedHost {
 			t.Error("TLS SNI changed")
 		}
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
@@ -115,34 +119,44 @@ func TestCompositeRuntimeLab(t *testing.T) {
 	t.Cleanup(func() { _ = targetServer.Close() })
 	six := newCompositeLabPeer(t, false, targetPort)
 	four := newCompositeLabPeer(t, true, targetPort)
-	clock := atomic.Int64{}
-	clock.Store(time.Now().Unix())
 	changed := atomic.Bool{}
-	resolver := &compositeDNSServer{cache: map[string]compositeDNSAnswer{}, upstreams: []string{"anonymous fixture"}, now: func() time.Time { return time.Unix(clock.Load(), 0) }}
-	resolver.exchange = func(_ context.Context, query *dns.Msg, _ string) (*dns.Msg, error) {
+	// This is only an anonymous DNS fixture. Production uses official Xray's
+	// DNS client directly, not an Agent resolver or evidence-selection service.
+	resolver := dns.HandlerFunc(func(writer dns.ResponseWriter, query *dns.Msg) {
 		q := query.Question[0]
 		name := strings.TrimSuffix(q.Name, ".")
+		reply := new(dns.Msg)
+		reply.SetReply(query)
 		if name == "timeout.example.com" {
-			return nil, context.DeadlineExceeded
+			return
 		}
 		if name == "servfail.example.com" {
-			return compositeDNSReply(query, dns.RcodeServerFailure), nil
+			reply.Rcode = dns.RcodeServerFailure
+			_ = writer.WriteMsg(reply)
+			return
 		}
 		if name == "missing.example.com" {
-			return compositeDNSReply(query, dns.RcodeNameError), nil
+			reply.Rcode = dns.RcodeNameError
+			_ = writer.WriteMsg(reply)
+			return
 		}
 		if name == "alias.example.com" {
-			return compositeDNSReply(query, 0, &dns.CNAME{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 1}, Target: "dual.example.com."}), nil
+			reply.Answer = append(reply.Answer, &dns.CNAME{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 1}, Target: "dual.example.com."})
+			q.Name = "dual.example.com."
 		}
 		isSix := name != "v4.example.com" && (name != "change.example.com" || changed.Load())
 		if q.Qtype == dns.TypeAAAA && isSix {
-			return compositeDNSReply(query, 0, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 1}, AAAA: net.ParseIP("2001:4860:4860::8888")}), nil
+			ip := "2001:4860:4860::8888"
+			if name == "private.example.com" {
+				ip = "fd00::1"
+			}
+			reply.Answer = append(reply.Answer, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 1}, AAAA: net.ParseIP(ip)})
 		}
-		if q.Qtype == dns.TypeA {
-			return compositeDNSReply(query, 0, &dns.A{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: net.ParseIP("1.1.1.1")}), nil
+		if q.Qtype == dns.TypeA && name != "v6.example.com" {
+			reply.Answer = append(reply.Answer, &dns.A{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: net.ParseIP("1.1.1.1")})
 		}
-		return compositeDNSReply(query, 0), nil
-	}
+		_ = writer.WriteMsg(reply)
+	})
 	dnsListener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -177,14 +191,8 @@ func TestCompositeRuntimeLab(t *testing.T) {
 	if err := json.Unmarshal(artifact.Config, &config); err != nil {
 		t.Fatal(err)
 	}
-	for name, contents := range artifact.Files {
-		if err := os.WriteFile(filepath.Join(directory, name), contents, 0600); err != nil {
-			t.Fatal(err)
-		}
-		config["routing"].(map[string]any)["script"] = filepath.Join(directory, name)
-	}
 	// The lab rebases sockets and removes REALITY only. It does not alter the
-	// generated selection scripts, counter policy, credential scope, or guards.
+	// generated routing rules, counter policy, credential scope, or guards.
 	apiPort, entryPort, clientPort := compositeLabPort(t), compositeLabPort(t), compositeLabPort(t)
 	inbounds := config["inbounds"].([]any)
 	inbounds[0].(map[string]any)["port"] = apiPort
@@ -206,7 +214,9 @@ func TestCompositeRuntimeLab(t *testing.T) {
 		server := out["settings"].(map[string]any)["servers"].([]any)[0].(map[string]any)
 		server["address"], server["port"] = "127.0.0.1", peer.listener.Addr().(*net.TCPAddr).Port
 	}
-	config["dns"].(map[string]any)["servers"].([]any)[1].(map[string]any)["address"] = "tcp+local://" + dnsListener.Addr().String()
+	// Disable fixture caching to observe an explicit DNS family change. This
+	// does not assert custom/atomic DNS evidence or production cache semantics.
+	config["dns"].(map[string]any)["servers"] = []any{map[string]any{"address": "tcp+local://" + dnsListener.Addr().String(), "disableCache": true}}
 	stopServer := startCompositeLabCore(t, binaryPath, directory, "server", config, entryPort)
 	clientConfig := map[string]any{"log": map[string]any{"loglevel": "warning"}, "inbounds": []any{map[string]any{"listen": "127.0.0.1", "port": clientPort, "protocol": "socks", "settings": map[string]any{"auth": "noauth", "udp": false}}}, "outbounds": []any{map[string]any{"protocol": "vless", "settings": map[string]any{"vnext": []any{map[string]any{"address": "127.0.0.1", "port": entryPort, "users": []any{map[string]any{"id": routedID, "encryption": "none"}}}}}}}}
 	startCompositeLabCore(t, binaryPath, directory, "client", clientConfig, clientPort)
@@ -214,7 +224,7 @@ func TestCompositeRuntimeLab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transport := &http.Transport{DialContext: dialer.(proxy.ContextDialer).DialContext, DisableKeepAlives: true, TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "dual.example.com", MinVersion: tls.VersionTLS13}}
+	transport := &http.Transport{DialContext: dialer.(proxy.ContextDialer).DialContext, DisableKeepAlives: true, TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13}}
 	t.Cleanup(transport.CloseIdleConnections)
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 	request := func(target, path, expected string, status int) {
@@ -283,12 +293,11 @@ func TestCompositeRuntimeLab(t *testing.T) {
 	for _, status := range []int{401, 403, 404} {
 		request("dual.example.com", "/"+strconv.Itoa(status), "ipv6", status)
 	}
-	for _, target := range []string{"missing.example.com", "servfail.example.com", "timeout.example.com", "198.18.0.1", "127.0.0.1"} {
+	for _, target := range []string{"missing.example.com", "servfail.example.com", "timeout.example.com", "private.example.com", "198.18.0.1", "127.0.0.1", "::1"} {
 		request(target, "/", "blocked", 0)
 	}
 	request("change.example.com", "/", "ipv4", 200)
 	changed.Store(true)
-	clock.Add(2)
 	request("change.example.com", "/", "ipv6", 200)
 	stopServer()
 	startCompositeLabCore(t, binaryPath, directory, "server", config, entryPort)
@@ -377,7 +386,11 @@ func newCompositeLabPeer(t *testing.T, four bool, targetPort int) *compositeLabP
 					return
 				}
 				address, _ := netip.AddrFromSlice(ip)
-				if address.Is4() != four || !meridian.CompositePublicIP(address) || int(binary.BigEndian.Uint16(port)) != targetPort {
+				want := netip.MustParseAddr("2001:4860:4860::8888")
+				if four {
+					want = netip.MustParseAddr("1.1.1.1")
+				}
+				if address != want || int(binary.BigEndian.Uint16(port)) != targetPort {
 					t.Error("exit received wrong family or unsafe target")
 					return
 				}
@@ -450,7 +463,7 @@ func startCompositeLabCore(t *testing.T, binaryPath, directory, name string, con
 	ctx, cancel := context.WithCancel(context.Background())
 	command := exec.CommandContext(ctx, binaryPath, "run", "-c", filename)
 	ready := make(chan struct{})
-	diagnostics := &compositeLabDiagnostics{t: t, ready: ready}
+	diagnostics := &compositeLabDiagnostics{ready: ready}
 	command.Stdout = diagnostics
 	command.Stderr = diagnostics
 	if err := command.Start(); err != nil {
@@ -462,7 +475,6 @@ func startCompositeLabCore(t *testing.T, binaryPath, directory, name string, con
 	var once sync.Once
 	stop := func() { once.Do(func() { cancel(); <-stopped }) }
 	t.Cleanup(stop)
-	// Inbound sockets open before Router.Start initializes the Lua engine.
 	// Wait for the core's completed-start signal, not merely an open TCP port.
 	select {
 	case <-ready:
@@ -484,9 +496,8 @@ func startCompositeLabCore(t *testing.T, binaryPath, directory, name string, con
 	return stop
 }
 
-// Retain only the selector's bounded reason, never raw core logs or identities.
+// Observe startup only; never retain raw core logs or identities.
 type compositeLabDiagnostics struct {
-	t     *testing.T
 	ready chan struct{}
 	once  sync.Once
 }
@@ -495,14 +506,6 @@ func (d *compositeLabDiagnostics) Write(contents []byte) (int, error) {
 	for _, line := range strings.Split(string(contents), "\n") {
 		if strings.Contains(line, "Xray ") && strings.Contains(line, " started") {
 			d.once.Do(func() { close(d.ready) })
-		}
-		_, reason, ok := strings.Cut(line, "glivela selection failed stage=routing reason=")
-		if !ok {
-			continue
-		}
-		reason = strings.TrimSpace(reason)
-		if len(reason) < 64 && strings.IndexFunc(reason, func(r rune) bool { return r != '_' && (r < 'a' || r > 'z') }) == -1 {
-			d.t.Log("selection failure stage=routing reason=" + reason)
 		}
 	}
 	return len(contents), nil

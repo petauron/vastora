@@ -35,6 +35,12 @@ require_line "$ci_workflow" '          PRIVACY_RESULT: ${{ needs.privacy.result 
 require_line "$ci_workflow" '    needs: [changes, alpha-minimal, composite-runtime, privacy, go-race, go-quality, go-build, web, deployment, security, release-metadata, container-image-security]'
 require_line "$ci_workflow" '          COMPOSITE_RESULT: ${{ needs.composite-runtime.result }}'
 require_line "$ci_workflow" '          sh scripts/run-composite-runtime-lab.sh "$RUNNER_TEMP/glivela-xray"'
+require_line "$ci_workflow" '          docker pull "$GLIVELA_XRAY_IMAGE"'
+require_line "$ci_workflow" '          GLIVELA_XRAY_IMAGE: ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558'
+if grep -Fq 'runtime/Dockerfile' "$ci_workflow"; then
+  echo 'Composite CI must use official Xray, not build a custom dependency core.' >&2
+  exit 1
+fi
 require_line "$ci_workflow" '          for result in "$CHANGES_RESULT" "$ALPHA_RESULT" "$COMPOSITE_RESULT" "$PRIVACY_RESULT"'
 require_line "$ci_workflow" "vars.VASTORA_CI_MODE != 'alpha'"
 require_line "$ci_workflow" '    name: Release metadata'
