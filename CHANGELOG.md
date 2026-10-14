@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.317](https://github.com/petauron/vastora/compare/v0.1.0-alpha.316...v0.1.0-alpha.317) (2026-10-14)
+
+
+### Bug Fixes
+
+* **landing:** retain bounded route health diagnostics ([a4a4d12](https://github.com/petauron/vastora/commit/a4a4d125ad504b64d11ba8797718e2cc1545d74a))
+* **packages:** preserve application-owned configuration during upgrades ([3b36375](https://github.com/petauron/vastora/commit/3b363758988780033fbd56b04333d337b9398ebd))
+
 ## [0.1.0-alpha.316](https://github.com/petauron/vastora/compare/v0.1.0-alpha.315...v0.1.0-alpha.316) (2026-10-13)
 
 
