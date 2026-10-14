@@ -211,11 +211,14 @@ func (b *SystemdPackageBackend) Prepare(ctx context.Context, task DeploymentTask
 		if err := checkPackageParents(actual); err != nil {
 			return err
 		}
-		current, err := captureHostFile(actual)
-		if err != nil {
+		current, err := os.Lstat(actual)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if current.Exists {
+		if err == nil {
+			if !current.Mode().IsRegular() {
+				return errors.New("agent: package file path is not regular")
+			}
 			owned := false
 			for _, resource := range receipt.Resources {
 				if resource.Path == path {
@@ -344,13 +347,24 @@ func (b *SystemdPackageBackend) Inspect(ctx context.Context, task DeploymentTask
 		}
 		switch resource.Kind {
 		case "file", "unit":
-			snapshot, err := captureHostFile(actual)
+			var snapshot hostFileSnapshot
+			var err error
+			if resource.Kind == "file" && applicationOwnedNativeFile(resource.LogicalName) {
+				snapshot, err = captureApplicationConfiguration(actual)
+			} else {
+				snapshot, err = captureHostFile(actual)
+			}
 			if err != nil || !snapshot.Exists {
 				return errors.New("agent: receipt file no longer exists")
 			}
 			digest := sha256.Sum256(snapshot.Data)
-			if resource.SHA256 == "" || hex.EncodeToString(digest[:]) != resource.SHA256 {
-				return errors.New("agent: receipt file has changed outside the managed runtime")
+			if resource.SHA256 == "" {
+				return errors.New("agent: receipt file has no ownership digest")
+			}
+			if hex.EncodeToString(digest[:]) != resource.SHA256 {
+				if resource.Kind != "file" || !applicationOwnedNativeFile(resource.LogicalName) {
+					return errors.New("agent: receipt file has changed outside the managed runtime")
+				}
 			}
 			if resource.Kind == "unit" {
 				unitFound = true
@@ -485,10 +499,40 @@ func archivePackageDirectory(ctx context.Context, writer *tar.Writer, directory 
 }
 
 func (b *SystemdPackageBackend) Apply(ctx context.Context, task DeploymentTask, receipt *InstanceResources, persist func() error) error {
+	// Resolve every application-owned file before stopping or writing anything.
+	// An upgrade cannot initialize a missing file or introduce a new config path.
+	if task.Operation == "upgrade" {
+		for path, logical := range b.logicalNames {
+			if !applicationOwnedNativeFile(logical) {
+				continue
+			}
+			old := resourceNamed(receipt, "file", logical)
+			if old == nil || old.Path != path {
+				return errors.New("agent: native configuration migration requires explicit approval")
+			}
+			current, err := captureApplicationConfiguration(b.Manager.path(path))
+			if err != nil || !current.Exists {
+				return errors.New("agent: existing native configuration is unavailable")
+			}
+			b.files[path], b.modes[path] = current.Data, current.Mode
+		}
+	}
 	// Replacing service files must stop the old process, independently of backups.
 	if unit := resourceNamed(receipt, "unit", "service"); unit != nil {
 		if err := b.Manager.run(ctx, "systemctl", "stop", unit.Name); err != nil {
 			return errors.New("agent: systemd service could not stop for update")
+		}
+	}
+	if task.Operation == "upgrade" {
+		for path, logical := range b.logicalNames {
+			if !applicationOwnedNativeFile(logical) {
+				continue
+			}
+			current, err := captureApplicationConfiguration(b.Manager.path(path))
+			if err != nil {
+				return err
+			}
+			b.files[path], b.modes[path] = current.Data, current.Mode
 		}
 	}
 	if b.createUser != "" {
@@ -506,8 +550,10 @@ func (b *SystemdPackageBackend) Apply(ctx context.Context, task DeploymentTask, 
 		if err := checkPackageParents(actual); err != nil {
 			return err
 		}
-		if err := writeHostFileAtomic(actual, b.files[path], b.modes[path]); err != nil {
-			return err
+		if task.Operation != "upgrade" || !applicationOwnedNativeFile(b.logicalNames[path]) {
+			if err := writeHostFileAtomic(actual, b.files[path], b.modes[path]); err != nil {
+				return err
+			}
 		}
 		digest := sha256.Sum256(b.files[path])
 		kind, logical := "file", b.logicalNames[path]

@@ -35,7 +35,9 @@ type InstanceResources struct {
 	TaskID                 string            `json:"taskId"`
 	Resources              []RuntimeResource `json:"resources"`
 	Backups                []RuntimeBackup   `json:"backups,omitempty"`
-	RecordedAt             time.Time         `json:"recordedAt"`
+	// Locations only: contents remain application-owned and never enter Center.
+	ConfigurationPaths map[string][]string `json:"configurationPaths,omitempty"`
+	RecordedAt         time.Time           `json:"recordedAt"`
 }
 
 type RuntimeResource struct {

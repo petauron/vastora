@@ -168,3 +168,26 @@ the production migration and single-writer cutover must be completed separately.
 The default Docker context on the development machine must not be used as an
 isolated test target. Select an explicitly disposable test environment instead.
 See [the cutover guide](catalog-release-guide.md) for the operational sequence.
+
+## Third-party application upgrade boundary
+
+Initialization belongs to first installation. Version upgrades preserve opaque
+application-owned configuration, credentials, process environment and persistent
+storage; they do not import business settings into Center or rerender defaults.
+Explicit configuration changes and application-supported schema migrations are
+separate operator actions.
+
+Docker upgrades stop configuration writers, capture bounded regular files through
+the existing archive API, and persist private integrity-checked snapshots before
+replacing containers. Only locations enter ownership receipts; content remains
+local application data. Previously recorded paths remain retained even if a new
+recipe omits its initializer. Reused mounts are not rewritten. Missing files,
+links, unsafe archives or detached persistent storage block an upgrade rather
+than trigger initialization. A capture failure before runtime replacement resumes
+only original writers; failures after replacement retain operator recovery fences.
+
+Native upgrades leave existing configuration, credential and environment files
+untouched, including their inode and modification time. Binaries and systemd units
+remain immutable ownership boundaries. A new configuration location requires an
+explicit migration, not automatic default creation. Backups and the application's
+own migration facilities remain required before version-dependent data changes.
