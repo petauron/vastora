@@ -41,7 +41,9 @@ jobs:
 
   analyze-go:
     name: Analyze (go)
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' || needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true')
+    # Code-scanning protection compares every main configuration against PRs.
+    # Skipping a language leaves the PR without a required security baseline.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' || needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true')
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -55,7 +57,7 @@ jobs:
 
   analyze-javascript:
     name: Analyze (javascript-typescript)
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' || needs.changes.outputs.javascript == 'true' || needs.changes.outputs.full == 'true')
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' || needs.changes.outputs.javascript == 'true' || needs.changes.outputs.full == 'true')
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20

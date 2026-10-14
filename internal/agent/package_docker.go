@@ -46,10 +46,11 @@ type DockerPackageBackend struct {
 }
 
 type packageContainerPlan struct {
-	logical  string
-	options  client.ContainerCreateOptions
-	files    []byte
-	services []catalog.Service
+	logical     string
+	options     client.ContainerCreateOptions
+	files       []byte
+	services    []catalog.Service
+	configPaths []string
 }
 
 func runtimeInputs(task DeploymentTask) (map[string]any, map[string]string, error) {
@@ -228,9 +229,11 @@ func compileDockerPackage(task DeploymentTask, receipt *InstanceResources) ([]pa
 				}
 			}
 			for _, file := range item.ConfigFiles {
+				plan.configPaths = append(plan.configPaths, file.Path)
 				runtimeValues["config-file:"+file.Path] = file.Path
 			}
 			for name := range item.Credentials {
+				plan.configPaths = append(plan.configPaths, "/run/vastora-credentials/"+name)
 				runtimeValues["credential-file:"+name] = "/run/vastora-credentials/" + name
 			}
 			image := ""
@@ -406,6 +409,35 @@ func (b *DockerPackageBackend) Prepare(ctx context.Context, task DeploymentTask,
 		return err
 	}
 	b.plans = plans
+	if task.Operation == "upgrade" {
+		for logical, paths := range receipt.ConfigurationPaths {
+			if len(paths) == 0 {
+				continue
+			}
+			found := false
+			for _, plan := range plans {
+				found = found || plan.logical == logical
+			}
+			if !found {
+				return errors.New("agent: application configuration component changes require explicit migration")
+			}
+		}
+		// A version change may not silently detach existing persistent data.
+		for _, resource := range receipt.Resources {
+			if !resource.Persistent || resource.Kind != "volume" && resource.Kind != "bind" {
+				continue
+			}
+			retained := false
+			for _, plan := range plans {
+				for _, mounted := range plan.options.HostConfig.Mounts {
+					retained = retained || resource.Kind == "volume" && mounted.Type == mount.TypeVolume && mounted.Source == resource.Name || resource.Kind == "bind" && mounted.Type == mount.TypeBind && mounted.Source == resource.Path && mounted.Target == resource.Component
+				}
+			}
+			if !retained {
+				return errors.New("agent: persistent storage changes require explicit instance migration")
+			}
+		}
+	}
 	if err := b.prepareNetwork(ctx, task, receipt); err != nil {
 		return err
 	}
@@ -415,6 +447,13 @@ func (b *DockerPackageBackend) Prepare(ctx context.Context, task DeploymentTask,
 			old := resourceNamed(receipt, "container", plan.logical)
 			if old == nil || old.ID != current.Container.ID {
 				return errors.New("agent: container name collision is not owned by this receipt")
+			}
+			if task.Operation == "upgrade" {
+				for i := range b.plans {
+					if b.plans[i].logical == plan.logical {
+						b.plans[i].options.Config.Env = slices.Clone(current.Container.Config.Env)
+					}
+				}
 			}
 		} else if !errdefs.IsNotFound(err) {
 			return errors.New("agent: could not inspect package container")
@@ -602,6 +641,9 @@ func savePackageBackup(directory string, task DeploymentTask, resource RuntimeRe
 }
 
 func (b *DockerPackageBackend) Apply(ctx context.Context, task DeploymentTask, receipt *InstanceResources, persist func() error) error {
+	if err := b.preserveUpgradeConfiguration(ctx, task, receipt, persist); err != nil {
+		return err
+	}
 	if err := b.applyNetwork(ctx, task, receipt, persist); err != nil {
 		return err
 	}
@@ -673,6 +715,13 @@ func (b *DockerPackageBackend) Apply(ctx context.Context, task DeploymentTask, r
 			if _, err := b.Docker.CopyToContainer(ctx, created.ID, client.CopyToContainerOptions{DestinationPath: "/", Content: bytes.NewReader(plan.files)}); err != nil {
 				return errors.New("agent: could not install private package configuration")
 			}
+		}
+		if receipt.ConfigurationPaths == nil {
+			receipt.ConfigurationPaths = map[string][]string{}
+		}
+		receipt.ConfigurationPaths[plan.logical] = slices.Clone(plan.configPaths)
+		if err := persist(); err != nil {
+			return err
 		}
 		if _, err := b.Docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 			return errors.New("agent: could not start package container")

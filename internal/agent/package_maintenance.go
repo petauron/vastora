@@ -320,6 +320,19 @@ func (b *DockerPackageBackend) Logs(ctx context.Context, task DeploymentTask, re
 // recovery copies; only after all archives have been copied do managed container
 // bindings change. The helper container is never started or given a shell.
 func (b *DockerPackageBackend) Restore(ctx context.Context, task DeploymentTask, receipt *InstanceResources, backups []RuntimeBackup, persist func() error) error {
+	// Restore explicitly selected opaque configuration snapshots, not defaults.
+	for i := range b.plans {
+		for _, backup := range backups {
+			if backup.Resource != "configuration:"+b.plans[i].logical {
+				continue
+			}
+			raw, err := readPackageBackup(b.StateDirectory, task, backup)
+			if err != nil {
+				return err
+			}
+			b.plans[i].files = raw
+		}
+	}
 	for _, resource := range slices.Clone(receipt.Resources) {
 		if resource.Kind == "bind" {
 			return errors.New("agent: external host mounts require explicit offline data recovery")

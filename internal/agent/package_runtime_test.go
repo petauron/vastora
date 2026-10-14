@@ -412,6 +412,7 @@ func TestPackageSystemdCompleteLifecycleBothArchitectures(t *testing.T) {
 			task.Manifest.Images = nil
 			task.Manifest.Artifacts = []catalog.Artifact{{Name: "app", OperatingSystem: "linux", Architecture: architecture, URL: server.URL + "/app", SHA256: hex.EncodeToString(digest[:]), Format: "raw"}}
 			task.Manifest.Runtime = &catalog.RuntimeSpec{Kind: "systemd", Version: 1, Storage: []catalog.Storage{{Name: "data", Persistent: true}}, Systemd: &catalog.SystemdRuntime{Artifact: "app", Executable: "app", Files: []catalog.ArtifactFile{{Path: "app", Executable: true}}, StateDirectories: []string{"data"}}}
+			task.Manifest.Runtime.Systemd.ConfigFiles = []catalog.ConfigFile{{Path: "settings.json", Format: "json", Values: map[string]catalog.Value{"initial": literalValue(`true`)}}}
 			packageTaskDigest(t, &task)
 			root := packageTestDirectory(t)
 			directory := packageTestDirectory(t)
@@ -431,6 +432,15 @@ func TestPackageSystemdCompleteLifecycleBothArchitectures(t *testing.T) {
 				t.Fatal(err)
 			}
 			unit := resourceNamed(result.Resources, "unit", "service")
+			configurationPath := manager.path(resourceNamed(result.Resources, "file", "config:settings.json").Path)
+			customConfiguration := []byte(`{"api-keys":["one","two","three","four"],"custom-provider":"example"}`)
+			if err := os.WriteFile(configurationPath, customConfiguration, 0600); err != nil {
+				t.Fatal(err)
+			}
+			configurationBefore, err := os.Stat(configurationPath)
+			if err != nil {
+				t.Fatal(err)
+			}
 			unitData, _ := os.ReadFile(manager.path(unit.Path))
 			if !bytes.Contains(unitData, []byte("Type=exec\n")) || !bytes.Contains(unitData, []byte("User=65534\n")) || unit.MainPID != 123 {
 				t.Fatal("missing confinement or runtime identity")
@@ -449,6 +459,14 @@ func TestPackageSystemdCompleteLifecycleBothArchitectures(t *testing.T) {
 			}
 			if len(result.Resources.Backups) != 0 {
 				t.Fatal("native upgrade unexpectedly created a backup")
+			}
+			retainedConfiguration, err := os.ReadFile(configurationPath)
+			if err != nil || !bytes.Equal(retainedConfiguration, customConfiguration) {
+				t.Fatal("native upgrade reset application-owned configuration")
+			}
+			configurationAfter, err := os.Stat(configurationPath)
+			if err != nil || !os.SameFile(configurationBefore, configurationAfter) || !configurationBefore.ModTime().Equal(configurationAfter.ModTime()) {
+				t.Fatal("native upgrade rewrote the configuration file")
 			}
 			data, err := os.ReadFile(filepath.Join(dataPath, "database"))
 			if err != nil || string(data) != "version-one" {
