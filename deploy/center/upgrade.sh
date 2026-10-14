@@ -264,10 +264,9 @@ docker compose up -d --remove-orphans deployer center
 validate_vastora_runtime_network
 
 write_host_update_stage "Waiting for Center health checks."
-attempt=0
-until curl -fsS "http://127.0.0.1:$bootstrap_port/healthz" >/dev/null 2>&1; do
-  attempt=$((attempt + 1))
-  if [ "$attempt" -ge 30 ]; then
+health_deadline=$(($(date +%s) + 300))
+until curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS "http://127.0.0.1:$bootstrap_port/healthz" >/dev/null 2>&1; do
+  if [ "$(date +%s)" -ge "$health_deadline" ]; then
     echo "The updated Center did not become healthy." >&2
     echo "The new files were kept because its database migration may already have run; an automatic downgrade would be unsafe." >&2
     echo "Inspect: cd '$install_dir' && docker compose logs center" >&2
@@ -288,10 +287,9 @@ if [ "$agent_changed" = yes ]; then
 fi
 
 write_host_update_stage "Finishing Center startup reconciliation."
-attempt=0
-until curl -fsS "http://127.0.0.1:$bootstrap_port/readyz" >/dev/null 2>&1; do
-  attempt=$((attempt + 1))
-  if [ "$attempt" -ge 240 ]; then
+health_deadline=$(($(date +%s) + 480))
+until curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS "http://127.0.0.1:$bootstrap_port/readyz" >/dev/null 2>&1; do
+  if [ "$(date +%s)" -ge "$health_deadline" ]; then
     echo "The updated Center did not finish startup reconciliation." >&2
     echo "Inspect: cd '$install_dir' && docker compose logs center deployer" >&2
     exit 1
@@ -306,7 +304,7 @@ if [ "$agent_changed" = yes ]; then
 	  exit 1
 	fi
   attempt=0
-  until curl -fsS http://127.0.0.1:8090/healthz >/dev/null 2>&1; do
+  until curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:8090/healthz >/dev/null 2>&1; do
     attempt=$((attempt + 1))
     if [ "$attempt" -ge 30 ]; then
       echo "The co-located Agent did not become healthy after Center reconciliation." >&2
