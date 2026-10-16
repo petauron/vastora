@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.318](https://github.com/petauron/vastora/compare/v0.1.0-alpha.317...v0.1.0-alpha.318) (2026-10-16)
+
+
+### Bug Fixes
+
+* align application names with Glivela and Senulun catalog branding ([#920](https://github.com/petauron/vastora/issues/920)) ([d0b7f83](https://github.com/petauron/vastora/commit/d0b7f8384d99f4c02e93fca80023f26198a36a39))
+
 ## [0.1.0-alpha.317](https://github.com/petauron/vastora/compare/v0.1.0-alpha.316...v0.1.0-alpha.317) (2026-10-14)
 
 
