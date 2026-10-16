@@ -122,7 +122,7 @@ func TestMeridianExportCompletesWithOpaqueApplicationCommandID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, "opaque-export-command", 1, false, "export rejected", nil, false); err != nil {
-		t.Fatalf("opaque Meridian export command did not complete: %v", err)
+		t.Fatalf("opaque Glivela export command did not complete: %v", err)
 	}
 	var state string
 	if err := store.db.QueryRowContext(ctx, `SELECT state FROM application_commands WHERE id='opaque-export-command'`).Scan(&state); err != nil || state != "failed" {
@@ -174,27 +174,27 @@ func TestMeridianCutoverFencesNewLegacyMutations(t *testing.T) {
 	}
 	if err := store.reconcileGlobalLandingPool(ctx, landingTx, true); err != nil {
 		_ = landingTx.Rollback()
-		t.Fatalf("legacy landing reconciliation did not yield to Meridian: %v", err)
+		t.Fatalf("legacy landing reconciliation did not yield to Glivela: %v", err)
 	}
 	if err := store.queueLandingServer(ctx, landingTx, node.ID, serverState.Plan); err != nil {
 		_ = landingTx.Rollback()
-		t.Fatalf("legacy landing server queue did not yield to Meridian: %v", err)
+		t.Fatalf("legacy landing server queue did not yield to Glivela: %v", err)
 	}
 	if err := store.queueLandingClientCommand(ctx, landingTx, landingGrantRecord{}, "prepare"); err != nil {
 		_ = landingTx.Rollback()
-		t.Fatalf("legacy landing client queue did not yield to Meridian: %v", err)
+		t.Fatalf("legacy landing client queue did not yield to Glivela: %v", err)
 	}
 	if err := store.queueNextLandingClientCommand(ctx, landingTx, node.ID); err != nil {
 		_ = landingTx.Rollback()
-		t.Fatalf("legacy landing client refill did not yield to Meridian: %v", err)
+		t.Fatalf("legacy landing client refill did not yield to Glivela: %v", err)
 	}
 	if err := store.queueClientLandingRoutes(ctx, landingTx, applicationID); err != nil {
 		_ = landingTx.Rollback()
-		t.Fatalf("legacy landing route queue did not yield to Meridian: %v", err)
+		t.Fatalf("legacy landing route queue did not yield to Glivela: %v", err)
 	}
 	if err := store.refreshClientLandingSources(ctx, landingTx, node.ID); err != nil {
 		_ = landingTx.Rollback()
-		t.Fatalf("legacy landing source refresh did not yield to Meridian: %v", err)
+		t.Fatalf("legacy landing source refresh did not yield to Glivela: %v", err)
 	}
 	serverTask, err := store.claimLandingServerTask(ctx, landingTx, node.ID)
 	if err != nil || serverTask != nil {
@@ -240,7 +240,7 @@ func TestMeridianCutoverFencesNewLegacyMutations(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.resumeThreeXUIControllerConvergence(ctx); err != nil {
-		t.Fatalf("legacy convergence did not yield to Meridian: %v", err)
+		t.Fatalf("legacy convergence did not yield to Glivela: %v", err)
 	}
 	var backgroundLegacyCommands int
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE kind GLOB '3xui.*' AND (state IN ('pending','running') OR reconciliation_required=1)`).Scan(&backgroundLegacyCommands); err != nil || backgroundLegacyCommands != 0 {
@@ -262,7 +262,7 @@ func TestMeridianCutoverFencesNewLegacyMutations(t *testing.T) {
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at)
 		VALUES('authorized-meridian-export',?,?,?,?,?,'pending',?,?)`, applicationID, node.ID, node.ID, "meridian.legacy.export", []byte(`{"applicationId":"cutover-fence-application"}`), stamp, stamp); err != nil {
-		t.Fatalf("authorized Meridian command was fenced: %v", err)
+		t.Fatalf("authorized Glivela command was fenced: %v", err)
 	}
 }
 
@@ -287,7 +287,7 @@ func TestMeridianCutoverKeepsLegacyListenerAliasesUntilRuntimeReceipt(t *testing
 		}, networking.Profile{ServiceAddress: value.serviceAddress, LANAddress: value.serviceAddress, PublicAddress: value.publicAddress, EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 		nodeIDs[value.applicationID] = node.ID
 		if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-			VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, value.applicationID, "Meridian", node.ID, siteID, meridianAppKey, stamp, stamp); err != nil {
+			VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, value.applicationID, "Glivela", node.ID, siteID, meridianAppKey, stamp, stamp); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,protocol,container_port,host_port,endpoint,source,app_protocol,observed_listen,status,created_at,updated_at)
@@ -385,7 +385,7 @@ func TestMeridianRuntimeProjectionAllowsEndpointWithoutAccounts(t *testing.T) {
 		endpointID    = "empty-meridian-endpoint"
 	)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Empty Meridian entry", node.ID, siteID, meridianAppKey, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Empty Glivela entry", node.ID, siteID, meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,region_code,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
@@ -424,7 +424,7 @@ func TestCreateMeridianEndpointQueuesEmptyRuntimeBeforeFirstAccount(t *testing.T
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	const applicationID = "empty-first-meridian-application"
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Empty-first Meridian entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Empty-first Glivela entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	input := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{
@@ -460,7 +460,7 @@ func TestCreateMeridianEndpointQueuesEmptyRuntimeBeforeFirstAccount(t *testing.T
 		t.Fatal(err)
 	}
 	if publicationHostname != endpoint.AdvertiseHost || publicationSNI != input.ServerName || publicationStatus != "pending" || net.ParseIP(publicationHostname) != nil {
-		t.Fatalf("new Meridian publication host=%q sni=%q status=%q endpoint=%#v", publicationHostname, publicationSNI, publicationStatus, endpoint)
+		t.Fatalf("new Glivela publication host=%q sni=%q status=%q endpoint=%#v", publicationHostname, publicationSNI, publicationStatus, endpoint)
 	}
 }
 
@@ -484,7 +484,7 @@ func TestRecoverMeridianEndpointReleasesOnlyMatchingFenceAndQueuesCenterAuthorit
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	const applicationID = "recover-meridian-application"
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Recover Meridian entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Recover Glivela entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	seedMeridianAdoptedResources(t, store, applicationID)
@@ -518,7 +518,7 @@ func TestRecoverMeridianEndpointReleasesOnlyMatchingFenceAndQueuesCenterAuthorit
 	}
 	var oldFence int
 	if err := store.db.QueryRowContext(ctx, `SELECT reconciliation_required FROM application_commands WHERE id=?`, failedCommandID).Scan(&oldFence); err != nil || oldFence != 0 {
-		t.Fatalf("old Meridian fence=%d err=%v", oldFence, err)
+		t.Fatalf("old Glivela fence=%d err=%v", oldFence, err)
 	}
 	var commandJSON []byte
 	if err := store.db.QueryRowContext(ctx, `SELECT input_json FROM application_commands WHERE agent_id=? AND kind=? AND state='pending'`, node.ID, meridianruntime.ApplyKind).Scan(&commandJSON); err != nil {
@@ -590,7 +590,7 @@ func TestExpiredMeridianRuntimeLeaseProjectsFailedEndpointForRecovery(t *testing
 	stamp := clock.Format(time.RFC3339Nano)
 	const applicationID = "expired-meridian-application"
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Expired Meridian entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Expired Glivela entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	seedMeridianAdoptedResources(t, store, applicationID)
@@ -614,7 +614,7 @@ func TestExpiredMeridianRuntimeLeaseProjectsFailedEndpointForRecovery(t *testing
 	}
 	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
 	if err != nil || task == nil || task.ID != commandID || task.MeridianRuntime == nil {
-		t.Fatalf("claimed Meridian task=%#v err=%v", task, err)
+		t.Fatalf("claimed Glivela task=%#v err=%v", task, err)
 	}
 	clock = clock.Add(taskLeaseDuration + time.Second)
 	if err := store.recoverExpiredTasks(ctx, node.ID); err != nil {
@@ -653,7 +653,7 @@ func TestLegacyRetirementTaskNeverRemovesVerifiedEndpointFromSubscriptions(t *te
 	stamp := clock.Format(time.RFC3339Nano)
 	const applicationID = "retiring-meridian-application"
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Retiring Meridian entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Retiring Glivela entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	seedMeridianAdoptedResources(t, store, applicationID)
@@ -751,7 +751,7 @@ func TestCreateMeridianEndpointReusesRetiredIdentityAndUsage(t *testing.T) {
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	const applicationID = "reinstalled-meridian-application"
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Reinstalled Meridian entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Reinstalled Glivela entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	create := func(name string) MeridianEndpointView {
@@ -853,7 +853,7 @@ func TestMeridianRouteLifecycleDoesNotBlockUnrelatedSubscriptionEntries(t *testi
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Route lifecycle Meridian entry", entry.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Route lifecycle Glivela entry", entry.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	verification := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})

@@ -34,7 +34,7 @@ func meridianCutoverPublicationIssue(ctx context.Context, queryer networkQueryer
 	if lastError == "" {
 		lastError = "the public subscription entry did not become ready"
 	}
-	return fmt.Sprintf("Meridian subscription publication is %s: %s", status, lastError), nil
+	return fmt.Sprintf("Glivela subscription publication is %s: %s", status, lastError), nil
 }
 
 // retryFailedMeridianSubscriptionPublication requeues only the public entry
@@ -82,22 +82,22 @@ func (s *Store) retryFailedMeridianSubscriptionPublication(ctx context.Context, 
 		case ingressSiteGateway:
 			var routeExists int
 			if err := tx.QueryRowContext(ctx, `SELECT status,EXISTS(SELECT 1 FROM routes WHERE publication_id=?) FROM gateway_states WHERE gateway_node_id=?`, value.id, value.gatewayID).Scan(&state, &routeExists); err != nil {
-				return errors.New("center: failed Meridian subscription gateway state is unavailable")
+				return errors.New("center: failed Glivela subscription gateway state is unavailable")
 			}
 			if routeExists != 1 {
-				return errors.New("center: failed Meridian subscription route is unavailable")
+				return errors.New("center: failed Glivela subscription route is unavailable")
 			}
 			gateways[value.gatewayID] = true
 		case ingressTunnelConnector:
 			if err := tx.QueryRowContext(ctx, `SELECT status FROM cloudflare_tunnels WHERE agent_id=?`, value.gatewayID).Scan(&state); err != nil {
-				return errors.New("center: failed Meridian subscription Tunnel state is unavailable")
+				return errors.New("center: failed Glivela subscription Tunnel state is unavailable")
 			}
 			tunnels[value.gatewayID] = true
 		default:
-			return errors.New("center: failed Meridian subscription entry has an unsupported ingress owner")
+			return errors.New("center: failed Glivela subscription entry has an unsupported ingress owner")
 		}
 		if state != "ready" && state != "failed" {
-			return errors.New("center: Meridian subscription publication is still active; wait for its current task or recover it explicitly")
+			return errors.New("center: Glivela subscription publication is still active; wait for its current task or recover it explicitly")
 		}
 	}
 
@@ -112,7 +112,7 @@ func (s *Store) retryFailedMeridianSubscriptionPublication(ctx context.Context, 
 			return err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian subscription publication changed before retry")
+			return errors.New("center: Glivela subscription publication changed before retry")
 		}
 	}
 	for gatewayID := range gateways {
@@ -158,7 +158,7 @@ func (s *Store) ensureMeridianSubscriptionServiceInTx(ctx context.Context, tx *s
 		return "", err
 	}
 	if len(active) > 1 {
-		return "", errors.New("center: multiple active Meridian subscription services require cleanup")
+		return "", errors.New("center: multiple active Glivela subscription services require cleanup")
 	}
 	if len(active) == 1 {
 		if active[0].applicationID == applicationID {
@@ -201,10 +201,10 @@ func (s *Store) ensureMeridianSubscriptionServiceInTx(ctx context.Context, tx *s
 			return "", err
 		}
 		if activePublications != 0 {
-			return "", errors.New("center: move or remove the active Meridian subscription entry before changing its host")
+			return "", errors.New("center: move or remove the active Glivela subscription entry before changing its host")
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET status='stopped',updated_at=? WHERE id=? AND status<>'stopped'`, now.UTC().Format(time.RFC3339Nano), active[0].id); err != nil {
-			return "", fmt.Errorf("center: retire previous Meridian subscription service: %w", err)
+			return "", fmt.Errorf("center: retire previous Glivela subscription service: %w", err)
 		}
 	}
 
@@ -219,7 +219,7 @@ func (s *Store) ensureMeridianSubscriptionServiceInTx(ctx context.Context, tx *s
 		endpoint := net.JoinHostPort(dockerruntime.CenterAlias, "8080")
 		if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,management,status,last_error,created_at,updated_at)
 			VALUES(?,?,?,?, 'http',8080,8080,?,'system',?,0,'ready','',?,?)`, serviceID, applicationID, siteID, meridianSubscriptionServiceName, endpoint, meridianSubscriptionProtocol, stamp, stamp); err != nil {
-			return "", fmt.Errorf("center: create Meridian subscription service: %w", err)
+			return "", fmt.Errorf("center: create Glivela subscription service: %w", err)
 		}
 		return serviceID, nil
 	}
@@ -229,7 +229,7 @@ func (s *Store) ensureMeridianSubscriptionServiceInTx(ctx context.Context, tx *s
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	endpoint := net.JoinHostPort(dockerruntime.CenterAlias, "8080")
 	if _, err := tx.ExecContext(ctx, `UPDATE services SET site_id=?,protocol='http',container_port=8080,host_port=8080,endpoint=?,source='system',app_protocol=?,management=0,status='ready',last_error='',updated_at=? WHERE id=?`, siteID, endpoint, meridianSubscriptionProtocol, stamp, serviceID); err != nil {
-		return "", fmt.Errorf("center: restore Meridian subscription service: %w", err)
+		return "", fmt.Errorf("center: restore Glivela subscription service: %w", err)
 	}
 	return serviceID, nil
 }

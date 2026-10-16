@@ -49,7 +49,7 @@ func (s *Store) NodeEgress(ctx context.Context, nodeID string) (NodeEgressView, 
 	if count != 1 {
 		v.Available = false
 		v.State = "unavailable"
-		v.Error = "此节点需要一个已配置的 Meridian 原生入口。远程落地出口不受此策略控制。"
+		v.Error = "此节点需要一个已配置的 Glivela 原生入口。远程落地出口不受此策略控制。"
 		return v, nil
 	}
 	err = s.db.QueryRowContext(ctx, `SELECT e.status,e.last_error,COALESCE(d.command_id,'') FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id LEFT JOIN meridian_deployments d ON d.endpoint_id=e.id WHERE a.node_id=? AND a.app_key=? AND a.status='running' AND e.status<>'retired'`, nodeID, meridianAppKey).Scan(&v.State, &v.Error, &v.CommandID)

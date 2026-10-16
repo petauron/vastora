@@ -98,7 +98,7 @@ func TestAbandonOrphanCommandReleasesPulseEnrollment(t *testing.T) {
 			}
 			next, err := store.claimExecutionTask(ctx, service.ID, service.Credential, session, 0)
 			if err != nil || next == nil || next.PulseEnrollment == nil {
-				t.Fatalf("Pulse enrollment remained blocked: %v", err)
+				t.Fatalf("Senulun enrollment remained blocked: %v", err)
 			}
 		})
 	}

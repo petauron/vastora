@@ -103,7 +103,7 @@ func TestMeridianLandingSourceRefreshResumesAfterCutover(t *testing.T) {
 			}
 			want := []landing.AuthorizedNode{{Address: "100.64.0.61", TCPOnly: true}}
 			if state.Revision != 2 || !slices.Equal(state.Plan.Sources, want) {
-				t.Fatalf("Meridian source was not queued after handover: %#v", state)
+				t.Fatalf("Glivela source was not queued after handover: %#v", state)
 			}
 			if err := store.refreshClientLandingSources(ctx, tx, egressID); err != nil {
 				t.Fatal(err)
@@ -255,7 +255,7 @@ func TestMeridianLandingReconciliationFindsEntryAndEgressWithoutLegacyGrants(t *
 				t.Fatal(err)
 			}
 			if got := meridianLandingSourcePlan(t, tx, egressID).Plan.Sources; !slices.Equal(got, []landing.AuthorizedNode{{Address: "100.64.0.61", TCPOnly: true}}) {
-				t.Fatalf("Meridian-only association was missed: %#v", got)
+				t.Fatalf("Glivela-only association was missed: %#v", got)
 			}
 			if _, err := tx.Exec(`UPDATE meridian_route_grants SET enabled=0,status='revoked'`); err != nil {
 				t.Fatal(err)
@@ -318,7 +318,7 @@ func TestMeridianLegacyRetirementStopsOnlyTheMatchingLegacySourceUse(t *testing.
 			t.Fatal(err)
 		}
 		if got := meridianLandingSourcePlan(t, tx, egressID).Plan.Sources; !slices.Equal(got, want) {
-			t.Fatalf("incorrect legacy/Meridian source union: got=%#v want=%#v", got, want)
+			t.Fatalf("incorrect legacy/Glivela source union: got=%#v want=%#v", got, want)
 		}
 	}
 	// The legacy source matches its authenticated observation. The Meridian

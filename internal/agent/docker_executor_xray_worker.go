@@ -639,7 +639,7 @@ func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) 
 		return err
 	}
 	if installation.ApplicationID != state.ApplicationID {
-		return errors.New("agent: Meridian recovery state belongs to another application")
+		return errors.New("agent: Glivela recovery state belongs to another application")
 	}
 	if state.Pending != nil || state.HandoverPending || len(state.RetiringGates) != 0 {
 		return errMeridianExplicitRecoveryRequired
@@ -656,7 +656,7 @@ func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) 
 		return err
 	}
 	if state.Applied == nil {
-		return errors.New("agent: Meridian runtime has no applied revision")
+		return errors.New("agent: Glivela runtime has no applied revision")
 	}
 	docker, err := client.New(client.WithHost(socket))
 	if err != nil {

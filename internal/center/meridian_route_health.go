@@ -31,11 +31,11 @@ func (s *Store) authorizeMeridianEntrySource(ctx context.Context, tx *sql.Tx, en
 		s.now().UTC().Add(-landingHealthFreshness).Format(time.RFC3339Nano)).Scan(&pinnedJSON, &observedJSON, &agentID)
 	var observed, pinned landing.PeerIdentity
 	if err != nil || json.Unmarshal(observedJSON, &observed) != nil || (meridianruntime.Peer{EgressID: agentID, Identity: observed}).Validate() != nil || json.Unmarshal(pinnedJSON, &pinned) != nil {
-		return errors.New("center: Meridian entry private identity is unavailable; wait for its authenticated Agent report")
+		return errors.New("center: Glivela entry private identity is unavailable; wait for its authenticated Agent report")
 	}
 	if pinned != (landing.PeerIdentity{}) {
 		if pinned != observed {
-			return errors.New("center: Meridian entry private identity changed; explicitly reconcile the replaced machine before authorizing routes")
+			return errors.New("center: Glivela entry private identity changed; explicitly reconcile the replaced machine before authorizing routes")
 		}
 		return nil
 	}
@@ -44,7 +44,7 @@ func (s *Store) authorizeMeridianEntrySource(ctx context.Context, tx *sql.Tx, en
 		return err
 	}
 	if existing != 0 {
-		return errors.New("center: existing Meridian routes have no pinned entry identity; explicit reconciliation is required")
+		return errors.New("center: existing Glivela routes have no pinned entry identity; explicit reconciliation is required")
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE meridian_endpoints SET source_peer_json=? WHERE id=?`, observedJSON, endpointID)
 	return err
@@ -71,7 +71,7 @@ func recordMeridianRouteHealth(ctx context.Context, tx *sql.Tx, endpointID strin
 	for _, grantID := range projection.readyRouteGrantIDs {
 		egressID, exists := projection.routePeerIDs[grantID]
 		if !exists {
-			return errors.New("center: Meridian route has no bound egress observation")
+			return errors.New("center: Glivela route has no bound egress observation")
 		}
 		status, healthy, message := "blocked", 0, meridianRouteEvidenceUnavailable
 		secondaryID := projection.routeSecondaryPeerIDs[grantID]
@@ -91,7 +91,7 @@ func recordMeridianRouteHealth(ctx context.Context, tx *sql.Tx, endpointID strin
 			return err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian route changed before its transport observation was committed")
+			return errors.New("center: Glivela route changed before its transport observation was committed")
 		}
 		diagnostic := routeHealthDiagnostic(result, egressID, secondaryID, status, now)
 		if !familiesVerified {
@@ -108,7 +108,7 @@ func recordMeridianRouteHealth(ctx context.Context, tx *sql.Tx, endpointID strin
 			return err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian blocked route changed before its observation was committed")
+			return errors.New("center: Glivela blocked route changed before its observation was committed")
 		}
 		if err := recordRouteHealthDiagnostics(ctx, tx, grantID, MeridianHealthDiagnostics{Status: "blocked", Reason: "authorization_unavailable", ReceivedAt: now.UTC(), ObservedAt: now.UTC(), Legs: []MeridianHealthLeg{}}); err != nil {
 			return err

@@ -218,7 +218,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			CheckMeridianLinkServer(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
 		})
 		if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
-			err = errors.New("agent: Meridian link server is unavailable")
+			err = errors.New("agent: Glivela link server is unavailable")
 		} else {
 			value, checkErr := checker.CheckMeridianLinkServer(ctx, *task.NodeDiagnostics)
 			result.NodeDiagnostics, err = &value, checkErr
@@ -228,7 +228,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			CheckMeridianLinkBandwidth(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
 		})
 		if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
-			err = errors.New("agent: Meridian link bandwidth is unavailable")
+			err = errors.New("agent: Glivela link bandwidth is unavailable")
 		} else {
 			value, checkErr := checker.CheckMeridianLinkBandwidth(ctx, *task.NodeDiagnostics)
 			result.NodeDiagnostics, err = &value, checkErr
@@ -377,7 +377,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				ApplyMeridianRuntime(context.Context, meridianruntime.Task) (meridianruntime.Result, error)
 			})
 			if !ok {
-				err = errors.New("agent: Meridian runtime capability is not configured")
+				err = errors.New("agent: Glivela runtime capability is not configured")
 			} else {
 				var runtimeResult meridianruntime.Result
 				runtimeResult, err = executor.ApplyMeridianRuntime(ctx, *task.MeridianRuntime)
@@ -395,7 +395,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				RetireLegacyMeridianInstallation(context.Context, meridianruntime.LegacyRetireTask) (meridianruntime.LegacyRetireResult, error)
 			})
 			if !ok {
-				err = errors.New("agent: Meridian legacy retirement capability is not configured")
+				err = errors.New("agent: Glivela legacy retirement capability is not configured")
 			} else {
 				var retireResult meridianruntime.LegacyRetireResult
 				retireResult, err = executor.RetireLegacyMeridianInstallation(ctx, *task.MeridianLegacyRetire)
@@ -408,7 +408,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				InspectPulseReporting(context.Context, pulse.ReportingTask) (pulse.ReportingResult, error)
 			})
 			if !ok {
-				err = errors.New("agent: Pulse reporting capability is not configured")
+				err = errors.New("agent: Senulun reporting capability is not configured")
 			} else {
 				var reporting pulse.ReportingResult
 				reporting, err = executor.InspectPulseReporting(ctx, *task.PulseReporting)
@@ -421,7 +421,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				RotatePulse(context.Context, pulse.RotationTask) (pulse.RotationResult, error)
 			})
 			if !ok {
-				err = errors.New("agent: Pulse rotation capability is not configured")
+				err = errors.New("agent: Senulun rotation capability is not configured")
 			} else {
 				var rotation pulse.RotationResult
 				rotation, err = executor.RotatePulse(ctx, *task.PulseRotation)
@@ -434,7 +434,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				InspectPulse(context.Context, pulse.InspectionTask) (pulse.InspectionResult, error)
 			})
 			if !ok {
-				err = errors.New("agent: Pulse inspection capability is not configured")
+				err = errors.New("agent: Senulun inspection capability is not configured")
 			} else {
 				var inspection pulse.InspectionResult
 				inspection, err = executor.InspectPulse(ctx, *task.PulseInspection)
@@ -447,7 +447,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				EnrollPulse(context.Context, pulse.EnrollmentTask) (pulse.EnrollmentResult, error)
 			})
 			if !ok {
-				err = errors.New("agent: Pulse enrollment capability is not configured")
+				err = errors.New("agent: Senulun enrollment capability is not configured")
 			} else {
 				var enrollment pulse.EnrollmentResult
 				enrollment, err = executor.EnrollPulse(ctx, *task.PulseEnrollment)

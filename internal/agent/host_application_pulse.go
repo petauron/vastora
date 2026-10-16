@@ -55,7 +55,7 @@ func pulseEnvironment(config pulse.AgentConfig) []byte {
 // import credentials, or copy arbitrary environment entries into managed output.
 func pulseRetainLocation(config pulse.AgentConfig, environment []byte) (pulse.AgentConfig, error) {
 	if len(environment) > 16*1024 {
-		return config, errors.New("agent: retained Pulse environment exceeds 16 KiB")
+		return config, errors.New("agent: retained Senulun environment exceeds 16 KiB")
 	}
 	seen := make(map[string]bool, 2)
 	for _, line := range strings.Split(string(environment), "\n") {
@@ -65,7 +65,7 @@ func pulseRetainLocation(config pulse.AgentConfig, environment []byte) (pulse.Ag
 			continue
 		}
 		if seen[key] {
-			return config, errors.New("agent: retained Pulse location setting is duplicated")
+			return config, errors.New("agent: retained Senulun location setting is duplicated")
 		}
 		seen[key] = true
 		if key == "PULSE_NODE_REGION" && config.NodeRegion != nil || key == "PULSE_GEOIP_PROVIDER" && config.GeoIPProvider != nil {
@@ -75,12 +75,12 @@ func pulseRetainLocation(config pulse.AgentConfig, environment []byte) (pulse.Ag
 		if strings.HasPrefix(value, "\"") {
 			decoded, err := strconv.Unquote(value)
 			if err != nil {
-				return config, errors.New("agent: retained Pulse location setting has invalid quoting")
+				return config, errors.New("agent: retained Senulun location setting has invalid quoting")
 			}
 			value = decoded
 		} else if strings.HasPrefix(value, "'") {
 			if len(value) < 2 || !strings.HasSuffix(value, "'") || strings.Contains(value[1:len(value)-1], "'") {
-				return config, errors.New("agent: retained Pulse location setting has invalid quoting")
+				return config, errors.New("agent: retained Senulun location setting has invalid quoting")
 			}
 			value = value[1 : len(value)-1]
 		}

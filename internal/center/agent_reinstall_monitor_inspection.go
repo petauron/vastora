@@ -196,7 +196,7 @@ func (s *Store) reinstallInspectionService(ctx context.Context, tx *sql.Tx, agen
 	 AND d.state='succeeded' AND d.operation IN ('install','upgrade','configure') AND d.reconciliation_required=0
 	 AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=n.id AND r.state NOT IN ('superseded','completed'))`, applicationID, agentID, pulseAppKey).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("center: a running managed Pulse service with an inspection-capable Agent is required")
+		return "", errors.New("center: a running managed Senulun service with an inspection-capable Agent is required")
 	}
 	return id, err
 }

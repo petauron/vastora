@@ -79,7 +79,7 @@ func validateMeridianHostPorts(ctx context.Context, docker *client.Client, artif
 			}
 		}
 		if !owned {
-			return fmt.Errorf("agent: Meridian %s listener %s is unavailable", network, address)
+			return fmt.Errorf("agent: Glivela %s listener %s is unavailable", network, address)
 		}
 	}
 	return nil

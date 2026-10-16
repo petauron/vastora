@@ -321,7 +321,7 @@ func TestRemoveOfflineMeridianAgentAfterFailedLegacyCleanup(t *testing.T) {
 	s := openMeridianSharedEndpointSnapshotFixture(t)
 	defer s.Close()
 	ctx := context.Background()
-	controller := enrollAccessTestNode(t, s, "Meridian subscription host", "10.0.0.92")
+	controller := enrollAccessTestNode(t, s, "Glivela subscription host", "10.0.0.92")
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -384,10 +384,10 @@ func TestRemoveOfflineMeridianAgentAfterFailedLegacyCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	if removalCount(t, s, `SELECT COUNT(*) FROM agents WHERE id=?`, workerID) != 0 || removalCount(t, s, `SELECT COUNT(*) FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID) != 0 {
-		t.Fatal("retired Meridian node records remained")
+		t.Fatal("retired Glivela node records remained")
 	}
 	if removalCount(t, s, `SELECT COUNT(*) FROM meridian_credentials WHERE endpoint_id=?`, sharedSnapshotEndpointID) != 0 || removalCount(t, s, `SELECT COUNT(*) FROM meridian_route_grants WHERE endpoint_id=?`, sharedSnapshotEndpointID) != 0 {
-		t.Fatal("retired Meridian subscription identities remained")
+		t.Fatal("retired Glivela subscription identities remained")
 	}
 	if removalCount(t, s, `SELECT COUNT(*) FROM meridian_accounts`) != 2 || removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id='removal-meridian-controller' AND status='running'`) != 1 {
 		t.Fatal("shared accounts or subscription host were changed")

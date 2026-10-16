@@ -143,7 +143,7 @@ func TestOfficialUIBundleVersionCannotBeReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := replaceOfficialUIBundles(ctx, tx, result); err == nil {
-		t.Fatal("accepted Meridian UI was later omitted")
+		t.Fatal("accepted Glivela UI was later omitted")
 	}
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)

@@ -140,20 +140,20 @@ type Result struct {
 
 func (t Task) ValidateLinkBandwidth(kind string) error {
 	if kind != LinkBandwidthKind && kind != LinkServerKind || t.Link == nil || t.BindAddress != "" || len(t.Targets) != 0 || len(t.BandwidthTargets) != 0 {
-		return errors.New("node diagnostics: invalid Meridian link task")
+		return errors.New("node diagnostics: invalid Glivela link task")
 	}
 	v := t.Link
 	if len(v.SourceNodeID) < 1 || len(v.SourceNodeID) > 128 || len(v.LandingNodeID) < 1 || len(v.LandingNodeID) > 128 || v.SourceNodeID == v.LandingNodeID || v.SourceIP == v.LandingIP || v.Port < 20000 || v.Port > 60000 {
-		return errors.New("node diagnostics: invalid Meridian link identity")
+		return errors.New("node diagnostics: invalid Glivela link identity")
 	}
 	for _, raw := range []string{v.SourceIP, v.LandingIP} {
 		parsed := net.ParseIP(raw)
 		if parsed == nil {
-			return errors.New("node diagnostics: invalid Meridian private address")
+			return errors.New("node diagnostics: invalid Glivela private address")
 		}
 		ip := parsed.To4()
 		if ip == nil || ip[0] != 100 || ip[1] < 64 || ip[1] > 127 || ip.String() != raw {
-			return errors.New("node diagnostics: invalid Meridian private address")
+			return errors.New("node diagnostics: invalid Glivela private address")
 		}
 	}
 	return nil
@@ -249,19 +249,19 @@ func (r Result) Validate(kind string) error {
 	}
 	if kind == LinkServerKind {
 		if !r.LinkServerCompleted || r.Link != nil || r.Host != nil || len(r.Network) != 0 || len(r.Routes) != 0 || len(r.Bandwidth) != 0 {
-			return errors.New("node diagnostics: invalid Meridian link server result")
+			return errors.New("node diagnostics: invalid Glivela link server result")
 		}
 		return nil
 	}
 	if kind == LinkBandwidthKind {
 		v := r.Link
 		if v == nil || (v.TransportState != "" && v.TransportState != "direct") || r.LinkServerCompleted || r.Host != nil || len(r.Network) != 0 || len(r.Routes) != 0 || len(r.Bandwidth) != 0 || v.SourceNodeID == "" || v.LandingNodeID == "" || v.SourceNodeID == v.LandingNodeID || v.UploadBytes <= 0 || v.DownloadBytes <= 0 || v.UploadSeconds < 8 || v.UploadSeconds > 30 || v.DownloadSeconds < 8 || v.DownloadSeconds > 30 || v.UploadMbps < 0 || v.UploadMbps > 1_000_000 || v.DownloadMbps < 0 || v.DownloadMbps > 1_000_000 {
-			return errors.New("node diagnostics: invalid Meridian link result")
+			return errors.New("node diagnostics: invalid Glivela link result")
 		}
 		return nil
 	}
 	if r.Link != nil || r.LinkServerCompleted {
-		return errors.New("node diagnostics: unexpected Meridian link evidence")
+		return errors.New("node diagnostics: unexpected Glivela link evidence")
 	}
 	if kind == HostProfileKind {
 		if r.Host == nil || len(r.Network) != 0 || len(r.Routes) != 0 || len(r.Bandwidth) != 0 {

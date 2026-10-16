@@ -84,7 +84,7 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := verifyCenterEncryptedState(ctx, store.db, store.key); err != nil {
-		t.Fatalf("Meridian encrypted state was not owned by the database key verifier: %v", err)
+		t.Fatalf("Glivela encrypted state was not owned by the database key verifier: %v", err)
 	}
 	// Subscription rendering uses only the public endpoint projection. Runtime
 	// private keys stay outside the HTTP request path even if their encrypted
@@ -112,7 +112,7 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bytes.Contains(sealedSnapshot, []byte(token)) || bytes.Contains(sealedSnapshot, []byte(protocolID)) || bytes.Contains(sealedSnapshot, []byte("vless://")) {
-		t.Fatal("applied Meridian subscription snapshot was stored in plaintext")
+		t.Fatal("applied Glivela subscription snapshot was stored in plaintext")
 	}
 
 	mihomoRequest := httptest.NewRequest(http.MethodGet, "/sub/"+token+"?target=clash", nil)

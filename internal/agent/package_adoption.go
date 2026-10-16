@@ -23,7 +23,7 @@ func historicalReceipt(task DeploymentTask, kind string) *InstanceResources {
 // container names independently confirm that no runtime exists.
 func (e ApplicationExecutor) historicalDormantMeridianResources(ctx context.Context, task DeploymentTask, docker packageDockerEngine) (*InstanceResources, error) {
 	if task.AppKey != meridianKey || !task.DormantRuntime {
-		return nil, errors.New("agent: dormant adoption is reserved for Meridian")
+		return nil, errors.New("agent: dormant adoption is reserved for Glivela")
 	}
 	if err := e.inspectDormantMeridian(ctx, docker); err != nil {
 		return nil, err
@@ -35,17 +35,17 @@ func (e ApplicationExecutor) historicalDormantMeridianResources(ctx context.Cont
 
 func (e ApplicationExecutor) inspectDormantMeridian(ctx context.Context, docker packageDockerEngine) error {
 	if e.Store == nil {
-		return errors.New("agent: dormant Meridian requires local runtime evidence")
+		return errors.New("agent: dormant Glivela requires local runtime evidence")
 	}
 	var rows int
 	if err := e.Store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_runtime_state`).Scan(&rows); err != nil {
 		return err
 	}
 	if rows != 0 {
-		return errors.New("agent: Meridian runtime state exists; dormant package requires review")
+		return errors.New("agent: Glivela runtime state exists; dormant package requires review")
 	}
 	if _, err := os.Lstat(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory)); err == nil {
-		return errors.New("agent: Meridian configuration artifacts exist; dormant package requires review")
+		return errors.New("agent: Glivela configuration artifacts exist; dormant package requires review")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -59,7 +59,7 @@ func inspectDormantMeridianContainers(ctx context.Context, docker packageDockerE
 			return err
 		}
 		if exists {
-			return errors.New("agent: Meridian container exists; dormant adoption requires review")
+			return errors.New("agent: Glivela container exists; dormant adoption requires review")
 		}
 	}
 	return nil
@@ -220,7 +220,7 @@ func historicalSystemdResources(ctx context.Context, task DeploymentTask, histor
 	if task.AppKey == pulse.AgentKey {
 		info, err := os.Lstat(manager.path(pulseState))
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, errors.New("agent: historical Pulse state is missing or unsafe")
+			return nil, errors.New("agent: historical Senulun state is missing or unsafe")
 		}
 		receipt.Resources = append(receipt.Resources, RuntimeResource{Kind: "directory", LogicalName: "state", Name: filepath.Base(pulseState), Path: pulseState, Persistent: true, Component: "historical-verified"})
 	}

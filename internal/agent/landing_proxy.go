@@ -78,11 +78,11 @@ func (s *Store) prepareLandingXrayRuntimeMigration(ctx context.Context, task Dep
 		if state, err := s.landingRuntime(ctx); err != nil {
 			return nil, err
 		} else if state != nil && state.Route != nil && state.ApplicationID != task.ApplicationID {
-			return nil, errors.New("agent: Meridian preparation belongs to another landing application")
+			return nil, errors.New("agent: Glivela preparation belongs to another landing application")
 		}
 		legacy, err := s.AppliedInstallation(ctx, threeXUIKey)
 		if err == nil && legacy.ApplicationID != task.ApplicationID {
-			return nil, errors.New("agent: Meridian preparation belongs to another legacy application")
+			return nil, errors.New("agent: Glivela preparation belongs to another legacy application")
 		}
 		if err != nil && !errors.Is(err, errApplicationNotInstalled) {
 			return nil, err

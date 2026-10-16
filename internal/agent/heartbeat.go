@@ -23,7 +23,7 @@ import (
 	"github.com/petauron/vastora/internal/platform"
 )
 
-var errMeridianRuntimeNotConfigured = errors.New("agent: Meridian runtime is not configured on this node")
+var errMeridianRuntimeNotConfigured = errors.New("agent: Glivela runtime is not configured on this node")
 
 func (c Client) Heartbeat(ctx context.Context, store *Store) error {
 	_, err := c.heartbeat(ctx, store)
@@ -75,7 +75,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if errors.Is(observeErr, errApplicationNotInstalled) || errors.Is(observeErr, errMeridianRuntimeNotConfigured) {
 		observeErr = nil
 	} else if observeErr != nil {
-		observeErr = fmt.Errorf("agent: observe Meridian runtime: %w", observeErr)
+		observeErr = fmt.Errorf("agent: observe Glivela runtime: %w", observeErr)
 	}
 	var meridianRuntime *meridianruntime.Result
 	if _, installErr := store.AppliedInstallation(ctx, meridianKey); installErr == nil {
@@ -84,14 +84,14 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 				ObserveMeridianRuntime(context.Context) (meridianruntime.Result, error)
 			})
 			if !ok {
-				observeErr = errors.Join(observeErr, errors.New("agent: Meridian runtime observer is unavailable"))
+				observeErr = errors.Join(observeErr, errors.New("agent: Glivela runtime observer is unavailable"))
 			} else if observed, runtimeErr := observer.ObserveMeridianRuntime(ctx); runtimeErr != nil {
-				observeErr = errors.Join(observeErr, fmt.Errorf("agent: observe Meridian usage: %w", runtimeErr))
+				observeErr = errors.Join(observeErr, fmt.Errorf("agent: observe Glivela usage: %w", runtimeErr))
 			} else {
 				meridianRuntime = &observed
 			}
 		} else if !errors.Is(stateErr, errApplicationNotInstalled) {
-			observeErr = errors.Join(observeErr, fmt.Errorf("agent: inspect Meridian runtime state: %w", stateErr))
+			observeErr = errors.Join(observeErr, fmt.Errorf("agent: inspect Glivela runtime state: %w", stateErr))
 		}
 	} else if !errors.Is(installErr, errApplicationNotInstalled) {
 		observeErr = errors.Join(observeErr, installErr)
@@ -235,14 +235,14 @@ func observeProxyRuntime(ctx context.Context, store *Store) ([]ApplicationEndpoi
 			return nil, errMeridianRuntimeNotConfigured
 		}
 		if stateErr != nil || state.ApplicationID != installation.ApplicationID {
-			return nil, errors.New("agent: Meridian runtime state is unavailable")
+			return nil, errors.New("agent: Glivela runtime state is unavailable")
 		}
 		if state.Applied == nil {
-			return nil, errors.New("agent: Meridian runtime has no applied revision")
+			return nil, errors.New("agent: Glivela runtime has no applied revision")
 		}
 		active, readErr := os.ReadFile(filepath.Join(store.dataDir, meridianRuntimeDirectory, "config.json"))
 		if readErr != nil || !artifactMatchesBytes(*state.Applied, active) {
-			return nil, errors.New("agent: Meridian applied receipt does not match the active Xray configuration")
+			return nil, errors.New("agent: Glivela applied receipt does not match the active Xray configuration")
 		}
 		return observeMeridianState(*state.Applied)
 	} else {
@@ -329,13 +329,13 @@ func observeProxyRuntime(ctx context.Context, store *Store) ([]ApplicationEndpoi
 
 func observeMeridianState(artifact meridian.DesiredArtifact) ([]ApplicationEndpointObservation, error) {
 	if artifact.Validate() != nil {
-		return nil, errors.New("agent: Meridian runtime artifact is invalid")
+		return nil, errors.New("agent: Glivela runtime artifact is invalid")
 	}
 	var config struct {
 		Inbounds []json.RawMessage `json:"inbounds"`
 	}
 	if json.Unmarshal(artifact.Config, &config) != nil {
-		return nil, errors.New("agent: Meridian Xray configuration is invalid")
+		return nil, errors.New("agent: Glivela Xray configuration is invalid")
 	}
 	var realityTag, hysteriaTag, listen string
 	var port int
@@ -352,32 +352,32 @@ func observeMeridianState(artifact meridian.DesiredArtifact) ([]ApplicationEndpo
 			} `json:"streamSettings"`
 		}
 		if json.Unmarshal(raw, &inbound) != nil {
-			return nil, errors.New("agent: Meridian runtime contains an invalid endpoint")
+			return nil, errors.New("agent: Glivela runtime contains an invalid endpoint")
 		}
 		if inbound.Tag == "api" {
 			continue
 		}
 		if inbound.Port < 1 || inbound.Port > 65535 || strings.TrimSpace(inbound.Tag) == "" {
-			return nil, errors.New("agent: Meridian runtime contains an invalid endpoint")
+			return nil, errors.New("agent: Glivela runtime contains an invalid endpoint")
 		}
 		method := strings.ToLower(strings.TrimSpace(inbound.Stream.Method))
 		security := strings.ToLower(strings.TrimSpace(inbound.Stream.Security))
 		switch {
 		case inbound.Protocol == "vless" && method == "raw" && security == "reality":
 			if realityTag != "" {
-				return nil, errors.New("agent: Meridian runtime contains multiple REALITY endpoints")
+				return nil, errors.New("agent: Glivela runtime contains multiple REALITY endpoints")
 			}
 			realityTag, listen, port = strings.TrimSpace(inbound.Tag), strings.TrimSpace(inbound.Listen), inbound.Port
 		case inbound.Protocol == "hysteria" && method == "hysteria" && security == "tls":
 			if hysteriaTag != "" {
-				return nil, errors.New("agent: Meridian runtime contains multiple Hysteria endpoints")
+				return nil, errors.New("agent: Glivela runtime contains multiple Hysteria endpoints")
 			}
 			hysteriaTag = strings.TrimSpace(inbound.Tag)
 			if realityTag == "" {
 				listen, port = strings.TrimSpace(inbound.Listen), inbound.Port
 			}
 		default:
-			return nil, errors.New("agent: Meridian runtime contains an unsupported endpoint")
+			return nil, errors.New("agent: Glivela runtime contains an unsupported endpoint")
 		}
 	}
 	selectedTag := realityTag
@@ -385,7 +385,7 @@ func observeMeridianState(artifact meridian.DesiredArtifact) ([]ApplicationEndpo
 		selectedTag = hysteriaTag
 	}
 	if selectedTag == "" || port < 1 {
-		return nil, errors.New("agent: Meridian runtime has no managed endpoint")
+		return nil, errors.New("agent: Glivela runtime has no managed endpoint")
 	}
 	return []ApplicationEndpointObservation{{
 		AppKey: meridianKey, Name: "inbound-1", Protocol: "tcp",

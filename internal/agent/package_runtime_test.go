@@ -216,7 +216,7 @@ func TestDormantMeridianAdoptionRequiresNoLocalRuntimeStateOrContainers(t *testi
 		t.Fatal(err)
 	}
 	if _, err := executor.historicalDormantMeridianResources(context.Background(), task, docker); err == nil {
-		t.Fatal("Meridian configuration artifacts were ignored")
+		t.Fatal("Glivela configuration artifacts were ignored")
 	}
 	if err := os.Remove(filepath.Join(store.dataDir, meridianRuntimeDirectory)); err != nil {
 		t.Fatal(err)
@@ -225,7 +225,7 @@ func TestDormantMeridianAdoptionRequiresNoLocalRuntimeStateOrContainers(t *testi
 		t.Fatal(err)
 	}
 	if _, err := executor.historicalDormantMeridianResources(context.Background(), task, docker); err == nil {
-		t.Fatal("persisted Meridian runtime state was ignored")
+		t.Fatal("persisted Glivela runtime state was ignored")
 	}
 }
 

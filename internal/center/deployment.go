@@ -382,7 +382,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			}
 			var collectorConfig pulse.AgentConfig
 			if err == nil && json.Unmarshal(config, &collectorConfig) != nil {
-				err = errors.New("center: invalid Pulse collector configuration")
+				err = errors.New("center: invalid Senulun collector configuration")
 			}
 			if err == nil {
 				err = collectorConfig.Validate()
@@ -581,7 +581,7 @@ func (s *Store) validateMeridianUninstall(ctx context.Context, agentID string) e
 		return err
 	}
 	if cutoverState == "publish" || cutoverState == "project" || cutoverState == "verify" || cutoverState == "retire" {
-		return errors.New("center: Meridian cannot be uninstalled while the authority cutover is converging")
+		return errors.New("center: Glivela cannot be uninstalled while the authority cutover is converging")
 	}
 	var activeSubscriptionEntries int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM applications application
@@ -592,7 +592,7 @@ func (s *Store) validateMeridianUninstall(ctx context.Context, agentID string) e
 		return err
 	}
 	if activeSubscriptionEntries != 0 {
-		return errors.New("center: move or remove the active Meridian subscription entry before uninstalling its host")
+		return errors.New("center: move or remove the active Glivela subscription entry before uninstalling its host")
 	}
 	return nil
 }

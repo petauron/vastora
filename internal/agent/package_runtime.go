@@ -201,7 +201,7 @@ func validatePackageTask(task DeploymentTask) error {
 			return errors.New("agent: unsupported runtime capability")
 		}
 		if capability == "meridian-runtime" && task.AppKey != meridianKey {
-			return errors.New("agent: Meridian integration capability is reserved for its reviewed package")
+			return errors.New("agent: Glivela integration capability is reserved for its reviewed package")
 		}
 		if !slices.Contains(task.AuthorizedCapabilities, capability) {
 			return errors.New("agent: runtime capability requires explicit administrator authorization: " + capability)
@@ -292,7 +292,7 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	}
 	dormant := receipt != nil && receipt.IntegrationState == "dormant"
 	if dormant && (task.AppKey != meridianKey || task.Operation != "upgrade" || receipt.State != "ready" || receipt.Runtime != "docker" || task.Manifest.Runtime.Kind != "docker" || len(receipt.Resources) != 0) {
-		return result, errors.New("agent: dormant Meridian permits only a verified package upgrade without runtime activation")
+		return result, errors.New("agent: dormant Glivela permits only a verified package upgrade without runtime activation")
 	}
 	if task.Operation == "install" && receipt != nil && receipt.State != "retained" {
 		return result, errors.New("agent: application is already installed")

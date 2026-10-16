@@ -133,7 +133,7 @@ func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID s
 			var applied landing.ServerState
 			if state.Plan == nil || json.Unmarshal(appliedJSON, &applied) != nil || applied.Validate() != nil ||
 				applied.NodeID != nodeID || applied.Plan == nil || state.Plan.Address != applied.Plan.Address {
-				return nil, errors.New("center: pending landing intent would stop or replace a referenced Meridian service; explicit recovery is required")
+				return nil, errors.New("center: pending landing intent would stop or replace a referenced Glivela service; explicit recovery is required")
 			}
 		}
 		if err := s.refreshClientLandingSources(ctx, tx, nodeID); err != nil {

@@ -162,7 +162,7 @@ func ensureMeridianManagementWritable(ctx context.Context, tx *sql.Tx) error {
 		return err
 	}
 	if authority != "meridian" || state != "not_required" && state != "complete" {
-		return errors.New("center: Meridian management is locked until the explicit cutover completes")
+		return errors.New("center: Glivela management is locked until the explicit cutover completes")
 	}
 	return nil
 }
@@ -190,7 +190,7 @@ func (s *Store) listMeridianEndpoints(ctx context.Context) ([]MeridianEndpointVi
 			return nil, err
 		}
 		if json.Unmarshal(names, &value.ServerNames) != nil || json.Unmarshal(shortIDs, &value.ShortIDs) != nil {
-			return nil, errors.New("center: stored Meridian endpoint metadata is invalid")
+			return nil, errors.New("center: stored Glivela endpoint metadata is invalid")
 		}
 		value.RuntimeHealthy = healthy == 1
 		value.LegacyRetired = legacyRetired == 1
@@ -204,7 +204,7 @@ func (s *Store) UpdateMeridianEndpointName(ctx context.Context, endpointID strin
 	endpointID = strings.TrimSpace(endpointID)
 	region, _, displayName, err := composeRealityDisplayName(input.RegionCode, input.Name)
 	if err != nil || !meridian.ValidIdentifier(endpointID) {
-		return MeridianEndpointView{}, errors.New("center: Meridian endpoint, region, and a valid node name are required")
+		return MeridianEndpointView{}, errors.New("center: Glivela endpoint, region, and a valid node name are required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -218,17 +218,17 @@ func (s *Store) UpdateMeridianEndpointName(ctx context.Context, endpointID strin
 	if err := tx.QueryRowContext(ctx, `SELECT endpoint.service_id,service.site_id,application.app_key,application.status,endpoint.status
 		FROM meridian_endpoints endpoint JOIN services service ON service.id=endpoint.service_id
 		JOIN applications application ON application.id=endpoint.application_id WHERE endpoint.id=?`, endpointID).Scan(&serviceID, &siteID, &appKey, &applicationStatus, &endpointStatus); err != nil {
-		return MeridianEndpointView{}, errors.New("center: Meridian endpoint was not found")
+		return MeridianEndpointView{}, errors.New("center: Glivela endpoint was not found")
 	}
 	if appKey != meridianAppKey || applicationStatus != "running" || endpointStatus == "retired" {
-		return MeridianEndpointView{}, errors.New("center: Meridian endpoint is unavailable")
+		return MeridianEndpointView{}, errors.New("center: Glivela endpoint is unavailable")
 	}
 	var duplicates int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE id<>? AND app_protocol=? AND status<>'stopped' AND display_name=? COLLATE NOCASE`, serviceID, meridianEntryProtocol, displayName).Scan(&duplicates); err != nil {
 		return MeridianEndpointView{}, err
 	}
 	if duplicates != 0 {
-		return MeridianEndpointView{}, errors.New("center: a Meridian subscription node already uses that display name")
+		return MeridianEndpointView{}, errors.New("center: a Glivela subscription node already uses that display name")
 	}
 	if err := ensureRealityDisplayNameUnreserved(ctx, tx, siteID, displayName); err != nil {
 		return MeridianEndpointView{}, err
@@ -239,7 +239,7 @@ func (s *Store) UpdateMeridianEndpointName(ctx context.Context, endpointID strin
 		return MeridianEndpointView{}, err
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return MeridianEndpointView{}, errors.New("center: Meridian endpoint changed while renaming")
+		return MeridianEndpointView{}, errors.New("center: Glivela endpoint changed while renaming")
 	}
 	if err := tx.Commit(); err != nil {
 		return MeridianEndpointView{}, err
@@ -253,7 +253,7 @@ func (s *Store) UpdateMeridianEndpointName(ctx context.Context, endpointID strin
 			return value, nil
 		}
 	}
-	return MeridianEndpointView{}, errors.New("center: renamed Meridian endpoint is unavailable")
+	return MeridianEndpointView{}, errors.New("center: renamed Glivela endpoint is unavailable")
 }
 
 // RecoverMeridianEndpoint is the explicit escape hatch for an uncertain
@@ -264,7 +264,7 @@ func (s *Store) UpdateMeridianEndpointName(ctx context.Context, endpointID strin
 func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID string, input MeridianEndpointRecoveryInput) error {
 	endpointID, adminID = strings.TrimSpace(endpointID), strings.TrimSpace(adminID)
 	if endpointID == "" || adminID == "" || !input.ConfirmCenterAuthority || !input.ExecutionStopped {
-		return errors.New("center: confirm Center authority and that the previous Meridian execution has stopped")
+		return errors.New("center: confirm Center authority and that the previous Glivela execution has stopped")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -283,12 +283,12 @@ func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID
 	if err := tx.QueryRowContext(ctx, `SELECT application.node_id,endpoint.status,application.status,endpoint.desired_revision,endpoint.applied_revision
 		FROM meridian_endpoints endpoint JOIN applications application ON application.id=endpoint.application_id
 		WHERE endpoint.id=? AND application.app_key=?`, endpointID, meridianAppKey).Scan(&nodeID, &endpointStatus, &applicationStatus, &desiredRevision, &appliedRevision); errors.Is(err, sql.ErrNoRows) {
-		return errors.New("center: Meridian endpoint was not found")
+		return errors.New("center: Glivela endpoint was not found")
 	} else if err != nil {
 		return err
 	}
 	if applicationStatus != "running" || endpointStatus != "failed" || desiredRevision <= appliedRevision {
-		return errors.New("center: Meridian endpoint does not have a failed unapplied revision")
+		return errors.New("center: Glivela endpoint does not have a failed unapplied revision")
 	}
 
 	var commandID string
@@ -304,7 +304,7 @@ func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID
 		var executionID string
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM task_executions WHERE agent_id=? AND task_id=? AND attempt=?
 			AND state IN ('failed','unknown') AND disposition='' ORDER BY created_at DESC LIMIT 1`, nodeID, commandID, commandAttempt).Scan(&executionID); errors.Is(err, sql.ErrNoRows) {
-			return errors.New("center: Meridian recovery execution evidence is unavailable")
+			return errors.New("center: Glivela recovery execution evidence is unavailable")
 		} else if err != nil {
 			return err
 		}
@@ -316,7 +316,7 @@ func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID
 			return err
 		}
 		if changed, _ := result.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian recovery execution changed; inspect again")
+			return errors.New("center: Glivela recovery execution changed; inspect again")
 		}
 		updated, err := tx.ExecContext(ctx, `UPDATE application_commands SET reconciliation_required=0,reconciliation_requested=0,lease_expires_at='',updated_at=?
 			WHERE id=? AND agent_id=? AND state='failed' AND reconciliation_required=1`, now, commandID, nodeID)
@@ -324,7 +324,7 @@ func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID
 			return err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian recovery command changed; inspect again")
+			return errors.New("center: Glivela recovery command changed; inspect again")
 		}
 	}
 	var unresolved int
@@ -332,14 +332,14 @@ func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID
 		return err
 	}
 	if unresolved != 0 {
-		return errors.New("center: resolve the node's other uncertain execution before Meridian recovery")
+		return errors.New("center: resolve the node's other uncertain execution before Glivela recovery")
 	}
 	var active int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id=? AND (state IN ('pending','running') OR reconciliation_required=1)`, nodeID).Scan(&active); err != nil {
 		return err
 	}
 	if active != 0 {
-		return errors.New("center: wait for the node's active operation before Meridian recovery")
+		return errors.New("center: wait for the node's active operation before Glivela recovery")
 	}
 	if _, err := s.queueMeridianRuntime(ctx, tx, endpointID, true); err != nil {
 		return err
@@ -448,15 +448,15 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 		input.Fingerprint = "chrome"
 	}
 	if nameErr != nil || input.ApplicationID == "" || input.VerificationID == "" || !isPublicPublicationVerificationIP(net.ParseIP(input.TargetIP)) || !validRealityTargetHostname(input.TargetHost) || !validRealityTargetHostname(input.ServerName) {
-		return MeridianEndpointView{}, errors.New("center: Meridian application, unique region-prefixed node name, and a completed node-side REALITY target check are required")
+		return MeridianEndpointView{}, errors.New("center: Glivela application, unique region-prefixed node name, and a completed node-side REALITY target check are required")
 	}
 	privateKey, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
-		return MeridianEndpointView{}, fmt.Errorf("center: generate Meridian REALITY key: %w", err)
+		return MeridianEndpointView{}, fmt.Errorf("center: generate Glivela REALITY key: %w", err)
 	}
 	shortIDRaw := make([]byte, 8)
 	if _, err := rand.Read(shortIDRaw); err != nil {
-		return MeridianEndpointView{}, fmt.Errorf("center: generate Meridian short ID: %w", err)
+		return MeridianEndpointView{}, fmt.Errorf("center: generate Glivela short ID: %w", err)
 	}
 	endpointID, err := randomToken(18)
 	if err != nil {
@@ -492,10 +492,10 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 		FROM applications application JOIN agents agent ON agent.id=application.node_id
 		LEFT JOIN agent_network_profiles profile ON profile.agent_id=agent.id WHERE application.id=?`, input.ApplicationID).Scan(
 		&siteID, &nodeID, &serviceAddress, &publicAddress, &status, &appKey); err != nil {
-		return MeridianEndpointView{}, errors.New("center: Meridian application was not found")
+		return MeridianEndpointView{}, errors.New("center: Glivela application was not found")
 	}
 	if appKey != meridianAppKey || status != "running" || net.ParseIP(serviceAddress) == nil {
-		return MeridianEndpointView{}, errors.New("center: Meridian application is not ready for an endpoint")
+		return MeridianEndpointView{}, errors.New("center: Glivela application is not ready for an endpoint")
 	}
 	endpoint.ListenAddress = serviceAddress
 	if err := s.ensureAllMeridianSubscriptionSnapshotsInTx(ctx, tx); err != nil {
@@ -523,7 +523,7 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 		return MeridianEndpointView{}, err
 	}
 	if duplicates != 0 {
-		return MeridianEndpointView{}, errors.New("center: a Meridian subscription node already uses that display name")
+		return MeridianEndpointView{}, errors.New("center: a Glivela subscription node already uses that display name")
 	}
 	if err := ensureRealityDisplayNameUnreserved(ctx, tx, siteID, displayName); err != nil {
 		return MeridianEndpointView{}, err
@@ -548,7 +548,7 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 				WHERE service_id=? AND kind=? AND status='stopped' ORDER BY updated_at DESC LIMIT 1`, serviceID, publicationShared443).Scan(&previousHostname, &cleanupPending)
 			if err == nil {
 				if cleanupPending != 0 {
-					return MeridianEndpointView{}, errors.New("center: the previous Meridian publication is still removing external resources")
+					return MeridianEndpointView{}, errors.New("center: the previous Glivela publication is still removing external resources")
 				}
 				if domainSuffixPattern.MatchString(previousHostname) {
 					endpoint.AdvertiseHost = previousHostname
@@ -568,10 +568,10 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 			}
 		}
 	} else if !domainSuffixPattern.MatchString(endpoint.AdvertiseHost) {
-		return MeridianEndpointView{}, errors.New("center: Meridian public entry requires a valid hostname")
+		return MeridianEndpointView{}, errors.New("center: Glivela public entry requires a valid hostname")
 	}
 	if endpoint.Validate() != nil {
-		return MeridianEndpointView{}, errors.New("center: Meridian endpoint settings are invalid")
+		return MeridianEndpointView{}, errors.New("center: Glivela endpoint settings are invalid")
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if reactivate {
@@ -579,14 +579,14 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 			endpoint=?,source='observed',app_protocol=?,management=0,observed_listen=?,status='pending',last_error='',updated_at=?
 			WHERE id=? AND application_id=? AND status='stopped'`, siteID, displayName, region, net.JoinHostPort(serviceAddress, "10443"), meridianEntryProtocol, serviceAddress, now, serviceID, input.ApplicationID)
 		if err != nil {
-			return MeridianEndpointView{}, fmt.Errorf("center: restore Meridian service: %w", err)
+			return MeridianEndpointView{}, fmt.Errorf("center: restore Glivela service: %w", err)
 		}
 		if changed, _ := result.RowsAffected(); changed != 1 {
-			return MeridianEndpointView{}, errors.New("center: retired Meridian service is not reusable")
+			return MeridianEndpointView{}, errors.New("center: retired Glivela service is not reusable")
 		}
 	} else if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,region_code,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
 		VALUES(?,?,?,?,?,?,'tcp',10443,10443,?,'observed',?,0,?,'pending',?,?)`, serviceID, input.ApplicationID, siteID, "inbound-1", displayName, region, net.JoinHostPort(serviceAddress, "10443"), meridianEntryProtocol, serviceAddress, now, now); err != nil {
-		return MeridianEndpointView{}, fmt.Errorf("center: create Meridian service: %w", err)
+		return MeridianEndpointView{}, fmt.Errorf("center: create Glivela service: %w", err)
 	}
 	secretID, err := s.putSecret(ctx, tx, []byte(privateValue), meridianEndpointSecretContext(endpointID))
 	if err != nil {
@@ -601,10 +601,10 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 			runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE id=? AND application_id=? AND status='retired'`, serviceID, endpoint.InboundTag, endpoint.ListenAddress, endpoint.ListenPort,
 			endpoint.AdvertiseHost, endpoint.AdvertisePort, endpoint.Target, verified.TargetIP, names, secretID, endpoint.PublicKey, shortIDs, endpoint.Fingerprint, now, endpointID, input.ApplicationID)
 		if err != nil {
-			return MeridianEndpointView{}, fmt.Errorf("center: restore Meridian endpoint: %w", err)
+			return MeridianEndpointView{}, fmt.Errorf("center: restore Glivela endpoint: %w", err)
 		}
 		if changed, _ := result.RowsAffected(); changed != 1 {
-			return MeridianEndpointView{}, errors.New("center: retired Meridian endpoint is not reusable")
+			return MeridianEndpointView{}, errors.New("center: retired Glivela endpoint is not reusable")
 		}
 		for _, previousSecretID := range []sql.NullString{{String: previousPrivateSecretID, Valid: previousPrivateSecretID != ""}, previousHY2CertID, previousHY2KeyID} {
 			if previousSecretID.Valid && previousSecretID.String != secretID {
@@ -616,7 +616,7 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 	} else if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,status,created_at,updated_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, endpointID, input.ApplicationID, serviceID, endpoint.InboundTag, endpoint.ListenAddress, endpoint.ListenPort,
 		endpoint.AdvertiseHost, endpoint.AdvertisePort, endpoint.Target, verified.TargetIP, names, secretID, endpoint.PublicKey, shortIDs, endpoint.Fingerprint, 1, 0, "", "", nil, nil, "", "pending", now, now); err != nil {
-		return MeridianEndpointView{}, fmt.Errorf("center: create Meridian endpoint: %w", err)
+		return MeridianEndpointView{}, fmt.Errorf("center: create Glivela endpoint: %w", err)
 	}
 	if err := ensureMeridianEndpointPublication(ctx, tx, serviceID, nodeID, endpoint.AdvertiseHost, verified.ServerName, now); err != nil {
 		return MeridianEndpointView{}, err
@@ -636,7 +636,7 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 			return value, nil
 		}
 	}
-	return MeridianEndpointView{}, errors.New("center: created Meridian endpoint is unavailable")
+	return MeridianEndpointView{}, errors.New("center: created Glivela endpoint is unavailable")
 }
 
 func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceID, nodeID, hostname, serverName, stamp string) error {
@@ -646,7 +646,7 @@ func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceI
 		return err
 	}
 	if duplicate != 0 {
-		return errors.New("center: this REALITY SNI is already published on the Meridian node")
+		return errors.New("center: this REALITY SNI is already published on the Glivela node")
 	}
 
 	var publicationID, status string
@@ -662,7 +662,7 @@ func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceI
 		_, err = tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,status,created_at,updated_at)
 			VALUES(?,?,?,'application_node',?,?,?,'manual',0,'pending',?,?)`, publicationID, serviceID, publicationShared443, nodeID, hostname, serverName, stamp, stamp)
 		if err != nil {
-			return fmt.Errorf("center: create Meridian public entry: %w", err)
+			return fmt.Errorf("center: create Glivela public entry: %w", err)
 		}
 		return nil
 	}
@@ -670,16 +670,16 @@ func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceI
 		return err
 	}
 	if status != "stopped" {
-		return errors.New("center: Meridian public entry already exists")
+		return errors.New("center: Glivela public entry already exists")
 	}
 	if cleanupPending != 0 {
-		return errors.New("center: the previous Meridian publication is still removing external resources")
+		return errors.New("center: the previous Glivela publication is still removing external resources")
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE publications SET ingress_owner='application_node',entry_node_id=?,hostname=?,sni_hostname=?,dns_provider='manual',
 		dns_record_id='',access_application_id='',tls_enabled=0,desired_revision=?,applied_revision=0,status='pending',last_error='',action_required=0,
 		cleanup_pending=0,cleanup_attempt=0,cleanup_retry_at='',updated_at=? WHERE id=?`, nodeID, hostname, serverName, revision+1, stamp, publicationID)
 	if err != nil {
-		return fmt.Errorf("center: restore Meridian public entry: %w", err)
+		return fmt.Errorf("center: restore Glivela public entry: %w", err)
 	}
 	return nil
 }
@@ -692,7 +692,7 @@ func (s *Store) CreateMeridianAccount(ctx context.Context, input MeridianAccount
 	}
 	plan := meridian.AccountPlan{TotalBytes: input.TotalBytes, ExpiryTime: input.ExpiryTime, ResetDays: input.ResetDays, Enabled: enabled}
 	if input.DisplayName == "" || len([]rune(input.DisplayName)) > meridian.MaxDisplayNameLength || plan.Validate() != nil || input.ExpiryTime > 0 && input.ExpiryTime <= s.now().UTC().UnixMilli() {
-		return MeridianAccountCreated{}, errors.New("center: invalid Meridian account plan")
+		return MeridianAccountCreated{}, errors.New("center: invalid Glivela account plan")
 	}
 	accountID, err := randomToken(18)
 	if err != nil {
@@ -715,7 +715,7 @@ func (s *Store) CreateMeridianAccount(ctx context.Context, input MeridianAccount
 		return MeridianAccountCreated{}, err
 	}
 	if endpointCount == 0 {
-		return MeridianAccountCreated{}, errors.New("center: create a Meridian endpoint before creating accounts")
+		return MeridianAccountCreated{}, errors.New("center: create a Glivela endpoint before creating accounts")
 	}
 	if err := s.ensureAllMeridianSubscriptionSnapshotsInTx(ctx, tx); err != nil {
 		return MeridianAccountCreated{}, err
@@ -735,7 +735,7 @@ func (s *Store) CreateMeridianAccount(ctx context.Context, input MeridianAccount
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,expiry_time,reset_days,next_reset_at,enabled,subscription_token_secret_id,subscription_token_sha256,status,created_at,updated_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, accountID, input.DisplayName, input.TotalBytes, input.ExpiryTime, input.ResetDays, nextReset, boolInt(enabled), secretID, meridian.SubscriptionTokenFingerprint(token), status, now, now); err != nil {
-		return MeridianAccountCreated{}, fmt.Errorf("center: create Meridian account: %w", err)
+		return MeridianAccountCreated{}, fmt.Errorf("center: create Glivela account: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id,application_id FROM meridian_endpoints WHERE status<>'retired' ORDER BY id`)
 	if err != nil {
@@ -776,17 +776,17 @@ func (s *Store) CreateMeridianAccount(ctx context.Context, input MeridianAccount
 			return MeridianAccountCreated{Account: value, SubscriptionToken: token, SubscriptionPath: path}, nil
 		}
 	}
-	return MeridianAccountCreated{}, errors.New("center: created Meridian account is unavailable")
+	return MeridianAccountCreated{}, errors.New("center: created Glivela account is unavailable")
 }
 
 func (s *Store) UpdateMeridianAccount(ctx context.Context, accountID string, input MeridianAccountInput) (MeridianAccountView, error) {
 	accountID, input.DisplayName = strings.TrimSpace(accountID), strings.TrimSpace(input.DisplayName)
 	if input.Enabled == nil {
-		return MeridianAccountView{}, errors.New("center: Meridian account enabled state is required")
+		return MeridianAccountView{}, errors.New("center: Glivela account enabled state is required")
 	}
 	plan := meridian.AccountPlan{TotalBytes: input.TotalBytes, ExpiryTime: input.ExpiryTime, ResetDays: input.ResetDays, Enabled: *input.Enabled}
 	if !meridian.ValidIdentifier(accountID) || input.DisplayName == "" || len([]rune(input.DisplayName)) > meridian.MaxDisplayNameLength || plan.Validate() != nil || input.ExpiryTime > 0 && input.ExpiryTime <= s.now().UTC().UnixMilli() {
-		return MeridianAccountView{}, errors.New("center: invalid Meridian account plan")
+		return MeridianAccountView{}, errors.New("center: invalid Glivela account plan")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -801,7 +801,7 @@ func (s *Store) UpdateMeridianAccount(ctx context.Context, accountID string, inp
 	var previousResetDays int
 	var previousNextReset string
 	if err := tx.QueryRowContext(ctx, `SELECT reset_days,next_reset_at FROM meridian_accounts WHERE id=?`, accountID).Scan(&previousResetDays, &previousNextReset); err != nil {
-		return MeridianAccountView{}, errors.New("center: Meridian account was not found")
+		return MeridianAccountView{}, errors.New("center: Glivela account was not found")
 	}
 	if err := s.ensureMeridianSubscriptionSnapshotsForAccountEndpointsInTx(ctx, tx, accountID); err != nil {
 		return MeridianAccountView{}, err
@@ -822,7 +822,7 @@ func (s *Store) UpdateMeridianAccount(ctx context.Context, accountID string, inp
 		return MeridianAccountView{}, err
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return MeridianAccountView{}, errors.New("center: Meridian account was not found")
+		return MeridianAccountView{}, errors.New("center: Glivela account was not found")
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=?
 		WHERE status<>'retired' AND id IN (SELECT endpoint_id FROM meridian_credentials WHERE account_id=?)`, now, accountID); err != nil {
@@ -843,7 +843,7 @@ func (s *Store) UpdateMeridianAccount(ctx context.Context, accountID string, inp
 			return value, nil
 		}
 	}
-	return MeridianAccountView{}, errors.New("center: updated Meridian account is unavailable")
+	return MeridianAccountView{}, errors.New("center: updated Glivela account is unavailable")
 }
 
 func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRouteGrantInput) (MeridianRouteGrantView, error) {
@@ -852,7 +852,7 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 	input.EgressNodeID = strings.TrimSpace(input.EgressNodeID)
 	input.IPv4EgressNodeID = strings.TrimSpace(input.IPv4EgressNodeID)
 	if !meridian.ValidIdentifier(input.AccountID) || !meridian.ValidIdentifier(input.EndpointID) || !meridian.ValidIdentifier(input.EgressNodeID) {
-		return MeridianRouteGrantView{}, errors.New("center: invalid Meridian route grant")
+		return MeridianRouteGrantView{}, errors.New("center: invalid Glivela route grant")
 	}
 	if input.IPv4EgressNodeID != "" && (!meridian.ValidIdentifier(input.IPv4EgressNodeID) || input.IPv4EgressNodeID == input.EgressNodeID) {
 		return MeridianRouteGrantView{}, errors.New("center: choose a distinct IPv4 exit")
@@ -871,10 +871,10 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 		FROM meridian_endpoints endpoint JOIN meridian_accounts account ON account.id=?
 		JOIN meridian_credentials credential ON credential.endpoint_id=endpoint.id AND credential.account_id=account.id AND credential.kind='native'
 		WHERE endpoint.id=? AND endpoint.status<>'retired' AND endpoint.vless_enabled=1`, input.AccountID, input.EndpointID).Scan(&applicationID, &baseCredentialID, &accountStatus, &accountEnabled); err != nil {
-		return MeridianRouteGrantView{}, errors.New("center: Meridian account or endpoint is unavailable")
+		return MeridianRouteGrantView{}, errors.New("center: Glivela account or endpoint is unavailable")
 	}
 	if accountStatus != "active" || accountEnabled != 1 {
-		return MeridianRouteGrantView{}, errors.New("center: disabled Meridian account cannot receive a route")
+		return MeridianRouteGrantView{}, errors.New("center: disabled Glivela account cannot receive a route")
 	}
 	// Historical installations have an explicit pending/blocked adoption row.
 	// Reject before changing landing authorization or the endpoint revision.
@@ -883,7 +883,7 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 		return MeridianRouteGrantView{}, err
 	}
 	if adoptionPending {
-		return MeridianRouteGrantView{}, errors.New("center: adopt application resources before adding a Meridian route")
+		return MeridianRouteGrantView{}, errors.New("center: adopt application resources before adding a Glivela route")
 	}
 	var previousGrantID, previousStatus string
 	err = tx.QueryRowContext(ctx, `SELECT id,status FROM meridian_route_grants WHERE account_id=? AND endpoint_id=? AND egress_node_id=? AND COALESCE(ipv4_egress_node_id,'')=?`, input.AccountID, input.EndpointID, input.EgressNodeID, input.IPv4EgressNodeID).Scan(&previousGrantID, &previousStatus)
@@ -891,7 +891,7 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 		return MeridianRouteGrantView{}, err
 	}
 	if previousGrantID != "" && previousStatus != "revoked" {
-		return MeridianRouteGrantView{}, errors.New("center: Meridian route already exists or is still being revoked")
+		return MeridianRouteGrantView{}, errors.New("center: Glivela route already exists or is still being revoked")
 	}
 	if err := s.authorizeMeridianEntrySource(ctx, tx, input.EndpointID); err != nil {
 		return MeridianRouteGrantView{}, err
@@ -932,7 +932,7 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 			VALUES(?,?,?,?,NULLIF(?,''),?,?,'fixed',?,1,'pending',?,?)`, grantID, input.AccountID, input.EndpointID, input.EgressNodeID, input.IPv4EgressNodeID, baseCredentialID, routeCredentialID, boolInt(input.HideNative), now, now)
 	}
 	if err != nil {
-		return MeridianRouteGrantView{}, fmt.Errorf("center: create Meridian route grant: %w", err)
+		return MeridianRouteGrantView{}, fmt.Errorf("center: create Glivela route grant: %w", err)
 	}
 	if err := s.refreshClientLandingSources(ctx, tx, input.EgressNodeID); err != nil {
 		return MeridianRouteGrantView{}, err
@@ -957,13 +957,13 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 			return value, nil
 		}
 	}
-	return MeridianRouteGrantView{}, errors.New("center: created Meridian route grant is unavailable")
+	return MeridianRouteGrantView{}, errors.New("center: created Glivela route grant is unavailable")
 }
 
 func (s *Store) RevokeMeridianRouteGrant(ctx context.Context, grantID string) error {
 	grantID = strings.TrimSpace(grantID)
 	if !meridian.ValidIdentifier(grantID) {
-		return errors.New("center: invalid Meridian route grant")
+		return errors.New("center: invalid Glivela route grant")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -975,10 +975,10 @@ func (s *Store) RevokeMeridianRouteGrant(ctx context.Context, grantID string) er
 	}
 	var endpointID, routeCredentialID, status string
 	if err := tx.QueryRowContext(ctx, `SELECT endpoint_id,route_credential_id,status FROM meridian_route_grants WHERE id=?`, grantID).Scan(&endpointID, &routeCredentialID, &status); err != nil {
-		return errors.New("center: Meridian route grant was not found")
+		return errors.New("center: Glivela route grant was not found")
 	}
 	if status == "revoked" || status == "revoking" {
-		return errors.New("center: Meridian route grant is already being removed")
+		return errors.New("center: Glivela route grant is already being removed")
 	}
 	if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
 		return err
@@ -1048,7 +1048,7 @@ func (s *Store) insertMeridianCredential(ctx context.Context, tx *sql.Tx, accoun
 	hy2Identity := ""
 	var hy2Configured int
 	if err := tx.QueryRowContext(ctx, `SELECT hy2_inbound_tag<>'' FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&hy2Configured); err != nil {
-		return "", errors.New("center: Meridian endpoint is unavailable")
+		return "", errors.New("center: Glivela endpoint is unavailable")
 	}
 	if kind == meridian.NativeCredential && hy2Configured == 1 {
 		hy2Auth, tokenErr := randomToken(32)
@@ -1067,11 +1067,11 @@ func (s *Store) insertMeridianCredential(ctx context.Context, tx *sql.Tx, accoun
 	}
 	credential := meridian.Credential{ID: credentialID, AccountID: accountID, Kind: kind, User: user, Identity: meridian.Identity(protocolID), EntryID: applicationID, EgressID: egressNodeID, Enabled: enabled}
 	if credential.Validate() != nil {
-		return "", errors.New("center: generated Meridian credential is invalid")
+		return "", errors.New("center: generated Glivela credential is invalid")
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,hy2_auth_secret_id,hy2_identity_sha256,egress_node_id,enabled,created_at,updated_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, credentialID, accountID, endpointID, kind, user, credential.Identity, secretID, hy2SecretID, hy2Identity, egress, boolInt(enabled), now, now); err != nil {
-		return "", fmt.Errorf("center: create Meridian credential: %w", err)
+		return "", fmt.Errorf("center: create Glivela credential: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,baseline_bytes,observed_bytes,raw_up_bytes,raw_down_bytes,observed_at) VALUES(?,0,0,0,0,?)`, credentialID, now); err != nil {
 		return "", err

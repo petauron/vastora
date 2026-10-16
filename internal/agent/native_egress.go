@@ -45,7 +45,7 @@ func (e ApplicationExecutor) checkNativeEgressNetwork(parent context.Context, ta
 	defer docker.Close()
 	inspected, err := docker.ContainerInspect(parent, meridianXrayContainer, client.ContainerInspectOptions{})
 	if err != nil || state.Applied == nil || verifyMeridianHostContainer(inspected, state.AppliedGID, state.Applied) != nil || inspected.Container.State == nil || !inspected.Container.State.Running {
-		return errors.New("agent: an intact running Meridian host runtime is required for egress preflight")
+		return errors.New("agent: an intact running Glivela host runtime is required for egress preflight")
 	}
 	current, err := os.Readlink("/proc/self/ns/net")
 	if err != nil {
@@ -53,7 +53,7 @@ func (e ApplicationExecutor) checkNativeEgressNetwork(parent context.Context, ta
 	}
 	actual, err := os.Readlink(fmt.Sprintf("/proc/%d/ns/net", inspected.Container.State.Pid))
 	if err != nil || actual != current {
-		return errors.New("agent: cannot inspect the actual Meridian network namespace; no host or Docker network settings were changed")
+		return errors.New("agent: cannot inspect the actual Glivela network namespace; no host or Docker network settings were changed")
 	}
 	ctx, cancel := context.WithTimeout(parent, 8*time.Second)
 	defer cancel()
@@ -77,7 +77,7 @@ func (e ApplicationExecutor) checkNativeEgressNetwork(parent context.Context, ta
 	}
 	conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, target)
 	if err != nil {
-		return errors.New("agent: selected egress family is unreachable in the Meridian runtime network; check address and route")
+		return errors.New("agent: selected egress family is unreachable in the Glivela runtime network; check address and route")
 	}
 	return conn.Close()
 }

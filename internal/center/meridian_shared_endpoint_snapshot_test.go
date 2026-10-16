@@ -122,7 +122,7 @@ func TestMeridianObservationKeepsImportedServiceIdentityAndRepairsListener(t *te
 		t.Fatal(err)
 	}
 	if name != "inbound-8" || protocol != meridianEntryProtocol || services != 1 {
-		t.Fatalf("Meridian observation changed imported identity: name=%q protocol=%q services=%d", name, protocol, services)
+		t.Fatalf("Glivela observation changed imported identity: name=%q protocol=%q services=%d", name, protocol, services)
 	}
 	var revision int64
 	var encoded []byte
@@ -134,7 +134,7 @@ func TestMeridianObservationKeepsImportedServiceIdentityAndRepairsListener(t *te
 		t.Fatal(err)
 	}
 	if len(listener.Listener.Routes) != 1 || listener.Listener.Routes[0].ProxyProtocol != gateway.ProxyProtocolV2 {
-		t.Fatalf("repaired Meridian listener lacks PROXY v2: %#v", listener.Listener.Routes)
+		t.Fatalf("repaired Glivela listener lacks PROXY v2: %#v", listener.Listener.Routes)
 	}
 	reconcile()
 	var nextRevision int64
@@ -142,7 +142,7 @@ func TestMeridianObservationKeepsImportedServiceIdentityAndRepairsListener(t *te
 		t.Fatal(err)
 	}
 	if nextRevision != revision {
-		t.Fatalf("unchanged Meridian observation churned listener revision: %d to %d", revision, nextRevision)
+		t.Fatalf("unchanged Glivela observation churned listener revision: %d to %d", revision, nextRevision)
 	}
 }
 
