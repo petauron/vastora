@@ -8,7 +8,7 @@ it("shows the recovery action needed instead of the generic conflict message", (
 });
 
 it("shows the new product label for the server's native runtime recovery error", () => {
-  const error = new Error("center: restore the native Meridian runtime and wait for a fresh authenticated private identity report before recovering landing access");
+  const error = new Error("center: restore the native Glivela runtime and wait for a fresh authenticated private identity report before recovering landing access");
   expect(userError("zh-CN", error)).toBe("请先恢复本机 Glivela，并等待节点上报最新私网身份，再恢复落地线路。");
 });
 
