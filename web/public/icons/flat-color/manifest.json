@@ -1,0 +1,248 @@
+{
+  "family": "Vastora Color Planes",
+  "generator": "OpenAI built-in Image Gen",
+  "status": "complete-family",
+  "cleanup": "Per-icon exterior transparency, preserved opaque subjects and intentional cutouts; RGB unchanged.",
+  "icons": [
+    {
+      "name": "home",
+      "file": "home.webp",
+      "prompt": "Single desktop application icon: desktop monitor with a slim slate gray frame and foot, screen filled with sky blue and turquoise flat landscape shapes. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "6fb3810eb36d784188eedaef3bf5b6c606d6f7792aad2e4b0045ba33dcb5e1bb",
+      "sha256": "6dbefa07aaf288b31932702f6ed067847a4b539ea644342f0ec541b30b5ee898",
+      "bytes": 4450,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "app-store",
+      "file": "app-store.webp",
+      "prompt": "Single desktop application icon: orange-coral shopping bag with short integrated handle and three small pale app squares. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "0785976b112ec02ad40aa50b2c5b15deb45042024a3a5a80ade90d88809f8b09",
+      "sha256": "54fdc58c6572a1c1aabc225d36d2db1bb0336724d34027dea692d1f7fad89224",
+      "bytes": 9756,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "nodes",
+      "file": "nodes.webp",
+      "prompt": "Single desktop application icon: three stacked graphite server trays with small mint status lights and simple slot lines. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "1613cc17926a5f52c724163bc591aa7ebec81ad6b6a7b0626a2b4b47c409a53c",
+      "sha256": "7c14dd7e331307f654072e8f93ac32e1a611ced99fe1b9ccdec73895766d4243",
+      "bytes": 4894,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "settings",
+      "file": "settings.webp",
+      "prompt": "Single desktop application icon: graphite gray gear with pale gray inner ring, carefully balanced simple teeth. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "7a667700d90600c88c10e23ba376690de4080b98583976cd6847bdad976f26f8",
+      "sha256": "026cf9715b7d52e10dc913fb0d526fd89588bf7a9bb2f1d45d1ea8fa0f5d2f95",
+      "bytes": 11596,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "network",
+      "file": "network.webp",
+      "prompt": "A single beautifully composed desktop control-panel icon: blue browser window, slim blue header with two tiny controls and white address bar, pale blue main area. Freestanding silhouette on plain pure white backdrop, NO enclosing tile or extra white square. Sophisticated flat graphic design: precise geometry, intentional negative space, opaque color planes, extremely subtle analogous HUE gradients (color transitions only, NOT illumination). Synology DSM-like utility clarity. Front orthographic view, no perspective. No 3D, no bevels, no embossing, no highlights, no light source, no metallic surface, no reflections, no shadows, no gloss, no texture. Shape itself occupies 78% of square canvas. Clean edges, no extra decoration, label or border.",
+      "sourceSha256": "b209b6098f6122c115f0a4d4e66c94cdb4e3dda094e8ea9f3d5b54cbe4e6a2a8",
+      "sha256": "99d3201281506a8a99b2e27fa56fe1c8fe6757bc26a13346c280cbf138508565",
+      "bytes": 3372,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "users",
+      "file": "users.webp",
+      "prompt": "A single beautifully composed desktop control-panel icon: two overlapping user silhouettes, larger blue foreground person and smaller teal rear person, balanced head/body proportions. Freestanding silhouette on plain pure white backdrop, NO enclosing tile or extra white square. Sophisticated flat graphic design: precise geometry, intentional negative space, opaque color planes, extremely subtle analogous HUE gradients (color transitions only, NOT illumination). Synology DSM-like utility clarity. Front orthographic view, no perspective. No 3D, no bevels, no embossing, no highlights, no light source, no metallic surface, no reflections, no shadows, no gloss, no texture. Shape itself occupies 78% of square canvas. Clean edges, no extra decoration, label or border.",
+      "sourceSha256": "abbb62b1ab0ad7b836abe36089d7a1985424d69479f232caa724c4064e09b576",
+      "sha256": "3c1ac118cf68d743de1d4c85842039253ffeba46eca7ba45e3ad1409a59bed31",
+      "bytes": 9416,
+      "opticalMaxPixels": 218,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "backup",
+      "file": "backup.webp",
+      "prompt": "A single beautifully composed desktop control-panel icon: blue stacked database cylinder with green curved restore arrow around right edge, clearly separated geometric layers. Freestanding silhouette on plain pure white backdrop, NO enclosing tile or extra white square. Sophisticated flat graphic design: precise geometry, intentional negative space, opaque color planes, extremely subtle analogous HUE gradients (color transitions only, NOT illumination). Synology DSM-like utility clarity. Front orthographic view, no perspective. No 3D, no bevels, no embossing, no highlights, no light source, no metallic surface, no reflections, no shadows, no gloss, no texture. Shape itself occupies 78% of square canvas. Clean edges, no extra decoration, label or border.",
+      "sourceSha256": "27a6b36f4f6d826585dc6ef4cc1327704881830ad27cf17668662b2a32f986e9",
+      "sha256": "a3e6064106f3cfaa3dbaa80fa0053709be98a4dc11a21aeff0302e7f8b204e30",
+      "bytes": 17404,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "senulun",
+      "file": "senulun.webp",
+      "prompt": "Single desktop application icon: vivid green heartbeat waveform over a dark forest-green rounded rectangular monitor panel, no outer tile. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "08fd48b1d1891d95c22f418669c3c13165143505cc4f187e7a395c0952a2ab14",
+      "sha256": "94332f61c34606cba8c8b6ad93c324b6f97b4e9ce536016d4c4f02bef8886e7b",
+      "bytes": 6396,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "info",
+      "file": "info.webp",
+      "prompt": "A single beautifully composed desktop control-panel icon: blue circular information symbol with clean white lowercase sans-serif i. Freestanding silhouette on plain pure white backdrop, NO enclosing tile or extra white square. Sophisticated flat graphic design: precise geometry, intentional negative space, opaque color planes, extremely subtle analogous HUE gradients (color transitions only, NOT illumination). Synology DSM-like utility clarity. Front orthographic view, no perspective. No 3D, no bevels, no embossing, no highlights, no light source, no metallic surface, no reflections, no shadows, no gloss, no texture. Shape itself occupies 78% of square canvas. Clean edges, no extra decoration, label or border.",
+      "sourceSha256": "3139e49e71c5976c3f1a403b9ed7a123e67134d7f3a17c3084aa2c75e62816b4",
+      "sha256": "c98499716a55c119498b63231625af7533cf3f444c02649dfc0dccf2583be314",
+      "bytes": 9806,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "assistant",
+      "file": "assistant.webp",
+      "prompt": "A single beautifully composed desktop control-panel icon: purple and indigo speech bubble with three white dots, rounded silhouette and short clean tail. Freestanding silhouette on plain pure white backdrop, NO enclosing tile or extra white square. Sophisticated flat graphic design: precise geometry, intentional negative space, opaque color planes, extremely subtle analogous HUE gradients (color transitions only, NOT illumination). Synology DSM-like utility clarity. Front orthographic view, no perspective. No 3D, no bevels, no embossing, no highlights, no light source, no metallic surface, no reflections, no shadows, no gloss, no texture. Shape itself occupies 78% of square canvas. Clean edges, no extra decoration, label or border.",
+      "sourceSha256": "886b4292744e0a8038d5f874d76ec52648381d2878e7dec62f14bb6fb6085c6a",
+      "sha256": "1c5568d09c23b429d1b0df658ff3befbf05052240254bb47b39e4fef5f71d5f0",
+      "bytes": 8878,
+      "opticalMaxPixels": 218,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "security",
+      "file": "security.webp",
+      "prompt": "A single beautifully composed desktop control-panel icon: emerald green shield, flat white checkmark inset as a color shape. Freestanding silhouette on plain pure white backdrop, NO enclosing tile or extra white square. Sophisticated flat graphic design: precise geometry, intentional negative space, opaque color planes, extremely subtle analogous HUE gradients (color transitions only, NOT illumination). Synology DSM-like utility clarity. Front orthographic view, no perspective. No 3D, no bevels, no embossing, no highlights, no light source, no metallic surface, no reflections, no shadows, no gloss, no texture. Shape itself occupies 78% of square canvas. Clean edges, no extra decoration, label or border.",
+      "sourceSha256": "816d5f3e5d2460c274b1a612f4fc260299fd42087281fbbc430fafc55f9ae70a",
+      "sha256": "ca165b350fb529fc8feb811e6ea9329633d201400d033888fa50b8e46528f92c",
+      "bytes": 9228,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "activity",
+      "file": "activity.webp",
+      "prompt": "Single desktop application icon: three slate event lines, three orange dots and a fine orange vertical timeline. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "5c578927fe5c0445bf83c9bd5e6e784d1e99cacc9551424f28abb146c9bcd748",
+      "sha256": "ada7dabc709b311fa6ee9d986c2a729910e5f210c2502e0adc216d2d001ab728",
+      "bytes": 9734,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "diagnostics",
+      "file": "diagnostics.webp",
+      "prompt": "A single beautifully composed desktop control-panel icon: orange magnifying glass containing a simple orange pulse line on very pale orange interior. Freestanding silhouette on plain pure white backdrop, NO enclosing tile or extra white square. Sophisticated flat graphic design: precise geometry, intentional negative space, opaque color planes, extremely subtle analogous HUE gradients (color transitions only, NOT illumination). Synology DSM-like utility clarity. Front orthographic view, no perspective. No 3D, no bevels, no embossing, no highlights, no light source, no metallic surface, no reflections, no shadows, no gloss, no texture. Shape itself occupies 78% of square canvas. Clean edges, no extra decoration, label or border.",
+      "sourceSha256": "2c08df3178f026f1fdc577c6b07ff7d2ca6e1b59ddb1fde6a6a9cd463a4e58a4",
+      "sha256": "8667ebebe6df80fb7e3fdb67a0fac718344874101b5d967b380129eed3e8194c",
+      "bytes": 12670,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "update",
+      "file": "update.webp",
+      "prompt": "A single beautifully composed desktop control-panel icon: two broad curved arrows forming a nearly complete circle, one azure and one teal. Freestanding silhouette on plain pure white backdrop, NO enclosing tile or extra white square. Sophisticated flat graphic design: precise geometry, intentional negative space, opaque color planes, extremely subtle analogous HUE gradients (color transitions only, NOT illumination). Synology DSM-like utility clarity. Front orthographic view, no perspective. No 3D, no bevels, no embossing, no highlights, no light source, no metallic surface, no reflections, no shadows, no gloss, no texture. Shape itself occupies 78% of square canvas. Clean edges, no extra decoration, label or border.",
+      "sourceSha256": "18c592cd1f7df590dc09c62ecb8c1a31a39390e2bb2efe3142c460256d7c3da3",
+      "sha256": "02b37f1b8b5d14352fa7f98085634f529aec4887d8b4c317bbff62f615cebe97",
+      "bytes": 13236,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "catalog",
+      "file": "catalog.webp",
+      "prompt": "A single beautifully composed desktop control-panel icon: pale blue rectangular application catalog panel, three small colored square thumbnails and three dark slate horizontal lines, no folds. Freestanding silhouette on plain pure white backdrop, NO enclosing tile or extra white square. Sophisticated flat graphic design: precise geometry, intentional negative space, opaque color planes, extremely subtle analogous HUE gradients (color transitions only, NOT illumination). Synology DSM-like utility clarity. Front orthographic view, no perspective. No 3D, no bevels, no embossing, no highlights, no light source, no metallic surface, no reflections, no shadows, no gloss, no texture. Shape itself occupies 78% of square canvas. Clean edges, no extra decoration, label or border.",
+      "sourceSha256": "371da1bb8de418d5730b94d7a7878624d2b774e7bc09295405245d399930c87a",
+      "sha256": "9a6486a24299c24baacc75943156182facd1a0daf853a0e6a0c46332eac32859",
+      "bytes": 3884,
+      "opticalMaxPixels": 218,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "meridian",
+      "file": "meridian.webp",
+      "prompt": "Single desktop application icon: teal circular compass with a white and pale blue directional needle, only four direction ticks. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "0bb92858e06c4fe93efca78b821dc4f81c72d7db3a834bc09a167f6466413954",
+      "sha256": "3e86422b7914ed03e0c2dd854e721e3e73b0bae37eafa8bfff9f58f9ef2cd9d6",
+      "bytes": 11724,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "cpa",
+      "file": "cpa.webp",
+      "prompt": "Single desktop application icon: two interlocking rounded links, one blue and one teal, simple clear negative space. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "9bf65eafeac53c36b2a78c77a95ea40368b99fbad1eb4c7fd45b007b4f6affce",
+      "sha256": "9c313ab41fa298232bae3bd8983837dfb3aa786d364abe220d5cae1d86f8e301",
+      "bytes": 12664,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "probe",
+      "file": "probe.webp",
+      "prompt": "Single desktop application icon: azure speedometer with a semicircular scale, pale blue face and single blue needle. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "5786ae6084895010afcee314672205eaff83c55b390b98283b9f3bb58936e7f4",
+      "sha256": "5db5c4e07f2a7bb4b024510054df6c88721161c5a52f05ed40c4819240ca95c8",
+      "bytes": 8808,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "keeper",
+      "file": "keeper.webp",
+      "prompt": "Single desktop application icon: three vertical bar-chart columns, blue teal and orange, differing heights, thin slate baseline. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "affb723504b1e492aa86c3f98e20aa2702f85eae43b0875659103875dc62c2d5",
+      "sha256": "bb0d061a168edbdbb70b9856996a8bbd1e1bd86a61b7c5efeef1f784e73575de",
+      "bytes": 2882,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "telegram",
+      "file": "telegram.webp",
+      "prompt": "Single desktop application icon: bright sky-blue circle with a clean white paper airplane symbol. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "447d84dea87f1f4aca8af1877a5f7dd4127cd3b92870f086ab53a68e03116715",
+      "sha256": "2d9463026445f64fbd42f01ccf32540363b9fb409530d584b8a08bf2692432d1",
+      "bytes": 11466,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "headscale",
+      "file": "headscale.webp",
+      "prompt": "Single desktop application icon: five violet network dots joined by clean violet geometric lines, open network silhouette. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "a5101c0d56378c17a9bfc4d7c7927b3382b87b603fc6c7e7808b15b60fbcdc5a",
+      "sha256": "d45ca6102a985d3c69211693ed0dc9862be9a9b430d07a43a8c541e58e65d308",
+      "bytes": 17526,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "files",
+      "file": "files.webp",
+      "prompt": "Single desktop application icon: golden yellow folder with small upper tab and orange back layer, front view. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "9389e8924688b3b19eb8f387df565a86fda3884c1d78f5c385f5fa54d6a5c1c9",
+      "sha256": "5295befc01626f67cf8525616fd8896c7b52149f57328225ededfd6aa0307dec",
+      "bytes": 2936,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "web-gateway",
+      "file": "web-gateway.webp",
+      "prompt": "Single desktop application icon: teal doorway with rightward enter arrow, pale teal door plane, clean simple geometric outline. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "89df459b0412ccdbae06a042654b7cb32efa7128cb58167ccf7539b446def8b0",
+      "sha256": "607ac6b5507c494445fb28269751ce33c679a9b8af0481e49a7a2d3f0d5b5f99",
+      "bytes": 6286,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    },
+    {
+      "name": "application",
+      "file": "application.webp",
+      "prompt": "Single desktop application icon: slate browser window header with three small dots and blue content panel with two short pale rows. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
+      "sourceSha256": "f2c32b3ebcf5d19ddfef511a8ed9d3a0c36fd67557af6f7065849992f8a3fd48",
+      "sha256": "9b0f2c270eb9c54ee47a7549a11ad5d193f91df8deeb822099d1691c73e61e39",
+      "bytes": 3414,
+      "opticalMaxPixels": 210,
+      "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
+    }
+  ]
+}

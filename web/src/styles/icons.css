@@ -1,0 +1,24 @@
+.vastora-visual-icon { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; isolation: isolate; }
+.vastora-visual-icon > img { width: 125%; height: 125%; max-width: none; object-fit: contain; pointer-events: none; user-select: none; }
+.desktop-feature-icon.vastora-visual-icon { border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
+/* One scalable continuous-corner mask for app identity tiles at every size. */
+.desktop-app-icon.desktop-asset-icon, .desktop-launchpad-icon {
+  border-radius: 0;
+  -webkit-mask: url("/icons/app-tile-mask.svg") center / 100% 100% no-repeat;
+  mask: url("/icons/app-tile-mask.svg") center / 100% 100% no-repeat;
+}
+/* App identities have a tile; settings feature glyphs remain freestanding. */
+.desktop-app-icon.desktop-asset-icon { border: 0; background: #deebf7; box-shadow: none; overflow: hidden; }
+.desktop-app-icon.desktop-asset-icon > img { width: 90%; height: 90%; }
+.desktop-asset-icon:is([data-icon="app-store"], [data-icon="meridian"]) { background: #deebf7; }
+/* One Telegram sky blue; source chroma separates the white detail from colored planes. */
+.vastora-visual-icon[data-icon="app-store"] > img { filter: url("/icons/sky-blue-filters.svg#store"); }
+.vastora-visual-icon[data-icon="meridian"] > img { filter: url("/icons/sky-blue-filters.svg#compass"); }
+.desktop-asset-icon:is([data-icon="activity"], [data-icon="files"]) { background: #ffe5cf; }
+.desktop-asset-icon:is([data-icon="nodes"], [data-icon="settings"]) { background: #dbe2e9; }
+.desktop-asset-icon:is([data-icon="cpa"], [data-icon="web-gateway"]) { background: #d4eeea; }
+.desktop-asset-icon:is([data-icon="senulun"], [data-icon="keeper"]) { background: #dceedd; }
+.desktop-asset-icon:is([data-icon="headscale"], [data-icon="assistant"]) { background: #e8def7; }
+.desktop-feature-icon.vastora-visual-icon { display: inline-flex; }
+
+.desktop-app-icon.vastora-visual-icon { filter: none; }
