@@ -190,7 +190,7 @@ func TestHeartbeatAllowsMeridianSubscriptionHostWithoutLocalXrayRuntime(t *testi
 			t.Fatal(err)
 		}
 		if payload.ApplicationEndpointsObserved || len(payload.ApplicationEndpoints) != 0 || string(payload.MeridianRuntime) != "null" {
-			t.Fatalf("controller-only Meridian package reported a proxy runtime: %#v", payload)
+			t.Fatalf("controller-only Glivela package reported a proxy runtime: %#v", payload)
 		}
 		heartbeats++
 		response.Header().Set("Content-Type", "application/json")

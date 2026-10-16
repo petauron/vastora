@@ -201,7 +201,7 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 	}
 	if len(routes) == 0 {
 		if restore != nil {
-			return gateway.NodeListenerState{}, errors.New("center: no saved Meridian shared entry to restore")
+			return gateway.NodeListenerState{}, errors.New("center: no saved Glivela shared entry to restore")
 		}
 		return gateway.NodeListenerState{
 			Revision: revision,

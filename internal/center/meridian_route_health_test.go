@@ -127,7 +127,7 @@ func TestMeridianRuntimeSuccessNeedsPeerEvidenceAndHeartbeatRenewsWithoutRevisio
 		t.Fatal(err)
 	}
 	if protocol != meridianEntryProtocol {
-		t.Fatalf("Meridian runtime receipt left legacy service protocol: %q", protocol)
+		t.Fatalf("Glivela runtime receipt left legacy service protocol: %q", protocol)
 	}
 	check := func(wantHealthy int, wantStatus string) {
 		t.Helper()

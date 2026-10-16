@@ -24,14 +24,14 @@ func (b *SystemdPackageBackend) preparePulseInputs(task DeploymentTask, receipt 
 	}
 	var settings pulse.AgentConfig
 	if json.Unmarshal(task.Config, &settings) != nil {
-		return task, errors.New("agent: invalid Pulse configuration")
+		return task, errors.New("agent: invalid Senulun configuration")
 	}
 	if err := settings.Validate(); err != nil {
 		return task, err
 	}
 	release, err := os.ReadFile(b.Manager.path("/etc/os-release"))
 	if err != nil || !pulseSupportedOS(release) {
-		return task, errors.New("agent: Pulse requires Debian 12/13 or Ubuntu 24.04/26.04")
+		return task, errors.New("agent: Senulun requires Debian 12/13 or Ubuntu 24.04/26.04")
 	}
 	if environment := resourceNamed(receipt, "file", "environment"); environment != nil {
 		raw, err := os.ReadFile(b.Manager.path(environment.Path))
@@ -49,20 +49,20 @@ func (b *SystemdPackageBackend) preparePulseInputs(task DeploymentTask, receipt 
 	}
 	var secrets map[string]string
 	if json.Unmarshal(task.Secrets, &secrets) != nil || secrets == nil {
-		return task, errors.New("agent: invalid Pulse credentials")
+		return task, errors.New("agent: invalid Senulun credentials")
 	}
 	if task.PulseRestore != nil {
 		if task.Operation != "install" || task.PulseRestore.Validate() != nil {
-			return task, errors.New("agent: invalid Pulse restoration task")
+			return task, errors.New("agent: invalid Senulun restoration task")
 		}
 		secrets["enrollment_token"] = ""
 	} else if credentials == nil {
 		if task.Operation != "install" {
-			return task, errors.New("agent: retained Pulse identity is missing; explicit re-enrollment required")
+			return task, errors.New("agent: retained Senulun identity is missing; explicit re-enrollment required")
 		}
 		token := secrets["enrollment_token"]
 		if len(token) < 16 || len(token) > 512 || strings.ContainsAny(token, " \t\r\n") {
-			return task, errors.New("agent: Pulse enrollment token is unavailable")
+			return task, errors.New("agent: Senulun enrollment token is unavailable")
 		}
 	} else {
 		secrets["enrollment_token"] = ""
@@ -114,7 +114,7 @@ func readPulsePackageCredentials(path, serviceURL string) ([]byte, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() || info.Size() > 8192 || info.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("agent: Pulse identity storage is not private")
+		return nil, errors.New("agent: Senulun identity storage is not private")
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -127,7 +127,7 @@ func readPulsePackageCredentials(path, serviceURL string) ([]byte, error) {
 		ProtocolVersion int    `json:"protocol_version"`
 	}
 	if json.Unmarshal(raw, &identity) != nil || identity.ServiceURL != serviceURL || identity.NodeID == "" || identity.AgentToken == "" || identity.ProtocolVersion != 2 {
-		return nil, errors.New("agent: Pulse identity is invalid or belongs to another service")
+		return nil, errors.New("agent: Senulun identity is invalid or belongs to another service")
 	}
 	return raw, nil
 }
@@ -138,7 +138,7 @@ func (b *SystemdPackageBackend) completePulseEnrollment(ctx context.Context, tas
 	}
 	var settings pulse.AgentConfig
 	if json.Unmarshal(task.Config, &settings) != nil {
-		return errors.New("agent: invalid Pulse configuration")
+		return errors.New("agent: invalid Senulun configuration")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
@@ -154,13 +154,13 @@ func (b *SystemdPackageBackend) completePulseEnrollment(ctx context.Context, tas
 		}
 		select {
 		case <-ctx.Done():
-			return errors.New("agent: Pulse enrollment did not complete")
+			return errors.New("agent: Senulun enrollment did not complete")
 		case <-ticker.C:
 		}
 	}
 	source := resourceNamed(receipt, "file", "credential:enrollment-token")
 	if source == nil {
-		return errors.New("agent: Pulse enrollment source ownership missing")
+		return errors.New("agent: Senulun enrollment source ownership missing")
 	}
 	if err := writeHostFileAtomic(b.Manager.path(source.Path), nil, 0600); err != nil {
 		return err
@@ -176,15 +176,15 @@ func (b *SystemdPackageBackend) restorePulseIdentity(ctx context.Context, task D
 		return nil
 	}
 	if task.AppKey != pulse.AgentKey || task.Operation != "install" || task.PulseRestore.Validate() != nil {
-		return errors.New("agent: invalid Pulse restoration task")
+		return errors.New("agent: invalid Senulun restoration task")
 	}
 	var settings pulse.AgentConfig
 	if json.Unmarshal(task.Config, &settings) != nil || settings.Validate() != nil {
-		return errors.New("agent: invalid Pulse restoration configuration")
+		return errors.New("agent: invalid Senulun restoration configuration")
 	}
 	binary := resourceNamed(receipt, "file", "artifact:"+task.Manifest.Runtime.Systemd.Executable)
 	if binary == nil {
-		return errors.New("agent: Pulse executable receipt missing")
+		return errors.New("agent: Senulun executable receipt missing")
 	}
 	path := b.Manager.path(pulsePackageIdentityPath(task, receipt))
 	if err := checkPackageParents(path); err != nil {
@@ -192,7 +192,7 @@ func (b *SystemdPackageBackend) restorePulseIdentity(ctx context.Context, task D
 	}
 	if entries, err := os.ReadDir(filepath.Dir(path)); err == nil {
 		if len(entries) != 0 {
-			return errors.New("agent: Pulse restoration cannot overwrite existing state")
+			return errors.New("agent: Senulun restoration cannot overwrite existing state")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -205,10 +205,10 @@ func (b *SystemdPackageBackend) restorePulseIdentity(ctx context.Context, task D
 	}
 	user, _, _ := strings.Cut(task.Manifest.Runtime.Systemd.User, ":")
 	if user == "" || user == "root" {
-		return errors.New("agent: Pulse restoration requires a dedicated service user")
+		return errors.New("agent: Senulun restoration requires a dedicated service user")
 	}
 	if err := b.Manager.run(ctx, "chown", user, filepath.Dir(path)); err != nil {
-		return errors.New("agent: Pulse identity ownership could not be set")
+		return errors.New("agent: Senulun identity ownership could not be set")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -225,7 +225,7 @@ func (b *SystemdPackageBackend) restorePulseIdentity(ctx context.Context, task D
 		err = cmd.Run()
 	}
 	if err != nil {
-		return errors.New("agent: Pulse identity import requires inspection")
+		return errors.New("agent: Senulun identity import requires inspection")
 	}
 	raw, err := readPulsePackageCredentials(path, settings.ServiceURL)
 	var saved struct {
@@ -233,7 +233,7 @@ func (b *SystemdPackageBackend) restorePulseIdentity(ctx context.Context, task D
 		Token  string `json:"agent_token"`
 	}
 	if err != nil || json.Unmarshal(raw, &saved) != nil || saved.NodeID != task.PulseRestore.NodeID || saved.Token != task.PulseRestore.Token {
-		return errors.New("agent: Pulse importer did not retain approved identity")
+		return errors.New("agent: Senulun importer did not retain approved identity")
 	}
 	return nil
 }

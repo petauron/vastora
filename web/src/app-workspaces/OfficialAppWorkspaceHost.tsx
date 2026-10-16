@@ -3,6 +3,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { copy } from "@/views/shared";
+import { localized } from "@/views/appAccess";
 import { ApplicationStatus } from "@/views/apps/InstalledApplicationPrimitives";
 import type { AppManagerProps, AppWorkspaceProps } from "./types";
 
@@ -79,7 +80,7 @@ function useOfficialMeridianUI(version: string | undefined) {
 
 function LoadingOrError({ state, retry, language, runtimeFailed }: { state: "loading" | "ready" | "failed"; retry: () => void; language: AppWorkspaceProps["language"]; runtimeFailed: boolean }) {
   if (state === "loading") return <Spinner />;
-  if (state === "failed") return <Alert variant="destructive"><AlertTitle>{copy(language, "Glivela 界面未就绪", "Glivela interface unavailable")}</AlertTitle><AlertDescription>{runtimeFailed
+  if (state === "failed") return <Alert variant="destructive"><AlertTitle>{copy(language, "应用界面未就绪", "Application interface unavailable")}</AlertTitle><AlertDescription>{runtimeFailed
     ? copy(language, "界面启动失败，请重试。", "The interface failed to start. Try again.")
     : copy(language, "请确认该版本的界面资源已发布并刷新官方应用目录。", "Confirm this version's interface was published and refresh the official catalog.")}
     <Button className="ml-2" onClick={retry} size="sm" variant="outline">{copy(language, "重试加载", "Retry")}</Button></AlertDescription></Alert>;
@@ -116,7 +117,7 @@ export function OfficialAppWorkspaceHost(props: AppWorkspaceProps) {
     }
   }, [props]);
   const unavailable = runtimeFailed || state === "failed";
-  return <section aria-label="Glivela" data-app-workspace="vastora-official/meridian">
+  return <section aria-label={props.group.app ? localized(props.group.app, props.language, "name") : props.group.appKey} data-app-workspace="vastora-official/meridian">
     <LoadingOrError state={runtimeFailed ? "failed" : state} retry={retry} language={props.language} runtimeFailed={runtimeFailed} />
     {unavailable ? <div aria-label={copy(props.language, "已安装的 Glivela 节点", "Installed Glivela nodes")} className="mt-4 max-h-72 divide-y overflow-y-auto rounded-lg border">
       {props.group.instances.map((instance) => <div className="flex flex-wrap items-center gap-3 px-3 py-2" key={instance.application.id}>
@@ -158,5 +159,5 @@ export function OfficialAppManagerHost(props: AppManagerProps & { version?: stri
       setRuntimeFailed(true);
     }
   }, [props]);
-  return <section aria-label="Glivela 管理"><LoadingOrError state={runtimeFailed ? "failed" : state} retry={retry} language={props.language} runtimeFailed={runtimeFailed} />{runtimeFailed || state === "failed" ? <Button className="mt-3" onClick={props.onClose} size="sm" variant="outline">{copy(props.language, "关闭", "Close")}</Button> : null}<div ref={target} /></section>;
+  return <section aria-label={copy(props.language, "应用管理", "Application management")}><LoadingOrError state={runtimeFailed ? "failed" : state} retry={retry} language={props.language} runtimeFailed={runtimeFailed} />{runtimeFailed || state === "failed" ? <Button className="mt-3" onClick={props.onClose} size="sm" variant="outline">{copy(props.language, "关闭", "Close")}</Button> : null}<div ref={target} /></section>;
 }

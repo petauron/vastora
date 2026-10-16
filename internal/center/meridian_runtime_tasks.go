@@ -67,7 +67,7 @@ func (s *Store) resetDueMeridianAccounts(ctx context.Context, tx *sql.Tx) error 
 	}
 	for _, account := range due {
 		if account.days < 1 || account.days > meridian.MaxResetDays {
-			return errors.New("center: stored Meridian reset schedule is invalid")
+			return errors.New("center: stored Glivela reset schedule is invalid")
 		}
 		if err := s.ensureMeridianSubscriptionSnapshotsForAccountEndpointsInTx(ctx, tx, account.id); err != nil {
 			return err
@@ -188,10 +188,10 @@ func (s *Store) queueMeridianRuntime(ctx context.Context, tx *sql.Tx, endpointID
 	// cannot authorize a runtime image until historical resources are adopted.
 	var adoptionState string
 	if err := tx.QueryRowContext(ctx, `SELECT adoption_state FROM application_resources WHERE application_id=?`, projection.task.ApplicationID).Scan(&adoptionState); err != nil {
-		return "", errors.New("center: adopt application resources before changing Meridian runtime")
+		return "", errors.New("center: adopt application resources before changing Glivela runtime")
 	}
 	if adoptionState != "ready" {
-		return "", errors.New("center: adopt application resources before changing Meridian runtime")
+		return "", errors.New("center: adopt application resources before changing Glivela runtime")
 	}
 	command := meridianruntime.Command{EndpointID: endpointID, ReplacePendingState: replacePendingState}
 	encoded, err := json.Marshal(command)
@@ -209,7 +209,7 @@ func (s *Store) queueMeridianRuntime(ctx context.Context, tx *sql.Tx, endpointID
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,site_id,display_name,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at)
 		VALUES(?,?,?,?,?,?,?,?, 'pending',?,?)`, id, projection.task.ApplicationID, siteID, displayName, projection.agentID, projection.agentID, meridianruntime.ApplyKind, encoded, now, now); err != nil {
-		return "", fmt.Errorf("center: queue Meridian runtime: %w", err)
+		return "", fmt.Errorf("center: queue Glivela runtime: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_deployments(endpoint_id,desired_revision,desired_sha256,command_id,status,updated_at)
 		VALUES(?,?,?,?, 'pending',?)
@@ -227,7 +227,7 @@ func (s *Store) queueMeridianRuntime(ctx context.Context, tx *sql.Tx, endpointID
 			return "", err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return "", errors.New("center: verified Meridian endpoint changed before legacy retirement was queued")
+			return "", errors.New("center: verified Glivela endpoint changed before legacy retirement was queued")
 		}
 	} else {
 		updated, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET status='pending',runtime_healthy=0,last_error='',updated_at=? WHERE id=? AND status<>'retired'`, now, endpointID)
@@ -235,7 +235,7 @@ func (s *Store) queueMeridianRuntime(ctx context.Context, tx *sql.Tx, endpointID
 			return "", err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return "", errors.New("center: Meridian endpoint changed before its runtime revision was queued")
+			return "", errors.New("center: Glivela endpoint changed before its runtime revision was queued")
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET status=CASE WHEN status='revoking' THEN status WHEN enabled=1 THEN 'pending' ELSE status END,runtime_healthy=0,last_error='',updated_at=? WHERE endpoint_id=? AND status<>'revoked'`, now, endpointID); err != nil {
 			return "", err
@@ -247,11 +247,11 @@ func (s *Store) queueMeridianRuntime(ctx context.Context, tx *sql.Tx, endpointID
 				return "", err
 			}
 			if changed, _ := updated.RowsAffected(); changed != 1 {
-				return "", errors.New("center: Meridian blocked route changed before its runtime revision was queued")
+				return "", errors.New("center: Glivela blocked route changed before its runtime revision was queued")
 			}
 		}
 	}
-	if err := s.recordTaskEvent(ctx, tx, id, projection.agentID, "application.command", int64(projection.task.Desired.Revision), "queued", "Meridian runtime revision queued"); err != nil {
+	if err := s.recordTaskEvent(ctx, tx, id, projection.agentID, "application.command", int64(projection.task.Desired.Revision), "queued", "Glivela runtime revision queued"); err != nil {
 		return "", err
 	}
 	return id, nil
@@ -276,10 +276,10 @@ func (s *Store) discardSupersededMeridianRuntimeCommand(ctx context.Context, tx 
 		return false, nil
 	}
 	if commandRevision < 1 || commandRevision > currentRevision {
-		return false, errors.New("center: stored Meridian deployment revision is invalid")
+		return false, errors.New("center: stored Glivela deployment revision is invalid")
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	message := "Meridian runtime revision superseded before Agent claim"
+	message := "Glivela runtime revision superseded before Agent claim"
 	if _, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET status='failed',last_error=?,updated_at=? WHERE endpoint_id=? AND command_id=? AND desired_revision=?`, message, now, endpointID, commandID, commandRevision); err != nil {
 		return true, err
 	}
@@ -291,7 +291,7 @@ func (s *Store) discardSupersededMeridianRuntimeCommand(ctx context.Context, tx 
 		return true, err
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return true, errors.New("center: superseded Meridian command is no longer pending")
+		return true, errors.New("center: superseded Glivela command is no longer pending")
 	}
 	if err := s.recordTaskEvent(ctx, tx, commandID, agentID, "application.command", commandRevision, "succeeded", message); err != nil {
 		return true, err
@@ -337,20 +337,20 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 		&revision, &appliedRevision, &runtimeHealthy, &legacyRetired, &endpointStatus, &expectedSHA, &sourcePeerJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return projection, errors.New("center: Meridian endpoint is not deployable")
+		return projection, errors.New("center: Glivela endpoint is not deployable")
 	}
 	if err != nil {
-		return projection, fmt.Errorf("center: read Meridian endpoint: %w", err)
+		return projection, fmt.Errorf("center: read Glivela endpoint: %w", err)
 	}
 	if expectedAgentID != "" && projection.agentID != expectedAgentID {
-		return projection, errors.New("center: Meridian endpoint moved to another Agent")
+		return projection, errors.New("center: Glivela endpoint moved to another Agent")
 	}
 	if restore == nil && expectedAgentID != "" && expectedSHA == "" {
-		return projection, errors.New("center: Meridian deployment digest is unavailable")
+		return projection, errors.New("center: Glivela deployment digest is unavailable")
 	}
 	if restore != nil {
 		if restore.Revision != uint64(revision) {
-			return projection, errors.New("center: reviewed Meridian runtime revision changed")
+			return projection, errors.New("center: reviewed Glivela runtime revision changed")
 		}
 		endpoint.ListenAddress = restore.Address
 		projection.task.ImageReference = restore.Image
@@ -358,15 +358,15 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 	}
 	endpoint.ID, endpoint.EntryID = endpointID, projection.task.ApplicationID
 	if revision < 1 || json.Unmarshal(serverNamesJSON, &endpoint.ServerNames) != nil || json.Unmarshal(shortIDsJSON, &endpoint.ShortIDs) != nil {
-		return projection, errors.New("center: stored Meridian endpoint is invalid")
+		return projection, errors.New("center: stored Glivela endpoint is invalid")
 	}
 	privateKey, err := s.meridianSecretInTx(ctx, tx, privateKeySecretID, meridianEndpointSecretContext(endpointID))
 	if err != nil {
-		return projection, errors.New("center: stored Meridian endpoint key is unavailable")
+		return projection, errors.New("center: stored Glivela endpoint key is unavailable")
 	}
 	endpoint.PrivateKey = string(privateKey)
 	if endpoint.Validate() != nil || vlessEnabled == 0 && hy2Enabled == 0 {
-		return projection, errors.New("center: stored Meridian endpoint is invalid")
+		return projection, errors.New("center: stored Glivela endpoint is invalid")
 	}
 	realityEndpoints := []meridian.RealityEndpoint{}
 	if vlessEnabled == 1 {
@@ -376,22 +376,22 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 	if hy2Enabled == 1 {
 		expiresAt, parseErr := time.Parse(time.RFC3339Nano, hy2NotAfter)
 		if parseErr != nil || !expiresAt.After(s.now().Add(time.Hour)) {
-			return projection, errors.New("center: stored Meridian Hysteria certificate is unavailable or expired")
+			return projection, errors.New("center: stored Glivela Hysteria certificate is unavailable or expired")
 		}
 		if !hy2CertID.Valid || !hy2KeyID.Valid {
-			return projection, errors.New("center: stored Meridian Hysteria certificate is unavailable")
+			return projection, errors.New("center: stored Glivela Hysteria certificate is unavailable")
 		}
 		certificate, secretErr := s.meridianSecretInTx(ctx, tx, hy2CertID.String, meridianHY2CertificateSecretContext(endpointID))
 		if secretErr != nil {
-			return projection, errors.New("center: stored Meridian Hysteria certificate is unavailable")
+			return projection, errors.New("center: stored Glivela Hysteria certificate is unavailable")
 		}
 		hy2PrivateKey, secretErr := s.meridianSecretInTx(ctx, tx, hy2KeyID.String, meridianHY2PrivateKeySecretContext(endpointID))
 		if secretErr != nil {
-			return projection, errors.New("center: stored Meridian Hysteria key is unavailable")
+			return projection, errors.New("center: stored Glivela Hysteria key is unavailable")
 		}
 		hysteriaEndpoint = meridian.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: projection.task.ApplicationID, InboundTag: hy2InboundTag, ListenPort: 443, AdvertiseHost: endpoint.AdvertiseHost, AdvertisePort: 443, ServerName: hy2ServerName, CertificatePEM: string(certificate), PrivateKeyPEM: string(hy2PrivateKey)}
 		if hysteriaEndpoint.Validate() != nil {
-			return projection, errors.New("center: stored Meridian Hysteria endpoint is invalid")
+			return projection, errors.New("center: stored Glivela Hysteria endpoint is invalid")
 		}
 		hysteriaEndpoints = append(hysteriaEndpoints, hysteriaEndpoint)
 	}
@@ -424,7 +424,7 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 		Revision:     uint64(revision), RealityEndpoints: realityEndpoints, HysteriaEndpoints: hysteriaEndpoints, Credentials: materials, Grants: routes.grants, Peers: routes.peers,
 	})
 	if err != nil || expectedSHA != "" && artifact.ConfigSHA256 != expectedSHA {
-		return projection, errors.New("center: Meridian desired state changed after it was queued")
+		return projection, errors.New("center: Glivela desired state changed after it was queued")
 	}
 	projection.task.Desired, projection.materials = artifact, materials
 	projection.backendAddress = endpoint.ListenAddress
@@ -434,7 +434,7 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 	if len(routes.runtimePeers) != 0 {
 		var source landing.PeerIdentity
 		if json.Unmarshal(sourcePeerJSON, &source) != nil || (meridianruntime.Peer{EgressID: projection.agentID, Identity: source}).Validate() != nil {
-			return projection, errors.New("center: Meridian entry has no authorized private source identity")
+			return projection, errors.New("center: Glivela entry has no authorized private source identity")
 		}
 		projection.task.Source = &source
 	}
@@ -460,7 +460,7 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 	}
 	projection.task.RetireLegacy = restore == nil && retirePhase && legacyRetired == 0 && endpointStatus == "ready" && runtimeHealthy == 1 && appliedRevision == revision && unreadyRoutes == 0
 	if projection.task.Validate() != nil {
-		return projection, errors.New("center: Meridian runtime task is invalid")
+		return projection, errors.New("center: Glivela runtime task is invalid")
 	}
 	return projection, nil
 }
@@ -524,7 +524,7 @@ func (s *Store) meridianRuntimeMaterials(ctx context.Context, tx *sql.Tx, endpoi
 		projection, err := meridian.ProjectQuota(plan, usage)
 		status := accountStatus[accountID]
 		if err != nil || status != "active" && status != "disabled" && status != "expired" {
-			return nil, nil, errors.New("center: stored Meridian quota is invalid")
+			return nil, nil, errors.New("center: stored Glivela quota is invalid")
 		}
 		quotaEnabled[accountID] = status == "active" && projection.Enabled
 	}
@@ -533,18 +533,18 @@ func (s *Store) meridianRuntimeMaterials(ctx context.Context, tx *sql.Tx, endpoi
 	for _, value := range storedValues {
 		protocolID, err := s.meridianSecretInTx(ctx, tx, value.secretID, meridianCredentialSecretContext(value.material.Credential.ID))
 		if err != nil {
-			return nil, nil, errors.New("center: stored Meridian credential is unavailable")
+			return nil, nil, errors.New("center: stored Glivela credential is unavailable")
 		}
 		value.material.ProtocolID = string(protocolID)
 		if value.hy2SecretID.Valid {
 			hy2Auth, secretErr := s.meridianSecretInTx(ctx, tx, value.hy2SecretID.String, meridianCredentialHY2SecretContext(value.material.Credential.ID))
 			if secretErr != nil {
-				return nil, nil, errors.New("center: stored Meridian Hysteria credential is unavailable")
+				return nil, nil, errors.New("center: stored Glivela Hysteria credential is unavailable")
 			}
 			value.material.HysteriaAuth = string(hy2Auth)
 		}
 		if value.material.Validate() != nil {
-			return nil, nil, errors.New("center: stored Meridian credential is invalid")
+			return nil, nil, errors.New("center: stored Glivela credential is invalid")
 		}
 		value.material.Credential.Enabled = value.material.Credential.Enabled && quotaEnabled[value.material.Credential.AccountID] && endpointEnabled
 		byID[value.material.Credential.ID] = value.material
@@ -596,7 +596,7 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		route, routeOK := credentials[routeID]
 		if !baseOK || !routeOK || base.Credential.AccountID != grant.AccountID || route.Credential.AccountID != grant.AccountID {
 			rows.Close()
-			return meridianRuntimeRoutes{}, errors.New("center: stored Meridian route credentials are incomplete")
+			return meridianRuntimeRoutes{}, errors.New("center: stored Glivela route credentials are incomplete")
 		}
 		grant.EntryID, grant.InboundTag = base.Credential.EntryID, inboundTag
 		grant.Base, grant.Route = base.Credential, route.Credential
@@ -613,7 +613,7 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		}
 		if inboundTag == "" {
 			rows.Close()
-			return meridianRuntimeRoutes{}, errors.New("center: Meridian routes require a VLESS REALITY entry")
+			return meridianRuntimeRoutes{}, errors.New("center: Glivela routes require a VLESS REALITY entry")
 		}
 		if len(peerJSON) == 0 {
 			result.blockedGrants[grant.ID] = meridianRoutePeerUnavailable
@@ -623,7 +623,7 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		var peer landing.PeerIdentity
 		if json.Unmarshal(peerJSON, &peer) != nil || (meridianruntime.Peer{EgressID: grant.EgressID, Identity: peer}).Validate() != nil {
 			rows.Close()
-			return meridianRuntimeRoutes{}, errors.New("center: stored Meridian route peer is invalid")
+			return meridianRuntimeRoutes{}, errors.New("center: stored Glivela route peer is invalid")
 		}
 		var source landing.PeerIdentity
 		if json.Unmarshal(sourceJSON, &source) != nil || !meridianLandingSourceAuthorized(appliedJSON, desiredJSON, grant.EgressID, serverRevision, source, peer) {
@@ -654,7 +654,7 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		}
 		if grant.Validate() != nil || !grant.Deployable() || projectedPeer.Validate() != nil {
 			rows.Close()
-			return meridianRuntimeRoutes{}, errors.New("center: stored Meridian route is invalid")
+			return meridianRuntimeRoutes{}, errors.New("center: stored Glivela route is invalid")
 		}
 		result.grants = append(result.grants, grant)
 		result.readyGrantIDs = append(result.readyGrantIDs, grant.ID)
@@ -699,13 +699,13 @@ func meridianAccountUsageInTx(ctx context.Context, tx *sql.Tx, accountID string)
 			return nil, err
 		}
 		if !baseline.Valid || !observed.Valid {
-			return nil, errors.New("center: Meridian usage watermark is missing")
+			return nil, errors.New("center: Glivela usage watermark is missing")
 		}
 		value.Baseline, value.Observed, value.Active = baseline.Int64, observed.Int64, active == 1
 		usage = append(usage, value)
 	}
 	if err := rows.Err(); err != nil || len(usage) == 0 {
-		return nil, errors.Join(errors.New("center: Meridian account has no usage authority"), err)
+		return nil, errors.Join(errors.New("center: Glivela account has no usage authority"), err)
 	}
 	return usage, nil
 }
@@ -721,7 +721,7 @@ func (s *Store) meridianSecretInTx(ctx context.Context, tx *sql.Tx, id, addition
 func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var command meridianruntime.Command
 	if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
-		return errors.New("center: stored Meridian runtime command is invalid")
+		return errors.New("center: stored Glivela runtime command is invalid")
 	}
 	if handled, err := s.completeSupersededMeridianRuntimeCommand(ctx, commit, tx, taskID, agentID, command.EndpointID, succeeded, taskError, rawResult); handled || err != nil {
 		return err
@@ -733,25 +733,25 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 		if projectionErr != nil {
 			succeeded, taskError = false, projectionErr.Error()
 		} else if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.MeridianRuntime == nil || envelope.MeridianRuntime.Validate(projection.task.Desired) != nil || envelope.MeridianRuntime.VerifyEgress(projection.task, observedAt) != nil || projection.task.RetireLegacy && !envelope.MeridianRuntime.LegacyRetired {
-			succeeded, taskError = false, "center: Agent returned an invalid Meridian runtime receipt"
+			succeeded, taskError = false, "center: Agent returned an invalid Glivela runtime receipt"
 		} else {
 			health, err := envelope.MeridianRuntime.PeerHealth(projection.task, observedAt)
 			if err != nil {
-				succeeded, taskError = false, "center: Agent returned invalid Meridian transport observations"
+				succeeded, taskError = false, "center: Agent returned invalid Glivela transport observations"
 			} else if projection.task.RetireLegacy {
 				for _, healthy := range health {
 					if !healthy {
-						succeeded, taskError = false, "center: Meridian retirement has no fresh verified transport evidence"
+						succeeded, taskError = false, "center: Glivela retirement has no fresh verified transport evidence"
 					}
 				}
 			}
 		}
 	}
 	if !succeeded && taskError == "" {
-		taskError = "Meridian runtime apply failed"
+		taskError = "Glivela runtime apply failed"
 	}
 	now := observedAt.Format(time.RFC3339Nano)
-	state, event, message := "succeeded", "succeeded", "Meridian runtime revision applied"
+	state, event, message := "succeeded", "succeeded", "Glivela runtime revision applied"
 	resultJSON := []byte(`{}`)
 	changedAccounts := []string{}
 	var endpointQuotaBefore, endpointQuotaChanged bool
@@ -766,7 +766,7 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 		}
 		snapshots, err := meridian.ParseXrayUserCounters(projection.materials, envelope.MeridianRuntime.Stats)
 		if err != nil {
-			succeeded, taskError = false, "center: Agent returned invalid Meridian usage counters"
+			succeeded, taskError = false, "center: Agent returned invalid Glivela usage counters"
 		} else if err := s.observeMeridianUsageInTx(ctx, tx, command.EndpointID, snapshots, now); err != nil {
 			return err
 		} else {
@@ -831,7 +831,7 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 		return err
 	}
 	if changed, _ := commandUpdate.RowsAffected(); changed != 1 {
-		return errors.New("center: Meridian runtime command changed before its receipt was committed")
+		return errors.New("center: Glivela runtime command changed before its receipt was committed")
 	}
 	revision := int64(1)
 	if projectionErr == nil {
@@ -884,18 +884,18 @@ func (s *Store) completeSupersededMeridianRuntimeCommand(ctx context.Context, co
 		return false, nil
 	}
 	if commandRevision < 1 || commandRevision > currentRevision || !meridian.ValidIdentity(expectedSHA) {
-		return false, errors.New("center: stored Meridian deployment revision is invalid")
+		return false, errors.New("center: stored Glivela deployment revision is invalid")
 	}
 
 	state, deploymentStatus := "succeeded", "ready"
-	message := "Meridian runtime revision superseded by newer desired state"
+	message := "Glivela runtime revision superseded by newer desired state"
 	terminalError := ""
 	resultJSON := []byte(`{}`)
 	if succeeded {
 		var envelope ApplicationTaskResult
 		if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.MeridianRuntime == nil || !meridianSupersededReceiptMatches(commandRevision, expectedSHA, *envelope.MeridianRuntime) {
 			state, deploymentStatus = "failed", "failed"
-			message = "center: Agent returned an invalid superseded Meridian runtime receipt"
+			message = "center: Agent returned an invalid superseded Glivela runtime receipt"
 			terminalError = message
 		} else {
 			resultJSON, _ = json.Marshal(envelope.MeridianRuntime.Receipt)
@@ -904,7 +904,7 @@ func (s *Store) completeSupersededMeridianRuntimeCommand(ctx context.Context, co
 		state, deploymentStatus = "failed", "failed"
 		message = applicationCommandFailureMessage(errors.New(taskError))
 		if message == "" {
-			message = "superseded Meridian runtime apply failed"
+			message = "superseded Glivela runtime apply failed"
 		}
 		terminalError = message
 	}
@@ -920,7 +920,7 @@ func (s *Store) completeSupersededMeridianRuntimeCommand(ctx context.Context, co
 		return true, err
 	}
 	if changed, _ := commandUpdate.RowsAffected(); changed != 1 {
-		return true, errors.New("center: superseded Meridian command changed before its receipt was committed")
+		return true, errors.New("center: superseded Glivela command changed before its receipt was committed")
 	}
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", commandRevision, state, message); err != nil {
 		return true, err
@@ -939,7 +939,7 @@ func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, endpoi
 	var endpointDelta int64
 	for _, snapshot := range snapshots {
 		if snapshot.UpBytes < 0 || snapshot.DownBytes < 0 {
-			return errors.New("center: Meridian usage counter is negative")
+			return errors.New("center: Glivela usage counter is negative")
 		}
 		var baseline, observed, rawUp, rawDown int64
 		err := tx.QueryRowContext(ctx, `SELECT baseline_bytes,observed_bytes,raw_up_bytes,raw_down_bytes FROM meridian_usage_watermarks WHERE credential_id=?`, snapshot.CredentialID).Scan(&baseline, &observed, &rawUp, &rawDown)
@@ -970,7 +970,7 @@ func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, endpoi
 		}
 		nextObserved := saturatingAdd(observed, saturatingAdd(upDelta, downDelta))
 		if nextObserved < baseline {
-			return errors.New("center: Meridian usage watermark overflowed its baseline")
+			return errors.New("center: Glivela usage watermark overflowed its baseline")
 		}
 		endpointDelta = saturatingAdd(endpointDelta, nextObserved-observed)
 		updated, err := tx.ExecContext(ctx, `UPDATE meridian_usage_watermarks SET observed_bytes=?,raw_up_bytes=?,raw_down_bytes=?,observed_at=? WHERE credential_id=?`, nextObserved, snapshot.UpBytes, snapshot.DownBytes, observedAt, snapshot.CredentialID)
@@ -978,7 +978,7 @@ func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, endpoi
 			return err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian usage watermark changed during observation")
+			return errors.New("center: Glivela usage watermark changed during observation")
 		}
 	}
 	if endpointDelta > 0 {
@@ -987,14 +987,14 @@ func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, endpoi
 			return err
 		}
 		if used < 0 {
-			return errors.New("center: stored Meridian entry traffic is invalid")
+			return errors.New("center: stored Glivela entry traffic is invalid")
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET used_bytes=?,updated_at=? WHERE id=?`, saturatingAdd(used, endpointDelta), observedAt, endpointID)
 		if err != nil {
 			return err
 		}
 		if changed, _ := result.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian entry changed during usage observation")
+			return errors.New("center: Glivela entry changed during usage observation")
 		}
 	}
 	return nil
@@ -1007,7 +1007,7 @@ func (s *Store) recordMeridianRuntimeObservation(ctx context.Context, tx *sql.Tx
 		JOIN applications application ON application.id=endpoint.application_id
 		WHERE application.node_id=? AND application.app_key=? AND application.status='running' AND endpoint.status<>'retired'`, agentID, meridianAppKey).Scan(&endpointID, &desiredRevision, &appliedRevision)
 	if errors.Is(err, sql.ErrNoRows) {
-		return errors.New("center: Agent reported a Meridian runtime without an owned endpoint")
+		return errors.New("center: Agent reported a Glivela runtime without an owned endpoint")
 	}
 	if err != nil {
 		return err
@@ -1017,10 +1017,10 @@ func (s *Store) recordMeridianRuntimeObservation(ctx context.Context, tx *sql.Tx
 	}
 	projection, err := s.buildMeridianRuntimeTask(ctx, tx, endpointID, agentID)
 	if err != nil || result.Validate(projection.task.Desired) != nil {
-		return errors.New("center: Agent reported a Meridian runtime that does not match desired state")
+		return errors.New("center: Agent reported a Glivela runtime that does not match desired state")
 	}
 	if _, err := result.PeerHealth(projection.task, now); err != nil {
-		return errors.New("center: Agent reported invalid Meridian transport observations")
+		return errors.New("center: Agent reported invalid Glivela transport observations")
 	}
 	before, err := s.meridianQuotaStatesInTx(ctx, tx, endpointID)
 	if err != nil {
@@ -1032,7 +1032,7 @@ func (s *Store) recordMeridianRuntimeObservation(ctx context.Context, tx *sql.Tx
 	}
 	snapshots, err := meridian.ParseXrayUserCounters(projection.materials, result.Stats)
 	if err != nil {
-		return errors.New("center: Agent reported invalid Meridian usage counters")
+		return errors.New("center: Agent reported invalid Glivela usage counters")
 	}
 	nowText := now.UTC().Format(time.RFC3339Nano)
 	if err := s.observeMeridianUsageInTx(ctx, tx, endpointID, snapshots, nowText); err != nil {
@@ -1058,7 +1058,7 @@ func (s *Store) recordMeridianRuntimeObservation(ctx context.Context, tx *sql.Tx
 			return err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian endpoint changed during runtime observation")
+			return errors.New("center: Glivela endpoint changed during runtime observation")
 		}
 		if err := recordMeridianRouteHealth(ctx, tx, endpointID, projection, result, now); err != nil {
 			return err
@@ -1097,7 +1097,7 @@ func (s *Store) markMeridianQuotaBoundaryChanged(ctx context.Context, tx *sql.Tx
 		}
 	}
 	if len(endpointIDs) == 0 {
-		return errors.New("center: Meridian quota boundary has no affected endpoint")
+		return errors.New("center: Glivela quota boundary has no affected endpoint")
 	}
 	orderedEndpointIDs := make([]string, 0, len(endpointIDs))
 	for affectedEndpointID := range endpointIDs {
@@ -1127,7 +1127,7 @@ func (s *Store) markMeridianQuotaBoundaryChanged(ctx context.Context, tx *sql.Tx
 			return err
 		}
 		if changed, _ := resultRow.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian quota boundary references an unavailable endpoint")
+			return errors.New("center: Glivela quota boundary references an unavailable endpoint")
 		}
 	}
 	return nil
@@ -1211,7 +1211,7 @@ func (s *Store) meridianQuotaStatesInTx(ctx context.Context, tx *sql.Tx, endpoin
 		}
 		projection, err := meridian.ProjectQuota(value.plan, usage)
 		if err != nil {
-			return nil, errors.New("center: stored Meridian quota is invalid")
+			return nil, errors.New("center: stored Glivela quota is invalid")
 		}
 		states[value.id] = projection.Enabled
 	}
@@ -1276,7 +1276,7 @@ func (s *Store) projectVerifiedMeridianRuntime(ctx context.Context, tx *sql.Tx, 
 		return err
 	}
 	if changed, _ := endpointUpdate.RowsAffected(); changed != 1 {
-		return errors.New("center: Meridian endpoint changed before its runtime receipt was committed")
+		return errors.New("center: Glivela endpoint changed before its runtime receipt was committed")
 	}
 	serviceUpdate, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,protocol='tcp',container_port=?,host_port=?,
 		app_protocol=?,observed_listen=?,status='ready',last_error='',updated_at=?
@@ -1285,14 +1285,14 @@ func (s *Store) projectVerifiedMeridianRuntime(ctx context.Context, tx *sql.Tx, 
 		return err
 	}
 	if changed, _ := serviceUpdate.RowsAffected(); changed != 1 {
-		return errors.New("center: Meridian service changed before its runtime receipt was committed")
+		return errors.New("center: Glivela service changed before its runtime receipt was committed")
 	}
 	deploymentUpdate, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET applied_revision=?,applied_sha256=?,status='ready',last_error='',updated_at=? WHERE endpoint_id=? AND command_id=? AND desired_revision=?`, revision, projection.task.Desired.ConfigSHA256, now, endpointID, taskID, revision)
 	if err != nil {
 		return err
 	}
 	if changed, _ := deploymentUpdate.RowsAffected(); changed != 1 {
-		return errors.New("center: Meridian deployment changed before its runtime receipt was committed")
+		return errors.New("center: Glivela deployment changed before its runtime receipt was committed")
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET applied_revision=desired_revision,
 		runtime_healthy=0,health_expires_unix_ms=0,status=CASE WHEN status='revoking' THEN 'revoked' ELSE status END,

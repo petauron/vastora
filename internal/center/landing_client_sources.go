@@ -137,7 +137,7 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 		var peer landing.PeerIdentity
 		if json.Unmarshal(raw, &peer) != nil || (meridianruntime.Peer{EgressID: entryID, Identity: peer}).Validate() != nil {
 			rows.Close()
-			return errors.Join(errLandingSourceReconciliation, errors.New("center: invalid Meridian grant source snapshot"))
+			return errors.Join(errLandingSourceReconciliation, errors.New("center: invalid Glivela grant source snapshot"))
 		}
 		allowed, recovering, err := s.reinstallLandingSourceAllowed(ctx, tx, entryID, endpointID, landingID, peer)
 		if err != nil {

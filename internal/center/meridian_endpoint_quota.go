@@ -15,7 +15,7 @@ func meridianEndpointQuotaEnabledInTx(ctx context.Context, tx *sql.Tx, endpointI
 		return false, err
 	}
 	if total < 0 || used < 0 {
-		return false, errors.New("center: stored Meridian entry traffic is invalid")
+		return false, errors.New("center: stored Glivela entry traffic is invalid")
 	}
 	return total == 0 || used < total, nil
 }
@@ -30,7 +30,7 @@ func (s *Store) markMeridianEndpointQuotaBoundaryChanged(ctx context.Context, tx
 		return err
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return errors.New("center: Meridian entry traffic boundary has no active endpoint")
+		return errors.New("center: Glivela entry traffic boundary has no active endpoint")
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,
 		status=CASE WHEN status IN ('revoking','revoked') THEN status ELSE 'pending' END,last_error='',updated_at=?
@@ -71,11 +71,11 @@ func (s *Store) resetDueMeridianEndpoints(ctx context.Context, tx *sql.Tx) error
 	}
 	for _, endpoint := range due {
 		if endpoint.resetDay < 1 || endpoint.resetDay > 31 {
-			return errors.New("center: stored Meridian entry reset day is invalid")
+			return errors.New("center: stored Glivela entry reset day is invalid")
 		}
 		location, err := time.LoadLocation(endpoint.timezone)
 		if err != nil {
-			return errors.New("center: stored Meridian entry timezone is invalid")
+			return errors.New("center: stored Glivela entry timezone is invalid")
 		}
 		wasEnabled, err := meridianEndpointQuotaEnabledInTx(ctx, tx, endpoint.id)
 		if err != nil {
@@ -93,7 +93,7 @@ func (s *Store) resetDueMeridianEndpoints(ctx context.Context, tx *sql.Tx) error
 			return err
 		}
 		if changed, _ := result.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian entry changed before its traffic reset")
+			return errors.New("center: Glivela entry changed before its traffic reset")
 		}
 		if !wasEnabled {
 			if err := s.markMeridianEndpointQuotaBoundaryChanged(ctx, tx, endpoint.id, nowText); err != nil {

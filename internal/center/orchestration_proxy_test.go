@@ -192,27 +192,27 @@ func TestMeridianSubscriptionIsServedByCenterWithoutAgentCommand(t *testing.T) {
 	}
 	serviceID, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center")
 	if err != nil || serviceID == "" {
-		t.Fatalf("Meridian subscription service = %q, err=%v", serviceID, err)
+		t.Fatalf("Glivela subscription service = %q, err=%v", serviceID, err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE sites SET domain_suffix='example.test' WHERE id=?`, testSiteID(t, store)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: serviceID, Kind: publicationPublic, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "wrong.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "dedicated public subscription workflow") {
-		t.Fatalf("generic Meridian publication error = %v", err)
+		t.Fatalf("generic Glivela publication error = %v", err)
 	}
 	command, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "meridian-center", GatewayNodeID: node.ID, Kind: publicationPublic, DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if command.Kind != meridianSubscriptionCommandKind || command.State != "succeeded" || command.PublicationID == "" {
-		t.Fatalf("Meridian subscription command = %#v", command)
+		t.Fatalf("Glivela subscription command = %#v", command)
 	}
 	var pending int
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE id=? AND state IN ('pending','running')`, command.ID).Scan(&pending); err != nil {
 		t.Fatal(err)
 	}
 	if pending != 0 {
-		t.Fatal("Meridian subscription publication queued an Agent command")
+		t.Fatal("Glivela subscription publication queued an Agent command")
 	}
 }
 
@@ -248,27 +248,27 @@ func TestMeridianSubscriptionHostMovesOnlyAfterPublicationStops(t *testing.T) {
 	}
 	firstServiceID, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center-a")
 	if err != nil || firstServiceID == "" {
-		t.Fatalf("first Meridian subscription service = %q, err=%v", firstServiceID, err)
+		t.Fatalf("first Glivela subscription service = %q, err=%v", firstServiceID, err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE sites SET domain_suffix='example.test' WHERE id=?`, siteID); err != nil {
 		t.Fatal(err)
 	}
 	command, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "meridian-center-a", GatewayNodeID: first.ID, Kind: publicationPublic, DNSProvider: "manual"})
 	if err != nil || command.PublicationID == "" {
-		t.Fatalf("create first Meridian subscription publication: %#v err=%v", command, err)
+		t.Fatalf("create first Glivela subscription publication: %#v err=%v", command, err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE settings SET value=? WHERE key=?`, `{"publicAddress":"203.0.113.72","bindAddress":"10.0.0.72"}`, setupGatewayBindingSetting); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center-b"); err == nil || !strings.Contains(err.Error(), "remove the active Meridian subscription entry") {
-		t.Fatalf("unsafe Meridian subscription host move error = %v", err)
+	if _, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center-b"); err == nil || !strings.Contains(err.Error(), "remove the active Glivela subscription entry") {
+		t.Fatalf("unsafe Glivela subscription host move error = %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE publications SET status='stopped' WHERE id=?`, command.PublicationID); err != nil {
 		t.Fatal(err)
 	}
 	secondServiceID, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center-b")
 	if err != nil || secondServiceID == "" || secondServiceID == firstServiceID {
-		t.Fatalf("moved Meridian subscription service = %q, err=%v", secondServiceID, err)
+		t.Fatalf("moved Glivela subscription service = %q, err=%v", secondServiceID, err)
 	}
 	var firstStatus, secondStatus string
 	if err := store.db.QueryRowContext(ctx, `SELECT status FROM services WHERE id=?`, firstServiceID).Scan(&firstStatus); err != nil {

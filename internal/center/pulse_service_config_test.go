@@ -44,7 +44,7 @@ func TestPulseServiceRejectsInvalidAuthenticationChange(t *testing.T) {
 		`{"setup_token":"too-short"}`,
 	} {
 		if _, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: service.ID, AppKey: pulseAppKey, Operation: "configure", Config: json.RawMessage(config)}); err == nil {
-			t.Fatal("invalid Pulse authentication configuration was accepted")
+			t.Fatal("invalid Senulun authentication configuration was accepted")
 		}
 	}
 }
@@ -61,12 +61,12 @@ func TestPulseUpgradeFillsMissingLegacyHostSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if created.OneTimeCredentials == nil || len(created.OneTimeCredentials.SetupToken) < 32 || !created.OneTimeCredentialsAvailable {
-		t.Fatal("generated Pulse setup token was not delivered once")
+		t.Fatal("generated Senulun setup token was not delivered once")
 	}
 	task := claimTask(t, store, service)
 	config, secrets, err := pulse.DecodeServiceConfig(task.Config, task.Secrets)
 	if err != nil || config.PublicURL != "https://pulse.private.example.com" || secrets.SetupToken != created.OneTimeCredentials.SetupToken {
-		t.Fatal("legacy Pulse upgrade did not use its ready HTTPS entry and generated token")
+		t.Fatal("legacy Senulun upgrade did not use its ready HTTPS entry and generated token")
 	}
 	if strings.Contains(string(task.Config), secrets.SetupToken) {
 		t.Fatal("setup token leaked into public deployment configuration")

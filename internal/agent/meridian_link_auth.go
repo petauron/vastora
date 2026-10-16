@@ -12,7 +12,7 @@ import (
 )
 
 func validateMeridianLinkAuth(auth *nodediagnostics.LinkBandwidthAuth, server bool) error {
-	invalid := errors.New("agent: missing or invalid Meridian probe authentication")
+	invalid := errors.New("agent: missing or invalid Glivela probe authentication")
 	if auth == nil || len(auth.KeyPEM) > 4096 {
 		return invalid
 	}

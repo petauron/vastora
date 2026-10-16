@@ -117,7 +117,7 @@ func (s *Store) QueueAgentReinstallPreparation(ctx context.Context, agentID, adm
 	}
 	index := slices.IndexFunc(plan.Applications, func(app AgentReinstallApplication) bool { return app.ApplicationID == input.ApplicationID })
 	if index < 0 || plan.Applications[index].AppKey != meridianAppKey || plan.Applications[index].Recovery != "rebuild_configuration" {
-		return result, errors.New("center: only a reviewed Meridian package can be prepared")
+		return result, errors.New("center: only a reviewed Glivela package can be prepared")
 	}
 	source := plan.Applications[index]
 	var sourceTask AgentTask
@@ -130,14 +130,14 @@ func (s *Store) QueueAgentReinstallPreparation(ctx context.Context, agentID, adm
 		return result, err
 	}
 	if json.Unmarshal(manifest, &sourceTask.Manifest) != nil || catalog.ValidateApp(sourceTask.Manifest) != nil || sourceTask.Manifest.ID != "meridian" || sourceTask.Manifest.Version != version || secretID.Valid || registryID.Valid || string(config) != "{}" {
-		return result, errors.New("center: saved Meridian package or configuration requires review")
+		return result, errors.New("center: saved Glivela package or configuration requires review")
 	}
 	if err := readReinstallPackageAuthorization(ctx, tx, source.DeploymentID, &sourceTask); err != nil {
 		return result, err
 	}
 	address := plan.NetworkReview.Approval.Profile.ServiceAddress
 	if !networking.IsPrivateServiceAddress(address) {
-		return result, errors.New("center: Meridian requires an approved private service address")
+		return result, errors.New("center: Glivela requires an approved private service address")
 	}
 	sourcePlan := AgentReinstallPlan{AgentID: agentID}
 	sourceRevision, err := readReinstallApplications(ctx, tx, &sourcePlan)
@@ -186,7 +186,7 @@ func (s *Store) QueueAgentReinstallPreparation(ctx context.Context, agentID, adm
 	if err = s.recordReinstallPreparationProgress(ctx, tx, id); err != nil {
 		return result, err
 	}
-	if err = s.recordTaskEvent(ctx, tx, id, agentID, "application.apply", applicationTaskRevision, "queued", "Prepare the reviewed Meridian package; business restoration remains pending"); err != nil {
+	if err = s.recordTaskEvent(ctx, tx, id, agentID, "application.apply", applicationTaskRevision, "queued", "Prepare the reviewed Glivela package; business restoration remains pending"); err != nil {
 		return result, err
 	}
 	if err = tx.Commit(); err != nil {

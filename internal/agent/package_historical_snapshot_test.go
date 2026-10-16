@@ -96,5 +96,5 @@ func TestPackageHistoricalPulseSnapshot(t *testing.T) {
 	if before.Container.ID != after.Container.ID || before.Container.State.StartedAt != after.Container.State.StartedAt || !reflect.DeepEqual(before.Container.Mounts, after.Container.Mounts) || !reflect.DeepEqual(before.Container.Config, after.Container.Config) || !reflect.DeepEqual(before.Container.HostConfig, after.Container.HostConfig) {
 		t.Fatal("historical runtime changed during adoption")
 	}
-	t.Log("historical Pulse adoption retained container identity, start time, mounts and configuration; receipt written only to temporary directory")
+	t.Log("historical Senulun adoption retained container identity, start time, mounts and configuration; receipt written only to temporary directory")
 }

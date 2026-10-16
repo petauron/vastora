@@ -779,7 +779,7 @@ func TestMeridianArtifactHY2DetectionControlsUDP443Publication(t *testing.T) {
 		t.Fatalf("VLESS-only artifact = %v, err=%v", hasHY2, err)
 	}
 	if _, err := meridianArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"hysteria","port":10443}]}`)); err == nil {
-		t.Fatal("Meridian accepted Hysteria away from UDP 443")
+		t.Fatal("Glivela accepted Hysteria away from UDP 443")
 	}
 }
 

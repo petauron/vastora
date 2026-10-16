@@ -169,14 +169,14 @@ func (e ApplicationExecutor) runMeridianIperfContainer(parent context.Context, t
 		return nil, ctx.Err()
 	}
 	if readErr != nil || output.buffer.Len() > nodediagnostics.MaxResultBytes {
-		return nil, errors.New("agent: invalid Meridian iPerf output")
+		return nil, errors.New("agent: invalid Glivela iPerf output")
 	}
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case result := <-exited:
 		if result.Error != nil || result.StatusCode != 0 {
-			return nil, errors.New("agent: Meridian iPerf failed")
+			return nil, errors.New("agent: Glivela iPerf failed")
 		}
 	}
 	return output.buffer.Bytes(), nil

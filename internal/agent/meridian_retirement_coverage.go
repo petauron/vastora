@@ -37,7 +37,7 @@ func meridianLegacyChildCoverage(grants []landing.ClientGrant, config []byte) er
 		} `json:"inbounds"`
 	}
 	if json.Unmarshal(config, &rendered) != nil {
-		return errors.New("agent: Meridian artifact cannot prove legacy child coverage")
+		return errors.New("agent: Glivela artifact cannot prove legacy child coverage")
 	}
 	identities := map[string]string{}
 	for _, inbound := range rendered.Inbounds {
@@ -46,7 +46,7 @@ func meridianLegacyChildCoverage(grants []landing.ClientGrant, config []byte) er
 		}
 		for _, client := range inbound.Settings.Clients {
 			if _, duplicate := identities[client.Email]; duplicate {
-				return errors.New("agent: Meridian artifact has duplicate child users")
+				return errors.New("agent: Glivela artifact has duplicate child users")
 			}
 			identities[client.Email] = landing.Identity(client.ID)
 		}
@@ -56,7 +56,7 @@ func meridianLegacyChildCoverage(grants []landing.ClientGrant, config []byte) er
 			continue
 		}
 		if identities[meridian.RouteUser(grant.ID)] != grant.FixedIdentity {
-			return errors.New("agent: legacy fixed child is missing from Meridian; retirement requires explicit reconciliation")
+			return errors.New("agent: legacy fixed child is missing from Glivela; retirement requires explicit reconciliation")
 		}
 	}
 	return nil

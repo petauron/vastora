@@ -155,6 +155,6 @@ func TestLegacyControllerObservationDoesNotOverwriteMigratedMeridianWorker(t *te
 		t.Fatal(err)
 	}
 	if protocol != meridianEntryProtocol {
-		t.Fatalf("legacy controller overwrote migrated Meridian service protocol: %s", protocol)
+		t.Fatalf("legacy controller overwrote migrated Glivela service protocol: %s", protocol)
 	}
 }

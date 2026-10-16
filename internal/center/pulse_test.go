@@ -109,7 +109,7 @@ func TestPulseEnrollmentPrivateHTTPSAndNativeInstall(t *testing.T) {
 		t.Fatal("configuration did not preserve identity, retain omitted options, and clear explicit empty region")
 	}
 	if strings.Contains(string(changedTask.Config), `"interval_seconds"`) {
-		t.Fatal("configuration changes must leave the metrics interval to Pulse")
+		t.Fatal("configuration changes must leave the metrics interval to Senulun")
 	}
 }
 

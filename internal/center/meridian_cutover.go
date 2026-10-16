@@ -32,7 +32,7 @@ type MeridianCutoverView struct {
 	Complete                      bool   `json:"complete"`
 }
 
-var errMeridianOwnsLegacyLanding = errors.New("center: Meridian authority owns landing configuration")
+var errMeridianOwnsLegacyLanding = errors.New("center: Glivela authority owns landing configuration")
 
 func meridianOwnsLegacyLanding(ctx context.Context, queryer networkQueryer) (bool, error) {
 	var owns bool
@@ -54,10 +54,10 @@ func (s *Store) MeridianCutover(ctx context.Context) (MeridianCutoverView, error
 		&view.LastError, &view.UpdatedAt, &view.SwitchedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return MeridianCutoverView{}, errors.New("center: Meridian cutover state is unavailable")
+		return MeridianCutoverView{}, errors.New("center: Glivela cutover state is unavailable")
 	}
 	if err != nil {
-		return MeridianCutoverView{}, fmt.Errorf("center: read Meridian cutover state: %w", err)
+		return MeridianCutoverView{}, fmt.Errorf("center: read Glivela cutover state: %w", err)
 	}
 	if legacyID.Valid {
 		view.LegacyControllerApplicationID = legacyID.String
@@ -84,12 +84,12 @@ func (s *Store) MeridianCutover(ctx context.Context) (MeridianCutoverView, error
 		&view.ImportedAccounts, &view.ImportedCredentials, &view.ReadyEndpoints,
 		&view.RetiredEndpoints, &view.ReadyRoutes, &view.BlockedRoutes, &view.PendingDeployments, &view.FailedDeployments,
 	); err != nil {
-		return MeridianCutoverView{}, fmt.Errorf("center: summarize Meridian cutover: %w", err)
+		return MeridianCutoverView{}, fmt.Errorf("center: summarize Glivela cutover: %w", err)
 	}
 	if view.State == "publish" && view.LastError == "" {
 		view.LastError, err = meridianCutoverPublicationIssue(ctx, s.db)
 		if err != nil {
-			return MeridianCutoverView{}, fmt.Errorf("center: inspect Meridian subscription publication: %w", err)
+			return MeridianCutoverView{}, fmt.Errorf("center: inspect Glivela subscription publication: %w", err)
 		}
 	}
 	view.Complete = view.State == "complete" && view.SubscriptionAuthority == "meridian" &&

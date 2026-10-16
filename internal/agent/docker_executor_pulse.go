@@ -34,30 +34,30 @@ func pulseServiceCLI(ctx context.Context, docker *client.Client, containerID str
 	defer cancel()
 	execution, err := docker.ExecCreate(ctx, containerID, client.ExecCreateOptions{Cmd: append([]string{"/usr/local/bin/pulse-service"}, args...), AttachStdout: true, AttachStderr: true, AttachStdin: input != nil})
 	if err != nil {
-		return nil, errors.New("agent: Pulse administration could not start")
+		return nil, errors.New("agent: Senulun administration could not start")
 	}
 	attached, err := docker.ExecAttach(ctx, execution.ID, client.ExecAttachOptions{})
 	if err != nil {
-		return nil, errors.New("agent: Pulse administration connection failed")
+		return nil, errors.New("agent: Senulun administration connection failed")
 	}
 	defer attached.Close()
 	stopClose := context.AfterFunc(ctx, func() { attached.Close() })
 	defer stopClose()
 	if input != nil {
 		if _, err := io.Copy(attached.Conn, input); err != nil {
-			return nil, errors.New("agent: Pulse administration input failed")
+			return nil, errors.New("agent: Senulun administration input failed")
 		}
 		if err := attached.CloseWrite(); err != nil {
-			return nil, errors.New("agent: Pulse administration input failed")
+			return nil, errors.New("agent: Senulun administration input failed")
 		}
 	}
 	var stdout bytes.Buffer
 	if _, err := stdcopy.StdCopy(&stdout, io.Discard, io.LimitReader(attached.Reader, 64<<10)); err != nil {
-		return nil, errors.New("agent: Pulse administration response failed")
+		return nil, errors.New("agent: Senulun administration response failed")
 	}
 	status, err := docker.ExecInspect(ctx, execution.ID, client.ExecInspectOptions{})
 	if err != nil || status.Running || status.ExitCode != 0 {
-		return nil, errors.New("agent: Pulse administration failed")
+		return nil, errors.New("agent: Senulun administration failed")
 	}
 	return stdout.Bytes(), nil
 }
@@ -92,7 +92,7 @@ func inspectPulseEnrollments(ctx context.Context, docker *client.Client, contain
 		return result, err
 	}
 	if !strings.Contains(string(help), "enrollment inspect ID") {
-		return result, errors.New("agent: installed Pulse does not support enrollment inspection; upgrade the managed service explicitly")
+		return result, errors.New("agent: installed Senulun does not support enrollment inspection; upgrade the managed service explicitly")
 	}
 	for _, id := range task.EnrollmentIDs {
 		output, err := pulseServiceCLI(ctx, docker, containerID, []string{"enrollment", "inspect", id}, nil)
@@ -103,11 +103,11 @@ func inspectPulseEnrollments(ctx context.Context, docker *client.Client, contain
 		decoder := json.NewDecoder(bytes.NewReader(output))
 		decoder.DisallowUnknownFields()
 		if decoder.Decode(&record) != nil || record.ID != id {
-			return pulse.InspectionResult{}, errors.New("agent: invalid Pulse inspection response")
+			return pulse.InspectionResult{}, errors.New("agent: invalid Senulun inspection response")
 		}
 		var trailing any
 		if decoder.Decode(&trailing) != io.EOF {
-			return pulse.InspectionResult{}, errors.New("agent: invalid Pulse inspection response")
+			return pulse.InspectionResult{}, errors.New("agent: invalid Senulun inspection response")
 		}
 		result.Records = append(result.Records, record)
 	}
@@ -119,7 +119,7 @@ func inspectPulseEnrollments(ctx context.Context, docker *client.Client, contain
 
 func (e ApplicationExecutor) EnrollPulse(ctx context.Context, task pulse.EnrollmentTask) (pulse.EnrollmentResult, error) {
 	if task.ApplicationID == "" || task.DeploymentID == "" {
-		return pulse.EnrollmentResult{}, errors.New("agent: invalid Pulse enrollment task")
+		return pulse.EnrollmentResult{}, errors.New("agent: invalid Senulun enrollment task")
 	}
 	socket := e.DockerSocket
 	if socket == "" {
@@ -132,18 +132,18 @@ func (e ApplicationExecutor) EnrollPulse(ctx context.Context, task pulse.Enrollm
 	defer docker.Close()
 	receipt, err := e.ApplicationResources(task.ApplicationID)
 	if err != nil || receipt.AppKey != pulse.ServiceKey || receipt.State != "ready" {
-		return pulse.EnrollmentResult{}, errors.New("agent: Pulse package ownership receipt unavailable")
+		return pulse.EnrollmentResult{}, errors.New("agent: Senulun package ownership receipt unavailable")
 	}
 	resource := resourceNamed(receipt, "container", "pulse")
 	if resource == nil {
-		return pulse.EnrollmentResult{}, errors.New("agent: Pulse container receipt unavailable")
+		return pulse.EnrollmentResult{}, errors.New("agent: Senulun container receipt unavailable")
 	}
 	current, exists, err := inspectOwnedApplicationContainer(ctx, docker, resource.Name, pulse.ServiceKey, resource.Component, task.ApplicationID, anyApplicationDeployment)
 	if err != nil {
 		return pulse.EnrollmentResult{}, err
 	}
 	if !exists || current.Container.ID != resource.ID {
-		return pulse.EnrollmentResult{}, errors.New("agent: managed Pulse service is unavailable")
+		return pulse.EnrollmentResult{}, errors.New("agent: managed Senulun service is unavailable")
 	}
 	output, err := pulseServiceCLI(ctx, docker, resource.ID, []string{"enrollment", "create", "--ttl-seconds", "3600"}, nil)
 	if err != nil {
@@ -151,7 +151,7 @@ func (e ApplicationExecutor) EnrollPulse(ctx context.Context, task pulse.Enrollm
 	}
 	var result pulse.EnrollmentResult
 	if json.Unmarshal(output, &result) != nil || result.ID == "" || len(result.Token) < 16 || len(result.Token) > 512 || result.ExpiresAtUnixMS <= time.Now().UnixMilli() {
-		return pulse.EnrollmentResult{}, errors.New("agent: invalid Pulse enrollment response")
+		return pulse.EnrollmentResult{}, errors.New("agent: invalid Senulun enrollment response")
 	}
 	return result, nil
 }
@@ -175,7 +175,7 @@ func (e ApplicationExecutor) RotatePulse(ctx context.Context, task pulse.Rotatio
 	defer docker.Close()
 	containerID, err := e.pulseServiceContainerID(ctx, docker, task.Inspection.ApplicationID, task.Inspection.DeploymentID)
 	if err != nil {
-		return pulse.RotationResult{}, errors.New("agent: reviewed Pulse service is unavailable")
+		return pulse.RotationResult{}, errors.New("agent: reviewed Senulun service is unavailable")
 	}
 	// Pin every read and the write to this container ID, even if the managed name
 	// is reassigned while the operation is running.
@@ -185,15 +185,15 @@ func (e ApplicationExecutor) RotatePulse(ctx context.Context, task pulse.Rotatio
 	}
 	id, err := records.OriginalNodeID(task.Inspection)
 	if err != nil || id != task.NodeID {
-		return pulse.RotationResult{}, errors.New("agent: original Pulse identity changed before credential rotation")
+		return pulse.RotationResult{}, errors.New("agent: original Senulun identity changed before credential rotation")
 	}
 	output, err := pulseServiceCLI(ctx, docker, containerID, []string{"node", "rotate", task.NodeID}, nil)
 	if err != nil {
-		return pulse.RotationResult{}, uncertainTaskOutcome(errors.New("agent: Pulse credential rotation outcome needs inspection"))
+		return pulse.RotationResult{}, uncertainTaskOutcome(errors.New("agent: Senulun credential rotation outcome needs inspection"))
 	}
 	result := pulse.RotationResult{NodeID: task.NodeID, Token: strings.TrimSpace(string(output))}
 	if result.Validate(task) != nil {
-		return pulse.RotationResult{}, uncertainTaskOutcome(errors.New("agent: Pulse credential rotation response needs inspection"))
+		return pulse.RotationResult{}, uncertainTaskOutcome(errors.New("agent: Senulun credential rotation response needs inspection"))
 	}
 	return result, nil
 }
@@ -216,24 +216,24 @@ func (e ApplicationExecutor) InspectPulseReporting(ctx context.Context, task pul
 	defer docker.Close()
 	containerID, err := e.pulseServiceContainerID(ctx, docker, task.ApplicationID, task.DeploymentID)
 	if err != nil {
-		return result, errors.New("agent: reviewed Pulse service is unavailable")
+		return result, errors.New("agent: reviewed Senulun service is unavailable")
 	}
 	help, err := pulseServiceCLI(ctx, docker, containerID, []string{"--help"}, nil)
 	if err != nil || !strings.Contains(string(help), "node reporting ID") {
-		return result, errors.New("agent: Pulse service does not support reporting inspection")
+		return result, errors.New("agent: Senulun service does not support reporting inspection")
 	}
 	output, err := pulseServiceCLI(ctx, docker, containerID, []string{"node", "reporting", task.Credentials.NodeID}, strings.NewReader(task.Credentials.Token+"\n"))
 	if err != nil {
-		return result, errors.New("agent: Pulse reporting inspection failed")
+		return result, errors.New("agent: Senulun reporting inspection failed")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(output))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&result) != nil || result.Validate(task) != nil {
-		return pulse.ReportingResult{}, errors.New("agent: invalid Pulse reporting response")
+		return pulse.ReportingResult{}, errors.New("agent: invalid Senulun reporting response")
 	}
 	var trailing any
 	if decoder.Decode(&trailing) != io.EOF {
-		return pulse.ReportingResult{}, errors.New("agent: invalid Pulse reporting response")
+		return pulse.ReportingResult{}, errors.New("agent: invalid Senulun reporting response")
 	}
 	return result, nil
 }
@@ -242,18 +242,18 @@ func (e ApplicationExecutor) InspectPulseReporting(ctx context.Context, task pul
 func (e ApplicationExecutor) pulseServiceContainerID(ctx context.Context, docker *client.Client, applicationID, deploymentID string) (string, error) {
 	receipt, err := e.ApplicationResources(applicationID)
 	if err != nil || receipt.AppKey != pulse.ServiceKey || receipt.State != "ready" {
-		return "", errors.New("agent: Pulse package ownership receipt unavailable")
+		return "", errors.New("agent: Senulun package ownership receipt unavailable")
 	}
 	resource := resourceNamed(receipt, "container", "pulse")
 	if resource == nil {
-		return "", errors.New("agent: Pulse container receipt unavailable")
+		return "", errors.New("agent: Senulun container receipt unavailable")
 	}
 	current, exists, err := inspectOwnedApplicationContainer(ctx, docker, resource.Name, pulse.ServiceKey, resource.Component, applicationID, deploymentID)
 	if err != nil {
 		return "", err
 	}
 	if !exists || current.Container.ID != resource.ID {
-		return "", errors.New("agent: reviewed Pulse service is unavailable")
+		return "", errors.New("agent: reviewed Senulun service is unavailable")
 	}
 	return resource.ID, nil
 }

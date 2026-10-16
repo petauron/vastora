@@ -161,11 +161,11 @@ func TestReplaceMeridianPendingStateRequiresExplicitNewerCenterRevision(t *testi
 		t.Fatal(err)
 	}
 	if replaced.Pending == nil || replaced.Pending.Revision != desired.Revision || replaced.Pending.ConfigSHA256 != desired.ConfigSHA256 || replaced.Applied == nil || replaced.Applied.Revision != applied.Revision {
-		t.Fatalf("replaced Meridian state=%#v", replaced)
+		t.Fatalf("replaced Glivela state=%#v", replaced)
 	}
 	persisted, err := store.loadMeridianRuntimeState(ctx)
 	if err != nil || persisted.Pending == nil || persisted.Pending.Revision != desired.Revision {
-		t.Fatalf("persisted Meridian state=%#v err=%v", persisted, err)
+		t.Fatalf("persisted Glivela state=%#v err=%v", persisted, err)
 	}
 	staleTask := task
 	staleTask.Desired = meridianRecoveryArtifact(1, `{"revision":"stale"}`)
@@ -203,6 +203,6 @@ func TestCompletedMeridianReplacementRemovesOnlyStoppedOwnedResidue(t *testing.T
 		t.Fatalf("verified legacy residue was retained: %v", err)
 	}
 	if current, err := engine.resolve(meridianXrayContainer); err != nil || !current.running {
-		t.Fatalf("current Meridian runtime changed: %#v err=%v", current, err)
+		t.Fatalf("current Glivela runtime changed: %#v err=%v", current, err)
 	}
 }

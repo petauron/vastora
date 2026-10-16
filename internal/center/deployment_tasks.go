@@ -807,7 +807,7 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 		}
 	}
 	if restoredMonitor != nil && succeeded && (taskResult.PulseRestored == nil || taskResult.PulseRestored.NodeID != restoredMonitor.PulseRestore.NodeID || len(taskResult.Services) != 0) {
-		return "", nil, errors.New("center: restored Pulse collector did not confirm the original monitoring identity")
+		return "", nil, errors.New("center: restored Senulun collector did not confirm the original monitoring identity")
 	}
 	if preparation && len(taskResult.GeneratedSecrets) != 0 {
 		return "", nil, errors.New("center: package preparation cannot change application credentials")

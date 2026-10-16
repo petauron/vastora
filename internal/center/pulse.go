@@ -18,13 +18,13 @@ const pulseAgentAppKey = pulse.AgentKey
 // Older Pulse installations have no host settings to retain. Fill only
 // absent values; explicit updates and already stored secrets remain intact.
 func (s *Store) withPulseHostDefaults(ctx context.Context, agentID, operation string, raw []byte) ([]byte, string, error) {
-	values, err := decodeJSONObject(raw, "center: Pulse configuration must be a JSON object")
+	values, err := decodeJSONObject(raw, "center: Senulun configuration must be a JSON object")
 	if err != nil {
 		return nil, "", err
 	}
 	var publicURL string
 	if field, exists := values["public_url"]; exists && json.Unmarshal(field, &publicURL) != nil {
-		return nil, "", errors.New("center: Pulse dashboard HTTPS address is invalid")
+		return nil, "", errors.New("center: Senulun dashboard HTTPS address is invalid")
 	}
 	if strings.TrimSpace(publicURL) == "" && operation == "upgrade" {
 		var hostname string
@@ -36,7 +36,7 @@ func (s *Store) withPulseHostDefaults(ctx context.Context, agentID, operation st
 			ORDER BY CASE p.kind WHEN 'cloudflare_tunnel' THEN 0 WHEN 'public_direct' THEN 1
 				WHEN 'headscale_gateway' THEN 2 WHEN 'lan_gateway' THEN 3 ELSE 4 END, p.updated_at DESC LIMIT 1`, agentID, pulseAppKey).Scan(&hostname)
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, "", errors.New("center: add a ready Pulse dashboard HTTPS access point before upgrading")
+			return nil, "", errors.New("center: add a ready Senulun dashboard HTTPS access point before upgrading")
 		}
 		if err != nil {
 			return nil, "", err
@@ -46,7 +46,7 @@ func (s *Store) withPulseHostDefaults(ctx context.Context, agentID, operation st
 	}
 	var setupToken string
 	if field, exists := values["setup_token"]; exists && json.Unmarshal(field, &setupToken) != nil {
-		return nil, "", errors.New("center: Pulse administrator setup token is invalid")
+		return nil, "", errors.New("center: Senulun administrator setup token is invalid")
 	}
 	generated := ""
 	if setupToken == "" && (operation == "install" || operation == "upgrade") {
@@ -72,7 +72,7 @@ func (s *Store) validatePulseDeployment(ctx context.Context, request DeploymentR
 			return err
 		}
 		if pending != 0 {
-			return errors.New("center: wait for Pulse collector enrollment before changing the monitoring service")
+			return errors.New("center: wait for Senulun collector enrollment before changing the monitoring service")
 		}
 	}
 	key := pulseAppKey
@@ -92,10 +92,10 @@ func (s *Store) validatePulseDeployment(ctx context.Context, request DeploymentR
 		return err
 	}
 	if count > 0 && request.Operation == "install" {
-		return errors.New("center: a global Pulse monitoring service already exists")
+		return errors.New("center: a global Senulun monitoring service already exists")
 	}
 	if count > 0 {
-		return errors.New("center: remove Pulse collectors before uninstalling the monitoring service")
+		return errors.New("center: remove Senulun collectors before uninstalling the monitoring service")
 	}
 	return nil
 }
@@ -103,7 +103,7 @@ func (s *Store) validatePulseDeployment(ctx context.Context, request DeploymentR
 func (s *Store) pulseAgentConfig(ctx context.Context, nodeID string, options []byte) ([]byte, error) {
 	var config pulse.AgentConfig
 	if json.Unmarshal(options, &config) != nil {
-		return nil, errors.New("center: invalid Pulse collector options")
+		return nil, errors.New("center: invalid Senulun collector options")
 	}
 	var hostname string
 	err := s.db.QueryRowContext(ctx, `SELECT a.id, p.hostname FROM applications a
@@ -113,7 +113,7 @@ func (s *Store) pulseAgentConfig(ctx context.Context, nodeID string, options []b
 		AND p.kind IN ('headscale_gateway','lan_gateway') AND p.status = 'ready' AND p.tls_enabled = 1
 		ORDER BY CASE p.kind WHEN 'headscale_gateway' THEN 0 ELSE 1 END, p.created_at LIMIT 1`, pulseAppKey).Scan(&config.ServiceApplicationID, &hostname)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errors.New("center: add a private HTTPS access point to the Pulse monitoring service first")
+		return nil, errors.New("center: add a private HTTPS access point to the Senulun monitoring service first")
 	}
 	if err != nil {
 		return nil, err
@@ -131,11 +131,11 @@ func (s *Store) pulseAgentConfig(ctx context.Context, nodeID string, options []b
 func (s *Store) queuePulseEnrollment(ctx context.Context, tx *sql.Tx, deployment DeploymentView, configJSON []byte, now time.Time) error {
 	var config pulse.AgentConfig
 	if json.Unmarshal(configJSON, &config) != nil || config.Validate() != nil {
-		return errors.New("center: invalid Pulse enrollment configuration")
+		return errors.New("center: invalid Senulun enrollment configuration")
 	}
 	var serviceAgentID string
 	if err := tx.QueryRowContext(ctx, `SELECT node_id FROM applications WHERE id = ? AND app_key = ? AND status = 'running'`, config.ServiceApplicationID, pulseAppKey).Scan(&serviceAgentID); err != nil {
-		return errors.New("center: Pulse monitoring service is unavailable")
+		return errors.New("center: Senulun monitoring service is unavailable")
 	}
 	id, err := randomToken(18)
 	if err != nil {
@@ -149,7 +149,7 @@ func (s *Store) queuePulseEnrollment(ctx context.Context, tx *sql.Tx, deployment
 	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, config.ServiceApplicationID, serviceAgentID, deployment.AgentID, pulse.EnrollmentKind, input, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	return s.recordTaskEvent(ctx, tx, id, serviceAgentID, "application.command", 1, "queued", "Prepare Pulse collector enrollment")
+	return s.recordTaskEvent(ctx, tx, id, serviceAgentID, "application.command", 1, "queued", "Prepare Senulun collector enrollment")
 }
 
 func (s *Store) completePulseEnrollment(ctx context.Context, commit projectionCommit, tx *sql.Tx, commandID, agentID string, inputJSON []byte, succeeded bool, rawResult json.RawMessage) error {
@@ -158,7 +158,7 @@ func (s *Store) completePulseEnrollment(ctx context.Context, commit projectionCo
 		Enrollment *pulse.EnrollmentResult `json:"pulseEnrollment"`
 	}
 	if json.Unmarshal(inputJSON, &input) != nil {
-		return errors.New("center: invalid Pulse enrollment task")
+		return errors.New("center: invalid Senulun enrollment task")
 	}
 	if json.Unmarshal(rawResult, &result) != nil || result.Enrollment == nil || result.Enrollment.ID == "" || len(result.Enrollment.Token) < 16 || len(result.Enrollment.Token) > 512 || result.Enrollment.ExpiresAtUnixMS <= s.now().UnixMilli() {
 		succeeded = false
@@ -168,7 +168,7 @@ func (s *Store) completePulseEnrollment(ctx context.Context, commit projectionCo
 		return err
 	}
 	if state != "pending" {
-		return errors.New("center: Pulse collector installation is no longer pending")
+		return errors.New("center: Senulun collector installation is no longer pending")
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	commandState, message := "succeeded", ""
@@ -182,11 +182,11 @@ func (s *Store) completePulseEnrollment(ctx context.Context, commit projectionCo
 		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET secret_id = ?, updated_at = ? WHERE id = ?`, secretID, now, input.DeploymentID); err != nil {
 			return err
 		}
-		if err := s.recordTaskEvent(ctx, tx, input.DeploymentID, targetAgentID, "application.apply", 1, "queued", "Pulse collector is ready to install"); err != nil {
+		if err := s.recordTaskEvent(ctx, tx, input.DeploymentID, targetAgentID, "application.apply", 1, "queued", "Senulun collector is ready to install"); err != nil {
 			return err
 		}
 	} else {
-		commandState, message = "failed", "Pulse enrollment could not be prepared. Retry installation."
+		commandState, message = "failed", "Senulun enrollment could not be prepared. Retry installation."
 		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET state = 'failed', error = ?, updated_at = ? WHERE id = ?`, message, now, input.DeploymentID); err != nil {
 			return err
 		}

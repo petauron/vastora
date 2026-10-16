@@ -101,7 +101,7 @@ func TestXrayConfigurationRecoveryFindsLegacyWorkerDuringMeridianCutover(t *test
 		t.Fatal(err)
 	}
 	if err := store.StartXrayConfigurationInspection(ctx, nodeID); err != nil {
-		t.Fatalf("legacy worker inspection was hidden by its Meridian application key: %v", err)
+		t.Fatalf("legacy worker inspection was hidden by its Glivela application key: %v", err)
 	}
 	view, err := store.XrayConfigurationRecovery(ctx, nodeID)
 	if err != nil || view.ApplicationID != "snapshot-shared-app" || view.State != "pending" {

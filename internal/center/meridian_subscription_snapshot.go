@@ -27,13 +27,13 @@ func meridianSubscriptionSnapshotSecretContext(accountID string) string {
 
 func validateMeridianSubscriptionSnapshot(value meridianAppliedSubscriptionSnapshot) error {
 	if !meridian.ValidIdentifier(value.AccountID) || value.AccountRevision == 0 || len(value.Entries) == 0 {
-		return errors.New("center: invalid Meridian subscription snapshot")
+		return errors.New("center: invalid Glivela subscription snapshot")
 	}
 	if _, err := meridian.RenderLinks(value.Entries, value.AccountID, meridian.FixedMode, value.Routes, false); err != nil {
-		return errors.New("center: invalid Meridian subscription snapshot")
+		return errors.New("center: invalid Glivela subscription snapshot")
 	}
 	if _, err := meridian.RenderMihomo(value.Entries, value.AccountID, meridian.FixedMode, value.Routes); err != nil {
-		return errors.New("center: invalid Meridian subscription snapshot")
+		return errors.New("center: invalid Glivela subscription snapshot")
 	}
 	return nil
 }
@@ -42,11 +42,11 @@ func (s *Store) saveMeridianSubscriptionSnapshotInTx(ctx context.Context, tx *sq
 	value.AccountID = account.ID
 	value.AccountRevision = account.AppliedRevision
 	if account.DesiredRevision != account.AppliedRevision || validateMeridianSubscriptionSnapshot(value) != nil {
-		return errors.New("center: cannot snapshot an unapplied Meridian subscription")
+		return errors.New("center: cannot snapshot an unapplied Glivela subscription")
 	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		return errors.New("center: cannot encode Meridian subscription snapshot")
+		return errors.New("center: cannot encode Glivela subscription snapshot")
 	}
 	digest := sha256.Sum256(encoded)
 	fingerprint := hex.EncodeToString(digest[:])
@@ -86,15 +86,15 @@ func (s *Store) loadMeridianSubscriptionSnapshotInTx(ctx context.Context, tx *sq
 	}
 	encoded, err := s.meridianSecretInTx(ctx, tx, secretID, meridianSubscriptionSnapshotSecretContext(accountID))
 	if err != nil {
-		return meridianAppliedSubscriptionSnapshot{}, errors.New("center: stored Meridian subscription snapshot is unavailable")
+		return meridianAppliedSubscriptionSnapshot{}, errors.New("center: stored Glivela subscription snapshot is unavailable")
 	}
 	digest := sha256.Sum256(encoded)
 	if hex.EncodeToString(digest[:]) != fingerprint {
-		return meridianAppliedSubscriptionSnapshot{}, errors.New("center: stored Meridian subscription snapshot changed")
+		return meridianAppliedSubscriptionSnapshot{}, errors.New("center: stored Glivela subscription snapshot changed")
 	}
 	var value meridianAppliedSubscriptionSnapshot
 	if json.Unmarshal(encoded, &value) != nil || value.AccountID != accountID || value.AccountRevision != revision || validateMeridianSubscriptionSnapshot(value) != nil {
-		return meridianAppliedSubscriptionSnapshot{}, errors.New("center: stored Meridian subscription snapshot is invalid")
+		return meridianAppliedSubscriptionSnapshot{}, errors.New("center: stored Glivela subscription snapshot is invalid")
 	}
 	return value, nil
 }
@@ -276,7 +276,7 @@ func (s *Store) ensureMeridianSubscriptionSnapshotInTx(ctx context.Context, tx *
 	if err := tx.QueryRowContext(ctx, `SELECT id,display_name,total_bytes,expiry_time,reset_days,enabled,desired_revision,applied_revision,status
 		FROM meridian_accounts WHERE id=?`, accountID).Scan(&account.ID, &account.DisplayName, &account.Plan.TotalBytes, &account.Plan.ExpiryTime,
 		&account.Plan.ResetDays, &enabled, &account.DesiredRevision, &account.AppliedRevision, &status); errors.Is(err, sql.ErrNoRows) {
-		return errors.New("center: Meridian account was not found")
+		return errors.New("center: Glivela account was not found")
 	} else if err != nil {
 		return err
 	}
@@ -292,7 +292,7 @@ func (s *Store) ensureMeridianSubscriptionSnapshotInTx(ctx context.Context, tx *
 		return nil
 	}
 	if account.DesiredRevision != account.AppliedRevision {
-		return errors.New("center: Meridian account has no recoverable applied subscription")
+		return errors.New("center: Glivela account has no recoverable applied subscription")
 	}
 	projection, err := s.meridianSubscriptionProjectionInTx(ctx, tx, accountID, false)
 	if err != nil {
@@ -311,7 +311,7 @@ func (s *Store) ensureMeridianSubscriptionSnapshotInTx(ctx context.Context, tx *
 			// errors and existing stale snapshots still fail closed.
 			return nil
 		}
-		return fmt.Errorf("center: capture applied Meridian subscription: %w", err)
+		return fmt.Errorf("center: capture applied Glivela subscription: %w", err)
 	}
 	return s.saveMeridianSubscriptionSnapshotInTx(ctx, tx, account, projection)
 }

@@ -42,7 +42,7 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	}
 	if appKey == meridianAppKey {
 		if input.GatewayNodeID != agentID {
-			return ApplicationCommandView{}, errors.New("center: Meridian subscription must use the Center's co-located entry node")
+			return ApplicationCommandView{}, errors.New("center: Glivela subscription must use the Center's co-located entry node")
 		}
 		if _, err := s.ensureMeridianSubscriptionService(ctx, input.ApplicationID); err != nil {
 			return ApplicationCommandView{}, err
@@ -52,11 +52,11 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 			return ApplicationCommandView{}, err
 		}
 		if authority != "meridian" || state != "not_required" && state != "complete" {
-			return ApplicationCommandView{}, errors.New("center: Meridian subscription publication is locked until cutover completes")
+			return ApplicationCommandView{}, errors.New("center: Glivela subscription publication is locked until cutover completes")
 		}
 	} else {
 		if appKey != threeXUIAppKey || role != threeXUIRoleMaster {
-			return ApplicationCommandView{}, errors.New("center: public subscription is available only on Meridian or the running global 3x-ui controller")
+			return ApplicationCommandView{}, errors.New("center: public subscription is available only on Glivela or the running global 3x-ui controller")
 		}
 		controllerApplicationID, controllerAgentID, err := runningGlobalThreeXUIController(ctx, s.db)
 		if err != nil || controllerApplicationID != input.ApplicationID || controllerAgentID != agentID {
@@ -144,9 +144,9 @@ func (s *Store) completeMeridianSubscriptionPublication(ctx context.Context, inp
 	stamp := now.Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,result_json,state,created_at,updated_at)
 		VALUES(?,?,?,?,?,?,?,'succeeded',?,?)`, id, input.ApplicationID, agentID, input.GatewayNodeID, meridianSubscriptionCommandKind, encoded, resultJSON, stamp, stamp); err != nil {
-		return ApplicationCommandView{}, fmt.Errorf("center: record Meridian subscription publication: %w", err)
+		return ApplicationCommandView{}, fmt.Errorf("center: record Glivela subscription publication: %w", err)
 	}
-	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "succeeded", "Meridian public subscription published by Center"); err != nil {
+	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "succeeded", "Glivela public subscription published by Center"); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if err := tx.Commit(); err != nil {

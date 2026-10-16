@@ -152,13 +152,13 @@ func (s *Store) projectApplicationAdoption(ctx context.Context, tx *sql.Tx, agen
 		if receipt.IntegrationState == "dormant" {
 			var endpoints int
 			if appKey != meridianAppKey || len(receipt.Resources) != 0 {
-				return errors.New("center: dormant adoption is reserved for Meridian without runtime resources")
+				return errors.New("center: dormant adoption is reserved for Glivela without runtime resources")
 			}
 			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_endpoints WHERE application_id=?`, appID).Scan(&endpoints); err != nil {
 				return err
 			}
 			if endpoints != 0 {
-				return errors.New("center: Meridian endpoint appeared during dormant adoption")
+				return errors.New("center: Glivela endpoint appeared during dormant adoption")
 			}
 		} else if receipt.IntegrationState != "" || len(receipt.Resources) == 0 {
 			return errors.New("center: adoption resource receipt lacks verified resources")

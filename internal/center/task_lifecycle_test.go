@@ -747,7 +747,7 @@ func TestPulseCredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	if created.OneTimeCredentials == nil || len(created.OneTimeCredentials.SetupToken) < 32 {
-		t.Fatal("Pulse did not return a strong one-time setup token")
+		t.Fatal("Senulun did not return a strong one-time setup token")
 	}
 	task := claimTask(t, store, node)
 	var secrets map[string]string

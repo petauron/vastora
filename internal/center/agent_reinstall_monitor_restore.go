@@ -139,7 +139,7 @@ func (s *Store) QueueAgentReinstallMonitorRestore(ctx context.Context, agentID, 
 	}
 	var pulseConfig pulse.AgentConfig
 	if json.Unmarshal(manifest, &source.Manifest) != nil || source.Manifest.ID != "pulse-agent" || source.Manifest.Version != version || catalog.ValidateApp(source.Manifest) != nil || registry.Valid || json.Unmarshal(config, &pulseConfig) != nil || pulseConfig.Validate() != nil || pulseConfig.ServiceApplicationID != rotation.Task.Inspection.ApplicationID {
-		return result, errors.New("center: saved Pulse package or service configuration requires review")
+		return result, errors.New("center: saved Senulun package or service configuration requires review")
 	}
 	credentials, err := s.reinstallRotatedCredentials(ctx, tx, serviceAgentID, rotationID, rotation.Task)
 	if err != nil {
@@ -181,7 +181,7 @@ func (s *Store) QueueAgentReinstallMonitorRestore(ctx context.Context, agentID, 
 	if err = s.recordReinstallMonitorRestoreProgress(ctx, tx, id); err != nil {
 		return result, err
 	}
-	if err = s.recordTaskEvent(ctx, tx, id, agentID, "application.apply", applicationTaskRevision, "queued", "Restore the saved Pulse collector with the original monitoring identity; reporting still requires verification"); err != nil {
+	if err = s.recordTaskEvent(ctx, tx, id, agentID, "application.apply", applicationTaskRevision, "queued", "Restore the saved Senulun collector with the original monitoring identity; reporting still requires verification"); err != nil {
 		return result, err
 	}
 	if err = tx.Commit(); err != nil {

@@ -45,7 +45,7 @@ func (e ApplicationExecutor) CompleteCommandResources(applicationID, taskID stri
 
 func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentTask) (ApplicationTaskResult, error) {
 	if task.PulseRestore != nil && (task.AppKey != pulse.AgentKey || task.Operation != "install" || task.PulseRestore.Validate() != nil) {
-		return ApplicationTaskResult{}, errors.New("agent: invalid Pulse restoration task")
+		return ApplicationTaskResult{}, errors.New("agent: invalid Senulun restoration task")
 	}
 	if task.Operation == "adopt" {
 		return e.Adopt(ctx, task)
@@ -140,7 +140,7 @@ func (e ApplicationExecutor) Adopt(ctx context.Context, task DeploymentTask) (Ap
 		return ApplicationTaskResult{}, errors.New("agent: adoption requires the original historical manifest digest")
 	}
 	if task.DormantRuntime && task.AppKey != meridianKey {
-		return ApplicationTaskResult{}, errors.New("agent: dormant adoption is reserved for Meridian")
+		return ApplicationTaskResult{}, errors.New("agent: dormant adoption is reserved for Glivela")
 	}
 	digest := sha256.Sum256(task.HistoricalManifest)
 	var supplied catalog.AppManifest

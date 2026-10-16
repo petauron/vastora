@@ -307,7 +307,7 @@ func TestManagedUpgradeDormantMeridianRequiresAdoptionAndOnlyStagesImage(t *test
 	}
 	adoption := claimTask(t, store, node)
 	if !adoption.DormantRuntime {
-		t.Fatal("Center did not recognize Meridian without endpoints")
+		t.Fatal("Center did not recognize Glivela without endpoints")
 	}
 	result, err := json.Marshal(map[string]any{"resources": map[string]any{"version": 1, "applicationId": adoption.ApplicationID, "appKey": adoption.AppKey, "taskId": adoption.ID, "runtime": "docker", "integrationState": "dormant", "packageVersion": adoption.Manifest.Version, "packageRevision": 0, "manifestSha256": adoption.ManifestSHA256, "state": "ready", "resources": []any{}}})
 	if err != nil {
