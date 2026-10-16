@@ -22,6 +22,7 @@
     {"value": "3fff::1", "reason": "RFC 9637 documentation address rejection fixture"}
   ],
   "allowedDomainRoots": [
+    { "value": "www.w3.org", "reason": "Standard SVG XML namespace for local icon assets" },
     { "value": "example.com", "reason": "RFC 2606 documentation domain" },
     { "value": "example.net", "reason": "RFC 2606 documentation domain" },
     { "value": "example.org", "reason": "RFC 2606 documentation domain" },

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg">
+  <filter id="store" color-interpolation-filters="sRGB" x="0" y="0" width="100%" height="100%">
+    <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  8 0 -8 0 -0.2" result="colorMask"/>
+    <feFlood flood-color="#1ca4fc" result="blue"/>
+    <feComposite in="blue" in2="colorMask" operator="in" result="blueShape"/>
+    <feFlood flood-color="#ffffff" result="white"/>
+    <feComposite in="blueShape" in2="white" operator="over" result="flatArtwork"/>
+    <feComposite in="flatArtwork" in2="SourceAlpha" operator="in"/>
+  </filter>
+  <filter id="compass" color-interpolation-filters="sRGB" x="0" y="0" width="100%" height="100%">
+    <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -8 0 8 0 -0.2" result="colorMask"/>
+    <feFlood flood-color="#1ca4fc" result="blue"/>
+    <feComposite in="blue" in2="colorMask" operator="in" result="blueShape"/>
+    <feFlood flood-color="#ffffff" result="white"/>
+    <feComposite in="blueShape" in2="white" operator="over" result="flatArtwork"/>
+    <feComposite in="flatArtwork" in2="SourceAlpha" operator="in"/>
+  </filter>
+</svg>
