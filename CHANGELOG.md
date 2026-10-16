@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.319](https://github.com/petauron/vastora/compare/v0.1.0-alpha.318...v0.1.0-alpha.319) (2026-10-16)
+
+
+### Bug Fixes
+
+* ship unified Color Planes icons and smooth app tiles ([#922](https://github.com/petauron/vastora/issues/922)) ([0d7715d](https://github.com/petauron/vastora/commit/0d7715d6c7540495e35e9dcc69bd7f7708dcd230))
+
 ## [0.1.0-alpha.318](https://github.com/petauron/vastora/compare/v0.1.0-alpha.317...v0.1.0-alpha.318) (2026-10-16)
 
 
