@@ -15,9 +15,9 @@ const EgressImage = "ghcr.io/xtls/xray-core:26.9.30@sha256:6d30597c3e729b5dc1faa
 
 type EgressObservation struct {
 	Policy       glivela.EgressPolicy `json:"policy"`
-	ConfigSHA256 string                `json:"configSha256"`
-	Exits        []string              `json:"exits"`
-	CheckedAt    time.Time             `json:"checkedAt"`
+	ConfigSHA256 string               `json:"configSha256"`
+	Exits        []string             `json:"exits"`
+	CheckedAt    time.Time            `json:"checkedAt"`
 }
 
 func MatchesEgress(policy glivela.EgressPolicy, exit string) bool {

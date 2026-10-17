@@ -15,8 +15,8 @@ import (
 )
 
 type meridianAppliedSubscriptionSnapshot struct {
-	AccountID       string                    `json:"accountId"`
-	AccountRevision uint64                    `json:"accountRevision"`
+	AccountID       string                   `json:"accountId"`
+	AccountRevision uint64                   `json:"accountRevision"`
 	Entries         []glivela.NativeEntry    `json:"entries"`
 	Routes          []glivela.PublishedRoute `json:"routes"`
 }

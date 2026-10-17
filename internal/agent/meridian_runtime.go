@@ -35,22 +35,22 @@ var errMeridianExplicitRecoveryRequired = errors.New("agent: Glivela runtime req
 // cutover. Pending is journaled before Docker mutation; Applied is advanced
 // only after the promoted container and its exact configuration are healthy.
 type meridianRuntimeState struct {
-	ApplicationID       string                    `json:"applicationId"`
-	ImageReference      string                    `json:"imageReference"`
+	ApplicationID       string                   `json:"applicationId"`
+	ImageReference      string                   `json:"imageReference"`
 	Applied             *glivela.DesiredArtifact `json:"applied,omitempty"`
 	Pending             *glivela.DesiredArtifact `json:"pending,omitempty"`
-	AppliedPeers        []meridianruntime.Peer    `json:"appliedPeers,omitempty"`
-	PendingPeers        []meridianruntime.Peer    `json:"pendingPeers,omitempty"`
-	AppliedSource       *landing.PeerIdentity     `json:"appliedSource,omitempty"`
-	PendingSource       *landing.PeerIdentity     `json:"pendingSource,omitempty"`
-	GateRevision        uint64                    `json:"gateRevision,omitempty"`
-	AppliedGID          uint32                    `json:"appliedGid,omitempty"`
-	PendingGID          uint32                    `json:"pendingGid,omitempty"`
-	Bridge              string                    `json:"bridge,omitempty"`
-	RetiringGates       []meridianGateIdentity    `json:"retiringGates,omitempty"`
-	HandoverPending     bool                      `json:"handoverPending,omitempty"`
-	LegacyLandingSealed []byte                    `json:"legacyLandingSealed,omitempty"`
-	LegacyRuntimeSHA256 string                    `json:"legacyRuntimeSha256,omitempty"`
+	AppliedPeers        []meridianruntime.Peer   `json:"appliedPeers,omitempty"`
+	PendingPeers        []meridianruntime.Peer   `json:"pendingPeers,omitempty"`
+	AppliedSource       *landing.PeerIdentity    `json:"appliedSource,omitempty"`
+	PendingSource       *landing.PeerIdentity    `json:"pendingSource,omitempty"`
+	GateRevision        uint64                   `json:"gateRevision,omitempty"`
+	AppliedGID          uint32                   `json:"appliedGid,omitempty"`
+	PendingGID          uint32                   `json:"pendingGid,omitempty"`
+	Bridge              string                   `json:"bridge,omitempty"`
+	RetiringGates       []meridianGateIdentity   `json:"retiringGates,omitempty"`
+	HandoverPending     bool                     `json:"handoverPending,omitempty"`
+	LegacyLandingSealed []byte                   `json:"legacyLandingSealed,omitempty"`
+	LegacyRuntimeSHA256 string                   `json:"legacyRuntimeSha256,omitempty"`
 }
 
 func (state meridianRuntimeState) validate() error {

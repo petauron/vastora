@@ -32,14 +32,14 @@ func (c Command) Validate() error {
 
 type Task struct {
 	NativeEgress        glivela.EgressPolicy    `json:"nativeEgress,omitempty"`
-	EgressClients       []AcceptanceClient       `json:"egressClients,omitempty"`
-	ApplicationID       string                   `json:"applicationId"`
-	ImageReference      string                   `json:"imageReference"`
+	EgressClients       []AcceptanceClient      `json:"egressClients,omitempty"`
+	ApplicationID       string                  `json:"applicationId"`
+	ImageReference      string                  `json:"imageReference"`
 	Desired             glivela.DesiredArtifact `json:"desired"`
-	RetireLegacy        bool                     `json:"retireLegacy"`
-	ReplacePendingState bool                     `json:"replacePendingState,omitempty"`
-	Peers               []Peer                   `json:"peers,omitempty"`
-	Source              *landing.PeerIdentity    `json:"source,omitempty"`
+	RetireLegacy        bool                    `json:"retireLegacy"`
+	ReplacePendingState bool                    `json:"replacePendingState,omitempty"`
+	Peers               []Peer                  `json:"peers,omitempty"`
+	Source              *landing.PeerIdentity   `json:"source,omitempty"`
 }
 
 func (t Task) Validate() error {
@@ -56,12 +56,12 @@ func (t Task) Validate() error {
 }
 
 type Result struct {
-	Egress        *EgressObservation      `json:"egress,omitempty"`
+	Egress        *EgressObservation     `json:"egress,omitempty"`
 	Receipt       glivela.AppliedReceipt `json:"receipt"`
-	Stats         json.RawMessage         `json:"stats"`
-	LegacyRetired bool                    `json:"legacyRetired"`
-	Peers         []PeerObservation       `json:"peers,omitempty"`
-	Source        *landing.PeerIdentity   `json:"source,omitempty"`
+	Stats         json.RawMessage        `json:"stats"`
+	LegacyRetired bool                   `json:"legacyRetired"`
+	Peers         []PeerObservation      `json:"peers,omitempty"`
+	Source        *landing.PeerIdentity  `json:"source,omitempty"`
 }
 
 // LegacyRetireTask authorizes removal of the superseded 3x-ui installation

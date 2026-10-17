@@ -14,12 +14,12 @@ import (
 
 type NodeEgressInput struct {
 	Policy   glivela.EgressPolicy `json:"policy"`
-	Revision int64                 `json:"revision"`
+	Revision int64                `json:"revision"`
 }
 
 type NodeEgressView struct {
-	Policy        glivela.EgressPolicy              `json:"policy"`
-	AppliedPolicy glivela.EgressPolicy              `json:"appliedPolicy"`
+	Policy        glivela.EgressPolicy               `json:"policy"`
+	AppliedPolicy glivela.EgressPolicy               `json:"appliedPolicy"`
 	Revision      int64                              `json:"revision"`
 	State         string                             `json:"state"`
 	Error         string                             `json:"error,omitempty"`
