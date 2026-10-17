@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.320](https://github.com/petauron/vastora/compare/v0.1.0-alpha.319...v0.1.0-alpha.320) (2026-10-17)
+
+
+### Bug Fixes
+
+* **web:** simplify app updates and separate adoption recovery ([725009d](https://github.com/petauron/vastora/commit/725009d07168ea83d717022e3510b4c785d7f37a))
+
 ## [0.1.0-alpha.319](https://github.com/petauron/vastora/compare/v0.1.0-alpha.318...v0.1.0-alpha.319) (2026-10-16)
 
 
