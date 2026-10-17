@@ -47,7 +47,7 @@ func (s *Store) reinstallAcceptanceTasks(ctx context.Context, tx *sql.Tx, target
 	if _, _, err = s.reinstallAccessTarget(ctx, tx, target, preparation); err != nil {
 		return nil, err
 	}
-	var reality meridian.RealityEndpoint
+	var reality glivela.RealityEndpoint
 	var names, shorts []byte
 	var vless, hy2 bool
 	var hy2Name string
@@ -66,7 +66,7 @@ func (s *Store) reinstallAcceptanceTasks(ctx context.Context, tx *sql.Tx, target
 		if !material.Credential.Enabled {
 			continue
 		}
-		routed := material.Credential.Kind == meridian.RouteCredential
+		routed := material.Credential.Kind == glivela.RouteCredential
 		exitNode := target
 		if routed {
 			var configured bool
@@ -84,16 +84,16 @@ func (s *Store) reinstallAcceptanceTasks(ctx context.Context, tx *sql.Tx, target
 		}
 		base := meridianruntime.AcceptanceTask{VerifierFingerprint: hex.EncodeToString(fingerprint[:]), OperationID: op.ID, PlanRevision: plan.Revision, TargetAgentID: target, VerifierAgentID: verifier, IdentityFingerprint: plan.IdentityFingerprint, ExpectedExit: exit}
 		if vless {
-			base.Client = meridianruntime.AcceptanceClient{Protocol: meridian.VLESSReality, Reality: &reality, Material: material}
+			base.Client = meridianruntime.AcceptanceClient{Protocol: glivela.VLESSReality, Reality: &reality, Material: material}
 			if err = base.Validate(); err != nil {
 				return nil, err
 			}
 			tasks = append(tasks, base)
 		}
 		// Routed HY2 is not a supported subscription in the Meridian domain model.
-		if hy2 && material.Credential.Kind == meridian.NativeCredential {
-			endpoint := meridian.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: input.ApplicationID, AdvertiseHost: reality.AdvertiseHost, AdvertisePort: 443, ServerName: hy2Name}
-			base.Client = meridianruntime.AcceptanceClient{Protocol: meridian.Hysteria2, Hysteria: &endpoint, Material: material}
+		if hy2 && material.Credential.Kind == glivela.NativeCredential {
+			endpoint := glivela.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: input.ApplicationID, AdvertiseHost: reality.AdvertiseHost, AdvertisePort: 443, ServerName: hy2Name}
+			base.Client = meridianruntime.AcceptanceClient{Protocol: glivela.Hysteria2, Hysteria: &endpoint, Material: material}
 			if err = base.Validate(); err != nil {
 				return nil, err
 			}

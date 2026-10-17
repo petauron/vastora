@@ -105,10 +105,10 @@ func TestMeridianUnappliedSourceBlocksOnlyFixedCredentialAndStillBuildsNativeRun
 	}
 	native := 0
 	for _, material := range projection.materials {
-		if material.Credential.Kind == meridian.NativeCredential && material.Credential.Enabled {
+		if material.Credential.Kind == glivela.NativeCredential && material.Credential.Enabled {
 			native++
 		}
-		if material.Credential.Kind == meridian.RouteCredential && material.Credential.Enabled {
+		if material.Credential.Kind == glivela.RouteCredential && material.Credential.Enabled {
 			t.Fatal("unauthorized fixed route credential remained active")
 		}
 	}
@@ -420,7 +420,7 @@ func TestMeridianSuccessfulReceiptSurvivesAnotherEntrySourceCleanupFailure(t *te
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM meridian_credentials WHERE endpoint_id='snapshot-second-endpoint' AND account_id=? AND kind='native'`, sharedSnapshotAccountB).Scan(&baseID); err != nil {
 		t.Fatal(err)
 	}
-	routeID, err := store.insertMeridianCredential(ctx, tx, sharedSnapshotAccountB, "snapshot-second-endpoint", "snapshot-second-app", meridian.RouteCredential, egressID, true, stamp)
+	routeID, err := store.insertMeridianCredential(ctx, tx, sharedSnapshotAccountB, "snapshot-second-endpoint", "snapshot-second-app", glivela.RouteCredential, egressID, true, stamp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +434,7 @@ func TestMeridianSuccessfulReceiptSurvivesAnotherEntrySourceCleanupFailure(t *te
 
 	result := meridianHealthResult(projection, store.now(), true)
 	for _, material := range projection.materials {
-		if material.Credential.AccountID == sharedSnapshotAccountA && material.Credential.Kind == meridian.NativeCredential {
+		if material.Credential.AccountID == sharedSnapshotAccountA && material.Credential.Kind == glivela.NativeCredential {
 			result.Stats, err = json.Marshal(map[string]any{"stat": []any{map[string]any{"name": "user>>>" + material.Credential.User + ">>>traffic>>>uplink", "value": 1000}}})
 			if err != nil {
 				t.Fatal(err)
@@ -447,7 +447,7 @@ func TestMeridianSuccessfulReceiptSurvivesAnotherEntrySourceCleanupFailure(t *te
 	if err := store.db.QueryRow(`SELECT state,result_json FROM application_commands WHERE id=?`, commandID).Scan(&commandState, &receiptJSON); err != nil {
 		t.Fatal(err)
 	}
-	var receipt meridian.AppliedReceipt
+	var receipt glivela.AppliedReceipt
 	if err := json.Unmarshal(receiptJSON, &receipt); err != nil || commandState != "succeeded" || receipt.Revision != projection.task.Desired.Revision || receipt.ConfigSHA256 != projection.task.Desired.ConfigSHA256 {
 		t.Fatalf("derived cleanup rolled back the accepted receipt: state=%s receipt=%#v err=%v", commandState, receipt, err)
 	}

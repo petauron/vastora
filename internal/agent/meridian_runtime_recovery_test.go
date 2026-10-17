@@ -18,9 +18,9 @@ import (
 	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
-func meridianRecoveryArtifact(revision uint64, config string) meridian.DesiredArtifact {
+func meridianRecoveryArtifact(revision uint64, config string) glivela.DesiredArtifact {
 	digest := sha256.Sum256([]byte(config))
-	return meridian.DesiredArtifact{Revision: revision, Config: []byte(config), ConfigSHA256: hex.EncodeToString(digest[:])}
+	return glivela.DesiredArtifact{Revision: revision, Config: []byte(config), ConfigSHA256: hex.EncodeToString(digest[:])}
 }
 
 func TestMeridianRevisionOnlyKeepsRuntimeGateAndFreshReceipt(t *testing.T) {
@@ -46,7 +46,7 @@ func TestMeridianRevisionOnlyKeepsRuntimeGateAndFreshReceipt(t *testing.T) {
 	observe := func(_ context.Context, current meridianRuntimeState) (meridianruntime.Result, error) {
 		observed = append(observed, current.Applied.Revision)
 		return meridianruntime.Result{
-			Receipt: meridian.AppliedReceipt{Revision: current.Applied.Revision, ConfigSHA256: current.Applied.ConfigSHA256, RuntimeReady: true},
+			Receipt: glivela.AppliedReceipt{Revision: current.Applied.Revision, ConfigSHA256: current.Applied.ConfigSHA256, RuntimeReady: true},
 			Stats:   json.RawMessage(`{"stat":[]}`), Peers: store.meridianPeerObservations(current), Source: cloneMeridianSource(current.AppliedSource),
 		}, nil
 	}

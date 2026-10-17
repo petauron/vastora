@@ -54,7 +54,7 @@ func TestLegacyMeridianGrantRejectsChangedAuthority(t *testing.T) {
 			endpoint.serviceID = "another-service"
 		}},
 		{name: "parent", change: func(_ *meridianImportedEndpoint, route *meridianruntime.LegacyRoute) {
-			route.ParentIdentityHash = meridian.Identity("another-parent")
+			route.ParentIdentityHash = glivela.Identity("another-parent")
 		}},
 		{name: "inbound", change: func(_ *meridianImportedEndpoint, route *meridianruntime.LegacyRoute) {
 			route.InboundTag = "another-inbound"
@@ -155,7 +155,7 @@ func openMeridianLegacyGrantSourceFixture(t *testing.T) (*Store, meridianImporte
 		VALUES(?,?,'snapshot-shared-app','snapshot-shared-service',?,?,?,?,4,4,'ready',?)`, grant.ID, parentID, egress.ID, sourceJSON, grantJSON, secretID, stamp); err != nil {
 		t.Fatal(err)
 	}
-	endpoint := meridianImportedEndpoint{model: meridian.RealityEndpoint{ID: sharedSnapshotEndpointID, InboundTag: "shared-entry"}, applicationID: "snapshot-shared-app", serviceID: "snapshot-shared-service", nodeID: entryID}
+	endpoint := meridianImportedEndpoint{model: glivela.RealityEndpoint{ID: sharedSnapshotEndpointID, InboundTag: "shared-entry"}, applicationID: "snapshot-shared-app", serviceID: "snapshot-shared-service", nodeID: entryID}
 	legacy := meridianruntime.LegacyRoute{ID: grant.ID, ParentIdentityHash: parentID, InboundID: 1, InboundTag: grant.InboundTag, BaseUser: grant.BaseUser, FixedUser: grant.FixedUser,
 		FixedUUID: routeUUID, EgressNodeID: peer.ID, Enabled: true, Revision: 4}
 	return store, endpoint, legacy, egress.ID, source

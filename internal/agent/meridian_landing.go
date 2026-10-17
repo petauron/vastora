@@ -53,7 +53,7 @@ func meridianTrafficGateFactory(identity meridianGateIdentity) (meridianTrafficG
 
 func (state meridianRuntimeState) validateLanding() error {
 	for _, plan := range []struct {
-		artifact     *meridian.DesiredArtifact
+		artifact     *glivela.DesiredArtifact
 		peers        []meridianruntime.Peer
 		source       *landing.PeerIdentity
 		gateRevision uint64
@@ -434,7 +434,7 @@ func removeClosedMeridianGateConflicts(ctx context.Context, state meridianRuntim
 
 // A peer-bearing runtime cannot auto-start after reboot before nft gates exist.
 // Only an exact, journaled Meridian container may be started behind closed gates.
-func (e ApplicationExecutor) prepareMeridianRuntimeStart(ctx context.Context, docker *client.Client, state meridianRuntimeState, artifact meridian.DesiredArtifact, peers []meridianruntime.Peer) error {
+func (e ApplicationExecutor) prepareMeridianRuntimeStart(ctx context.Context, docker *client.Client, state meridianRuntimeState, artifact glivela.DesiredArtifact, peers []meridianruntime.Peer) error {
 	if err := closeMeridianGates(ctx, state.knownLandingGates(), meridianTrafficGateFactory); err != nil {
 		return err
 	}

@@ -79,7 +79,7 @@ func recordMeridianRouteHealth(ctx context.Context, tx *sql.Tx, endpointID strin
 		if secondaryID != "" {
 			deadline = min(deadline, expires[secondaryID])
 		}
-		familiesVerified := secondaryID == "" || exits[egressID].Is6() && meridian.CompositePublicIP(exits[egressID]) && exits[secondaryID].Is4() && meridian.CompositePublicIP(exits[secondaryID])
+		familiesVerified := secondaryID == "" || exits[egressID].Is6() && glivela.CompositePublicIP(exits[egressID]) && exits[secondaryID].Is4() && glivela.CompositePublicIP(exits[secondaryID])
 		if health[egressID] && (secondaryID == "" || health[secondaryID]) && familiesVerified {
 			status, healthy, message = "ready", 1, ""
 		}

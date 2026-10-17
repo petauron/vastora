@@ -13,7 +13,7 @@ import (
 // fixed child credential in its applied journal exists in the native artifact.
 // Center may not know about orphaned Agent children, so Center route counts
 // alone are not sufficient retirement evidence.
-func (s *Store) verifyMeridianLegacyChildCoverage(ctx context.Context, applied meridian.DesiredArtifact) error {
+func (s *Store) verifyMeridianLegacyChildCoverage(ctx context.Context, applied glivela.DesiredArtifact) error {
 	legacy, err := s.landingRuntime(ctx)
 	if err != nil {
 		return err
@@ -55,7 +55,7 @@ func meridianLegacyChildCoverage(grants []landing.ClientGrant, config []byte) er
 		if !grant.Enabled || !grant.Mode.Fixed() {
 			continue
 		}
-		if identities[meridian.RouteUser(grant.ID)] != grant.FixedIdentity {
+		if identities[glivela.RouteUser(grant.ID)] != grant.FixedIdentity {
 			return errors.New("agent: legacy fixed child is missing from Glivela; retirement requires explicit reconciliation")
 		}
 	}

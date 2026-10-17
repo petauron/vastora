@@ -48,7 +48,7 @@ func openMeridianHealthCompletionFixture(t *testing.T) (*Store, meridianRuntimeP
 
 func meridianHealthResult(projection meridianRuntimeProjection, now time.Time, healthy bool) meridianruntime.Result {
 	result := meridianruntime.Result{
-		Receipt: meridian.AppliedReceipt{Revision: projection.task.Desired.Revision, ConfigSHA256: projection.task.Desired.ConfigSHA256, RuntimeReady: true},
+		Receipt: glivela.AppliedReceipt{Revision: projection.task.Desired.Revision, ConfigSHA256: projection.task.Desired.ConfigSHA256, RuntimeReady: true},
 		Stats:   json.RawMessage(`{}`), Source: projection.task.Source,
 	}
 	for _, peer := range projection.task.Peers {
@@ -192,7 +192,7 @@ func TestMeridianCompletionCrossingQuotaQueuesNewDesiredRevision(t *testing.T) {
 	store, projection, commandID, _ := openMeridianHealthCompletionFixture(t)
 	result := meridianHealthResult(projection, store.now(), true)
 	for _, material := range projection.materials {
-		if material.Credential.AccountID == sharedSnapshotAccountA && material.Credential.Kind == meridian.NativeCredential {
+		if material.Credential.AccountID == sharedSnapshotAccountA && material.Credential.Kind == glivela.NativeCredential {
 			result.Stats, _ = json.Marshal(map[string]any{"stat": []any{map[string]any{"name": "user>>>" + material.Credential.User + ">>>traffic>>>uplink", "value": 1000}}})
 		}
 	}

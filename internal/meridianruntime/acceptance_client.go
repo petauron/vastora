@@ -13,10 +13,10 @@ import (
 // identity over the encrypted task channel. It must never enter a public DTO,
 // log, command-line argument or unencrypted execution record.
 type AcceptanceClient struct {
-	Protocol meridian.ProtocolKind       `json:"protocol"`
-	Reality  *meridian.RealityEndpoint   `json:"reality,omitempty"`
-	Hysteria *meridian.HysteriaEndpoint  `json:"hysteria,omitempty"`
-	Material meridian.CredentialMaterial `json:"material"`
+	Protocol glivela.ProtocolKind       `json:"protocol"`
+	Reality  *glivela.RealityEndpoint   `json:"reality,omitempty"`
+	Hysteria *glivela.HysteriaEndpoint  `json:"hysteria,omitempty"`
+	Material glivela.CredentialMaterial `json:"material"`
 }
 
 // Config creates one real Xray client, using the same validated credential
@@ -30,16 +30,16 @@ func (c AcceptanceClient) Config(socksPort int) ([]byte, error) {
 	var link string
 	var err error
 	switch c.Protocol {
-	case meridian.VLESSReality:
+	case glivela.VLESSReality:
 		if c.Reality == nil || c.Hysteria != nil || c.Reality.PrivateKey != "" {
 			return nil, errors.New("acceptance: invalid public REALITY identity")
 		}
-		link, err = meridian.LinkForCredential(*c.Reality, c.Material, "recovery")
-	case meridian.Hysteria2:
+		link, err = glivela.LinkForCredential(*c.Reality, c.Material, "recovery")
+	case glivela.Hysteria2:
 		if c.Hysteria == nil || c.Reality != nil || c.Hysteria.PrivateKeyPEM != "" {
 			return nil, errors.New("acceptance: invalid public Hysteria identity")
 		}
-		link, err = meridian.Hysteria2LinkForCredential(*c.Hysteria, c.Material, "recovery")
+		link, err = glivela.Hysteria2LinkForCredential(*c.Hysteria, c.Material, "recovery")
 	default:
 		return nil, errors.New("acceptance: unsupported client protocol")
 	}
@@ -56,7 +56,7 @@ func (c AcceptanceClient) Config(socksPort int) ([]byte, error) {
 	}
 	query := parsed.Query()
 	outbound := map[string]any{"tag": "verified-route"}
-	if c.Protocol == meridian.VLESSReality {
+	if c.Protocol == glivela.VLESSReality {
 		outbound["protocol"] = "vless"
 		outbound["settings"] = map[string]any{"address": parsed.Hostname(), "port": port, "id": parsed.User.Username(), "encryption": "none", "flow": query.Get("flow")}
 		outbound["streamSettings"] = map[string]any{"network": "tcp", "security": "reality", "realitySettings": map[string]any{"serverName": query.Get("sni"), "fingerprint": query.Get("fp"), "password": query.Get("pbk"), "shortId": query.Get("sid"), "spiderX": query.Get("spx")}}

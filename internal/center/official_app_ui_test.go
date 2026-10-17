@@ -24,7 +24,7 @@ func TestOfficialUIBundleCacheRejectsTamperingAndWrongVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	const name = "ui-meridian-1.2.3.js"
+	const name = "ui-glivela-1.2.3.js"
 	bundle := []byte("export function mount() {}")
 	hash := sha256.Sum256(bundle)
 	target, err := metadata.TargetFile().FromBytes(name, bundle, "sha256")
@@ -121,8 +121,8 @@ func TestOfficialUIBundleVersionCannotBeReplaced(t *testing.T) {
 	result := catalog.OfficialFetchResult{
 		Catalog: catalog.Catalog{Apps: []catalog.AppManifest{{ID: "meridian", Version: "1.2.3"}}},
 		UIBundles: map[string][]byte{
-			"ui-meridian-1.2.3.js":  []byte("export const apiVersion = 1"),
-			"ui-meridian-1.2.3.css": []byte("body { color: white }"),
+			"ui-glivela-1.2.3.js":  []byte("export const apiVersion = 1"),
+			"ui-glivela-1.2.3.css": []byte("body { color: white }"),
 		},
 		State: catalog.OfficialFetchState{Acceptance: catalog.OfficialAcceptance{Revision: 7}},
 	}
@@ -150,7 +150,7 @@ func TestOfficialUIBundleVersionCannotBeReplaced(t *testing.T) {
 	}
 	result.UIBundles = acceptedBundles
 
-	result.UIBundles["ui-meridian-1.2.3.js"] = []byte("export const apiVersion = 2")
+	result.UIBundles["ui-glivela-1.2.3.js"] = []byte("export const apiVersion = 2")
 	tx, err = store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)

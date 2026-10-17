@@ -33,7 +33,9 @@ retain their own frontend and release lifecycle.
 ## Glivela release and trust boundary
 
 The Glivela UI produces a JS module and stylesheet named
-`ui-meridian-<application-version>.js` and `.css`. Its reviewed source commit is
+`ui-glivela-<application-version>.js` and `.css`. Immutable releases through
+alpha.21 retain their original `ui-meridian-` names; the catalog derives one
+exact target name from the version. Its reviewed source commit is
 an input to the protected official catalog publication workflow. That workflow
 builds it against the pinned Center platform UI source, checks the resulting
 bytes before loading publication credentials, and signs both files as TUF targets

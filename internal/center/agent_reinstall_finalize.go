@@ -93,7 +93,7 @@ func (s *Store) CompleteAgentReinstall(ctx context.Context, target, admin string
 		}
 		// Apply real counters once using existing watermarks. If they change quota
 		// intent, stop rather than mark a now-obsolete verified configuration ready.
-		counters, err := meridian.ParseXrayUserCounters(projection.materials, result.Stats)
+		counters, err := glivela.ParseXrayUserCounters(projection.materials, result.Stats)
 		if err != nil {
 			return receipt, err
 		}

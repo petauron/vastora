@@ -30,10 +30,10 @@ func (s *Server) handleMeridianSubscription(writer http.ResponseWriter, request 
 	var body []byte
 	contentType := "text/plain; charset=utf-8"
 	if mihomo {
-		body, err = meridian.RenderMihomo(subscription.Entries, subscription.Account.ID, meridian.FixedMode, subscription.Routes)
+		body, err = glivela.RenderMihomo(subscription.Entries, subscription.Account.ID, glivela.FixedMode, subscription.Routes)
 		contentType = "application/yaml; charset=utf-8"
 	} else {
-		body, err = meridian.RenderLinks(subscription.Entries, subscription.Account.ID, meridian.FixedMode, subscription.Routes, true)
+		body, err = glivela.RenderLinks(subscription.Entries, subscription.Account.ID, glivela.FixedMode, subscription.Routes, true)
 	}
 	if err != nil {
 		writeError(writer, http.StatusServiceUnavailable, errors.New("center: subscription is temporarily unavailable"))

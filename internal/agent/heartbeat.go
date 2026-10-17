@@ -327,7 +327,7 @@ func observeProxyRuntime(ctx context.Context, store *Store) ([]ApplicationEndpoi
 	return result, nil
 }
 
-func observeMeridianState(artifact meridian.DesiredArtifact) ([]ApplicationEndpointObservation, error) {
+func observeMeridianState(artifact glivela.DesiredArtifact) ([]ApplicationEndpointObservation, error) {
 	if artifact.Validate() != nil {
 		return nil, errors.New("agent: Glivela runtime artifact is invalid")
 	}

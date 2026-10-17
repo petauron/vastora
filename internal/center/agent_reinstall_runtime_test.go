@@ -61,7 +61,7 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...str
 		t.Fatal(err)
 	}
 	if _, err = tx.Exec(`INSERT INTO meridian_accounts(id,display_name,total_bytes,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
- VALUES('restore-account','Account',0,1,?,?,1,1,'active',?,?)`, token, meridian.SubscriptionTokenFingerprint("retained-subscription-token"), now, now); err != nil {
+ VALUES('restore-account','Account',0,1,?,?,1,1,'active',?,?)`, token, glivela.SubscriptionTokenFingerprint("retained-subscription-token"), now, now); err != nil {
 		t.Fatal(err)
 	}
 	for _, entry := range []struct {
@@ -73,7 +73,7 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...str
 			t.Fatal(err)
 		}
 		if _, err = tx.Exec(`INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,egress_node_id,enabled,created_at,updated_at)
- VALUES(?,'restore-account','restore-endpoint',?,?,?,?,?,1,?,?)`, entry.id, entry.kind, entry.id, meridian.Identity(entry.protocol), key, entry.egress, now, now); err != nil {
+ VALUES(?,'restore-account','restore-endpoint',?,?,?,?,?,1,?,?)`, entry.id, entry.kind, entry.id, glivela.Identity(entry.protocol), key, entry.egress, now, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = tx.Exec(`INSERT INTO meridian_usage_watermarks(credential_id,observed_bytes,observed_at) VALUES(?,0,?)`, entry.id, now); err != nil {

@@ -390,7 +390,7 @@ func TestMeridianRetirementWaitRequiresFreshPeerEvidenceAndPreservesJournalOnTim
 	legacy := seedMeridianLegacyLanding(t, store, "applied")
 	state := meridianLandingFixture()
 	task := meridianruntime.Task{ApplicationID: state.ApplicationID, ImageReference: state.ImageReference, Desired: *state.Applied, Peers: state.AppliedPeers, Source: state.AppliedSource}
-	result := meridianruntime.Result{Receipt: meridian.AppliedReceipt{Revision: state.Applied.Revision, ConfigSHA256: state.Applied.ConfigSHA256, RuntimeReady: true}, Stats: json.RawMessage(`{"stat":[]}`), Source: cloneMeridianSource(state.AppliedSource)}
+	result := meridianruntime.Result{Receipt: glivela.AppliedReceipt{Revision: state.Applied.Revision, ConfigSHA256: state.Applied.ConfigSHA256, RuntimeReady: true}, Stats: json.RawMessage(`{"stat":[]}`), Source: cloneMeridianSource(state.AppliedSource)}
 	result.Peers = []meridianruntime.PeerObservation{blockedMeridianPeer(task.Peers[0], task.Desired.Revision, "pending")}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

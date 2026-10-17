@@ -65,9 +65,9 @@ func TestMeridianRuntimeRoutesRejectIncompleteLandingIdentity(t *testing.T) {
 
 func TestMeridianRuntimeRoutesStillRequireMatchingCredentialAgentID(t *testing.T) {
 	store, _, _, _ := openMeridianRuntimeIdentityFixture(t)
-	_, err := readMeridianRuntimeIdentityRoutes(t, store, func(credentials map[string]meridian.CredentialMaterial) {
+	_, err := readMeridianRuntimeIdentityRoutes(t, store, func(credentials map[string]glivela.CredentialMaterial) {
 		for id, credential := range credentials {
-			if credential.Credential.Kind == meridian.RouteCredential {
+			if credential.Credential.Kind == glivela.RouteCredential {
 				credential.Credential.EgressID = "another-vastora-agent"
 				credentials[id] = credential
 			}
@@ -110,7 +110,7 @@ func openMeridianRuntimeIdentityFixture(t *testing.T) (*Store, string, string, l
 	return store, egress.ID, grant.ID, peer
 }
 
-func readMeridianRuntimeIdentityRoutes(t *testing.T, store *Store, change func(map[string]meridian.CredentialMaterial)) (meridianRuntimeRoutes, error) {
+func readMeridianRuntimeIdentityRoutes(t *testing.T, store *Store, change func(map[string]glivela.CredentialMaterial)) (meridianRuntimeRoutes, error) {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := store.db.BeginTx(ctx, nil)
