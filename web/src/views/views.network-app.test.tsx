@@ -362,6 +362,7 @@ describe("network and app views", () => {
 
   it.each(["install", "upgrade"] as const)("blocks an open %s sheet when the catalog expires or disappears", async (operation) => {
     const data = dashboard();
+    data.apps[0].app.runtime = { kind: "systemd", version: 1, requiredCapabilities: ["root"] };
     if (operation === "install") data.applications = [];
     else data.applications[0] = { ...data.applications[0], installedVersion: "1.2.59", availableVersion: "1.2.60", updateAvailable: true };
     const create = vi.spyOn(api, "createDeployment");
@@ -374,6 +375,7 @@ describe("network and app views", () => {
         : [...document.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.includes("升级到 v1.2.60"));
       button?.click();
     });
+    act(() => document.getElementById("package-capability-root")?.click());
     const submitButton = () => document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]');
     expect(submitButton()?.disabled).toBe(false);
     for (const apps of [[{ ...data.apps[0], installBlocked: true }], []]) {
@@ -390,6 +392,7 @@ describe("network and app views", () => {
 
   it("requires reviewing a newly published version instead of silently upgrading from an open sheet", async () => {
     const data = dashboard();
+    data.apps[0].app.runtime = { kind: "systemd", version: 1, requiredCapabilities: ["root"] };
     data.applications[0] = { ...data.applications[0], installedVersion: "1.2.59", availableVersion: "1.2.60", updateAvailable: true };
     const mutate = vi.fn(async () => undefined);
     renderAppDetails(<AppsView data={data} language="zh-CN" mutate={mutate} />);

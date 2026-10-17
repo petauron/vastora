@@ -8,7 +8,7 @@ export function AppInstallationSummary({ group, language, compact = false }: { g
   const attention = (instance: InstalledAppGroup["instances"][number]) =>
     ["failed", "degraded"].includes(instance.application.status) || instance.activeChange?.reconciliationRequired
     || Boolean(instance.agent && (!instance.agent.connected || instance.agent.credentialRevoked))
-    || instance.application.nodeSyncStatus === "failed" || instance.application.adoptionState === "blocked"
+    || instance.application.nodeSyncStatus === "failed" || ["pending", "blocked"].includes(instance.application.adoptionState ?? "")
     || instance.services.some(serviceNeedsAttention) || instance.publications.some(publicationNeedsAttention);
   const affected = group.instances.filter(attention).length;
   const changing = group.instances.filter((instance) => instance.activeChange && !attention(instance)).length;

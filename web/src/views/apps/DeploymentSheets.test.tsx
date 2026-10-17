@@ -9,7 +9,7 @@ import type { AppView } from "../../types";
 
 function fixture() {
   const data = dashboard();
-  const app = { ...data.apps[0], key: "community/new-monitor", sourceId: "community", app: { ...data.apps[0].app, id: "new-monitor", version: "1.0.0", packageRevision: 1, runtime: { kind: "systemd", version: 1, requiredCapabilities: ["root", "host-path"] }, config: [] } };
+  const app = { ...data.apps[0], key: "community/new-monitor", sourceId: "community", app: { ...data.apps[0].app, id: "new-monitor", version: "1.0.0", packageRevision: 1, runtime: { kind: "systemd", version: 1, requiredCapabilities: ["root", "host-path"] }, config: [] as AppView["app"]["config"] } };
   data.apps = [app];
   data.applications = [];
   const editor: DeploymentEditor = { app, operation: "install" };
@@ -36,6 +36,27 @@ describe("declarative package deployment review", () => {
     expect(submitButton()?.disabled).toBe(false);
     await act(async () => submitButton()?.click());
     expect(onSubmit).toHaveBeenCalledWith(data.agents[0], managed, { label: "My node" }, "install", undefined, "", []);
+  });
+
+  it("keeps an upgrade review compact and preserves configuration and registry credentials", async () => {
+    const { data, app } = fixture();
+    app.app.runtime.requiredCapabilities = [];
+    app.app.config = [{ key: "country", type: "string", required: false, secret: false, label: { en: "Country", "zh-CN": "国家" }, description: { en: "Existing setting", "zh-CN": "已有配置" } }];
+    const onSubmit = vi.fn(async () => undefined);
+    render(<DeploymentSheet data={data} editor={{ app, agent: data.agents[0], operation: "upgrade" }} language="en" onClose={vi.fn()} onSubmit={onSubmit} />);
+    expect(document.getElementById("deployment-agent")).toBeNull();
+    expect(document.getElementById("deployment-registry")).toBeNull();
+    expect(document.body.textContent).not.toContain("Country");
+    await act(async () => submitButton()?.click());
+    expect(onSubmit).toHaveBeenCalledWith(data.agents[0], app, {}, "upgrade", undefined, undefined, []);
+  });
+
+  it("shows only the missing upgrade setting reported after merging existing configuration", () => {
+    const { data, app } = fixture();
+    app.app.config = ["country", "new_setting"].map((key) => ({ key, type: "string" as const, required: true, secret: false, label: { en: key, "zh-CN": key }, description: { en: "", "zh-CN": "" } }));
+    render(<DeploymentSheet data={data} editor={{ app, agent: data.agents[0], operation: "upgrade", initialError: 'center: configuration field "new_setting" is required' }} language="en" onClose={vi.fn()} onSubmit={vi.fn()} />);
+    expect(document.body.textContent).toContain("new_setting");
+    expect(document.body.textContent).not.toContain("country");
   });
 
   it("never preapproves privileges and submits only the explicitly approved capabilities", async () => {

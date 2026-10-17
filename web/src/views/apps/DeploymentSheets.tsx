@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
-  KeyRoundIcon,
   RadioTowerIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
@@ -63,6 +62,7 @@ export type DeploymentEditor = {
   app: AppView;
   agent?: AgentView;
   operation: "install" | "upgrade" | "configure";
+  initialError?: string;
 } | null;
 
 function capabilityLabel(capability: string, language: Language) {
@@ -101,6 +101,7 @@ export function DeploymentSheet({
   const [config, setConfig] = useState<
     Record<string, string | boolean | number>
   >({});
+  const [missingUpgradeFields, setMissingUpgradeFields] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [registryCredentialID, setRegistryCredentialID] = useState("");
@@ -201,7 +202,9 @@ export function DeploymentSheet({
     setRegistryCredentialID(
       editor.operation === "install" ? "" : "__preserve__",
     );
-    setError("");
+    setError(editor.initialError ? userError(language, editor.initialError) : "");
+    const missing = editor.initialError?.match(/configuration field "([^"]+)" is required/)?.[1];
+    setMissingUpgradeFields(missing ? [missing] : []);
     setApprovedCapabilities([]);
   }, [editor]);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -259,6 +262,10 @@ export function DeploymentSheet({
         approvedCapabilities,
       );
     } catch (submitError) {
+      if (editor.operation === "upgrade" && submitError instanceof Error) {
+        const missing = submitError.message.match(/configuration field "([^"]+)" is required/)?.[1];
+        if (missing) setMissingUpgradeFields((current) => [...new Set([...current, missing])]);
+      }
       setError(userError(language, submitError));
     } finally {
       setBusy(false);
@@ -299,8 +306,8 @@ export function DeploymentSheet({
                 : editor?.operation === "upgrade"
                   ? copy(
                       language,
-                      `版本：${data.applications.find((application) => application.nodeId === editor.agent?.id && application.appKey === editor.app.key)?.installedVersion ?? "—"} → ${editor.app.app.version}。确认后更新，可保留现有配置。`,
-                      `Version: ${data.applications.find((application) => application.nodeId === editor.agent?.id && application.appKey === editor.app.key)?.installedVersion ?? "—"} → ${editor.app.app.version}. Confirm to update; existing settings can be kept.`,
+                      `版本：${data.applications.find((application) => application.nodeId === editor.agent?.id && application.appKey === editor.app.key)?.installedVersion ?? "—"} → ${editor.app.app.version}。保留现有配置、凭据和访问入口。`,
+                      `Version: ${data.applications.find((application) => application.nodeId === editor.agent?.id && application.appKey === editor.app.key)?.installedVersion ?? "—"} → ${editor.app.app.version}. Existing settings, credentials and access points are preserved.`,
                     )
                   : copy(
                       language,
@@ -316,7 +323,7 @@ export function DeploymentSheet({
           <div className="flex-1 overflow-y-auto px-4">
             <FieldGroup>
               {adoptionBlocked || runtimeBlocker ? <Alert role="status"><AlertTitle>{copy(language, "暂不能修改此应用", "Application changes are blocked")}</AlertTitle><AlertDescription>{runtimeBlocker || installed?.adoptionError || copy(language, "维护窗口内核实并接管现有资源后才能修改。接管不会重装或重启应用。", "Verify and adopt existing resources during maintenance before changing them. Adoption does not reinstall or restart the application.")}</AlertDescription></Alert> : null}
-              {editor ? <FieldDescription>{copy(language, `配方修订：${installed?.installedPackageRevision ?? 0} → ${editor.app.app.packageRevision ?? 0}`, `Recipe revision: ${installed?.installedPackageRevision ?? 0} → ${editor.app.app.packageRevision ?? 0}`)}</FieldDescription> : null}
+              {editor ? <details><summary className="cursor-pointer text-xs text-muted-foreground">{copy(language, "技术详情", "Technical details")}</summary><FieldDescription>{copy(language, `配方修订：${installed?.installedPackageRevision ?? 0} → ${editor.app.app.packageRevision ?? 0}`, `Recipe revision: ${installed?.installedPackageRevision ?? 0} → ${editor.app.app.packageRevision ?? 0}`)}</FieldDescription></details> : null}
               {requiredCapabilities.length > 0 ? <FieldSet><FieldLegend>{copy(language, "此配方需要管理员授权", "This recipe requires administrator approval")}</FieldLegend><FieldDescription>{copy(language, "逐项确认。升级不会自动批准新增权限。", "Approve each permission. Upgrades never automatically approve new privileges.")}</FieldDescription><FieldGroup>{requiredCapabilities.map((capability) => <Field orientation="horizontal" key={capability}><Checkbox id={`package-capability-${capability}`} checked={approvedCapabilities.includes(capability)} onCheckedChange={(checked) => setApprovedCapabilities((current) => checked ? [...current, capability] : current.filter((value) => value !== capability))} /><FieldLabel htmlFor={`package-capability-${capability}`}>{capabilityLabel(capability, language)}</FieldLabel></Field>)}</FieldGroup></FieldSet> : null}
               {editor?.app.permissionDetails?.length ? <FieldDescription>{editor.app.permissionDetails.map((detail) => <span className="block break-all font-mono text-xs" key={detail}>{detail}</span>)}</FieldDescription> : null}
               {catalogMessage ? (
@@ -327,10 +334,10 @@ export function DeploymentSheet({
                   <AlertDescription>{catalogMessage}</AlertDescription>
                 </Alert>
               ) : null}
-              {editor ? (
+              {editor && editor.operation !== "upgrade" ? (
                 <AppHostAccessNote app={editor.app} language={language} />
               ) : null}
-              <Field data-invalid={nodeUnavailable}>
+              {editor?.operation === "upgrade" ? <p className="text-sm text-muted-foreground">{copy(language, "更新主机：", "Update on: ")}{selectedAgent?.name ?? editor.agent?.name}</p> : <Field data-invalid={nodeUnavailable}>
                 <FieldLabel htmlFor="deployment-agent">
                   {copy(language, "节点", "Node")}
                 </FieldLabel>
@@ -378,7 +385,7 @@ export function DeploymentSheet({
                     {nodeUnavailableMessage}
                   </FieldError>
                 ) : null}
-              </Field>
+              </Field>}
               {isThreeXUIInstall && role === "master" ? (
                 <Alert>
                   <UsersIcon />
@@ -426,29 +433,11 @@ export function DeploymentSheet({
                   )}
                 </FieldError>
               ) : null}
-              {isPulseHost && editor?.operation === "upgrade" ? (
-                <Alert>
-                  <KeyRoundIcon />
-                  <AlertTitle>
-                    {copy(
-                      language,
-                      "Senulun 设置自动补齐",
-                      "Senulun settings are filled automatically",
-                    )}
-                  </AlertTitle>
-                  <AlertDescription>
-                    {copy(
-                      language,
-                      "面板地址取自当前就绪的 HTTPS 入口；旧版本没有初始化令牌时，Center 会安全生成并一次性显示。已有设置保持不变。",
-                      "The dashboard address comes from its ready HTTPS access point. If the old version has no setup token, Center generates one and shows it once. Existing settings stay unchanged.",
-                    )}
-                  </AlertDescription>
-                </Alert>
-              ) : null}
               {editor?.app.app.config
                 .filter(
                   (field) =>
                     !editor.app.managedConfigFields?.includes(field.key) &&
+                    (editor.operation !== "upgrade" || missingUpgradeFields.includes(field.key)) &&
                     !(
                       isPulseHost &&
                       editor.operation !== "configure" &&
@@ -464,10 +453,11 @@ export function DeploymentSheet({
                     key={field.key}
                     language={language}
                     operation={editor.operation}
+                    mustProvide={editor.operation === "upgrade" && missingUpgradeFields.includes(field.key)}
                     setConfig={setConfig}
                   />
                 ))}
-              {editor && !editor.app.app.hostAccess ? (
+              {editor && editor.operation !== "upgrade" && !editor.app.app.hostAccess ? (
                 <Field>
                   <FieldLabel htmlFor="deployment-registry">
                     {copy(
@@ -567,12 +557,14 @@ function ConfigField({
   field,
   language,
   operation,
+  mustProvide = false,
   setConfig,
 }: {
   config: Record<string, string | boolean | number>;
   field: AppView["app"]["config"][number];
   language: Language;
   operation: "install" | "upgrade" | "configure";
+  mustProvide?: boolean;
   setConfig: React.Dispatch<
     React.SetStateAction<Record<string, string | boolean | number>>
   >;
@@ -585,6 +577,7 @@ function ConfigField({
         <FieldLabel htmlFor={`config-${field.key}`}>{label}</FieldLabel>
         <SelectControl
           id={"config-" + field.key}
+          required={mustProvide}
           onValueChange={(value) =>
             setConfig((current) => {
               const next = { ...current };
@@ -596,7 +589,7 @@ function ConfigField({
           options={[
             {
               value: "",
-              label: copy(language, "保持当前设置", "Keep current setting"),
+              label: mustProvide ? copy(language, "请选择", "Select a value") : copy(language, "保持当前设置", "Keep current setting"),
             },
             { value: "true", label: copy(language, "开启", "On") },
             { value: "false", label: copy(language, "关闭", "Off") },
@@ -643,7 +636,7 @@ function ConfigField({
           })
         }
         placeholder={
-          operation !== "install"
+          operation !== "install" && !mustProvide
             ? copy(
                 language,
                 "留空以保持原值",
@@ -651,7 +644,7 @@ function ConfigField({
               )
             : undefined
         }
-        required={operation === "install" && field.required}
+        required={mustProvide || (operation === "install" && field.required)}
         type={
           field.secret
             ? "password"

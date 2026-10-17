@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AppWindowIcon, KeyRoundIcon } from "lucide-react";
 import { api } from "../api";
 import type { AppData, Mutate } from "../App";
-import type { Application, Deployment, Service } from "../types";
+import type { AgentView, AppView, Application, Deployment, Service, ThreeXUIRole } from "../types";
 import type { Language } from "../translations";
-import { latestOperations, localized, operationLabel } from "./appAccess";
-import { CopyButton, StateBadge, TechnicalError, copy } from "./shared";
+import { latestOperations, localized, operationLabel, packageNodeBlocker } from "./appAccess";
+import { CopyButton, StateBadge, TechnicalError, copy, catalogInstallBlocked, userError } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -59,10 +59,62 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
   const trafficApplication = trafficService ? data.applications.find((application) => application.id === trafficService.applicationId) : undefined;
   const trafficController = data.applications.find((application) => application.id === trafficApplication?.controllerApplicationId && application.role === "master" && application.status === "running");
 
+  const upgradeRequests = useRef(new Set<string>());
+  const [upgradeError, setUpgradeError] = useState("");
+  const [submittingUpgrade, setSubmittingUpgrade] = useState<string | null>(null);
+  const submitDeployment = async (
+    agent: AgentView, app: AppView, config: Record<string, string | boolean | number>,
+    operation: "install" | "upgrade" | "configure", role?: ThreeXUIRole,
+    registryCredentialId?: string, authorizedCapabilities?: string[],
+  ) => {
+    let result: Deployment | undefined;
+    const scope = deploymentSecretScope(agent.id, app.key, operation);
+    const operationKey = app.key === "vastora-official/3x-ui" && operation === "install" && role !== "worker" || app.key === "vastora-official/pulse" && (operation === "install" || operation === "upgrade") ? secretOperation(scope) : undefined;
+    const messages = { install: copy(language, "安装任务已创建。可在活动中查看进度。", "Install task created. Follow progress in Activity."), upgrade: copy(language, "升级任务已创建。", "Upgrade task created."), configure: copy(language, "配置任务已创建。", "Configuration task created.") };
+    await mutate(async () => { result = await api.createDeployment(agent.id, app.key, config, operation, false, role, registryCredentialId, operationKey, authorizedCapabilities, operation === "configure" ? undefined : { packageRevision: app.app.packageRevision ?? 0, manifestSha256: app.manifestSha256 ?? "" }); }, messages[operation], { reportError: false });
+    if (result?.oneTimeCredentials && operationKey) setCredentials({ ...result.oneTimeCredentials, deploymentId: result.id, operationKey, scope });
+    else if (result && operationKey) clearSecretOperation(scope);
+  };
+  const upgrade = async (application: Application, app: AppView, agent: AgentView) => {
+    if (upgradeRequests.current.has(application.id)) return;
+    upgradeRequests.current.add(application.id);
+    setSubmittingUpgrade(application.id);
+    setUpgradeError("");
+    try {
+      await submitDeployment(agent, app, {}, "upgrade");
+    } catch (error) {
+      // Only missing settings need an upgrade form; other failures stay inline.
+      if (error instanceof Error && /configuration field "[^"]+" is required/.test(error.message)) {
+        setDeploymentEditor({ app, agent, operation: "upgrade", initialError: error.message });
+      } else {
+        setUpgradeError(userError(language, error));
+      }
+    } finally {
+      upgradeRequests.current.delete(application.id);
+      setSubmittingUpgrade((current) => current === application.id ? null : current);
+    }
+  };
   const openChange = (application: Application, operation: "upgrade" | "configure") => {
     const app = catalogByKey.get(application.appKey);
     const agent = data.agents.find((value) => value.id === application.nodeId);
-    if (app && agent) setDeploymentEditor({ app, agent, operation });
+    if (!app || !agent) return;
+    if (operation === "configure") { setDeploymentEditor({ app, agent, operation }); return; }
+    if (application.adoptionState === "pending" || application.adoptionState === "blocked") {
+      setManagedApplicationID(application.id);
+      return;
+    }
+    if (data.deployments.some((task) => task.agentId === agent.id && task.appKey === app.key &&
+      (task.state === "pending" || task.state === "running" || task.reconciliationRequired))) return;
+    const blocker = packageNodeBlocker(agent, app, language);
+    if (!agent.connected || agent.credentialRevoked || blocker || catalogInstallBlocked(app)) {
+      setUpgradeError(blocker || copy(language, "请先确认节点在线并刷新应用目录。", "Check node connectivity and refresh the app catalog first."));
+      return;
+    }
+    if (app.app.runtime?.requiredCapabilities?.length) {
+      setDeploymentEditor({ app, agent, operation });
+    } else {
+      void upgrade(application, app, agent);
+    }
   };
 
   const openFromDetails = (action: () => void) => {
@@ -105,6 +157,8 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
 
   return (
     <section className="apps-workspace flex min-w-0 flex-col gap-5" data-mode={workspaceKey ? "workspace" : "store"}>
+      {submittingUpgrade ? <p role="status" className="flex items-center gap-2 text-sm"><Spinner />{copy(language, "正在提交更新…", "Submitting update…")}</p> : null}
+      {upgradeError ? <Alert variant="destructive" role="alert"><AlertTitle>{copy(language, "更新请求需要检查", "Check the update request")}</AlertTitle><AlertDescription>{upgradeError}</AlertDescription></Alert> : null}
 
       {credentials ? <Alert><KeyRoundIcon /><AlertTitle>{credentials.setupToken ? copy(language, "请保存 Senulun 初始化令牌", "Save the Senulun setup token") : copy(language, "请保存 Vastora Proxy 管理账号", "Save the Vastora Proxy administrator account")}</AlertTitle><AlertDescription><p>{copy(language, "确认保存前可在断线或刷新后重新领取；确认后 Center 会永久关闭再次显示。", "Until you acknowledge it, the same browser can recover these credentials after a disconnect or refresh. Acknowledgement permanently disables disclosure.")}</p>{credentials.setupToken ? <div className="mt-3 rounded-lg bg-muted p-3 text-sm"><p className="text-muted-foreground">{copy(language, "首次访问 Senulun /login 时使用", "Use for the first Senulun /login setup")}</p><div className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.setupToken}<CopyButton language={language} value={credentials.setupToken} /></div></div> : <dl className="mt-3 grid gap-2 rounded-lg bg-muted p-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "账号", "Username")}</dt><dd className="mt-1 flex items-center gap-2 font-mono">{credentials.username}<CopyButton language={language} value={credentials.username || ""} /></dd></div><div><dt className="text-muted-foreground">{copy(language, "密码", "Password")}</dt><dd className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.password}<CopyButton language={language} value={credentials.password || ""} /></dd></div></dl>}<Button className="mt-3" disabled={credentialAckBusy} onClick={() => void acknowledgeCredentials()} size="sm" variant="outline">{credentialAckBusy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "我已保存并关闭再次显示", "Saved — disable further disclosure")}</Button></AlertDescription></Alert> : null}
 
@@ -141,14 +195,8 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
           onUpgrade={() => openFromDetails(() => openChange(managedInstance.application, "upgrade"))}
         /> : null}
       </Sheet>
-      <DeploymentSheet data={data} editor={deploymentEditor} language={language} onClose={() => setDeploymentEditor(null)} onSubmit={async (agent, app, config, operation, role, registryCredentialId, authorizedCapabilities) => {
-        let result: Deployment | undefined;
-		const scope = deploymentSecretScope(agent.id, app.key, operation);
-		const operationKey = app.key === "vastora-official/3x-ui" && operation === "install" && role !== "worker" || app.key === "vastora-official/pulse" && (operation === "install" || operation === "upgrade") ? secretOperation(scope) : undefined;
-        const messages = { install: copy(language, "安装任务已创建。可在活动中查看进度。", "Install task created. Follow progress in Activity."), upgrade: copy(language, "升级任务已创建。", "Upgrade task created."), configure: copy(language, "配置任务已创建。", "Configuration task created.") };
-        await mutate(async () => { result = await api.createDeployment(agent.id, app.key, config, operation, false, role, registryCredentialId, operationKey, authorizedCapabilities, operation === "configure" ? undefined : { packageRevision: app.app.packageRevision ?? 0, manifestSha256: app.manifestSha256 ?? "" }); }, messages[operation]);
-        if (result?.oneTimeCredentials && operationKey) setCredentials({ ...result.oneTimeCredentials, deploymentId: result.id, operationKey, scope });
-		else if (result && operationKey) clearSecretOperation(scope);
+      <DeploymentSheet data={data} editor={deploymentEditor} language={language} onClose={() => setDeploymentEditor(null)} onSubmit={async (...args) => {
+        await submitDeployment(...args);
         setDeploymentEditor(null);
       }} />
       <PublicationSheet data={data} language={language} onClose={() => setPublicationService(null)} onSubmit={async (input) => {

@@ -14,9 +14,10 @@ export function ApplicationUpdate({ instance, language, onUpgrade }: { instance:
   if (!application.updateAvailable || activeChange) return null;
   const legacy = application.appKey === threeXUIAppKey && application.role === "master" && Boolean(application.controllerApplicationId) && application.id !== application.controllerApplicationId;
   const disabled = !agent?.connected || legacy || catalogInstallBlocked(app) || ["pending", "deploying"].includes(application.status);
+  const adoptionRequired = application.adoptionState === "pending" || application.adoptionState === "blocked";
   const name = agent?.name ?? application.nodeId;
   return <Button aria-label={copy(language, `更新 ${name} 的应用`, `Update application on ${name}`)} className="max-md:min-h-11" disabled={disabled} onClick={() => onUpgrade(application)} size="sm" variant="outline" title={copy(language, `更新到 v${application.availableVersion}`, `Update to v${application.availableVersion}`)}>
-    {application.status === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "更新", "Update")}
+    {adoptionRequired ? copy(language, "处理更新", "Resolve update") : application.status === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "更新", "Update")}
   </Button>;
 }
 
