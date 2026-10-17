@@ -16,15 +16,19 @@ func TestServerFirewallRemovalUsesFreshSnapshot(t *testing.T) {
 	for _, lostReply := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "lost-reply"}[lostReply], func(t *testing.T) {
 			policy := testServerFirewall()
-			foreign := map[string]nftObject{"table": {"family": "ip", "name": "filter"}}
-			document := nftDocument{Objects: append(policy.objects(), foreign)}
+			foreign := []map[string]nftObject{
+				{"table": {"family": "ip", "name": "filter"}},
+				{"chain": {"family": "ip", "table": "filter", "name": "output"}},
+				{"rule": {"family": "ip", "table": "filter", "chain": "output", "expr": []any{nftObject{"accept": nil}}}},
+			}
+			document := nftDocument{Objects: append(policy.objects(), foreign...)}
 			writes := 0
 			run := func(_ context.Context, input []byte, _ ...string) ([]byte, error) {
 				if input == nil {
 					return json.Marshal(document)
 				}
 				writes++
-				document.Objects = []map[string]nftObject{foreign}
+				document.Objects = foreign
 				if lostReply {
 					return nil, errors.New("lost delete reply")
 				}
