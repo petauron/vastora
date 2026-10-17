@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"errors"
 	"io"
 	"net"
@@ -64,7 +65,9 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 	if err := s.ensureServicePublicationVerificationAllowed(ctx, s.db, publication.ServiceID); err != nil {
 		return s.recordPublicationVerification(ctx, id, expectedRevision, err.Error())
 	}
-	if publication.Status == "failed" && publication.DNSProvider != "manual" && (publication.Kind != publicationCloudflare || publication.DNSRecordID == "") {
+	retryDNS := publication.Status == "failed" && publication.DNSProvider != "manual" && (publication.Kind != publicationCloudflare || publication.DNSRecordID == "")
+	missingSharedDNS := publication.Kind == publicationShared443 && publication.DNSProvider == "cloudflare" && publication.DNSRecordID == ""
+	if retryDNS || missingSharedDNS {
 		succeeded, reconcileErr := s.reconcilePublicationDNS(ctx, publication.ID, publication.EntryNodeID, publication.DNSProvider, publication.DesiredRevision)
 		if reconcileErr != nil {
 			return PublicationView{}, reconcileErr
@@ -165,6 +168,9 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 		if publication.Kind == publicationShared443 {
 			if err := verifyShared443TLS(ctx, verificationAddress, publication.SNIHostname); err != nil {
 				return s.recordPublicationVerification(ctx, id, expectedRevision, "exact-SNI TLS 1.3 health check did not pass")
+			}
+			if appKey == meridianAppKey {
+				return s.verifyMeridianPublication(ctx, publication, expectedRevision)
 			}
 			return s.markPublicationReady(ctx, id, expectedRevision)
 		}
@@ -312,11 +318,20 @@ func (s *Store) recordPublicationVerification(ctx context.Context, id string, ex
 }
 
 func (s *Store) markPublicationReady(ctx context.Context, id string, expectedRevision int64) (PublicationView, error) {
+	return s.markPublicationReadyChecked(ctx, id, expectedRevision, nil)
+}
+
+func (s *Store) markPublicationReadyChecked(ctx context.Context, id string, expectedRevision int64, check func(*sql.Tx) error) (PublicationView, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return PublicationView{}, err
 	}
 	defer tx.Rollback()
+	if check != nil {
+		if err := check(tx); err != nil {
+			return PublicationView{}, err
+		}
+	}
 	readyAt := s.now().UTC()
 	query := `UPDATE publications SET applied_revision = desired_revision, status = 'ready', last_error = '', updated_at = ?
 		WHERE id = ? AND status <> 'stopped' AND EXISTS (

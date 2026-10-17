@@ -55,6 +55,7 @@ func runDeployer(arguments []string) error {
 	}
 	fmt.Printf("Deployment helper listening on %s\n", *socket)
 	server := deployer.NewServer(installer).
+		WithMeridianProber(&deployer.MeridianProbeService{Socket: *dockerSocket}).
 		WithPublicEntryProber(deployer.NewPublicEntryProbeService(*dockerSocket, *runtimeImage)).
 		WithCenterRemoteAccessManager(deployer.DockerCenterRemoteAccessManager{Socket: *dockerSocket}).
 		WithCenterUpdater(deployer.FileCenterUpdater{InstallDir: *centerInstallDir, RuntimeImage: *runtimeImage})

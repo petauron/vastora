@@ -62,6 +62,7 @@ type Store struct {
 	dialRealitySecurityProbe       func(context.Context, string, string) error
 	secretDeliveryMu               sync.Mutex
 	verifyPublication              func(context.Context, string, int64) (PublicationView, error)
+	meridianProber                 deployapi.MeridianProber
 	taskChanges                    changeNotifier
 	now                            func() time.Time
 	discoverNetworkCandidates      func(time.Time) ([]networking.Candidate, error)
