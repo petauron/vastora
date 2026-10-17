@@ -402,6 +402,11 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 			}
 		}
 	}
+	if desired.Active() || current != nil && current.Route != nil {
+		if err := ensureLandingPackage(ctx); err != nil {
+			return err
+		}
+	}
 	if err := s.stopLandingMonitor(ctx); err != nil {
 		return err
 	}
@@ -464,11 +469,6 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 		}
 	}
 	if current == nil || current.Route == nil {
-		// Docker alone does not guarantee the nft userspace tool exists. Install
-		// the host prerequisites before persisting or changing any proxy route.
-		if err := ensureLandingPackage(ctx); err != nil {
-			return err
-		}
 		if err := s.verifyLocalLandingPlan(ctx, routes, desired); err != nil {
 			return err
 		}
