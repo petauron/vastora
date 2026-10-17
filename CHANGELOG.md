@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.324](https://github.com/petauron/vastora/compare/v0.1.0-alpha.323...v0.1.0-alpha.324) (2026-10-17)
+
+
+### Bug Fixes
+
+* restore authenticated Glivela public-entry health checks ([507ea7a](https://github.com/petauron/vastora/commit/507ea7a761281f936509d7ecea20e223f761a63b))
+
 ## [0.1.0-alpha.323](https://github.com/petauron/vastora/compare/v0.1.0-alpha.322...v0.1.0-alpha.323) (2026-10-17)
 
 
