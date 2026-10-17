@@ -41,9 +41,14 @@ export function LandingProvider({ enabled, agents = [], children }: { enabled: b
   const mounted = useRef(false);
   const liveLatencies = useRef<LandingLatencySnapshot | null>(null);
 
-  const adoptView = useCallback((next: LandingView) => {
+  const adoptView = useCallback((next: LandingView, streamAtStart: LandingLatencySnapshot | null) => {
     const live = liveLatencies.current;
-    setView({ ...next, latencies: freshLandingLatencies(live?.revision === next.revision ? live.samples : next.latencies) });
+    if (live && live.revision > next.revision) return;
+    // A complete poll replaces an idle/disconnected stream's cache. Only an
+    // event received during this request can be newer than its snapshot.
+    const samples = live !== streamAtStart && live?.revision === next.revision ? live.samples : next.latencies;
+    liveLatencies.current = { revision: next.revision, samples };
+    setView({ ...next, latencies: freshLandingLatencies(samples) });
   }, []);
 
   const refresh = useCallback(async () => {
@@ -51,11 +56,12 @@ export function LandingProvider({ enabled, agents = [], children }: { enabled: b
     const controller = new AbortController();
     reading.current = controller;
     const current = generation.current;
+    const streamAtStart = liveLatencies.current;
     const timeout = window.setTimeout(() => controller.abort(), 15000);
     try {
       const next = await api.landing(controller.signal);
       if (mounted.current && generation.current === current) {
-        adoptView(next);
+        adoptView(next, streamAtStart);
         setFailed(false);
       }
     } catch {
@@ -111,6 +117,7 @@ export function LandingProvider({ enabled, agents = [], children }: { enabled: b
     writing.current = true;
     setChangeError(null);
     const current = ++generation.current;
+    const streamAtStart = liveLatencies.current;
     reading.current?.abort();
     reading.current = null;
     setBusy(true);
@@ -119,7 +126,7 @@ export function LandingProvider({ enabled, agents = [], children }: { enabled: b
     const timeout = window.setTimeout(() => controller.abort(), 15000);
     try {
       const next = await operation(controller.signal);
-      if (mounted.current && generation.current === current) adoptView(next);
+      if (mounted.current && generation.current === current) adoptView(next, streamAtStart);
       return true;
     } catch (error) {
       if (mounted.current && generation.current === current) setChangeError(error);
