@@ -21,7 +21,7 @@ func addReinstallRemoteCommand(t *testing.T, store *Store, target AgentCredentia
 	if err != nil {
 		t.Fatal(err)
 	}
-	addReinstallApplication(t, store, monitor, "monitor", pulseAppKey, "0.1.0-alpha.5", "install", "succeeded")
+	addReinstallApplication(t, store, monitor, "monitor", senulunAppKey, "0.1.0-alpha.5", "install", "succeeded")
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.Exec(`INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at)
 	 VALUES('remote-enrollment','monitor',?,?,'pulse.enrollment.create',?,'pending',?,?)`, monitor.ID, target.ID,

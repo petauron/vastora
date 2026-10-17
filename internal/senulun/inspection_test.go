@@ -1,8 +1,8 @@
-package pulse
+package senulun
 
 import "testing"
 
-func TestPulseInspectionRequiresCompleteUnambiguousActiveIdentity(t *testing.T) {
+func TestSenulunInspectionRequiresCompleteUnambiguousActiveIdentity(t *testing.T) {
 	consumed := int64(100)
 	first, second := "original-node", "another-node"
 	task := InspectionTask{ApplicationID: "service", DeploymentID: "deployment", EnrollmentIDs: []string{"unused", "used"}}

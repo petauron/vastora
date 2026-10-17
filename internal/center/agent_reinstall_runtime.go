@@ -280,7 +280,7 @@ func (s *Store) completeReinstallRuntime(ctx context.Context, tx *sql.Tx, commit
 		if err != nil {
 			return err
 		}
-		if _, err = meridian.ParseXrayUserCounters(materials, envelope.MeridianRuntime.Stats); err != nil {
+		if _, err = glivela.ParseXrayUserCounters(materials, envelope.MeridianRuntime.Stats); err != nil {
 			return err
 		}
 		transportReady := true

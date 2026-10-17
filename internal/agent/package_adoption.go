@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/moby/moby/client"
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 func historicalReceipt(task DeploymentTask, kind string) *InstanceResources {
@@ -69,11 +69,11 @@ func inspectDormantMeridianContainers(ctx context.Context, docker packageDockerE
 // Installation of all ordinary v4 packages is selected by runtime kind alone.
 func historicalDockerResources(ctx context.Context, task DeploymentTask, history AppliedInstallation, docker packageDockerEngine, stateDirectory string) (*InstanceResources, error) {
 	names := map[string]struct{ name, logical, component string }{
-		pulse.ServiceKey: {pulseContainer, "pulse", "pulse"},
-		cpaKey:           {cpaContainer, "cpa", "cpa"},
-		keeperKey:        {keeperContainer, "keeper", "keeper"},
-		threeXUIKey:      {threeXUIContainer, "3x-ui", "3x-ui"},
-		meridianKey:      {meridianXrayContainer, "xray", "xray"},
+		senulun.ServiceKey: {senulunContainer, "pulse", "pulse"},
+		cpaKey:             {cpaContainer, "cpa", "cpa"},
+		keeperKey:          {keeperContainer, "keeper", "keeper"},
+		threeXUIKey:        {threeXUIContainer, "3x-ui", "3x-ui"},
+		meridianKey:        {meridianXrayContainer, "xray", "xray"},
 	}
 	binding, ok := names[task.AppKey]
 	if !ok {
@@ -179,12 +179,12 @@ func historicalSystemdResources(ctx context.Context, task DeploymentTask, histor
 		paths[komariBinaryPath] = "artifact:komari-agent"
 		paths[komariConfigPath] = "config:config.json"
 	} else {
-		unitPath = pulseUnitPath
-		paths[pulseBinary] = "artifact:pulse-agent"
-		paths[pulseEnv] = "environment"
-		paths[pulseToken] = "credential:enrollment-token"
-		paths[pulseDigest] = "legacy-package-proof"
-		paths[pulseArchive] = "legacy-release-archive"
+		unitPath = senulunUnitPath
+		paths[senulunBinary] = "artifact:pulse-agent"
+		paths[senulunEnv] = "environment"
+		paths[senulunToken] = "credential:enrollment-token"
+		paths[senulunDigest] = "legacy-package-proof"
+		paths[senulunArchive] = "legacy-release-archive"
 	}
 	paths[unitPath] = "service"
 	for path, logical := range paths {
@@ -202,7 +202,7 @@ func historicalSystemdResources(ctx context.Context, task DeploymentTask, histor
 			if !bytes.HasPrefix(snapshot.Data, []byte(komariUnitMarker)) {
 				return nil, errors.New("agent: historical unit is not managed")
 			}
-			if task.AppKey == pulse.AgentKey && !pulseUnitOwnedBy(snapshot.Data, task.ApplicationID) {
+			if task.AppKey == senulun.AgentKey && !senulunUnitOwnedBy(snapshot.Data, task.ApplicationID) {
 				return nil, errors.New("agent: historical unit belongs to another instance")
 			}
 		}
@@ -217,12 +217,12 @@ func historicalSystemdResources(ctx context.Context, task DeploymentTask, histor
 		}
 		receipt.Resources = append(receipt.Resources, resource)
 	}
-	if task.AppKey == pulse.AgentKey {
-		info, err := os.Lstat(manager.path(pulseState))
+	if task.AppKey == senulun.AgentKey {
+		info, err := os.Lstat(manager.path(senulunState))
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return nil, errors.New("agent: historical Senulun state is missing or unsafe")
 		}
-		receipt.Resources = append(receipt.Resources, RuntimeResource{Kind: "directory", LogicalName: "state", Name: filepath.Base(pulseState), Path: pulseState, Persistent: true, Component: "historical-verified"})
+		receipt.Resources = append(receipt.Resources, RuntimeResource{Kind: "directory", LogicalName: "state", Name: filepath.Base(senulunState), Path: senulunState, Persistent: true, Component: "historical-verified"})
 	}
 	_ = history // The caller already verified the encrypted historical identity.
 	return receipt, nil

@@ -1,8 +1,8 @@
-package pulse
+package senulun
 
 import "testing"
 
-func TestPulseRestoreRequiresCanonicalImporterIdentity(t *testing.T) {
+func TestSenulunRestoreRequiresCanonicalImporterIdentity(t *testing.T) {
 	for _, nodeID := range []string{
 		"11111111-1111-4111-8111-111111111111",
 		"original-node",

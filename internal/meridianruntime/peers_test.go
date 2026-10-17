@@ -33,12 +33,12 @@ func peerTaskFixture() Task {
 
 func setPeerTaskConfig(task *Task, config string) {
 	digest := sha256.Sum256([]byte(config))
-	task.Desired = meridian.DesiredArtifact{Revision: 7, Config: []byte(config), ConfigSHA256: hex.EncodeToString(digest[:])}
+	task.Desired = glivela.DesiredArtifact{Revision: 7, Config: []byte(config), ConfigSHA256: hex.EncodeToString(digest[:])}
 }
 
 func peerResultFixture(task Task, now time.Time) Result {
 	result := Result{
-		Receipt: meridian.AppliedReceipt{Revision: task.Desired.Revision, ConfigSHA256: task.Desired.ConfigSHA256, RuntimeReady: true},
+		Receipt: glivela.AppliedReceipt{Revision: task.Desired.Revision, ConfigSHA256: task.Desired.ConfigSHA256, RuntimeReady: true},
 		Stats:   json.RawMessage(`{"stat":[]}`),
 	}
 	if task.Source != nil {

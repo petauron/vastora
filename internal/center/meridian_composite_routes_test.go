@@ -112,7 +112,7 @@ func TestCompositeNativePolicyUsesOfficialImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if projection.task.ImageReference != meridianruntime.EgressImage || projection.task.NativeEgress != meridian.EgressIPv4Only {
+	if projection.task.ImageReference != meridianruntime.EgressImage || projection.task.NativeEgress != glivela.EgressIPv4Only {
 		t.Fatal("native policy must use the official core for composite routes too")
 	}
 	if err := projection.task.Validate(); err != nil {
@@ -149,7 +149,7 @@ func TestCompositePublicationAndSnapshotLoseOnlyUnavailableCombination(t *testin
 	if len(projection.Routes) != 2 || len(projection.Entries) == 0 {
 		t.Fatal("both existing and composite subscriptions required")
 	}
-	if _, err := meridian.RenderMihomo(projection.Entries, sharedSnapshotAccountA, meridian.FixedMode, projection.Routes); err != nil {
+	if _, err := glivela.RenderMihomo(projection.Entries, sharedSnapshotAccountA, glivela.FixedMode, projection.Routes); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(`UPDATE agents SET last_seen_at='' WHERE id=?`, four); err != nil {

@@ -22,8 +22,8 @@ import (
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
-	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/secret"
+	"github.com/petauron/vastora/internal/senulun"
 	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
@@ -33,11 +33,11 @@ type AgentTask struct {
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
-	PulseRestore              *pulse.RestoreCredentials            `json:"pulseRestore,omitempty"`
-	PulseReporting            *pulse.ReportingTask                 `json:"pulseReporting,omitempty"`
-	PulseRotation             *pulse.RotationTask                  `json:"pulseRotation,omitempty"`
-	PulseInspection           *pulse.InspectionTask                `json:"pulseInspection,omitempty"`
-	PulseEnrollment           *pulse.EnrollmentTask                `json:"pulseEnrollment,omitempty"`
+	SenulunRestore            *senulun.RestoreCredentials          `json:"pulseRestore,omitempty"`
+	SenulunReporting          *senulun.ReportingTask               `json:"pulseReporting,omitempty"`
+	SenulunRotation           *senulun.RotationTask                `json:"pulseRotation,omitempty"`
+	SenulunInspection         *senulun.InspectionTask              `json:"pulseInspection,omitempty"`
+	SenulunEnrollment         *senulun.EnrollmentTask              `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                   `json:"protocolCommand,omitempty"`
 	XrayRecovery              *xrayrecovery.Task                   `json:"xrayRecovery,omitempty"`
 	Kind                      string                               `json:"kind"`
@@ -544,7 +544,7 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 		task.Secrets = json.RawMessage(`{}`)
 	}
 	if restoredMonitor != nil {
-		task.PulseRestore = restoredMonitor.PulseRestore
+		task.SenulunRestore = restoredMonitor.SenulunRestore
 		task.Secrets = json.RawMessage(`{}`)
 	}
 	if registryCredentialID.Valid {
@@ -806,7 +806,7 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 			return "", nil, errors.New("center: invalid Agent task result")
 		}
 	}
-	if restoredMonitor != nil && succeeded && (taskResult.PulseRestored == nil || taskResult.PulseRestored.NodeID != restoredMonitor.PulseRestore.NodeID || len(taskResult.Services) != 0) {
+	if restoredMonitor != nil && succeeded && (taskResult.SenulunRestored == nil || taskResult.SenulunRestored.NodeID != restoredMonitor.SenulunRestore.NodeID || len(taskResult.Services) != 0) {
 		return "", nil, errors.New("center: restored Senulun collector did not confirm the original monitoring identity")
 	}
 	if preparation && len(taskResult.GeneratedSecrets) != 0 {

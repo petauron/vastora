@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 const (
@@ -23,10 +23,10 @@ const (
 )
 
 var applicationVolumes = map[string][]string{
-	threeXUIKey:      {threeXUIDatabaseVolume, "vastora-3x-ui-cert", "vastora-3x-ui-acme"},
-	cpaKey:           {"vastora-cpa-auths", "vastora-cpa-logs", "vastora-cpa-plugins"},
-	keeperKey:        {"vastora-cpa-keeper-data"},
-	pulse.ServiceKey: {"vastora-pulse-data"},
+	threeXUIKey:        {threeXUIDatabaseVolume, "vastora-3x-ui-cert", "vastora-3x-ui-acme"},
+	cpaKey:             {"vastora-cpa-auths", "vastora-cpa-logs", "vastora-cpa-plugins"},
+	keeperKey:          {"vastora-cpa-keeper-data"},
+	senulun.ServiceKey: {"vastora-pulse-data"},
 }
 
 type ApplicationExecutor struct {

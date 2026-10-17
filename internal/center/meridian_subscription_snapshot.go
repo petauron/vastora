@@ -15,10 +15,10 @@ import (
 )
 
 type meridianAppliedSubscriptionSnapshot struct {
-	AccountID       string                    `json:"accountId"`
-	AccountRevision uint64                    `json:"accountRevision"`
-	Entries         []meridian.NativeEntry    `json:"entries"`
-	Routes          []meridian.PublishedRoute `json:"routes"`
+	AccountID       string                   `json:"accountId"`
+	AccountRevision uint64                   `json:"accountRevision"`
+	Entries         []glivela.NativeEntry    `json:"entries"`
+	Routes          []glivela.PublishedRoute `json:"routes"`
 }
 
 func meridianSubscriptionSnapshotSecretContext(accountID string) string {
@@ -26,19 +26,19 @@ func meridianSubscriptionSnapshotSecretContext(accountID string) string {
 }
 
 func validateMeridianSubscriptionSnapshot(value meridianAppliedSubscriptionSnapshot) error {
-	if !meridian.ValidIdentifier(value.AccountID) || value.AccountRevision == 0 || len(value.Entries) == 0 {
+	if !glivela.ValidIdentifier(value.AccountID) || value.AccountRevision == 0 || len(value.Entries) == 0 {
 		return errors.New("center: invalid Glivela subscription snapshot")
 	}
-	if _, err := meridian.RenderLinks(value.Entries, value.AccountID, meridian.FixedMode, value.Routes, false); err != nil {
+	if _, err := glivela.RenderLinks(value.Entries, value.AccountID, glivela.FixedMode, value.Routes, false); err != nil {
 		return errors.New("center: invalid Glivela subscription snapshot")
 	}
-	if _, err := meridian.RenderMihomo(value.Entries, value.AccountID, meridian.FixedMode, value.Routes); err != nil {
+	if _, err := glivela.RenderMihomo(value.Entries, value.AccountID, glivela.FixedMode, value.Routes); err != nil {
 		return errors.New("center: invalid Glivela subscription snapshot")
 	}
 	return nil
 }
 
-func (s *Store) saveMeridianSubscriptionSnapshotInTx(ctx context.Context, tx *sql.Tx, account meridian.Account, value meridianAppliedSubscriptionSnapshot) error {
+func (s *Store) saveMeridianSubscriptionSnapshotInTx(ctx context.Context, tx *sql.Tx, account glivela.Account, value meridianAppliedSubscriptionSnapshot) error {
 	value.AccountID = account.ID
 	value.AccountRevision = account.AppliedRevision
 	if account.DesiredRevision != account.AppliedRevision || validateMeridianSubscriptionSnapshot(value) != nil {
@@ -229,7 +229,7 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 		return meridianAppliedSubscriptionSnapshot{}, err
 	}
 
-	routes := make([]meridian.PublishedRoute, 0, len(value.Routes))
+	routes := make([]glivela.PublishedRoute, 0, len(value.Routes))
 	for _, route := range value.Routes {
 		state, exists := states[route.Grant.ID]
 		if exists && state.live && state.egressID == route.Grant.EgressID && state.secondaryID == route.Grant.IPv4EgressID {
@@ -240,22 +240,22 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 			hiddenVLESSCredentials[route.Grant.Base.ID] = true
 		}
 	}
-	entries := make([]meridian.NativeEntry, 0, len(value.Entries))
+	entries := make([]glivela.NativeEntry, 0, len(value.Entries))
 	vlessBases := map[string]bool{}
 	for _, entry := range value.Entries {
 		native, exists := nativeStates[entry.Material.Credential.ID]
-		if !exists || entry.Protocol == meridian.VLESSReality && !native.vless || entry.Protocol == meridian.Hysteria2 && !native.hy2 {
+		if !exists || entry.Protocol == glivela.VLESSReality && !native.vless || entry.Protocol == glivela.Hysteria2 && !native.hy2 {
 			continue
 		}
-		if entry.Protocol == meridian.VLESSReality && hiddenVLESSCredentials[entry.Material.Credential.ID] {
+		if entry.Protocol == glivela.VLESSReality && hiddenVLESSCredentials[entry.Material.Credential.ID] {
 			continue
 		}
 		entries = append(entries, entry)
-		if entry.Protocol == meridian.VLESSReality {
+		if entry.Protocol == glivela.VLESSReality {
 			vlessBases[entry.Material.Credential.ID] = true
 		}
 	}
-	eligibleRoutes := make([]meridian.PublishedRoute, 0, len(routes))
+	eligibleRoutes := make([]glivela.PublishedRoute, 0, len(routes))
 	for _, route := range routes {
 		if vlessBases[route.Grant.Base.ID] {
 			eligibleRoutes = append(eligibleRoutes, route)
@@ -270,7 +270,7 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 // pending, the prior encrypted snapshot remains authoritative until the Agent
 // and publication receipts converge again.
 func (s *Store) ensureMeridianSubscriptionSnapshotInTx(ctx context.Context, tx *sql.Tx, accountID string) error {
-	var account meridian.Account
+	var account glivela.Account
 	var enabled int
 	var status string
 	if err := tx.QueryRowContext(ctx, `SELECT id,display_name,total_bytes,expiry_time,reset_days,enabled,desired_revision,applied_revision,status

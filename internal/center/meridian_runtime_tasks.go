@@ -25,7 +25,7 @@ type meridianRuntimeProjection struct {
 	task                  meridianruntime.Task
 	agentID               string
 	serviceID             string
-	materials             []meridian.CredentialMaterial
+	materials             []glivela.CredentialMaterial
 	readyRouteGrantIDs    []string
 	routePeerIDs          map[string]string
 	routeSecondaryPeerIDs map[string]string
@@ -66,7 +66,7 @@ func (s *Store) resetDueMeridianAccounts(ctx context.Context, tx *sql.Tx) error 
 		return err
 	}
 	for _, account := range due {
-		if account.days < 1 || account.days > meridian.MaxResetDays {
+		if account.days < 1 || account.days > glivela.MaxResetDays {
 			return errors.New("center: stored Glivela reset schedule is invalid")
 		}
 		if err := s.ensureMeridianSubscriptionSnapshotsForAccountEndpointsInTx(ctx, tx, account.id); err != nil {
@@ -314,8 +314,8 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 
 func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, endpointID, expectedAgentID string, restore *meridianRuntimeRestoreTarget) (meridianRuntimeProjection, error) {
 	var projection meridianRuntimeProjection
-	var endpoint meridian.RealityEndpoint
-	var hysteriaEndpoint meridian.HysteriaEndpoint
+	var endpoint glivela.RealityEndpoint
+	var hysteriaEndpoint glivela.HysteriaEndpoint
 	var serverNamesJSON, shortIDsJSON, sourcePeerJSON []byte
 	var privateKeySecretID, expectedSHA, hy2InboundTag, hy2ServerName, hy2NotAfter, endpointStatus string
 	var hy2CertID, hy2KeyID sql.NullString
@@ -368,11 +368,11 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 	if endpoint.Validate() != nil || vlessEnabled == 0 && hy2Enabled == 0 {
 		return projection, errors.New("center: stored Glivela endpoint is invalid")
 	}
-	realityEndpoints := []meridian.RealityEndpoint{}
+	realityEndpoints := []glivela.RealityEndpoint{}
 	if vlessEnabled == 1 {
 		realityEndpoints = append(realityEndpoints, endpoint)
 	}
-	hysteriaEndpoints := []meridian.HysteriaEndpoint{}
+	hysteriaEndpoints := []glivela.HysteriaEndpoint{}
 	if hy2Enabled == 1 {
 		expiresAt, parseErr := time.Parse(time.RFC3339Nano, hy2NotAfter)
 		if parseErr != nil || !expiresAt.After(s.now().Add(time.Hour)) {
@@ -389,7 +389,7 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 		if secretErr != nil {
 			return projection, errors.New("center: stored Glivela Hysteria key is unavailable")
 		}
-		hysteriaEndpoint = meridian.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: projection.task.ApplicationID, InboundTag: hy2InboundTag, ListenPort: 443, AdvertiseHost: endpoint.AdvertiseHost, AdvertisePort: 443, ServerName: hy2ServerName, CertificatePEM: string(certificate), PrivateKeyPEM: string(hy2PrivateKey)}
+		hysteriaEndpoint = glivela.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: projection.task.ApplicationID, InboundTag: hy2InboundTag, ListenPort: 443, AdvertiseHost: endpoint.AdvertiseHost, AdvertisePort: 443, ServerName: hy2ServerName, CertificatePEM: string(certificate), PrivateKeyPEM: string(hy2PrivateKey)}
 		if hysteriaEndpoint.Validate() != nil {
 			return projection, errors.New("center: stored Glivela Hysteria endpoint is invalid")
 		}
@@ -419,7 +419,7 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 	if err := applyNativeEgressProjection(ctx, tx, &projection, endpoint, hysteriaEndpoint, vlessEnabled, hy2Enabled, materials); err != nil {
 		return projection, err
 	}
-	artifact, err := meridian.BuildDesiredArtifact(meridian.XrayPlan{
+	artifact, err := glivela.BuildDesiredArtifact(glivela.XrayPlan{
 		NativeEgress: projection.task.NativeEgress,
 		Revision:     uint64(revision), RealityEndpoints: realityEndpoints, HysteriaEndpoints: hysteriaEndpoints, Credentials: materials, Grants: routes.grants, Peers: routes.peers,
 	})
@@ -465,7 +465,7 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 	return projection, nil
 }
 
-func (s *Store) meridianRuntimeMaterials(ctx context.Context, tx *sql.Tx, endpointID, entryID string) ([]meridian.CredentialMaterial, map[string]meridian.CredentialMaterial, error) {
+func (s *Store) meridianRuntimeMaterials(ctx context.Context, tx *sql.Tx, endpointID, entryID string) ([]glivela.CredentialMaterial, map[string]glivela.CredentialMaterial, error) {
 	endpointEnabled, err := meridianEndpointQuotaEnabledInTx(ctx, tx, endpointID)
 	if err != nil {
 		return nil, nil, err
@@ -479,14 +479,14 @@ func (s *Store) meridianRuntimeMaterials(ctx context.Context, tx *sql.Tx, endpoi
 		return nil, nil, err
 	}
 	type stored struct {
-		material    meridian.CredentialMaterial
+		material    glivela.CredentialMaterial
 		secretID    string
 		hy2SecretID sql.NullString
-		plan        meridian.AccountPlan
+		plan        glivela.AccountPlan
 		status      string
 	}
 	storedValues := []stored{}
-	accountPlans := map[string]meridian.AccountPlan{}
+	accountPlans := map[string]glivela.AccountPlan{}
 	accountStatus := map[string]string{}
 	for rows.Next() {
 		var value stored
@@ -521,15 +521,15 @@ func (s *Store) meridianRuntimeMaterials(ctx context.Context, tx *sql.Tx, endpoi
 		if err != nil {
 			return nil, nil, err
 		}
-		projection, err := meridian.ProjectQuota(plan, usage)
+		projection, err := glivela.ProjectQuota(plan, usage)
 		status := accountStatus[accountID]
 		if err != nil || status != "active" && status != "disabled" && status != "expired" {
 			return nil, nil, errors.New("center: stored Glivela quota is invalid")
 		}
 		quotaEnabled[accountID] = status == "active" && projection.Enabled
 	}
-	materials := []meridian.CredentialMaterial{}
-	byID := map[string]meridian.CredentialMaterial{}
+	materials := []glivela.CredentialMaterial{}
+	byID := map[string]glivela.CredentialMaterial{}
 	for _, value := range storedValues {
 		protocolID, err := s.meridianSecretInTx(ctx, tx, value.secretID, meridianCredentialSecretContext(value.material.Credential.ID))
 		if err != nil {
@@ -554,8 +554,8 @@ func (s *Store) meridianRuntimeMaterials(ctx context.Context, tx *sql.Tx, endpoi
 }
 
 type meridianRuntimeRoutes struct {
-	grants                []meridian.RouteGrant
-	peers                 []meridian.RoutePeer
+	grants                []glivela.RouteGrant
+	peers                 []glivela.RoutePeer
 	runtimePeers          []meridianruntime.Peer
 	routePeerIDs          map[string]string
 	routeSecondaryPeerIDs map[string]string
@@ -564,7 +564,7 @@ type meridianRuntimeRoutes struct {
 	disabledCredentialIDs map[string]bool
 }
 
-func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointID, inboundTag string, credentials map[string]meridian.CredentialMaterial) (meridianRuntimeRoutes, error) {
+func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointID, inboundTag string, credentials map[string]glivela.CredentialMaterial) (meridianRuntimeRoutes, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.account_id,grant_row.egress_node_id,COALESCE(grant_row.ipv4_egress_node_id,''),grant_row.base_credential_id,grant_row.route_credential_id,
 		grant_row.mode,grant_row.hide_native,grant_row.enabled,grant_row.desired_revision,grant_row.applied_revision,grant_row.runtime_healthy,grant_row.status,
 		CASE WHEN agent.id IS NULL THEN NULL ELSE server.peer_json END,
@@ -579,10 +579,10 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		return meridianRuntimeRoutes{}, err
 	}
 	result := meridianRuntimeRoutes{blockedGrants: map[string]string{}, disabledCredentialIDs: map[string]bool{}, routePeerIDs: map[string]string{}, routeSecondaryPeerIDs: map[string]string{}}
-	peersByID := map[string]meridian.RoutePeer{}
+	peersByID := map[string]glivela.RoutePeer{}
 	runtimePeersByID := map[string]meridianruntime.Peer{}
 	for rows.Next() {
-		var grant meridian.RouteGrant
+		var grant glivela.RouteGrant
 		var baseID, routeID, mode, status string
 		var hideNative, enabled, runtimeHealthy int
 		var peerJSON, appliedJSON, desiredJSON, sourceJSON []byte
@@ -600,7 +600,7 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		}
 		grant.EntryID, grant.InboundTag = base.Credential.EntryID, inboundTag
 		grant.Base, grant.Route = base.Credential, route.Credential
-		grant.Mode = meridian.PublishingMode(mode)
+		grant.Mode = glivela.PublishingMode(mode)
 		grant.HideNative, grant.Enabled = hideNative == 1, enabled == 1
 		grant.RuntimeGood = runtimeHealthy == 1 && status == "ready"
 		if !grant.Enabled {
@@ -633,7 +633,7 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		}
 		// The landing inventory is keyed by Vastora Agent ID. The reported peer
 		// identity belongs to Tailscale and must retain its separate ID domain.
-		projectedPeer := meridian.RoutePeer{EgressID: grant.EgressID, Address: peer.Address, Port: landing.SOCKSPort}
+		projectedPeer := glivela.RoutePeer{EgressID: grant.EgressID, Address: peer.Address, Port: landing.SOCKSPort}
 		if grant.IPv4EgressID != "" {
 			pair, runtimePair, pairErr := s.readCompositeRoutePeers(ctx, tx, endpointID, grant.EgressID, grant.IPv4EgressID, true)
 			if pairErr != nil {
@@ -641,7 +641,7 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 				result.disabledCredentialIDs[grant.Route.ID] = true
 				continue
 			}
-			if err := meridian.ValidateCompositePeers(grant, pair[0], pair[1]); err != nil {
+			if err := glivela.ValidateCompositePeers(grant, pair[0], pair[1]); err != nil {
 				rows.Close()
 				return meridianRuntimeRoutes{}, err
 			}
@@ -671,18 +671,18 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 	if err := rows.Close(); err != nil {
 		return meridianRuntimeRoutes{}, err
 	}
-	result.peers = make([]meridian.RoutePeer, 0, len(peersByID))
+	result.peers = make([]glivela.RoutePeer, 0, len(peersByID))
 	for _, peer := range peersByID {
 		result.peers = append(result.peers, peer)
 	}
-	slices.SortFunc(result.peers, func(a, b meridian.RoutePeer) int { return strings.Compare(a.EgressID, b.EgressID) })
+	slices.SortFunc(result.peers, func(a, b glivela.RoutePeer) int { return strings.Compare(a.EgressID, b.EgressID) })
 	for _, peer := range result.peers {
 		result.runtimePeers = append(result.runtimePeers, runtimePeersByID[peer.EgressID])
 	}
 	return result, nil
 }
 
-func meridianAccountUsageInTx(ctx context.Context, tx *sql.Tx, accountID string) ([]meridian.UsageMember, error) {
+func meridianAccountUsageInTx(ctx context.Context, tx *sql.Tx, accountID string) ([]glivela.UsageMember, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT credential.id,watermark.baseline_bytes,watermark.observed_bytes,credential.enabled
 		FROM meridian_credentials credential LEFT JOIN meridian_usage_watermarks watermark ON watermark.credential_id=credential.id
 		WHERE credential.account_id=? ORDER BY credential.id`, accountID)
@@ -690,9 +690,9 @@ func meridianAccountUsageInTx(ctx context.Context, tx *sql.Tx, accountID string)
 		return nil, err
 	}
 	defer rows.Close()
-	usage := []meridian.UsageMember{}
+	usage := []glivela.UsageMember{}
 	for rows.Next() {
-		var value meridian.UsageMember
+		var value glivela.UsageMember
 		var baseline, observed sql.NullInt64
 		var active int
 		if err := rows.Scan(&value.CredentialID, &baseline, &observed, &active); err != nil {
@@ -764,7 +764,7 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 		if err != nil {
 			return err
 		}
-		snapshots, err := meridian.ParseXrayUserCounters(projection.materials, envelope.MeridianRuntime.Stats)
+		snapshots, err := glivela.ParseXrayUserCounters(projection.materials, envelope.MeridianRuntime.Stats)
 		if err != nil {
 			succeeded, taskError = false, "center: Agent returned invalid Glivela usage counters"
 		} else if err := s.observeMeridianUsageInTx(ctx, tx, command.EndpointID, snapshots, now); err != nil {
@@ -883,7 +883,7 @@ func (s *Store) completeSupersededMeridianRuntimeCommand(ctx context.Context, co
 	if commandRevision == currentRevision {
 		return false, nil
 	}
-	if commandRevision < 1 || commandRevision > currentRevision || !meridian.ValidIdentity(expectedSHA) {
+	if commandRevision < 1 || commandRevision > currentRevision || !glivela.ValidIdentity(expectedSHA) {
 		return false, errors.New("center: stored Glivela deployment revision is invalid")
 	}
 
@@ -930,12 +930,12 @@ func (s *Store) completeSupersededMeridianRuntimeCommand(ctx context.Context, co
 
 func meridianSupersededReceiptMatches(revision int64, expectedSHA string, result meridianruntime.Result) bool {
 	receipt := result.Receipt
-	return revision > 0 && receipt.Revision == uint64(revision) && receipt.RuntimeReady && meridian.ValidIdentity(receipt.ConfigSHA256) &&
+	return revision > 0 && receipt.Revision == uint64(revision) && receipt.RuntimeReady && glivela.ValidIdentity(receipt.ConfigSHA256) &&
 		subtle.ConstantTimeCompare([]byte(expectedSHA), []byte(receipt.ConfigSHA256)) == 1 &&
 		len(result.Stats) > 0 && len(result.Stats) <= 4<<20 && json.Valid(result.Stats)
 }
 
-func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, endpointID string, snapshots []meridian.CounterSnapshot, observedAt string) error {
+func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, endpointID string, snapshots []glivela.CounterSnapshot, observedAt string) error {
 	var endpointDelta int64
 	for _, snapshot := range snapshots {
 		if snapshot.UpBytes < 0 || snapshot.DownBytes < 0 {
@@ -1030,7 +1030,7 @@ func (s *Store) recordMeridianRuntimeObservation(ctx context.Context, tx *sql.Tx
 	if err != nil {
 		return err
 	}
-	snapshots, err := meridian.ParseXrayUserCounters(projection.materials, result.Stats)
+	snapshots, err := glivela.ParseXrayUserCounters(projection.materials, result.Stats)
 	if err != nil {
 		return errors.New("center: Agent reported invalid Glivela usage counters")
 	}
@@ -1183,7 +1183,7 @@ func (s *Store) meridianQuotaStatesInTx(ctx context.Context, tx *sql.Tx, endpoin
 	}
 	type stored struct {
 		id, status string
-		plan       meridian.AccountPlan
+		plan       glivela.AccountPlan
 	}
 	values := []stored{}
 	for rows.Next() {
@@ -1209,7 +1209,7 @@ func (s *Store) meridianQuotaStatesInTx(ctx context.Context, tx *sql.Tx, endpoin
 		if err != nil {
 			return nil, err
 		}
-		projection, err := meridian.ProjectQuota(value.plan, usage)
+		projection, err := glivela.ProjectQuota(value.plan, usage)
 		if err != nil {
 			return nil, errors.New("center: stored Glivela quota is invalid")
 		}

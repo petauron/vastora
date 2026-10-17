@@ -11,16 +11,16 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/controlplane"
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
-func TestAgentReinstallFencesRemotePulseEnrollment(t *testing.T) {
+func TestAgentReinstallFencesRemoteSenulunEnrollment(t *testing.T) {
 	for _, phase := range []string{"pending", "offered", "running", "result_received", "pause-failure"} {
 		t.Run(phase, func(t *testing.T) {
-			store, monitor, collector, deployment := pulseFixture(t)
+			store, monitor, collector, deployment := senulunFixture(t)
 			ctx := context.Background()
-			addPulsePrivateFixture(t, store, deployment.ApplicationID, monitor.ID)
-			install, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey})
+			addSenulunPrivateFixture(t, store, deployment.ApplicationID, monitor.ID)
+			install, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -36,7 +36,7 @@ func TestAgentReinstallFencesRemotePulseEnrollment(t *testing.T) {
 			var originalEvidence []byte
 			if phase != "pending" {
 				task, err = store.claimExecutionTask(ctx, monitor.ID, monitor.Credential, session, 0)
-				if err != nil || task == nil || task.PulseEnrollment == nil {
+				if err != nil || task == nil || task.SenulunEnrollment == nil {
 					t.Fatalf("could not claim initial remote command: %+v %v", task, err)
 				}
 				if phase != "offered" {
@@ -45,7 +45,7 @@ func TestAgentReinstallFencesRemotePulseEnrollment(t *testing.T) {
 					}
 				}
 				if phase == "result_received" {
-					raw, _ := json.Marshal(map[string]any{"pulseEnrollment": pulse.EnrollmentResult{ID: "old-collector-enrollment", Token: strings.Repeat("e", 32), ExpiresAtUnixMS: store.now().Add(time.Hour).UnixMilli()}})
+					raw, _ := json.Marshal(map[string]any{"pulseEnrollment": senulun.EnrollmentResult{ID: "old-collector-enrollment", Token: strings.Repeat("e", 32), ExpiresAtUnixMS: store.now().Add(time.Hour).UnixMilli()}})
 					if err = store.StoreExecutionResult(ctx, monitor.ID, session, task.Authorization.ID, raw, true, false, "", nil, false); err != nil {
 						t.Fatal(err)
 					}

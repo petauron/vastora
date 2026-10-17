@@ -1,6 +1,6 @@
 import type { AppData, AppView } from "@/types";
 import type { Language } from "@/translations";
-import { isInstalledApplication, localized, pulseDashboardURL, secureDashboardURL } from "./appAccess";
+import { isInstalledApplication, localized, senulunDashboardURL, secureDashboardURL } from "./appAccess";
 
 export type DesktopApplication = { key: string; name: string; count: number; url?: string };
 
@@ -28,7 +28,7 @@ export function desktopApplications(data: AppData, language: Language): DesktopA
 // web entries need the application's workspace so the user can choose a host.
 export function applicationLaunchURL(data: AppData, appKey: string): string | undefined {
   if (appKey === "vastora-official/meridian" || appKey === "vastora-official/3x-ui") return undefined;
-  if (appKey === "vastora-official/pulse") return pulseDashboardURL(data);
+  if (appKey === "vastora-official/pulse") return senulunDashboardURL(data);
   const applications = data.applications.filter((app) => app.appKey === appKey && isInstalledApplication(app));
   if (applications.length !== 1 || applications[0].status !== "running") return undefined;
   const services = new Set(data.services.filter((service) => service.applicationId === applications[0].id && service.management && ["http", "https"].includes(service.protocol) && ["ready", "publishing"].includes(service.status)).map((service) => service.id));

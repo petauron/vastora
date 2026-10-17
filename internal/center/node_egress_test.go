@@ -34,7 +34,7 @@ func TestNodeEgressRejectsUnadoptedRuntimeWithoutChangingEndpoint(t *testing.T) 
 		}
 	}
 	read(&before)
-	if _, err := s.SetNodeEgress(context.Background(), id, NodeEgressInput{Policy: meridian.EgressIPv6Only}); err == nil {
+	if _, err := s.SetNodeEgress(context.Background(), id, NodeEgressInput{Policy: glivela.EgressIPv6Only}); err == nil {
 		t.Fatal("unadopted runtime change accepted")
 	}
 	read(&after)
@@ -52,10 +52,10 @@ func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
 		s, id := nodeEgressFixture(t)
 		ctx := context.Background()
 		before, err := s.NodeEgress(ctx, id)
-		if err != nil || !before.Available || before.Policy != meridian.EgressAuto || before.Revision != 0 {
+		if err != nil || !before.Available || before.Policy != glivela.EgressAuto || before.Revision != 0 {
 			t.Fatalf("initial=%#v err=%v", before, err)
 		}
-		command, err := s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: meridian.EgressIPv6Only})
+		command, err := s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: glivela.EgressIPv6Only})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,7 +63,7 @@ func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
 		if readErr != nil || view.Kind != meridianruntime.ApplyKind || view.State != "pending" {
 			t.Fatalf("queued command not readable: %#v %v", view, readErr)
 		}
-		if _, err = s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: meridian.EgressAuto}); err == nil {
+		if _, err = s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: glivela.EgressAuto}); err == nil {
 			t.Fatal("concurrent policy accepted")
 		}
 		tx, err := s.db.BeginTx(ctx, nil)
@@ -76,11 +76,11 @@ func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		tx.Rollback()
-		if p.task.NativeEgress != meridian.EgressIPv6Only || p.task.ImageReference != meridianruntime.EgressImage || len(p.task.EgressClients) != 1 {
+		if p.task.NativeEgress != glivela.EgressIPv6Only || p.task.ImageReference != meridianruntime.EgressImage || len(p.task.EgressClients) != 1 {
 			t.Fatalf("policy projection missing: %#v", p.task.NativeEgress)
 		}
 		c := p.task.EgressClients[0]
-		if c.Reality.AdvertiseHost != "entry.example.test" || c.Reality.AdvertisePort != 443 || c.Reality.PrivateKey != "" || c.Material.Credential.Kind != meridian.NativeCredential {
+		if c.Reality.AdvertiseHost != "entry.example.test" || c.Reality.AdvertisePort != 443 || c.Reality.PrivateKey != "" || c.Material.Credential.Kind != glivela.NativeCredential {
 			t.Fatal("probe changed identity or targeted a landing")
 		}
 		if _, err := c.Config(1080); err != nil {
@@ -103,7 +103,7 @@ func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		if success {
-			if after.AppliedPolicy != meridian.EgressIPv6Only || after.Verified == nil || after.State != "ready" {
+			if after.AppliedPolicy != glivela.EgressIPv6Only || after.Verified == nil || after.State != "ready" {
 				t.Fatalf("not verified: %#v", after)
 			}
 			// Quota closure must still render without a remaining enabled client.
@@ -120,10 +120,10 @@ func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
 			}
 			next, err := s.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, "")
 			tx.Rollback()
-			if err != nil || len(next.task.EgressClients) != 0 || next.task.NativeEgress != meridian.EgressIPv6Only {
+			if err != nil || len(next.task.EgressClients) != 0 || next.task.NativeEgress != glivela.EgressIPv6Only {
 				t.Fatalf("quota mutation lost policy: %v", err)
 			}
-		} else if after.State != "failed" || after.Verified != nil || after.AppliedPolicy != meridian.EgressAuto {
+		} else if after.State != "failed" || after.Verified != nil || after.AppliedPolicy != glivela.EgressAuto {
 			t.Fatalf("unverified marked applied: %#v", after)
 		}
 	}
@@ -138,7 +138,7 @@ func TestNodeEgressRejectsUnsupportedAndMissingClientsAtomically(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE meridian_accounts SET enabled=0`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: meridian.EgressIPv4Only}); err == nil {
+	if _, err := s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: glivela.EgressIPv4Only}); err == nil {
 		t.Fatal("missing native verification identity accepted")
 	}
 	view, err := s.NodeEgress(ctx, id)
@@ -148,7 +148,7 @@ func TestNodeEgressRejectsUnsupportedAndMissingClientsAtomically(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE agents SET capabilities_json='{}' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: meridian.EgressIPv4Only}); err == nil {
+	if _, err := s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: glivela.EgressIPv4Only}); err == nil {
 		t.Fatal("old Agent accepted")
 	}
 }

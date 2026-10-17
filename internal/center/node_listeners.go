@@ -35,7 +35,7 @@ func validateCenterNodeListenerState(state gateway.NodeListenerState) error {
 			}
 			continue
 		}
-		upstreamOK := (len(route.Upstreams) == 1 && route.Upstreams[0].Port == centerThreeXUIRealityPort && (route.Upstreams[0].Address == dockerruntime.MeridianAlias || route.Upstreams[0].Address == dockerruntime.LegacyXrayAlias || route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias)) || len(route.Upstreams) == 1 && route.Upstreams[0].Port == meridian.RealityBackendPort && networking.IsPrivateServiceAddress(route.Upstreams[0].Address)
+		upstreamOK := (len(route.Upstreams) == 1 && route.Upstreams[0].Port == centerThreeXUIRealityPort && (route.Upstreams[0].Address == dockerruntime.MeridianAlias || route.Upstreams[0].Address == dockerruntime.LegacyXrayAlias || route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias)) || len(route.Upstreams) == 1 && route.Upstreams[0].Port == glivela.RealityBackendPort && networking.IsPrivateServiceAddress(route.Upstreams[0].Address)
 		if route.ProxyProtocol != gateway.ProxyProtocolV2 || !upstreamOK {
 			return errors.New("center: managed REALITY listener must target the approved managed backend with Proxy Protocol v2")
 		}
@@ -155,7 +155,7 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 				return gateway.NodeListenerState{}, errors.New("center: restore other shared-listener applications before restoring this entry")
 			}
 			cutoverLegacyRuntime = ""
-			endpoint = net.JoinHostPort(restore.BackendAddress, strconv.Itoa(meridian.RealityBackendPort))
+			endpoint = net.JoinHostPort(restore.BackendAddress, strconv.Itoa(glivela.RealityBackendPort))
 		}
 		if route.ManagedReality && (appKey != meridianAppKey || cutoverLegacyRuntime != "") {
 			alias := dockerruntime.ThreeXUIAlias
@@ -189,7 +189,7 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 		} else if role == threeXUIRoleWorker && runtimeGeneration >= 2 {
 			expectedAlias = dockerruntime.LegacyXrayAlias
 		}
-		hostBackend := appKey == meridianAppKey && cutoverLegacyRuntime == "" && networking.IsPrivateServiceAddress(host) && port == meridian.RealityBackendPort
+		hostBackend := appKey == meridianAppKey && cutoverLegacyRuntime == "" && networking.IsPrivateServiceAddress(host) && port == glivela.RealityBackendPort
 		if route.ManagedReality && (runtime != "docker" || (!hostBackend && (host != expectedAlias || port != centerThreeXUIRealityPort)) || route.ProxyProtocol != gateway.ProxyProtocolV2) {
 			return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("managed REALITY listener requires its approved local Xray backend with Proxy Protocol v2")}
 		}

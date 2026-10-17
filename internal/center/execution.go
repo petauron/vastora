@@ -355,14 +355,14 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
 	}
-	var pulseReporting bool
+	var senulunReporting bool
 	if task.Kind == "application.command" {
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.node.reporting')`, task.ID, agentID).Scan(&pulseReporting); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.node.reporting')`, task.ID, agentID).Scan(&senulunReporting); err != nil {
 			return controlplane.ExecutionAuthorization{}, err
 		}
 	}
-	if pulseReporting || task.PulseReporting != nil {
-		if !pulseReporting || task.PulseReporting == nil || task.Attempt != 1 || task.Reconcile {
+	if senulunReporting || task.SenulunReporting != nil {
+		if !senulunReporting || task.SenulunReporting == nil || task.Attempt != 1 || task.Reconcile {
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
 		_, expectedTask, err := s.validateReinstallMonitorReporting(ctx, tx, agentID, task.ID)
@@ -370,19 +370,19 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, err
 		}
 		expected, _ := json.Marshal(expectedTask)
-		actual, _ := json.Marshal(task.PulseReporting)
+		actual, _ := json.Marshal(task.SenulunReporting)
 		if string(expected) != string(actual) {
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
 	}
-	var pulseRotation bool
+	var senulunRotation bool
 	if task.Kind == "application.command" {
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.node.rotate')`, task.ID, agentID).Scan(&pulseRotation); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.node.rotate')`, task.ID, agentID).Scan(&senulunRotation); err != nil {
 			return controlplane.ExecutionAuthorization{}, err
 		}
 	}
-	if pulseRotation || task.PulseRotation != nil {
-		if !pulseRotation || task.PulseRotation == nil || task.Attempt != 1 || task.Reconcile {
+	if senulunRotation || task.SenulunRotation != nil {
+		if !senulunRotation || task.SenulunRotation == nil || task.Attempt != 1 || task.Reconcile {
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
 		command, err := s.validateReinstallMonitorRotation(ctx, tx, agentID, task.ID)
@@ -390,19 +390,19 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, err
 		}
 		expected, _ := json.Marshal(command.Task)
-		actual, _ := json.Marshal(task.PulseRotation)
+		actual, _ := json.Marshal(task.SenulunRotation)
 		if string(expected) != string(actual) {
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
 	}
-	var pulseInspection bool
+	var senulunInspection bool
 	if task.Kind == "application.command" {
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.enrollment.inspect')`, task.ID, agentID).Scan(&pulseInspection); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND kind='pulse.enrollment.inspect')`, task.ID, agentID).Scan(&senulunInspection); err != nil {
 			return controlplane.ExecutionAuthorization{}, err
 		}
 	}
-	if pulseInspection || task.PulseInspection != nil {
-		if !pulseInspection || task.PulseInspection == nil {
+	if senulunInspection || task.SenulunInspection != nil {
+		if !senulunInspection || task.SenulunInspection == nil {
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
 		command, err := s.validateReinstallInspection(ctx, tx, agentID, task.ID)
@@ -410,7 +410,7 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, err
 		}
 		expected, _ := json.Marshal(command.Task)
-		actual, _ := json.Marshal(task.PulseInspection)
+		actual, _ := json.Marshal(task.SenulunInspection)
 		if string(expected) != string(actual) {
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
@@ -433,8 +433,8 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	if err != nil {
 		return controlplane.ExecutionAuthorization{}, err
 	}
-	if restoredMonitor != nil || task.PulseRestore != nil {
-		if restoredMonitor == nil || task.PulseRestore == nil {
+	if restoredMonitor != nil || task.SenulunRestore != nil {
+		if restoredMonitor == nil || task.SenulunRestore == nil {
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
 		expected, _ := json.Marshal(restoredMonitor)
@@ -719,7 +719,7 @@ func executionFailureCanReleaseFence(task AgentTask) bool {
 	if task.Kind == "application.maintenance" && task.PackageMaintenance != nil && task.PackageMaintenance.Action == "logs" {
 		return true
 	}
-	if task.Kind == "application.command" && task.PulseInspection != nil && task.PulseInspection.Validate() == nil {
+	if task.Kind == "application.command" && task.SenulunInspection != nil && task.SenulunInspection.Validate() == nil {
 		return true
 	}
 	if task.Kind != "application.command" || task.ClientCommand == nil {

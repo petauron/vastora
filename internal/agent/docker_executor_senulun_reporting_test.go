@@ -13,14 +13,14 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
-func TestPulseReportingPinsServiceAndUsesSecretStdin(t *testing.T) {
+func TestSenulunReportingPinsServiceAndUsesSecretStdin(t *testing.T) {
 	for _, mode := range []string{"fresh", "retained", "unsupported", "wrong-deployment", "wrong-node", "secret-field", "trailing-json", "failed"} {
 		t.Run(mode, func(t *testing.T) {
-			task := pulse.ReportingTask{ApplicationID: "monitor-service", DeploymentID: "reviewed", Credentials: pulse.RestoreCredentials{NodeID: "11111111-1111-4111-8111-111111111111", Token: "test-rotated-credential-never-publish"}}
-			labels := applicationResourceLabels(pulse.ServiceKey, "pulse", task.ApplicationID, task.DeploymentID)
+			task := senulun.ReportingTask{ApplicationID: "monitor-service", DeploymentID: "reviewed", Credentials: senulun.RestoreCredentials{NodeID: "11111111-1111-4111-8111-111111111111", Token: "test-rotated-credential-never-publish"}}
+			labels := applicationResourceLabels(senulun.ServiceKey, "pulse", task.ApplicationID, task.DeploymentID)
 			if mode == "wrong-deployment" {
 				labels[applicationDeploymentIDLabel] = "other"
 			}
@@ -33,8 +33,8 @@ func TestPulseReportingPinsServiceAndUsesSecretStdin(t *testing.T) {
 				switch {
 				case strings.HasSuffix(r.URL.Path, "/_ping"):
 					w.Header().Set("API-Version", "1.55")
-				case strings.HasSuffix(r.URL.Path, "/containers/"+pulseContainer+"/json"):
-					_ = json.NewEncoder(w).Encode(container.InspectResponse{ID: "fixed-pulse", Config: &container.Config{Labels: labels}, State: &container.State{Running: true}})
+				case (strings.HasSuffix(r.URL.Path, "/containers/"+senulunContainer+"/json") || strings.HasSuffix(r.URL.Path, "/containers/fixed-pulse/json")):
+					_ = json.NewEncoder(w).Encode(container.InspectResponse{ID: "fixed-pulse", Config: &container.Config{Labels: labels, Entrypoint: []string{"/usr/local/bin/pulse-service"}}, State: &container.State{Running: true}})
 				case strings.HasSuffix(r.URL.Path, "/containers/fixed-pulse/exec"):
 					var input struct {
 						Cmd         []string
@@ -100,7 +100,7 @@ func TestPulseReportingPinsServiceAndUsesSecretStdin(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			result, err := (ApplicationExecutor{PackageStateDirectory: pulseReviewedTestPackage(t, task.ApplicationID, task.DeploymentID), DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}).InspectPulseReporting(context.Background(), task)
+			result, err := (ApplicationExecutor{PackageStateDirectory: senulunReviewedTestPackage(t, task.ApplicationID, task.DeploymentID), DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}).InspectSenulunReporting(context.Background(), task)
 			mu.Lock()
 			defer mu.Unlock()
 			if mode == "fresh" || mode == "retained" {

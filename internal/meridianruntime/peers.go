@@ -24,7 +24,7 @@ func (p Peer) Validate() error {
 		return value != "" && len(value) <= limit && strings.TrimSpace(value) == value && !strings.ContainsAny(value, "\r\n\x00")
 	}
 	address, err := netip.ParseAddr(p.Identity.Address)
-	if !meridian.ValidIdentifier(p.EgressID) || !validIdentityPart(p.Identity.ID, 128) || !validIdentityPart(p.Identity.PublicKey, 512) ||
+	if !glivela.ValidIdentifier(p.EgressID) || !validIdentityPart(p.Identity.ID, 128) || !validIdentityPart(p.Identity.PublicKey, 512) ||
 		err != nil || !netip.MustParsePrefix("100.64.0.0/10").Contains(address) || address.String() != p.Identity.Address {
 		return errors.New("meridian runtime: invalid egress peer identity")
 	}

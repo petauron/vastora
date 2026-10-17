@@ -21,13 +21,13 @@ import (
 	"testing"
 
 	"github.com/moby/moby/client"
-	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/secret"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 // Rehearse only Pulse historical adoption. Database/key inputs are private
 // copies; Docker is exposed through a proxy that refuses every write request.
-func TestPackageHistoricalPulseSnapshot(t *testing.T) {
+func TestPackageHistoricalSenulunSnapshot(t *testing.T) {
 	directory := os.Getenv("VASTORA_HISTORICAL_AGENT_SNAPSHOT")
 	if directory == "" {
 		t.Skip("requires an explicit private Agent snapshot")
@@ -43,7 +43,7 @@ func TestPackageHistoricalPulseSnapshot(t *testing.T) {
 	defer db.Close()
 	store := &Store{db: db, key: key, dataDir: directory}
 	ctx := context.Background()
-	history, err := store.AppliedInstallation(ctx, pulse.ServiceKey)
+	history, err := store.AppliedInstallation(ctx, senulun.ServiceKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestPackageHistoricalPulseSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(raw)
-	task := DeploymentTask{ID: "historical-copy-rehearsal", ApplicationID: history.ApplicationID, AppKey: pulse.ServiceKey, Operation: "adopt", Manifest: history.Manifest, HistoricalManifest: raw, ManifestSHA256: hex.EncodeToString(digest[:])}
+	task := DeploymentTask{ID: "historical-copy-rehearsal", ApplicationID: history.ApplicationID, AppKey: senulun.ServiceKey, Operation: "adopt", Manifest: history.Manifest, HistoricalManifest: raw, ManifestSHA256: hex.EncodeToString(digest[:])}
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", "/var/run/docker.sock")
 	}}
@@ -74,7 +74,7 @@ func TestPackageHistoricalPulseSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer docker.Close()
-	before, err := docker.ContainerInspect(ctx, pulseContainer, client.ContainerInspectOptions{})
+	before, err := docker.ContainerInspect(ctx, senulunContainer, client.ContainerInspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestPackageHistoricalPulseSnapshot(t *testing.T) {
 	if result.Resources == nil || result.Resources.State != "ready" {
 		t.Fatal("adoption receipt incomplete")
 	}
-	after, err := docker.ContainerInspect(ctx, pulseContainer, client.ContainerInspectOptions{})
+	after, err := docker.ContainerInspect(ctx, senulunContainer, client.ContainerInspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,7 +23,7 @@ import (
 const meridianCutoverImportContext = "meridian-cutover-import:v1"
 
 type meridianImportedCredential struct {
-	model      meridian.Credential
+	model      glivela.Credential
 	endpointID string
 	protocolID string
 	hy2Auth    string
@@ -32,21 +32,21 @@ type meridianImportedCredential struct {
 }
 
 type meridianImportedAccount struct {
-	model       meridian.Account
+	model       glivela.Account
 	token       string
 	credentials []meridianImportedCredential
-	grants      []meridian.RouteGrant
+	grants      []glivela.RouteGrant
 }
 
 type meridianImportedEndpoint struct {
-	model         meridian.RealityEndpoint
+	model         glivela.RealityEndpoint
 	totalBytes    int64
 	usedBytes     int64
 	resetDay      int
 	nextResetAt   string
 	lastResetAt   string
 	targetIP      string
-	hy2           *meridian.HysteriaEndpoint
+	hy2           *glivela.HysteriaEndpoint
 	vlessEnabled  bool
 	hy2Enabled    bool
 	hy2NotAfter   string
@@ -57,11 +57,11 @@ type meridianImportedEndpoint struct {
 	sourcePeer    *landing.PeerIdentity
 }
 
-func (value meridianImportedCredential) material() meridian.CredentialMaterial {
-	material := meridian.CredentialMaterial{Credential: value.model, ProtocolID: value.protocolID}
+func (value meridianImportedCredential) material() glivela.CredentialMaterial {
+	material := glivela.CredentialMaterial{Credential: value.model, ProtocolID: value.protocolID}
 	if value.hy2Auth != "" {
 		material.HysteriaAuth = value.hy2Auth
-		material.HysteriaIdentity = meridian.Identity(value.hy2Auth)
+		material.HysteriaIdentity = glivela.Identity(value.hy2Auth)
 	}
 	return material
 }
@@ -287,7 +287,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 	endpointByInbound := map[int]meridianImportedEndpoint{}
 	endpointByEntry := map[string]meridianImportedEndpoint{}
 	for _, legacy := range exported.Endpoints {
-		if legacy.Port != meridian.DefaultRealityPort || !legacy.VLESSEnabled {
+		if legacy.Port != glivela.DefaultRealityPort || !legacy.VLESSEnabled {
 			return errors.New("every imported endpoint must keep VLESS enabled on TCP 443 before Glivela cutover")
 		}
 		resolved, err := s.resolveLegacyMeridianEndpoint(ctx, tx, exported.ControllerApplicationID, legacy)
@@ -311,7 +311,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 		if err != nil {
 			return err
 		}
-		account := meridianImportedAccount{model: meridian.Account{ID: accountID, DisplayName: legacy.Email, Plan: meridian.AccountPlan{TotalBytes: legacy.TotalBytes, ExpiryTime: legacy.ExpiryTime, ResetDays: legacy.ResetDays, Enabled: legacy.Enabled}, DesiredRevision: 1}, token: legacy.SubscriptionToken}
+		account := meridianImportedAccount{model: glivela.Account{ID: accountID, DisplayName: legacy.Email, Plan: glivela.AccountPlan{TotalBytes: legacy.TotalBytes, ExpiryTime: legacy.ExpiryTime, ResetDays: legacy.ResetDays, Enabled: legacy.Enabled}, DesiredRevision: 1}, token: legacy.SubscriptionToken}
 		for index, inboundID := range legacy.InboundIDs {
 			endpoint, exists := endpointByInbound[inboundID]
 			if !exists {
@@ -321,7 +321,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 			if err != nil {
 				return err
 			}
-			credential := meridianImportedCredential{model: meridian.Credential{ID: credentialID, AccountID: accountID, Kind: meridian.NativeCredential, User: "meridian-native-" + credentialID, Identity: meridian.Identity(legacy.UUID), EntryID: endpoint.applicationID, Enabled: legacy.Enabled}, endpointID: endpoint.model.ID, protocolID: legacy.UUID, hy2Auth: legacy.HY2AuthByInbound[inboundID]}
+			credential := meridianImportedCredential{model: glivela.Credential{ID: credentialID, AccountID: accountID, Kind: glivela.NativeCredential, User: "meridian-native-" + credentialID, Identity: glivela.Identity(legacy.UUID), EntryID: endpoint.applicationID, Enabled: legacy.Enabled}, endpointID: endpoint.model.ID, protocolID: legacy.UUID, hy2Auth: legacy.HY2AuthByInbound[inboundID]}
 			if index == 0 {
 				credential.baseline, credential.observed = legacy.UsageBaseline, legacy.UsageObserved
 			}
@@ -354,26 +354,26 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 		if err != nil {
 			return err
 		}
-		route := meridianImportedCredential{model: meridian.Credential{ID: routeCredentialID, AccountID: account.model.ID, Kind: meridian.RouteCredential, User: meridian.RouteUser(legacy.ID), Identity: meridian.Identity(legacy.FixedUUID), EntryID: endpoint.applicationID, EgressID: egressID, Enabled: legacy.Enabled && account.model.Plan.Enabled}, endpointID: endpoint.model.ID, protocolID: legacy.FixedUUID, baseline: legacy.UsageBaseline, observed: legacy.UsageObserved}
+		route := meridianImportedCredential{model: glivela.Credential{ID: routeCredentialID, AccountID: account.model.ID, Kind: glivela.RouteCredential, User: glivela.RouteUser(legacy.ID), Identity: glivela.Identity(legacy.FixedUUID), EntryID: endpoint.applicationID, EgressID: egressID, Enabled: legacy.Enabled && account.model.Plan.Enabled}, endpointID: endpoint.model.ID, protocolID: legacy.FixedUUID, baseline: legacy.UsageBaseline, observed: legacy.UsageObserved}
 		account.credentials = append(account.credentials, route)
-		account.grants = append(account.grants, meridian.RouteGrant{ID: legacy.ID, AccountID: account.model.ID, EntryID: endpoint.applicationID, EgressID: egressID, InboundTag: endpoint.model.InboundTag, Base: base.model, Route: route.model, Mode: meridian.FixedMode, Enabled: legacy.Enabled, HideNative: legacy.HideNative, DesiredRev: 1})
+		account.grants = append(account.grants, glivela.RouteGrant{ID: legacy.ID, AccountID: account.model.ID, EntryID: endpoint.applicationID, EgressID: egressID, InboundTag: endpoint.model.InboundTag, Base: base.model, Route: route.model, Mode: glivela.FixedMode, Enabled: legacy.Enabled, HideNative: legacy.HideNative, DesiredRev: 1})
 	}
 
-	planAccounts := make([]meridian.ImportAccount, 0, len(accounts))
-	materials := map[string]meridian.CredentialMaterial{}
+	planAccounts := make([]glivela.ImportAccount, 0, len(accounts))
+	materials := map[string]glivela.CredentialMaterial{}
 	for _, account := range accounts {
-		item := meridian.ImportAccount{Account: account.model, SubscriptionTokenFingerprint: meridian.SubscriptionTokenFingerprint(account.token), HysteriaIdentities: map[string]string{}, Grants: slices.Clone(account.grants)}
+		item := glivela.ImportAccount{Account: account.model, SubscriptionTokenFingerprint: glivela.SubscriptionTokenFingerprint(account.token), HysteriaIdentities: map[string]string{}, Grants: slices.Clone(account.grants)}
 		for _, credential := range account.credentials {
 			item.Credentials = append(item.Credentials, credential.model)
-			if credential.model.Kind == meridian.NativeCredential && credential.hy2Auth != "" {
-				item.HysteriaIdentities[credential.model.ID] = meridian.Identity(credential.hy2Auth)
+			if credential.model.Kind == glivela.NativeCredential && credential.hy2Auth != "" {
+				item.HysteriaIdentities[credential.model.ID] = glivela.Identity(credential.hy2Auth)
 			}
-			item.Usage = append(item.Usage, meridian.UsageMember{CredentialID: credential.model.ID, Baseline: credential.baseline, Observed: credential.observed, Active: credential.model.Enabled})
+			item.Usage = append(item.Usage, glivela.UsageMember{CredentialID: credential.model.ID, Baseline: credential.baseline, Observed: credential.observed, Active: credential.model.Enabled})
 			materials[credential.model.ID] = credential.material()
 		}
 		planAccounts = append(planAccounts, item)
 	}
-	plan, err := meridian.PlanImport(planAccounts)
+	plan, err := glivela.PlanImport(planAccounts)
 	if err != nil {
 		return errors.New("legacy authority does not form a valid Glivela import plan")
 	}
@@ -431,7 +431,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 		if account.model.Plan.ResetDays > 0 {
 			nextReset = now.AddDate(0, 0, account.model.Plan.ResetDays).Format(time.RFC3339Nano)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,expiry_time,reset_days,next_reset_at,last_reset_at,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?, ?,?,?,1,0,?,'',?,?)`, account.model.ID, account.model.DisplayName, account.model.Plan.TotalBytes, account.model.Plan.ExpiryTime, account.model.Plan.ResetDays, nextReset, "", enabled, tokenSecretID, meridian.SubscriptionTokenFingerprint(account.token), status, stamp, stamp); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,expiry_time,reset_days,next_reset_at,last_reset_at,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?, ?,?,?,1,0,?,'',?,?)`, account.model.ID, account.model.DisplayName, account.model.Plan.TotalBytes, account.model.Plan.ExpiryTime, account.model.Plan.ResetDays, nextReset, "", enabled, tokenSecretID, glivela.SubscriptionTokenFingerprint(account.token), status, stamp, stamp); err != nil {
 			return err
 		}
 		for _, credential := range account.credentials {
@@ -442,12 +442,12 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 			var egress any
 			var hy2SecretID any
 			hy2Identity := ""
-			if credential.model.Kind == meridian.NativeCredential && credential.hy2Auth != "" {
+			if credential.model.Kind == glivela.NativeCredential && credential.hy2Auth != "" {
 				secretID, secretErr := s.putSecret(ctx, tx, []byte(credential.hy2Auth), meridianCredentialHY2SecretContext(credential.model.ID))
 				if secretErr != nil {
 					return secretErr
 				}
-				hy2SecretID, hy2Identity = secretID, meridian.Identity(credential.hy2Auth)
+				hy2SecretID, hy2Identity = secretID, glivela.Identity(credential.hy2Auth)
 			}
 			if credential.model.EgressID != "" {
 				egress = credential.model.EgressID
@@ -511,7 +511,7 @@ func resolveLegacyMeridianGrant(ctx context.Context, tx *sql.Tx, endpoint *merid
 		record.ParentID != legacy.ParentIdentityHash || record.Grant.InboundTag != legacy.InboundTag || record.Grant.BaseUser != legacy.BaseUser ||
 		record.Grant.FixedUser != legacy.FixedUser || record.Grant.FixedIdentity != landing.Identity(legacy.FixedUUID) ||
 		record.Grant.Peer.ID != legacy.EgressNodeID || record.Revision != legacy.Revision || record.Grant.Enabled != legacy.Enabled ||
-		record.Grant.HideBase != legacy.HideNative || !meridian.ValidIdentifier(record.LandingNodeID) ||
+		record.Grant.HideBase != legacy.HideNative || !glivela.ValidIdentifier(record.LandingNodeID) ||
 		!sameLegacyInboundTag(endpoint.model.InboundTag, legacy.InboundTag) {
 		return "", errors.New("center: legacy route no longer matches its authorized Center grant")
 	}
@@ -595,7 +595,7 @@ func (s *Store) resolveLegacyMeridianEndpoint(ctx context.Context, tx *sql.Tx, c
 	if displayName == "" {
 		displayName = strings.TrimSpace(legacy.DisplayName)
 	}
-	model := meridian.RealityEndpoint{ID: endpointID, EntryID: applicationID, InboundTag: legacy.Tag, ListenAddress: serviceAddress, ListenPort: meridian.RealityBackendPort, AdvertiseHost: advertiseHost, AdvertisePort: legacy.Port, Target: legacy.Target, ServerNames: slices.Clone(legacy.ServerNames), PrivateKey: legacy.PrivateKey, PublicKey: legacy.PublicKey, ShortIDs: slices.Clone(legacy.ShortIDs), Fingerprint: legacy.Fingerprint}
+	model := glivela.RealityEndpoint{ID: endpointID, EntryID: applicationID, InboundTag: legacy.Tag, ListenAddress: serviceAddress, ListenPort: glivela.RealityBackendPort, AdvertiseHost: advertiseHost, AdvertisePort: legacy.Port, Target: legacy.Target, ServerNames: slices.Clone(legacy.ServerNames), PrivateKey: legacy.PrivateKey, PublicKey: legacy.PublicKey, ShortIDs: slices.Clone(legacy.ShortIDs), Fingerprint: legacy.Fingerprint}
 	if model.Validate() != nil || displayName == "" {
 		return meridianImportedEndpoint{}, errors.New("center: legacy REALITY endpoint cannot be represented by Glivela")
 	}
@@ -621,12 +621,12 @@ func (s *Store) resolveLegacyMeridianEndpoint(ctx context.Context, tx *sql.Tx, c
 	}
 	resolved := meridianImportedEndpoint{model: model, totalBytes: plan.TotalBytes, usedBytes: legacy.UsedBytes, resetDay: plan.ResetDay, nextResetAt: plan.NextResetAt, lastResetAt: plan.LastResetAt, targetIP: strings.TrimSpace(targetIP), vlessEnabled: legacy.VLESSEnabled, hy2Enabled: legacy.HY2Enabled, entryName: displayName, serviceID: candidates[0].id, applicationID: applicationID, nodeID: nodeID}
 	if legacy.HY2Configured {
-		hy2 := meridian.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: applicationID, InboundTag: legacy.HY2Tag, ListenPort: 443, AdvertiseHost: advertiseHost, AdvertisePort: 443, ServerName: legacy.HY2ServerName, CertificatePEM: legacy.HY2Certificate, PrivateKeyPEM: legacy.HY2PrivateKey}
+		hy2 := glivela.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: applicationID, InboundTag: legacy.HY2Tag, ListenPort: 443, AdvertiseHost: advertiseHost, AdvertisePort: 443, ServerName: legacy.HY2ServerName, CertificatePEM: legacy.HY2Certificate, PrivateKeyPEM: legacy.HY2PrivateKey}
 		if hy2.Validate() != nil {
 			return meridianImportedEndpoint{}, errors.New("center: legacy Hysteria endpoint cannot be represented by Glivela")
 		}
 		resolved.hy2 = &hy2
-		notAfter, expiryErr := meridian.HysteriaCertificateNotAfter(hy2)
+		notAfter, expiryErr := glivela.HysteriaCertificateNotAfter(hy2)
 		if expiryErr != nil || !notAfter.After(s.now().Add(time.Hour)) {
 			return meridianImportedEndpoint{}, errors.New("center: legacy Hysteria certificate expiry is invalid")
 		}
@@ -653,10 +653,10 @@ func sameLegacyInboundTag(left, right string) bool {
 	return normalize(left) != "" && normalize(left) == normalize(right)
 }
 
-func verifyMeridianImportSubscriptions(plan meridian.ImportPlan, materials map[string]meridian.CredentialMaterial, endpoints map[string]meridianImportedEndpoint) error {
+func verifyMeridianImportSubscriptions(plan glivela.ImportPlan, materials map[string]glivela.CredentialMaterial, endpoints map[string]meridianImportedEndpoint) error {
 	for _, item := range plan.Accounts {
-		entries := []meridian.NativeEntry{}
-		credentialByID := map[string]meridian.Credential{}
+		entries := []glivela.NativeEntry{}
+		credentialByID := map[string]glivela.Credential{}
 		links := map[string]string{}
 		for _, credential := range item.Credentials {
 			endpoint, exists := endpoints[credential.EntryID]
@@ -665,32 +665,32 @@ func verifyMeridianImportSubscriptions(plan meridian.ImportPlan, materials map[s
 				return errors.New("center: imported subscription material is incomplete")
 			}
 			if endpoint.vlessEnabled {
-				link, err := meridian.LinkForCredential(endpoint.model, material, endpoint.entryName)
+				link, err := glivela.LinkForCredential(endpoint.model, material, endpoint.entryName)
 				if err != nil {
 					return errors.New("center: imported VLESS subscription link is invalid")
 				}
-				links[credential.ID+"\x00"+string(meridian.VLESSReality)] = link
-				if credential.Kind == meridian.NativeCredential {
-					entries = append(entries, meridian.NativeEntry{Material: material, Protocol: meridian.VLESSReality, Link: link})
+				links[credential.ID+"\x00"+string(glivela.VLESSReality)] = link
+				if credential.Kind == glivela.NativeCredential {
+					entries = append(entries, glivela.NativeEntry{Material: material, Protocol: glivela.VLESSReality, Link: link})
 				}
 			}
-			if credential.Kind == meridian.NativeCredential && endpoint.hy2Enabled && endpoint.hy2 != nil {
-				link, err := meridian.Hysteria2LinkForCredential(*endpoint.hy2, material, endpoint.entryName+" · HY2")
+			if credential.Kind == glivela.NativeCredential && endpoint.hy2Enabled && endpoint.hy2 != nil {
+				link, err := glivela.Hysteria2LinkForCredential(*endpoint.hy2, material, endpoint.entryName+" · HY2")
 				if err != nil {
 					return errors.New("center: imported Hysteria subscription link is invalid")
 				}
-				links[credential.ID+"\x00"+string(meridian.Hysteria2)] = link
-				if credential.Kind == meridian.NativeCredential {
-					entries = append(entries, meridian.NativeEntry{Material: material, Protocol: meridian.Hysteria2, Link: link})
+				links[credential.ID+"\x00"+string(glivela.Hysteria2)] = link
+				if credential.Kind == glivela.NativeCredential {
+					entries = append(entries, glivela.NativeEntry{Material: material, Protocol: glivela.Hysteria2, Link: link})
 				}
 			}
 			credentialByID[credential.ID] = credential
 		}
-		routes := []meridian.PublishedRoute{}
+		routes := []glivela.PublishedRoute{}
 		for _, grant := range item.Grants {
 			grant.Base, grant.Route = credentialByID[grant.Base.ID], credentialByID[grant.Route.ID]
 			grant.AppliedRev, grant.RuntimeGood = grant.DesiredRev, true
-			for _, protocol := range []meridian.ProtocolKind{meridian.VLESSReality} {
+			for _, protocol := range []glivela.ProtocolKind{glivela.VLESSReality} {
 				baseLink, baseOK := links[grant.Base.ID+"\x00"+string(protocol)]
 				routeLink, routeOK := links[grant.Route.ID+"\x00"+string(protocol)]
 				if !baseOK && !routeOK {
@@ -702,13 +702,13 @@ func verifyMeridianImportSubscriptions(plan meridian.ImportPlan, materials map[s
 				baseMaterial, routeMaterial := materials[grant.Base.ID], materials[grant.Route.ID]
 				baseIdentity, routeIdentity := baseMaterial.Credential.Identity, routeMaterial.Credential.Identity
 				endpoint := endpoints[grant.EntryID]
-				routes = append(routes, meridian.PublishedRoute{Grant: grant, Protocol: protocol, EntryName: endpoint.entryName, BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: baseIdentity, RouteProtocolIdentity: routeIdentity})
+				routes = append(routes, glivela.PublishedRoute{Grant: grant, Protocol: protocol, EntryName: endpoint.entryName, BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: baseIdentity, RouteProtocolIdentity: routeIdentity})
 			}
 		}
-		if _, err := meridian.RenderLinks(entries, item.Account.ID, meridian.FixedMode, routes, true); err != nil {
+		if _, err := glivela.RenderLinks(entries, item.Account.ID, glivela.FixedMode, routes, true); err != nil {
 			return errors.New("center: imported base64 subscription is invalid")
 		}
-		if _, err := meridian.RenderMihomo(entries, item.Account.ID, meridian.FixedMode, routes); err != nil {
+		if _, err := glivela.RenderMihomo(entries, item.Account.ID, glivela.FixedMode, routes); err != nil {
 			return errors.New("center: imported Mihomo subscription is invalid")
 		}
 	}

@@ -51,7 +51,7 @@ func openMeridianLandingSourcesFixture(t *testing.T) (*Store, string, string) {
 		VALUES(?,1,1,?,?,?,'ready',?)`, egress.ID, serverJSON, serverJSON, peerJSON, stamp); err != nil {
 		t.Fatal(err)
 	}
-	credentialID, err := store.insertMeridianCredential(ctx, tx, sharedSnapshotAccountB, sharedSnapshotEndpointID, "snapshot-shared-app", meridian.RouteCredential, egress.ID, true, stamp)
+	credentialID, err := store.insertMeridianCredential(ctx, tx, sharedSnapshotAccountB, sharedSnapshotEndpointID, "snapshot-shared-app", glivela.RouteCredential, egress.ID, true, stamp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +360,7 @@ func TestMeridianDerivedLandingSourceErrorPreservesReceiptAndContinuesOtherTarge
 		VALUES(?,1,1,?,?,'ready',?)`, healthy.ID, serverJSON, serverJSON, stamp); err != nil {
 		t.Fatal(err)
 	}
-	credentialID, err := store.insertMeridianCredential(ctx, tx, sharedSnapshotAccountB, sharedSnapshotEndpointID, "snapshot-shared-app", meridian.RouteCredential, healthy.ID, true, stamp)
+	credentialID, err := store.insertMeridianCredential(ctx, tx, sharedSnapshotAccountB, sharedSnapshotEndpointID, "snapshot-shared-app", glivela.RouteCredential, healthy.ID, true, stamp)
 	if err != nil {
 		t.Fatal(err)
 	}

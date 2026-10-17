@@ -11,8 +11,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/secret"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 type AgentReinstallMonitorReporting struct {
@@ -41,8 +41,8 @@ const reinstallReportingAuthoritySQL = `EXISTS(SELECT 1 FROM agent_reinstall_mon
  AND target.status='active' AND target.credential_revoked_at='' AND target.x25519_public_key=inspection.replacement_key
  AND EXISTS(SELECT 1 FROM admins WHERE id=op.authorized_by))`
 
-func (s *Store) buildReinstallReportingTask(ctx context.Context, tx *sql.Tx, target, serviceID string, command reinstallMonitorReportingCommand) (pulse.ReportingTask, error) {
-	var result pulse.ReportingTask
+func (s *Store) buildReinstallReportingTask(ctx context.Context, tx *sql.Tx, target, serviceID string, command reinstallMonitorReportingCommand) (senulun.ReportingTask, error) {
+	var result senulun.ReportingTask
 	var rotationID string
 	err := tx.QueryRowContext(ctx, `SELECT r.command_id FROM agent_reinstall_monitor_restorations m
  JOIN deployments d ON d.id=m.deployment_id JOIN agent_reinstall_monitor_rotations r ON r.command_id=m.rotation_command_id
@@ -52,7 +52,7 @@ func (s *Store) buildReinstallReportingTask(ctx context.Context, tx *sql.Tx, tar
 		return result, errExecutionAuthorization
 	}
 	restored, err := s.reinstallMonitorRestoreTask(ctx, tx, target, command.RestorationID, false)
-	if err != nil || restored == nil || restored.PulseRestore == nil {
+	if err != nil || restored == nil || restored.SenulunRestore == nil {
 		return result, errExecutionAuthorization
 	}
 	var executionID string
@@ -66,9 +66,9 @@ func (s *Store) buildReinstallReportingTask(ctx context.Context, tx *sql.Tx, tar
 	}
 	var evidence executionResultEvidence
 	var imported struct {
-		Restored *pulse.RestoreResult `json:"pulseRestored"`
+		Restored *senulun.RestoreResult `json:"pulseRestored"`
 	}
-	if json.Unmarshal(proof, &evidence) != nil || !evidence.Succeeded || evidence.Unknown || json.Unmarshal(evidence.Result, &imported) != nil || imported.Restored == nil || imported.Restored.NodeID != restored.PulseRestore.NodeID {
+	if json.Unmarshal(proof, &evidence) != nil || !evidence.Succeeded || evidence.Unknown || json.Unmarshal(evidence.Result, &imported) != nil || imported.Restored == nil || imported.Restored.NodeID != restored.SenulunRestore.NodeID {
 		return result, errExecutionAuthorization
 	}
 	rotation, err := s.validateReinstallMonitorRotation(ctx, tx, serviceID, rotationID)
@@ -78,16 +78,16 @@ func (s *Store) buildReinstallReportingTask(ctx context.Context, tx *sql.Tx, tar
 	if rotation.Task.Inspection.ApplicationID != command.ServiceApplicationID || rotation.Task.Inspection.DeploymentID != command.ServiceDeploymentID {
 		return result, errExecutionAuthorization
 	}
-	result = pulse.ReportingTask{ApplicationID: command.ServiceApplicationID, DeploymentID: command.ServiceDeploymentID, Credentials: *restored.PulseRestore}
+	result = senulun.ReportingTask{ApplicationID: command.ServiceApplicationID, DeploymentID: command.ServiceDeploymentID, Credentials: *restored.SenulunRestore}
 	if result.Validate() != nil {
-		return pulse.ReportingTask{}, errExecutionAuthorization
+		return senulun.ReportingTask{}, errExecutionAuthorization
 	}
 	return result, nil
 }
 
-func (s *Store) validateReinstallMonitorReporting(ctx context.Context, tx *sql.Tx, serviceID, commandID string) (reinstallMonitorReportingCommand, pulse.ReportingTask, error) {
+func (s *Store) validateReinstallMonitorReporting(ctx context.Context, tx *sql.Tx, serviceID, commandID string) (reinstallMonitorReportingCommand, senulun.ReportingTask, error) {
 	var command reinstallMonitorReportingCommand
-	var task pulse.ReportingTask
+	var task senulun.ReportingTask
 	var raw []byte
 	var target string
 	err := tx.QueryRowContext(ctx, `SELECT c.input_json,c.gateway_node_id FROM application_commands c JOIN agents service ON service.id=c.agent_id
@@ -104,7 +104,7 @@ func (s *Store) validateReinstallMonitorReporting(ctx context.Context, tx *sql.T
 	encoded, _ := json.Marshal(task)
 	sum := sha256.Sum256(encoded)
 	if hex.EncodeToString(sum[:]) != command.TaskDigest {
-		return command, pulse.ReportingTask{}, errExecutionAuthorization
+		return command, senulun.ReportingTask{}, errExecutionAuthorization
 	}
 	return command, task, nil
 }
@@ -144,7 +144,7 @@ func (s *Store) readReinstallMonitorReporting(ctx context.Context, tx *sql.Tx, r
 	return &receipt, nil
 }
 
-func (s *Store) reinstallMonitorSampleAge(ctx context.Context, tx *sql.Tx, serviceID, commandID string, task pulse.ReportingTask, checked time.Time) (time.Duration, bool) {
+func (s *Store) reinstallMonitorSampleAge(ctx context.Context, tx *sql.Tx, serviceID, commandID string, task senulun.ReportingTask, checked time.Time) (time.Duration, bool) {
 	var executionID, createdAt string
 	var sealed []byte
 	if err := tx.QueryRowContext(ctx, `SELECT id,sealed_result,created_at FROM task_executions
@@ -161,7 +161,7 @@ func (s *Store) reinstallMonitorSampleAge(ctx context.Context, tx *sql.Tx, servi
 	}
 	var proof executionResultEvidence
 	var result struct {
-		Reporting *pulse.ReportingResult `json:"pulseReporting"`
+		Reporting *senulun.ReportingResult `json:"pulseReporting"`
 	}
 	if json.Unmarshal(raw, &proof) != nil || !proof.Succeeded || proof.Unknown ||
 		json.Unmarshal(proof.Result, &result) != nil || result.Reporting == nil || !result.Reporting.FreshAfterRotation(task) {
@@ -235,7 +235,7 @@ func (s *Store) QueueAgentReinstallMonitorReporting(ctx context.Context, target,
 	id = "reinstall-monitor-report-" + id
 	raw, _ := json.Marshal(command)
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, review.ServiceApplicationID, review.ServiceAgentID, target, pulse.ReportingKind, raw, now, now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, review.ServiceApplicationID, review.ServiceAgentID, target, senulun.ReportingKind, raw, now, now); err != nil {
 		return receipt, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_reinstall_monitor_reports(command_id,restoration_id,input_json) VALUES(?,?,?)`, id, command.RestorationID, raw); err != nil {
@@ -263,7 +263,7 @@ func (s *Store) completeReinstallMonitorReporting(ctx context.Context, commit pr
 	state := "failed"
 	if succeeded {
 		var result struct {
-			Reporting *pulse.ReportingResult `json:"pulseReporting"`
+			Reporting *senulun.ReportingResult `json:"pulseReporting"`
 		}
 		if json.Unmarshal(raw, &result) != nil || result.Reporting == nil || result.Reporting.Validate(task) != nil {
 			return errors.New("center: invalid original monitoring reporting result")

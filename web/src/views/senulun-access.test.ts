@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentView, AppData, Application, AppView, Service } from "../types";
-import { canInstall, eligibleAppNodes, gatewaysForKind, installBlocker, packageNodeBlocker, pulsePrivateAccess } from "./appAccess";
+import { canInstall, eligibleAppNodes, gatewaysForKind, installBlocker, packageNodeBlocker, senulunPrivateAccess } from "./appAccess";
 
 const agent: AgentView = { id: "collector", name: "Collector", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 0, enrolledAt: "2026-09-26T00:00:00Z", lastSeenAt: "2026-09-26T00:00:00Z", siteId: "site", roles: ["worker"], connected: true, credentialRevoked: false, capabilities: { docker: false, gateway: false, tunnel: false, metrics: true, logs: false, executorVersions: { systemd: 1 }, runtimeCapabilities: [] }, networkCandidates: [], networkProfile: { serviceAddress: "10.0.0.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: false, remoteUpdateSupported: true };
 const app = (id: string, kind: string): AppView => ({ key: `vastora-official/${id}`, sourceId: "vastora-official", fetchedAt: "2026-09-26T00:00:00Z", manifestSha256: "a".repeat(64), app: { id, version: "1.0.0", packageRevision: 1, runtime: { kind, version: 1, requiredCapabilities: [] }, name: { en: id, "zh-CN": id }, description: { en: id, "zh-CN": id }, config: [] } });
@@ -22,10 +22,10 @@ describe("Senulun app access", () => {
   it("waits for private HTTPS, not a browser-authenticated Tunnel", () => {
     expect(eligibleAppNodes(data, "vastora-official/pulse-agent")).toEqual([]);
     const publication = { id: "entry", serviceId: "dashboard", kind: "cloudflare_tunnel", status: "ready", tlsEnabled: true } as AppData["publications"][number];
-    expect(pulsePrivateAccess({ ...data, publications: [publication] })).toBeUndefined();
+    expect(senulunPrivateAccess({ ...data, publications: [publication] })).toBeUndefined();
     const ready = { ...data, publications: [{ ...publication, kind: "headscale_gateway" as const }] };
     expect(eligibleAppNodes(ready, "vastora-official/pulse-agent")).toEqual([agent]);
-    expect(pulsePrivateAccess({ ...ready, publications: [{ ...ready.publications[0], tlsEnabled: false }] })).toBeUndefined();
+    expect(senulunPrivateAccess({ ...ready, publications: [{ ...ready.publications[0], tlsEnabled: false }] })).toBeUndefined();
   });
   it("does not offer unauthenticated direct public access", () => {
     expect(gatewaysForKind(data, dashboard, "public_direct")).toEqual([]);

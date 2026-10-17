@@ -16,10 +16,10 @@ import (
 
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/platform"
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
-func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.T) {
+func TestManagedUpgradeSenulunEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.T) {
 	var recipe catalog.AppManifest
 	for _, app := range officialContractFixture(t).Apps {
 		if app.ID == "pulse-agent" {
@@ -32,8 +32,8 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 	for _, scenario := range []string{"upgrade", "configure", "missing-identity", "invalid-identity", "wrong-service", "insecure-identity", "install-without-token", "install-with-token", "undeclared-config", "missing-service-association"} {
 		t.Run(scenario, func(t *testing.T) {
 			task := packageTestTask(t)
-			task.AppKey, task.Manifest, task.Operation = pulse.AgentKey, recipe, "upgrade"
-			settings := pulse.AgentConfig{ServiceURL: "https://monitor.example.test/", ServiceApplicationID: "monitor", NodeName: "retained-node", NodeGroup: "retained-group"}
+			task.AppKey, task.Manifest, task.Operation = senulun.AgentKey, recipe, "upgrade"
+			settings := senulun.AgentConfig{ServiceURL: "https://monitor.example.test/", ServiceApplicationID: "monitor", NodeName: "retained-node", NodeGroup: "retained-group"}
 			task.Config, _ = json.Marshal(settings)
 			task.Secrets = json.RawMessage(`{}`)
 			if scenario == "undeclared-config" || scenario == "missing-service-association" {
@@ -89,7 +89,7 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 			if err := writeHostFileAtomic(manager.path("/etc/retained-collector.env"), []byte("PULSE_NODE_REGION=SG\nPULSE_GEOIP_PROVIDER=disabled\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			identityPath := manager.path(pulsePackageIdentityPath(task, receipt))
+			identityPath := manager.path(senulunPackageIdentityPath(task, receipt))
 			identity := []byte(`{"protocol_version":2,"service_url":"https://monitor.example.test/","node_id":"fixture-node","agent_token":"fixture-retained-token"}`)
 			mode := os.FileMode(0600)
 			switch scenario {
@@ -107,8 +107,8 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 			}
 			backend := &SystemdPackageBackend{Manager: manager, StateDirectory: packageTestDirectory(t)}
 			if scenario == "upgrade" || scenario == "configure" {
-				prepared, err := backend.preparePulseInputs(task, receipt)
-				var retained pulse.AgentConfig
+				prepared, err := backend.prepareSenulunInputs(task, receipt)
+				var retained senulun.AgentConfig
 				if err != nil || json.Unmarshal(prepared.Config, &retained) != nil || retained.NodeRegion == nil || *retained.NodeRegion != "SG" || retained.GeoIPProvider == nil || *retained.GeoIPProvider != "disabled" {
 					t.Fatalf("retained location settings were lost: %v", err)
 				}
@@ -122,7 +122,7 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 				if _, exists := config["service_application_id"]; exists {
 					t.Fatal("Center metadata reached the runtime configuration")
 				}
-				var original pulse.AgentConfig
+				var original senulun.AgentConfig
 				if json.Unmarshal(task.Config, &original) != nil || original.ServiceApplicationID != settings.ServiceApplicationID {
 					t.Fatal("preparation changed the original control-plane association")
 				}
@@ -169,7 +169,7 @@ func TestManagedUpgradePulseEnrollmentIsOneTimeAndIdentityIsRequired(t *testing.
 	if _, _, err := runtimeInputs(ordinary); err == nil {
 		t.Fatal("another application's undeclared Center metadata was accepted")
 	}
-	ordinary.AppKey = pulse.AgentKey
+	ordinary.AppKey = senulun.AgentKey
 	if _, _, err := runtimeInputs(ordinary); err == nil {
 		t.Fatal("a non-systemd package accepted collector-only metadata")
 	}

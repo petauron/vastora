@@ -1,4 +1,4 @@
-package pulse
+package senulun
 
 import (
 	"encoding/json"
@@ -6,18 +6,18 @@ import (
 )
 
 func TestCollectorRequiresCredentialFreeHTTPSRoot(t *testing.T) {
-	for _, endpoint := range []string{"http://pulse.example.com/", "https://user:secret@pulse.example.com/", "https://pulse.example.com/?token=x", "https://pulse.example.com/path", "https://pulse.example.com/#fragment"} {
+	for _, endpoint := range []string{"http://senulun.example.com/", "https://user:secret@senulun.example.com/", "https://senulun.example.com/?token=x", "https://senulun.example.com/path", "https://senulun.example.com/#fragment"} {
 		if (AgentConfig{ServiceURL: endpoint, ServiceApplicationID: "service", NodeName: "node"}).Validate() == nil {
 			t.Fatalf("accepted unsafe endpoint %s", endpoint)
 		}
 	}
-	if err := (AgentConfig{ServiceURL: "https://pulse.example.com/", ServiceApplicationID: "service", NodeName: "node"}).Validate(); err != nil {
+	if err := (AgentConfig{ServiceURL: "https://senulun.example.com/", ServiceApplicationID: "service", NodeName: "node"}).Validate(); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestCollectorLocationValidation(t *testing.T) {
-	base := AgentConfig{ServiceURL: "https://pulse.example.com/", ServiceApplicationID: "service", NodeName: "node"}
+	base := AgentConfig{ServiceURL: "https://senulun.example.com/", ServiceApplicationID: "service", NodeName: "node"}
 	for _, code := range []string{"", "SG", "us", "HK"} {
 		config := base
 		config.NodeRegion = &code

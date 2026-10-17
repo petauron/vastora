@@ -1,4 +1,4 @@
-package pulse
+package senulun
 
 import (
 	"errors"
@@ -18,7 +18,7 @@ type RestoreResult struct {
 func (credentials RestoreCredentials) Validate() error {
 	id, err := uuid.Parse(credentials.NodeID)
 	if err != nil || id.String() != credentials.NodeID || !validAgentToken(credentials.Token) {
-		return errors.New("pulse: invalid original monitoring credentials")
+		return errors.New("senulun: invalid original monitoring credentials")
 	}
 	return nil
 }

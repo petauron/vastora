@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
-const pulseAppKey = pulse.ServiceKey
-const pulseAgentAppKey = pulse.AgentKey
+const senulunAppKey = senulun.ServiceKey
+const senulunAgentAppKey = senulun.AgentKey
 
 // Older Pulse installations have no host settings to retain. Fill only
 // absent values; explicit updates and already stored secrets remain intact.
-func (s *Store) withPulseHostDefaults(ctx context.Context, agentID, operation string, raw []byte) ([]byte, string, error) {
+func (s *Store) withSenulunHostDefaults(ctx context.Context, agentID, operation string, raw []byte) ([]byte, string, error) {
 	values, err := decodeJSONObject(raw, "center: Senulun configuration must be a JSON object")
 	if err != nil {
 		return nil, "", err
@@ -34,7 +34,7 @@ func (s *Store) withPulseHostDefaults(ctx context.Context, agentID, operation st
 			WHERE app.node_id = ? AND app.app_key = ? AND service.name = 'dashboard'
 			AND p.status = 'ready' AND p.tls_enabled = 1
 			ORDER BY CASE p.kind WHEN 'cloudflare_tunnel' THEN 0 WHEN 'public_direct' THEN 1
-				WHEN 'headscale_gateway' THEN 2 WHEN 'lan_gateway' THEN 3 ELSE 4 END, p.updated_at DESC LIMIT 1`, agentID, pulseAppKey).Scan(&hostname)
+				WHEN 'headscale_gateway' THEN 2 WHEN 'lan_gateway' THEN 3 ELSE 4 END, p.updated_at DESC LIMIT 1`, agentID, senulunAppKey).Scan(&hostname)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", errors.New("center: add a ready Senulun dashboard HTTPS access point before upgrading")
 		}
@@ -62,22 +62,22 @@ func (s *Store) withPulseHostDefaults(ctx context.Context, agentID, operation st
 
 // Called under deploymentCreateMu. A Pulse controller is global, not one per
 // Site. Failed first installs may be retried; retained successful installs count.
-func (s *Store) validatePulseDeployment(ctx context.Context, request DeploymentRequest) error {
-	if request.AppKey != pulseAppKey {
+func (s *Store) validateSenulunDeployment(ctx context.Context, request DeploymentRequest) error {
+	if request.AppKey != senulunAppKey {
 		return nil
 	}
 	if request.Operation != "install" {
 		var pending int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands c JOIN applications a ON a.id = c.application_id WHERE a.app_key = ? AND c.kind IN (?,?,?,?) AND c.state IN ('pending','running')`, pulseAppKey, pulse.EnrollmentKind, pulse.InspectionKind, pulse.RotationKind, pulse.ReportingKind).Scan(&pending); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands c JOIN applications a ON a.id = c.application_id WHERE a.app_key = ? AND c.kind IN (?,?,?,?) AND c.state IN ('pending','running')`, senulunAppKey, senulun.EnrollmentKind, senulun.InspectionKind, senulun.RotationKind, senulun.ReportingKind).Scan(&pending); err != nil {
 			return err
 		}
 		if pending != 0 {
 			return errors.New("center: wait for Senulun collector enrollment before changing the monitoring service")
 		}
 	}
-	key := pulseAppKey
+	key := senulunAppKey
 	if request.Operation == "uninstall" {
-		key = pulseAgentAppKey
+		key = senulunAgentAppKey
 	}
 	if request.Operation != "install" && request.Operation != "uninstall" {
 		return nil
@@ -100,8 +100,8 @@ func (s *Store) validatePulseDeployment(ctx context.Context, request DeploymentR
 	return nil
 }
 
-func (s *Store) pulseAgentConfig(ctx context.Context, nodeID string, options []byte) ([]byte, error) {
-	var config pulse.AgentConfig
+func (s *Store) senulunAgentConfig(ctx context.Context, nodeID string, options []byte) ([]byte, error) {
+	var config senulun.AgentConfig
 	if json.Unmarshal(options, &config) != nil {
 		return nil, errors.New("center: invalid Senulun collector options")
 	}
@@ -111,7 +111,7 @@ func (s *Store) pulseAgentConfig(ctx context.Context, nodeID string, options []b
 		JOIN publications p ON p.service_id = sv.id
 		WHERE a.app_key = ? AND a.status = 'running' AND sv.status IN ('ready','publishing')
 		AND p.kind IN ('headscale_gateway','lan_gateway') AND p.status = 'ready' AND p.tls_enabled = 1
-		ORDER BY CASE p.kind WHEN 'headscale_gateway' THEN 0 ELSE 1 END, p.created_at LIMIT 1`, pulseAppKey).Scan(&config.ServiceApplicationID, &hostname)
+		ORDER BY CASE p.kind WHEN 'headscale_gateway' THEN 0 ELSE 1 END, p.created_at LIMIT 1`, senulunAppKey).Scan(&config.ServiceApplicationID, &hostname)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errors.New("center: add a private HTTPS access point to the Senulun monitoring service first")
 	}
@@ -128,13 +128,13 @@ func (s *Store) pulseAgentConfig(ctx context.Context, nodeID string, options []b
 	return json.Marshal(config)
 }
 
-func (s *Store) queuePulseEnrollment(ctx context.Context, tx *sql.Tx, deployment DeploymentView, configJSON []byte, now time.Time) error {
-	var config pulse.AgentConfig
+func (s *Store) queueSenulunEnrollment(ctx context.Context, tx *sql.Tx, deployment DeploymentView, configJSON []byte, now time.Time) error {
+	var config senulun.AgentConfig
 	if json.Unmarshal(configJSON, &config) != nil || config.Validate() != nil {
 		return errors.New("center: invalid Senulun enrollment configuration")
 	}
 	var serviceAgentID string
-	if err := tx.QueryRowContext(ctx, `SELECT node_id FROM applications WHERE id = ? AND app_key = ? AND status = 'running'`, config.ServiceApplicationID, pulseAppKey).Scan(&serviceAgentID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT node_id FROM applications WHERE id = ? AND app_key = ? AND status = 'running'`, config.ServiceApplicationID, senulunAppKey).Scan(&serviceAgentID); err != nil {
 		return errors.New("center: Senulun monitoring service is unavailable")
 	}
 	id, err := randomToken(18)
@@ -142,20 +142,20 @@ func (s *Store) queuePulseEnrollment(ctx context.Context, tx *sql.Tx, deployment
 		return err
 	}
 	id = "application-command-" + id
-	input, err := json.Marshal(pulse.EnrollmentTask{ApplicationID: config.ServiceApplicationID, DeploymentID: deployment.ID})
+	input, err := json.Marshal(senulun.EnrollmentTask{ApplicationID: config.ServiceApplicationID, DeploymentID: deployment.ID})
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, config.ServiceApplicationID, serviceAgentID, deployment.AgentID, pulse.EnrollmentKind, input, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, config.ServiceApplicationID, serviceAgentID, deployment.AgentID, senulun.EnrollmentKind, input, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	return s.recordTaskEvent(ctx, tx, id, serviceAgentID, "application.command", 1, "queued", "Prepare Senulun collector enrollment")
 }
 
-func (s *Store) completePulseEnrollment(ctx context.Context, commit projectionCommit, tx *sql.Tx, commandID, agentID string, inputJSON []byte, succeeded bool, rawResult json.RawMessage) error {
-	var input pulse.EnrollmentTask
+func (s *Store) completeSenulunEnrollment(ctx context.Context, commit projectionCommit, tx *sql.Tx, commandID, agentID string, inputJSON []byte, succeeded bool, rawResult json.RawMessage) error {
+	var input senulun.EnrollmentTask
 	var result struct {
-		Enrollment *pulse.EnrollmentResult `json:"pulseEnrollment"`
+		Enrollment *senulun.EnrollmentResult `json:"pulseEnrollment"`
 	}
 	if json.Unmarshal(inputJSON, &input) != nil {
 		return errors.New("center: invalid Senulun enrollment task")
@@ -164,7 +164,7 @@ func (s *Store) completePulseEnrollment(ctx context.Context, commit projectionCo
 		succeeded = false
 	}
 	var targetAgentID, applicationID, state string
-	if err := tx.QueryRowContext(ctx, `SELECT agent_id, application_id, state FROM deployments WHERE id = ? AND app_key = ? AND operation = 'install'`, input.DeploymentID, pulseAgentAppKey).Scan(&targetAgentID, &applicationID, &state); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT agent_id, application_id, state FROM deployments WHERE id = ? AND app_key = ? AND operation = 'install'`, input.DeploymentID, senulunAgentAppKey).Scan(&targetAgentID, &applicationID, &state); err != nil {
 		return err
 	}
 	if state != "pending" {

@@ -30,7 +30,7 @@ func TestAgentReinstallAcceptanceRunsCredentialsSequentially(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = tx.Exec(`INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at) SELECT 'native-second',account_id,endpoint_id,'native','native-second',?,?,1,created_at,updated_at FROM meridian_credentials WHERE id='native'`, meridian.Identity(protocol), key)
+			_, err = tx.Exec(`INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at) SELECT 'native-second',account_id,endpoint_id,'native','native-second',?,?,1,created_at,updated_at FROM meridian_credentials WHERE id='native'`, glivela.Identity(protocol), key)
 			if err != nil {
 				t.Fatal(err)
 			}

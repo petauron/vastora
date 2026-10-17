@@ -15,7 +15,7 @@ import (
 
 // Creation validates both existing exits without granting authority. Runtime
 // projection and publication additionally demand their applied source grants.
-func (s *Store) readCompositeRoutePeers(ctx context.Context, tx *sql.Tx, endpointID, ipv6ID, ipv4ID string, authorized bool) ([]meridian.RoutePeer, []meridianruntime.Peer, error) {
+func (s *Store) readCompositeRoutePeers(ctx context.Context, tx *sql.Tx, endpointID, ipv6ID, ipv4ID string, authorized bool) ([]glivela.RoutePeer, []meridianruntime.Peer, error) {
 	var entryID string
 	var sourceJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT application.node_id,endpoint.source_peer_json FROM meridian_endpoints endpoint
@@ -29,7 +29,7 @@ func (s *Store) readCompositeRoutePeers(ctx context.Context, tx *sql.Tx, endpoin
 	if json.Unmarshal(sourceJSON, &source) != nil || (meridianruntime.Peer{EgressID: entryID, Identity: source}).Validate() != nil {
 		return nil, nil, errors.New("center: composite entry has no pinned private identity")
 	}
-	peers := make([]meridian.RoutePeer, 0, 2)
+	peers := make([]glivela.RoutePeer, 0, 2)
 	runtimePeers := make([]meridianruntime.Peer, 0, 2)
 	for _, id := range []string{ipv6ID, ipv4ID} {
 		var appliedJSON, desiredJSON, peerJSON []byte
@@ -60,20 +60,20 @@ func (s *Store) readCompositeRoutePeers(ctx context.Context, tx *sql.Tx, endpoin
 		if authorized && !meridianLandingSourceAuthorized(appliedJSON, desiredJSON, id, revision, source, identity) {
 			return nil, nil, errors.New("center: both composite exits must confirm the exact entry source authorization")
 		}
-		family := meridian.EgressIPv4Only // Default Dante plan explicitly uses IPv4.
+		family := glivela.EgressIPv4Only // Default Dante plan explicitly uses IPv4.
 		if applied.Plan.EgressIP != "" {
 			address, err := netip.ParseAddr(applied.Plan.EgressIP)
-			if err != nil || address.Is4In6() || address.Is6() && !meridian.CompositePublicIP(address) {
+			if err != nil || address.Is4In6() || address.Is6() && !glivela.CompositePublicIP(address) {
 				return nil, nil, errors.New("center: invalid composite exit address")
 			}
 			if address.Is6() {
-				family = meridian.EgressIPv6Only
+				family = glivela.EgressIPv6Only
 			}
 		}
-		peers = append(peers, meridian.RoutePeer{EgressID: id, Address: identity.Address, Port: landing.SOCKSPort, ExitFamily: family, Ready: true})
+		peers = append(peers, glivela.RoutePeer{EgressID: id, Address: identity.Address, Port: landing.SOCKSPort, ExitFamily: family, Ready: true})
 		runtimePeers = append(runtimePeers, meridianruntime.Peer{EgressID: id, Identity: identity})
 	}
-	if err := meridian.ValidateCompositeExitPair(peers[0], peers[1]); err != nil {
+	if err := glivela.ValidateCompositeExitPair(peers[0], peers[1]); err != nil {
 		return nil, nil, err
 	}
 	return peers, runtimePeers, nil

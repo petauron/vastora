@@ -36,7 +36,7 @@ func reinstallRemaining(plan AgentReinstallPlan) []AgentReinstallRemaining {
 			add("data_restore", app.ApplicationID)
 			continue
 		}
-		if app.AppKey == pulseAgentAppKey && app.Recovery == "reenroll_monitor" {
+		if app.AppKey == senulunAgentAppKey && app.Recovery == "reenroll_monitor" {
 			var monitor *AgentReinstallMonitoring
 			for i := range plan.Monitoring {
 				if plan.Monitoring[i].ApplicationID == app.ApplicationID {

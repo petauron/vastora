@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	meridian "github.com/petauron/glivela"
+	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/deployapi"
 	"github.com/petauron/vastora/internal/meridianruntime"
 )
@@ -25,7 +25,7 @@ func (s *Store) meridianPublicationProof(ctx context.Context, tx *sql.Tx, servic
 	var applied int64
 	var healthy, enabled bool
 	var names, shorts []byte
-	var reality meridian.RealityEndpoint
+	var reality glivela.RealityEndpoint
 	err := tx.QueryRowContext(ctx, `SELECT endpoint.id,endpoint.application_id,application.node_id,
 		endpoint.advertise_host,endpoint.advertise_port,endpoint.server_names_json,endpoint.public_key,
 		endpoint.short_ids_json,endpoint.fingerprint,endpoint.desired_revision,endpoint.applied_revision,
@@ -46,8 +46,8 @@ func (s *Store) meridianPublicationProof(ctx context.Context, tx *sql.Tx, servic
 		return proof, err
 	}
 	for _, material := range materials {
-		if material.Credential.Enabled && material.Credential.Kind == meridian.NativeCredential {
-			proof.Request.Client = meridianruntime.AcceptanceClient{Protocol: meridian.VLESSReality, Reality: &reality, Material: material}
+		if material.Credential.Enabled && material.Credential.Kind == glivela.NativeCredential {
+			proof.Request.Client = meridianruntime.AcceptanceClient{Protocol: glivela.VLESSReality, Reality: &reality, Material: material}
 			proof.Request.ExpectedExit, err = s.reinstallAcceptanceExit(ctx, tx, nodeID, false)
 			return proof, err
 		}

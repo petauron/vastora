@@ -13,16 +13,16 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 // Rotation must inspect all original registrations before its single write.
 // No enrollment, delete, arbitrary shell or container-name mutation is accepted.
-func TestPulseRotationPinsContainerAndRechecksOriginalNode(t *testing.T) {
+func TestSenulunRotationPinsContainerAndRechecksOriginalNode(t *testing.T) {
 	for _, mode := range []string{"success", "old-service", "wrong-owner", "wrong-deployment", "wrong-id", "secret-field", "partial-failure", "trailing-json", "invalid-active", "different-node", "rotation-failed", "bad-token"} {
 		t.Run(mode, func(t *testing.T) {
-			task := pulse.InspectionTask{ApplicationID: "monitor-service", DeploymentID: "reviewed-deployment", EnrollmentIDs: []string{"registration-1", "registration-2"}}
-			labels := applicationResourceLabels(pulse.ServiceKey, "pulse", task.ApplicationID, task.DeploymentID)
+			task := senulun.InspectionTask{ApplicationID: "monitor-service", DeploymentID: "reviewed-deployment", EnrollmentIDs: []string{"registration-1", "registration-2"}}
+			labels := applicationResourceLabels(senulun.ServiceKey, "pulse", task.ApplicationID, task.DeploymentID)
 			if mode == "wrong-owner" {
 				labels[applicationInstallationLabel] = "other-app"
 			}
@@ -40,8 +40,8 @@ func TestPulseRotationPinsContainerAndRechecksOriginalNode(t *testing.T) {
 				case strings.HasSuffix(path, "/_ping"):
 					w.Header().Set("API-Version", "1.55")
 					w.WriteHeader(http.StatusOK)
-				case r.Method == http.MethodGet && strings.HasSuffix(path, "/containers/"+pulseContainer+"/json"):
-					_ = json.NewEncoder(w).Encode(container.InspectResponse{ID: "fixed-pulse", Config: &container.Config{Labels: labels}, State: &container.State{Running: true}})
+				case r.Method == http.MethodGet && (strings.HasSuffix(path, "/containers/"+senulunContainer+"/json") || strings.HasSuffix(path, "/containers/fixed-pulse/json")):
+					_ = json.NewEncoder(w).Encode(container.InspectResponse{ID: "fixed-pulse", Config: &container.Config{Labels: labels, Entrypoint: []string{"/usr/local/bin/pulse-service"}}, State: &container.State{Running: true}})
 				case r.Method == http.MethodPost && strings.HasSuffix(path, "/containers/fixed-pulse/exec"):
 					var input struct{ Cmd []string }
 					if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -113,9 +113,9 @@ func TestPulseRotationPinsContainerAndRechecksOriginalNode(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			executor := ApplicationExecutor{PackageStateDirectory: pulseReviewedTestPackage(t, task.ApplicationID, task.DeploymentID), DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}
-			rotation := pulse.RotationTask{Inspection: task, NodeID: "original-node"}
-			result, err := executor.RotatePulse(context.Background(), rotation)
+			executor := ApplicationExecutor{PackageStateDirectory: senulunReviewedTestPackage(t, task.ApplicationID, task.DeploymentID), DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}
+			rotation := senulun.RotationTask{Inspection: task, NodeID: "original-node"}
+			result, err := executor.RotateSenulun(context.Background(), rotation)
 			mu.Lock()
 			defer mu.Unlock()
 			if mode == "success" {

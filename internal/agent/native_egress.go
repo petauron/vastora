@@ -14,7 +14,7 @@ import (
 	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
-func (e ApplicationExecutor) verifyMeridianEgressClient(ctx context.Context, c meridianruntime.AcceptanceClient, image string, policy meridian.EgressPolicy) (string, error) {
+func (e ApplicationExecutor) verifyMeridianEgressClient(ctx context.Context, c meridianruntime.AcceptanceClient, image string, policy glivela.EgressPolicy) (string, error) {
 	var exit string
 	err := e.runMeridianClient(ctx, c, image, func(ctx context.Context, endpoint string) error {
 		var err error
@@ -58,7 +58,7 @@ func (e ApplicationExecutor) checkNativeEgressNetwork(parent context.Context, ta
 	ctx, cancel := context.WithTimeout(parent, 8*time.Second)
 	defer cancel()
 	family, network := "ip4", "tcp4"
-	if task.NativeEgress == meridian.EgressIPv6Only {
+	if task.NativeEgress == glivela.EgressIPv6Only {
 		family, network = "ip6", "tcp6"
 	}
 	addresses, err := net.DefaultResolver.LookupNetIP(ctx, family, "www.cloudflare.com")

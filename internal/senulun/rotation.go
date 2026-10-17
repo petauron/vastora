@@ -1,4 +1,4 @@
-package pulse
+package senulun
 
 import (
 	"errors"
@@ -21,14 +21,14 @@ type RotationResult struct {
 
 func (task RotationTask) Validate() error {
 	if task.Inspection.Validate() != nil || !validNodeID(task.NodeID) {
-		return errors.New("pulse: invalid original node rotation task")
+		return errors.New("senulun: invalid original node rotation task")
 	}
 	return nil
 }
 
 func (result RotationResult) Validate(task RotationTask) error {
 	if task.Validate() != nil || result.NodeID != task.NodeID || !validAgentToken(result.Token) {
-		return errors.New("pulse: invalid original node rotation result")
+		return errors.New("senulun: invalid original node rotation result")
 	}
 	return nil
 }

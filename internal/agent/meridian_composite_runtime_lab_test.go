@@ -171,15 +171,15 @@ func TestCompositeRuntimeLab(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = dnsServer.Shutdown() })
 	baseID, routedID := uuid.NewString(), uuid.NewString()
-	base := meridian.Credential{ID: "base", AccountID: "account", EntryID: "entry", User: "native", Kind: meridian.NativeCredential, Identity: meridian.Identity(baseID), Enabled: true}
-	routed := meridian.Credential{ID: "route", AccountID: "account", EntryID: "entry", EgressID: "six", User: "routed", Kind: meridian.RouteCredential, Identity: meridian.Identity(routedID), Enabled: true}
-	plan := meridian.XrayPlan{Revision: 1,
-		RealityEndpoints: []meridian.RealityEndpoint{{ID: "endpoint", EntryID: "entry", InboundTag: "entry", ListenAddress: "100.64.0.2", ListenPort: 10443, AdvertiseHost: "entry.example.com", AdvertisePort: 443, Target: "dual.example.com:443", ServerNames: []string{"dual.example.com"}, PrivateKey: "fixture", PublicKey: "fixture", ShortIDs: []string{"0123456789abcdef"}}},
-		Credentials:      []meridian.CredentialMaterial{{Credential: base, ProtocolID: baseID}, {Credential: routed, ProtocolID: routedID}},
-		Grants:           []meridian.RouteGrant{{ID: "combo", AccountID: "account", EntryID: "entry", EgressID: "six", IPv4EgressID: "four", InboundTag: "entry", Base: base, Route: routed, Mode: meridian.FixedMode, Enabled: true, DesiredRev: 1, AppliedRev: 1, RuntimeGood: true}},
-		Peers:            []meridian.RoutePeer{{EgressID: "six", Address: "100.64.0.6", Port: 1080, ExitFamily: meridian.EgressIPv6Only, Ready: true}, {EgressID: "four", Address: "100.64.0.4", Port: 1080, ExitFamily: meridian.EgressIPv4Only, Ready: true}},
+	base := glivela.Credential{ID: "base", AccountID: "account", EntryID: "entry", User: "native", Kind: glivela.NativeCredential, Identity: glivela.Identity(baseID), Enabled: true}
+	routed := glivela.Credential{ID: "route", AccountID: "account", EntryID: "entry", EgressID: "six", User: "routed", Kind: glivela.RouteCredential, Identity: glivela.Identity(routedID), Enabled: true}
+	plan := glivela.XrayPlan{Revision: 1,
+		RealityEndpoints: []glivela.RealityEndpoint{{ID: "endpoint", EntryID: "entry", InboundTag: "entry", ListenAddress: "100.64.0.2", ListenPort: 10443, AdvertiseHost: "entry.example.com", AdvertisePort: 443, Target: "dual.example.com:443", ServerNames: []string{"dual.example.com"}, PrivateKey: "fixture", PublicKey: "fixture", ShortIDs: []string{"0123456789abcdef"}}},
+		Credentials:      []glivela.CredentialMaterial{{Credential: base, ProtocolID: baseID}, {Credential: routed, ProtocolID: routedID}},
+		Grants:           []glivela.RouteGrant{{ID: "combo", AccountID: "account", EntryID: "entry", EgressID: "six", IPv4EgressID: "four", InboundTag: "entry", Base: base, Route: routed, Mode: glivela.FixedMode, Enabled: true, DesiredRev: 1, AppliedRev: 1, RuntimeGood: true}},
+		Peers:            []glivela.RoutePeer{{EgressID: "six", Address: "100.64.0.6", Port: 1080, ExitFamily: glivela.EgressIPv6Only, Ready: true}, {EgressID: "four", Address: "100.64.0.4", Port: 1080, ExitFamily: glivela.EgressIPv4Only, Ready: true}},
 	}
-	artifact, err := meridian.BuildDesiredArtifact(plan)
+	artifact, err := glivela.BuildDesiredArtifact(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -511,7 +511,7 @@ func (d *compositeLabDiagnostics) Write(contents []byte) (int, error) {
 	return len(contents), nil
 }
 
-func compositeLabStats(t *testing.T, binaryPath string, port int, material meridian.CredentialMaterial) meridian.CounterSnapshot {
+func compositeLabStats(t *testing.T, binaryPath string, port int, material glivela.CredentialMaterial) glivela.CounterSnapshot {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -519,7 +519,7 @@ func compositeLabStats(t *testing.T, binaryPath string, port int, material merid
 	if err != nil {
 		t.Fatal("controlled statistics unavailable")
 	}
-	counters, err := meridian.ParseXrayUserCounters([]meridian.CredentialMaterial{material}, output)
+	counters, err := glivela.ParseXrayUserCounters([]glivela.CredentialMaterial{material}, output)
 	if err != nil || len(counters) != 1 {
 		t.Fatal("invalid controlled counters")
 	}
