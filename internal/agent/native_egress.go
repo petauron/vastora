@@ -16,7 +16,7 @@ import (
 
 func (e ApplicationExecutor) verifyMeridianEgressClient(ctx context.Context, c meridianruntime.AcceptanceClient, image string, policy glivela.EgressPolicy) (string, error) {
 	var exit string
-	err := e.runMeridianClient(ctx, c, image, func(ctx context.Context, endpoint string) error {
+	err := e.runMeridianClient(ctx, c, image, nil, func(ctx context.Context, endpoint string) error {
 		var err error
 		exit, err = (landing.Probe{TCPOnly: true}).CheckClientTCP(ctx, endpoint)
 		if err != nil {
