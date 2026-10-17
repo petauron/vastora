@@ -1,4 +1,5 @@
 import { NodeEgressControls } from "./NodeEgressControls";
+import { canInspectXrayConfiguration } from "./xrayRecoveryEligibility";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { CheckCircle2Icon, CircleArrowUpIcon, GitCompareArrowsIcon, MapPinIcon, NetworkIcon, PlusIcon, RotateCcwIcon, SearchIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon, UnplugIcon } from "lucide-react";
 import { api } from "../api";
@@ -169,8 +170,8 @@ function NodeTableRow({ agent, data, language, onApplications, onConfigure, onNe
   const selectedGateway = Boolean(site?.gatewayNodes.includes(agent.id));
   const architecture = agent.architecture === "arm64" ? "ARM64" : "x64";
   const needsNetworkConfirmation = agent.status === "active" && !agent.removal && !agent.reinstall && !agent.networkProfile;
-  const cutoverActive = ["project", "verify", "retire"].includes(data.meridian.cutover.state);
-  const needsLegacyConfigurationInspection = cutoverActive && agent.connected && !agent.runtimeRecovery && data.meridian.endpoints.some((endpoint) => endpoint.nodeId === agent.id && !endpoint.legacyRetired && (endpoint.status === "applying" || endpoint.status === "failed"));
+  const canRecoverXray = canInspectXrayConfiguration(data, agent.id);
+  const needsLegacyConfigurationInspection = canRecoverXray && agent.connected && !agent.runtimeRecovery && data.meridian.endpoints.some((endpoint) => endpoint.nodeId === agent.id && !endpoint.legacyRetired && (endpoint.status === "applying" || endpoint.status === "failed"));
   return <>
     <TableRow className="h-14 hover:bg-muted/20">
       <TableCell className="min-w-0 py-2 pl-4"><div className="flex min-w-0 items-center gap-2.5"><ServerIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /><div className="min-w-0"><p className="truncate text-sm font-medium" title={agent.name}>{agent.name}</p><div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground md:hidden"><NodeStatus agent={agent} language={language} compact /><span aria-hidden="true">·</span><span className="truncate">{agent.version || "—"}</span></div></div></div></TableCell>
@@ -186,7 +187,7 @@ function NodeTableRow({ agent, data, language, onApplications, onConfigure, onNe
         {!agent.connected ? <Button aria-label={agent.removal ? copy(language, `查看 ${agent.name} 的移除进度`, `View removal progress for ${agent.name}`) : copy(language, `永久移除 ${agent.name}`, `Permanently remove ${agent.name}`)} onClick={onRemove} size="icon-sm" title={agent.removal ? copy(language, "查看移除进度", "View removal progress") : copy(language, "永久移除", "Permanently remove")} variant="ghost"><Trash2Icon aria-hidden="true" /></Button> : null}
       </div>{needsLegacyConfigurationInspection ? <XrayConfigurationRecoverySheet agent={agent} language={language} onOpenChange={setConfigurationRecoveryOpen} open={configurationRecoveryOpen} /> : null}</TableCell>
     </TableRow>
-    {agent.connected && agent.runtimeRecovery ? <TableRow><TableCell className="py-2" colSpan={5}><RuntimeRecoveryAlert agent={agent} language={language} onApplications={onApplications} /></TableCell></TableRow> : null}
+    {agent.connected && agent.runtimeRecovery ? <TableRow><TableCell className="py-2" colSpan={5}><RuntimeRecoveryAlert agent={agent} canRecoverXray={canRecoverXray} language={language} onApplications={onApplications} /></TableCell></TableRow> : null}
   </>;
 }
 

@@ -12,12 +12,12 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { copy } from "./shared";
 
-export function RuntimeRecoveryAlert({ agent, language, onApplications }: { agent: AgentView; language: Language; onApplications: () => void }) {
+export function RuntimeRecoveryAlert({ agent, language, onApplications, canRecoverXray = false }: { agent: AgentView; language: Language; onApplications: () => void; canRecoverXray?: boolean }) {
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   if (!agent.connected || !agent.runtimeRecovery) return null;
   const applications = agent.runtimeRecoveryApplications ?? [];
   const applicationBlocked = agent.runtimeRecovery === "application" && applications.length > 0;
-  const xrayBlocked = applications.some((application) => application.appKey === "vastora-official/3x-ui");
+  const xrayBlocked = canRecoverXray && applications.some((application) => ["vastora-official/3x-ui", "vastora-official/meridian"].includes(application.appKey));
   return <Alert variant={applicationBlocked ? "destructive" : "default"}>
     <NetworkIcon aria-hidden="true" />
     <AlertTitle>{applicationBlocked ? copy(language, "应用恢复受阻", "Application recovery blocked") : copy(language, "服务正在恢复", "Restoring services")}</AlertTitle>
