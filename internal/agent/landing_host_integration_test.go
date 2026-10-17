@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestLandingNativeHostLifecycle(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		if err := RemoveLanding(cleanupCtx, "landing-ci", 3); err != nil {
+		if err := RemoveLanding(cleanupCtx, "landing-ci", 6); err != nil {
 			t.Error("remove owned CI landing service", err)
 		}
 		_ = exec.CommandContext(cleanupCtx, "ip", "link", "delete", "vtland-ci").Run()
@@ -71,7 +72,56 @@ func TestLandingNativeHostLifecycle(t *testing.T) {
 	if err := ApplyLanding(ctx, "landing-ci", plan); err != nil {
 		t.Fatal("idempotent installation", err)
 	}
-	if err := RemoveLanding(ctx, "landing-ci", 2); err != nil {
+	// A real revision transition must remove the old nft table without
+	// mistaking reused JSON map keys for surviving kernel objects.
+	plan.Revision = 2
+	if err := ApplyLanding(ctx, "landing-ci", plan); err != nil {
+		t.Fatal("update native landing service", err)
+	}
+	journal, err := readLandingHostJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := prepareLandingRecovery(ctx, journal)
+	if err != nil || snapshot.directory == "" {
+		t.Fatal("prepare recovery", err)
+	}
+	defer snapshot.cleanup()
+	if err := stopLandingService(ctx); err != nil {
+		t.Fatal(err)
+	}
+	previous := journal.Policy
+	replacement := *previous
+	replacement.Revision = 3
+	if err := replacement.Install(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := previous.Remove(ctx); err != nil {
+		t.Fatal(err)
+	}
+	journal.Policy, journal.PreviousPolicy = &replacement, previous
+	broken := []byte("invalid dante configuration\n")
+	journal.PendingFiles = map[string]string{landingConfigPath: landingDigest(broken)}
+	journal.Revision = 3
+	if err := writeHostFileAtomic(landingConfigPath, broken, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.restore(ctx, journal); err != nil {
+		t.Fatal("restore after partial configuration write", err)
+	}
+	command("systemctl", "is-active", "--quiet", "vastora-landing.service")
+	restored, err := readLandingHostJournal()
+	if err != nil || restored.Revision != 3 || len(restored.PendingFiles) != 0 {
+		t.Fatal("recovery lost revision fence or retained partial intent", err)
+	}
+	// Non-disruptive validation failure must leave the recovered service up.
+	plan.Revision = 4
+	plan.EgressIP = "10.255.254.253"
+	if err := ApplyLanding(ctx, "landing-ci", plan); err == nil || !strings.Contains(err.Error(), "egress") {
+		t.Fatal("unavailable local egress was accepted", err)
+	}
+	command("systemctl", "is-active", "--quiet", "vastora-landing.service")
+	if err := RemoveLanding(ctx, "landing-ci", 5); err != nil {
 		t.Fatal("disable native landing service", err)
 	}
 	for _, path := range landingPaths() {

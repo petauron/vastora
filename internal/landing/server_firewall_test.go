@@ -12,6 +12,58 @@ func testServerFirewall() ServerFirewall {
 	return ServerFirewall{Revision: 1, Address: "100.64.0.8", Sources: []string{"100.64.0.9"}, Interface: "tailscale0", UID: 990}
 }
 
+func TestServerFirewallRemovalUsesFreshSnapshot(t *testing.T) {
+	for _, lostReply := range []bool{false, true} {
+		t.Run(map[bool]string{false: "success", true: "lost-reply"}[lostReply], func(t *testing.T) {
+			policy := testServerFirewall()
+			foreign := map[string]nftObject{"table": {"family": "ip", "name": "filter"}}
+			document := nftDocument{Objects: append(policy.objects(), foreign)}
+			writes := 0
+			run := func(_ context.Context, input []byte, _ ...string) ([]byte, error) {
+				if input == nil {
+					return json.Marshal(document)
+				}
+				writes++
+				document.Objects = []map[string]nftObject{foreign}
+				if lostReply {
+					return nil, errors.New("lost delete reply")
+				}
+				return nil, nil
+			}
+			if err := policy.remove(context.Background(), run); err != nil {
+				t.Fatal("confirmed removal rejected", err)
+			}
+			if err := policy.remove(context.Background(), run); err != nil || writes != 1 {
+				t.Fatalf("removal retry: %v, writes %d", err, writes)
+			}
+		})
+	}
+}
+
+func TestServerFirewallRemovalRejectsRemainingOrChangedPolicy(t *testing.T) {
+	for _, drift := range []bool{false, true} {
+		policy := testServerFirewall()
+		document := nftDocument{Objects: policy.objects()}
+		writes := 0
+		if drift {
+			document.Objects[0]["table"]["comment"] = "foreign"
+		}
+		run := func(_ context.Context, input []byte, _ ...string) ([]byte, error) {
+			if input != nil {
+				writes++
+				return nil, nil // Simulated delete which did not take effect.
+			}
+			return json.Marshal(document)
+		}
+		if err := policy.remove(context.Background(), run); err == nil {
+			t.Fatal("unconfirmed or foreign policy removal accepted")
+		}
+		if drift && writes != 0 {
+			t.Fatal("foreign policy was modified")
+		}
+	}
+}
+
 func TestServerFirewallRejectsUnscopedIdentity(t *testing.T) {
 	for _, change := range []func(*ServerFirewall){
 		func(p *ServerFirewall) { p.UID = 0 },
