@@ -113,7 +113,8 @@ func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, input de
 		return deployapi.CenterUpdateExecution{}, errors.New("deployer: another Center update is already running")
 	}
 	comparison := semver.Compare("v"+version, "v"+currentVersion)
-	if comparison < 0 || (comparison == 0 && image == currentImage) {
+	recoverFailed := status.State == "failed" && status.TargetVersion == version
+	if comparison < 0 || (comparison == 0 && image == currentImage && !recoverFailed) {
 		return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: Center release %s with image %s is already installed or older", version, image)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
