@@ -200,7 +200,11 @@ func (e ApplicationExecutor) replaceMeridianPendingState(ctx context.Context, st
 	return candidate, nil
 }
 
-func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meridianruntime.Task) (result meridianruntime.Result, resultErr error) {
+func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meridianruntime.Task) (meridianruntime.Result, error) {
+	return e.applyMeridianRuntime(ctx, task, ensureLandingPackage)
+}
+
+func (e ApplicationExecutor) applyMeridianRuntime(ctx context.Context, task meridianruntime.Task, ensureFirewall func(context.Context) error) (result meridianruntime.Result, resultErr error) {
 	if e.Store == nil || task.Validate() != nil {
 		return result, errors.New("agent: invalid Glivela runtime task")
 	}
@@ -231,6 +235,13 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 		state = meridianRuntimeState{ApplicationID: task.ApplicationID, ImageReference: task.ImageReference}
 	} else if err != nil {
 		return result, err
+	}
+	// Reject unsupported firewall userspace before pending recovery or handover
+	// can stop an otherwise healthy runtime. Existing gates also need readback.
+	if len(task.Peers) != 0 || len(state.knownLandingGates()) != 0 {
+		if err := ensureFirewall(ctx); err != nil {
+			return result, err
+		}
 	}
 	if len(task.EgressClients) != 0 && task.NativeEgress != glivela.EgressAuto {
 		if err := e.checkNativeEgressNetwork(ctx, task, state); err != nil {
@@ -383,11 +394,6 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	defer os.Remove(staged)
 	if err := validateXrayWorkerConfigAs(ctx, docker, task.ImageReference, staged, meridianAppliedRuntimeUID(state)); err != nil {
 		return result, err
-	}
-	if len(task.Peers) != 0 {
-		if err := ensureLandingPackage(ctx); err != nil {
-			return result, err
-		}
 	}
 	if err := validateMeridianHostPorts(ctx, docker, task.Desired, state); err != nil {
 		return result, err
