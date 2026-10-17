@@ -66,7 +66,17 @@ func TestLandingLatencyReportStreamsBeforeNextHeartbeat(t *testing.T) {
 	encodedPeer, _ := json.Marshal(peer)
 	exec(`UPDATE landing_server_states SET status='ready',applied_revision=desired_revision,peer_json=? WHERE node_id=?`, encodedPeer, owner.ID)
 	now := store.now().UTC().Format(time.RFC3339Nano)
-	exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at) VALUES('latency-app','Proxy',?,?,'vastora-official/3x-ui','running','docker','worker',?,?)`, source.ID, testSiteID(t, store), now, now)
+	exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at) VALUES('latency-app','Proxy',?,?,'vastora-official/meridian','running','docker','worker',?,?)`, source.ID, testSiteID(t, store), now, now)
+	targets, err := store.landingLatencyTargets(ctx, source.ID)
+	if err != nil || len(targets) != 1 || targets[0].NodeID != owner.ID {
+		t.Fatalf("Meridian source did not receive the selected landing target: %+v, %v", targets, err)
+	}
+	exec(`UPDATE applications SET app_key='vastora-official/cpa' WHERE id='latency-app'`)
+	targets, err = store.landingLatencyTargets(ctx, source.ID)
+	if err != nil || len(targets) != 0 {
+		t.Fatalf("unrelated application received landing targets: %+v, %v", targets, err)
+	}
+	exec(`UPDATE applications SET app_key='vastora-official/meridian' WHERE id='latency-app'`)
 	session, _, err := store.CreateFirstAdmin(ctx, "admin", "correct-horse-battery-staple")
 	if err != nil {
 		t.Fatal(err)
