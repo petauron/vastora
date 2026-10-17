@@ -9,11 +9,11 @@ import { LandingProvider, useLanding } from "./LandingControls";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root;
 let container: HTMLDivElement;
-let stream: TestStream;
 class TestStream {
+  static instances: TestStream[] = [];
   onmessage: ((event: MessageEvent) => void) | null = null;
   close = vi.fn();
-  constructor() { stream = this; }
+  constructor() { TestStream.instances.push(this); }
   send(event: LandingLatencyEvent) { this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(event) })); }
 }
 const sample = (latencyMs: number): LandingLatencyView => ({ nodeId: "entry", landingNodeId: "exit", state: "direct", latencyMs, checkedAt: new Date().toISOString() });
@@ -26,6 +26,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-18T00:00:00Z"));
   vi.stubGlobal("EventSource", TestStream);
+  TestStream.instances = [];
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -39,7 +40,7 @@ afterEach(() => {
 });
 async function mount() { await act(async () => root.render(<LandingProvider enabled><Probe /></LandingProvider>)); }
 const shown = () => JSON.parse(container.querySelector("output")!.textContent!);
-async function send(event: LandingLatencyEvent) { await act(async () => stream.send(event)); }
+async function send(event: LandingLatencyEvent) { await act(async () => TestStream.instances[0].send(event)); }
 
 it("uses fresh polling snapshots after a silent stream stall beyond three minutes", async () => {
   vi.spyOn(api, "landing").mockImplementation(async () => view([sample(24)]));
