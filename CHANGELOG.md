@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.325](https://github.com/petauron/vastora/compare/v0.1.0-alpha.324...v0.1.0-alpha.325) (2026-10-17)
+
+
+### Bug Fixes
+
+* align Xray recovery eligibility and refresh stalled latency streams ([513d7bb](https://github.com/petauron/vastora/commit/513d7bb0235e5cfdf8c112c5952b2aef32fee640))
+* queue concurrent Glivela entry verification without false failures ([5dfe06c](https://github.com/petauron/vastora/commit/5dfe06c946659100443fb1e15d99fb9fbd606e95))
+
 ## [0.1.0-alpha.324](https://github.com/petauron/vastora/compare/v0.1.0-alpha.323...v0.1.0-alpha.324) (2026-10-17)
 
 
