@@ -29,3 +29,10 @@ A failed check must remain failed. Do not rewrite publication status in the
 production database or substitute a heartbeat for authenticated traffic proof.
 
 Reference: https://docs.docker.com/engine/network/#container-networks
+
+## Exit evidence freshness
+
+Agent public-egress observations refresh every five minutes. The original
+observation timestamp is retained while cached, and failed refreshes retry no
+more than once per minute. Center still rejects evidence older than ten minutes;
+a heartbeat alone never renews the timestamp or constitutes exit proof.
