@@ -8,12 +8,24 @@ import (
 	"os"
 	"time"
 
+	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/deployer"
 )
 
 func runDeployer(arguments []string) error {
 	if len(arguments) == 0 {
 		return errors.New("deployer serve or public-entry-probe is required")
+	}
+	if arguments[0] == "meridian-entry-probe" {
+		flags := flag.NewFlagSet("deployer meridian-entry-probe", flag.ContinueOnError)
+		expected := flags.String("expected-exit", "", "required public egress address")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("unexpected probe arguments")
+		}
+		return agent.RunMeridianEntryProbe(context.Background(), *expected)
 	}
 	if arguments[0] == "public-entry-probe" {
 		flags := flag.NewFlagSet("deployer public-entry-probe", flag.ContinueOnError)
@@ -55,7 +67,7 @@ func runDeployer(arguments []string) error {
 	}
 	fmt.Printf("Deployment helper listening on %s\n", *socket)
 	server := deployer.NewServer(installer).
-		WithMeridianProber(&deployer.MeridianProbeService{Socket: *dockerSocket}).
+		WithMeridianProber(&deployer.MeridianProbeService{Socket: *dockerSocket, RuntimeImage: *runtimeImage}).
 		WithPublicEntryProber(deployer.NewPublicEntryProbeService(*dockerSocket, *runtimeImage)).
 		WithCenterRemoteAccessManager(deployer.DockerCenterRemoteAccessManager{Socket: *dockerSocket}).
 		WithCenterUpdater(deployer.FileCenterUpdater{InstallDir: *centerInstallDir, RuntimeImage: *runtimeImage})

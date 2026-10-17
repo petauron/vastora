@@ -13,8 +13,9 @@ import (
 // Reuse the bounded, secret-on-stdin client used for recovery acceptance.
 // Serialize probes so background publication checks cannot exhaust a small host.
 type MeridianProbeService struct {
-	Socket string
-	mu     sync.Mutex
+	Socket       string
+	RuntimeImage string
+	mu           sync.Mutex
 }
 
 func (service *MeridianProbeService) VerifyMeridianEntry(ctx context.Context, input deployapi.MeridianProbeRequest) error {
@@ -22,7 +23,7 @@ func (service *MeridianProbeService) VerifyMeridianEntry(ctx context.Context, in
 		return errors.New("deployer: proxy verification is busy; retry later")
 	}
 	defer service.mu.Unlock()
-	if err := (agent.ApplicationExecutor{DockerSocket: service.Socket}).VerifyMeridianClient(ctx, input.Client, input.ExpectedExit); err != nil {
+	if err := (agent.ApplicationExecutor{DockerSocket: service.Socket}).VerifyMeridianClientInContainer(ctx, input.Client, input.ExpectedExit, service.RuntimeImage); err != nil {
 		// No runtime or request errors containing credentials cross this boundary.
 		return errors.New("deployer: authenticated proxy HTTPS or exit verification failed")
 	}

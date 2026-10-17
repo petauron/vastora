@@ -11,10 +11,12 @@ import (
 type PublicEgressObserver func(context.Context, string, bool, []networking.Candidate, time.Time) (*networking.PublicEgress, error)
 type publicEgressDetector func(context.Context, string, bool, []networking.Candidate, time.Time) (*networking.PublicEgress, error)
 
-// NewPublicEgressObserver caches a successful observation for this process.
+// NewPublicEgressObserver refreshes successful evidence every five minutes,
+// before Center's ten-minute acceptance limit. Cached timestamps are never renewed
+// without a real observation.
 // Failed observations are retried at most once per minute on later heartbeats.
 func NewPublicEgressObserver() PublicEgressObserver {
-	return newStartupPublicEgressObserver(func(ctx context.Context, endpoint string, allowPrivate bool, candidates []networking.Candidate, now time.Time) (*networking.PublicEgress, error) {
+	return newPublicEgressObserver(func(ctx context.Context, endpoint string, allowPrivate bool, candidates []networking.Candidate, now time.Time) (*networking.PublicEgress, error) {
 		client, normalizedEndpoint, err := networking.PublicAddressHTTPClient(endpoint, allowPrivate)
 		if err != nil {
 			return nil, err
@@ -24,14 +26,14 @@ func NewPublicEgressObserver() PublicEgressObserver {
 	})
 }
 
-func newStartupPublicEgressObserver(detect publicEgressDetector) PublicEgressObserver {
+func newPublicEgressObserver(detect publicEgressDetector) PublicEgressObserver {
 	var mu sync.Mutex
 	var retryAt time.Time
 	var cached *networking.PublicEgress
 	return func(ctx context.Context, endpoint string, allowPrivate bool, candidates []networking.Candidate, now time.Time) (*networking.PublicEgress, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		if cached != nil {
+		if cached != nil && !now.Before(cached.ObservedAt) && now.Sub(cached.ObservedAt) < 5*time.Minute {
 			value := *cached
 			return &value, nil
 		}
