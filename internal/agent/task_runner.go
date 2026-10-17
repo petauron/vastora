@@ -21,7 +21,7 @@ import (
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
@@ -309,16 +309,16 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		if task.MeridianAcceptance != nil {
 			commands++
 		}
-		if task.PulseReporting != nil {
+		if task.SenulunReporting != nil {
 			commands++
 		}
-		if task.PulseRotation != nil {
+		if task.SenulunRotation != nil {
 			commands++
 		}
-		if task.PulseInspection != nil {
+		if task.SenulunInspection != nil {
 			commands++
 		}
-		if task.PulseEnrollment != nil {
+		if task.SenulunEnrollment != nil {
 			commands++
 		}
 		if task.ProtocolCommand != nil {
@@ -403,56 +403,56 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 					result.MeridianLegacyRetire = &retireResult
 				}
 			}
-		} else if task.PulseReporting != nil {
+		} else if task.SenulunReporting != nil {
 			executor, ok := c.Executor.(interface {
-				InspectPulseReporting(context.Context, pulse.ReportingTask) (pulse.ReportingResult, error)
+				InspectSenulunReporting(context.Context, senulun.ReportingTask) (senulun.ReportingResult, error)
 			})
 			if !ok {
 				err = errors.New("agent: Senulun reporting capability is not configured")
 			} else {
-				var reporting pulse.ReportingResult
-				reporting, err = executor.InspectPulseReporting(ctx, *task.PulseReporting)
+				var reporting senulun.ReportingResult
+				reporting, err = executor.InspectSenulunReporting(ctx, *task.SenulunReporting)
 				if err == nil {
-					result.PulseReporting = &reporting
+					result.SenulunReporting = &reporting
 				}
 			}
-		} else if task.PulseRotation != nil {
+		} else if task.SenulunRotation != nil {
 			executor, ok := c.Executor.(interface {
-				RotatePulse(context.Context, pulse.RotationTask) (pulse.RotationResult, error)
+				RotateSenulun(context.Context, senulun.RotationTask) (senulun.RotationResult, error)
 			})
 			if !ok {
 				err = errors.New("agent: Senulun rotation capability is not configured")
 			} else {
-				var rotation pulse.RotationResult
-				rotation, err = executor.RotatePulse(ctx, *task.PulseRotation)
+				var rotation senulun.RotationResult
+				rotation, err = executor.RotateSenulun(ctx, *task.SenulunRotation)
 				if err == nil {
-					result.PulseRotation = &rotation
+					result.SenulunRotation = &rotation
 				}
 			}
-		} else if task.PulseInspection != nil {
+		} else if task.SenulunInspection != nil {
 			executor, ok := c.Executor.(interface {
-				InspectPulse(context.Context, pulse.InspectionTask) (pulse.InspectionResult, error)
+				InspectSenulun(context.Context, senulun.InspectionTask) (senulun.InspectionResult, error)
 			})
 			if !ok {
 				err = errors.New("agent: Senulun inspection capability is not configured")
 			} else {
-				var inspection pulse.InspectionResult
-				inspection, err = executor.InspectPulse(ctx, *task.PulseInspection)
+				var inspection senulun.InspectionResult
+				inspection, err = executor.InspectSenulun(ctx, *task.SenulunInspection)
 				if err == nil {
-					result.PulseInspection = &inspection
+					result.SenulunInspection = &inspection
 				}
 			}
-		} else if task.PulseEnrollment != nil {
+		} else if task.SenulunEnrollment != nil {
 			executor, ok := c.Executor.(interface {
-				EnrollPulse(context.Context, pulse.EnrollmentTask) (pulse.EnrollmentResult, error)
+				EnrollSenulun(context.Context, senulun.EnrollmentTask) (senulun.EnrollmentResult, error)
 			})
 			if !ok {
 				err = errors.New("agent: Senulun enrollment capability is not configured")
 			} else {
-				var enrollment pulse.EnrollmentResult
-				enrollment, err = executor.EnrollPulse(ctx, *task.PulseEnrollment)
+				var enrollment senulun.EnrollmentResult
+				enrollment, err = executor.EnrollSenulun(ctx, *task.SenulunEnrollment)
 				if err == nil {
-					result.PulseEnrollment = &enrollment
+					result.SenulunEnrollment = &enrollment
 				}
 			}
 		} else if task.ProtocolCommand != nil {

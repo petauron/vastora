@@ -1,4 +1,4 @@
-package pulse
+package senulun
 
 import (
 	"errors"
@@ -28,12 +28,12 @@ type InspectionResult struct {
 
 func (task InspectionTask) Validate() error {
 	if task.ApplicationID == "" || task.DeploymentID == "" || len(task.EnrollmentIDs) == 0 || len(task.EnrollmentIDs) > MaxInspectionEnrollments {
-		return errors.New("pulse: invalid enrollment inspection task")
+		return errors.New("senulun: invalid enrollment inspection task")
 	}
 	seen := map[string]bool{}
 	for _, id := range task.EnrollmentIDs {
 		if id == "" || len(id) > 128 || strings.ContainsAny(id, "\r\n\x00") || strings.TrimSpace(id) != id || seen[id] {
-			return errors.New("pulse: invalid enrollment inspection identity")
+			return errors.New("senulun: invalid enrollment inspection identity")
 		}
 		seen[id] = true
 	}
@@ -42,14 +42,14 @@ func (task InspectionTask) Validate() error {
 
 func (result InspectionResult) Validate(task InspectionTask) error {
 	if task.Validate() != nil || len(result.Records) != len(task.EnrollmentIDs) {
-		return errors.New("pulse: incomplete enrollment inspection")
+		return errors.New("senulun: incomplete enrollment inspection")
 	}
 	for i, record := range result.Records {
 		if record.ID != task.EnrollmentIDs[i] || record.ExpiresAtUnixMS < 0 ||
 			(record.ConsumedAtUnixMS != nil && *record.ConsumedAtUnixMS < 0) ||
 			(record.NodeID != nil && (*record.NodeID == "" || len(*record.NodeID) > 128 || record.ConsumedAtUnixMS == nil)) ||
 			(record.NodeActive && record.NodeID == nil) {
-			return errors.New("pulse: invalid enrollment inspection result")
+			return errors.New("senulun: invalid enrollment inspection result")
 		}
 	}
 	return nil
@@ -67,12 +67,12 @@ func (result InspectionResult) OriginalNodeID(task InspectionTask) (string, erro
 			continue
 		}
 		if record.NodeID == nil || !record.NodeActive || (id != "" && id != *record.NodeID) {
-			return "", errors.New("pulse: original monitoring identity requires review")
+			return "", errors.New("senulun: original monitoring identity requires review")
 		}
 		id = *record.NodeID
 	}
 	if id == "" {
-		return "", errors.New("pulse: no consumed enrollment identifies an active monitoring node")
+		return "", errors.New("senulun: no consumed enrollment identifies an active monitoring node")
 	}
 	return id, nil
 }

@@ -11,7 +11,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 type AgentReinstallMonitorRotation struct {
@@ -22,11 +22,11 @@ type AgentReinstallMonitorRotation struct {
 }
 
 type reinstallMonitorRotationCommand struct {
-	OperationID    string             `json:"operationId"`
-	ApplicationID  string             `json:"applicationId"`
-	InspectionID   string             `json:"inspectionId"`
-	SourceRevision string             `json:"sourceRevision"`
-	Task           pulse.RotationTask `json:"task"`
+	OperationID    string               `json:"operationId"`
+	ApplicationID  string               `json:"applicationId"`
+	InspectionID   string               `json:"inspectionId"`
+	SourceRevision string               `json:"sourceRevision"`
+	Task           senulun.RotationTask `json:"task"`
 }
 
 const reinstallRotationAuthoritySQL = `EXISTS(SELECT 1 FROM agent_reinstall_monitor_rotations m
@@ -132,7 +132,7 @@ func (s *Store) QueueAgentReinstallMonitorRotation(ctx context.Context, agentID,
 		return result, err
 	}
 	command := reinstallMonitorRotationCommand{OperationID: op.ID, ApplicationID: input.ApplicationID, InspectionID: review.Inspection.CommandID, SourceRevision: sourceRevision,
-		Task: pulse.RotationTask{Inspection: inspected.Task, NodeID: review.Inspection.NodeID}}
+		Task: senulun.RotationTask{Inspection: inspected.Task, NodeID: review.Inspection.NodeID}}
 	if err = command.Task.Validate(); err != nil {
 		return result, err
 	}
@@ -143,7 +143,7 @@ func (s *Store) QueueAgentReinstallMonitorRotation(ctx context.Context, agentID,
 	id = "reinstall-monitor-rotation-" + id
 	raw, _ := json.Marshal(command)
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, review.ServiceApplicationID, review.ServiceAgentID, agentID, pulse.RotationKind, raw, now, now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, review.ServiceApplicationID, review.ServiceAgentID, agentID, senulun.RotationKind, raw, now, now); err != nil {
 		return result, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_reinstall_monitor_rotations(command_id,operation_id,application_id,inspection_id,plan_revision,input_json) VALUES(?,?,?,?,?,?)`, id, op.ID, input.ApplicationID, command.InspectionID, input.PlanRevision, raw); err != nil {
@@ -172,7 +172,7 @@ func (s *Store) validateReinstallMonitorRotation(ctx context.Context, tx *sql.Tx
 	err := tx.QueryRowContext(ctx, `SELECT c.input_json,c.gateway_node_id,m.operation_id,m.application_id,m.inspection_id FROM application_commands c
  JOIN agent_reinstall_monitor_rotations m ON m.command_id=c.id JOIN agents service ON service.id=c.agent_id
  WHERE c.id=? AND c.agent_id=? AND c.attempt<=1 AND (c.state<>'pending' OR c.attempt=0) AND c.reconciliation_requested=0 AND c.reconciliation_required=0
- AND json_extract(service.capabilities_json,'$.pulseRotation')=1 AND `+reinstallRotationAuthoritySQL, commandID, serviceAgentID).Scan(&raw, &target, &operationID, &applicationID, &inspectionID)
+ AND json_extract(service.capabilities_json,'$.senulunRotation')=1 AND `+reinstallRotationAuthoritySQL, commandID, serviceAgentID).Scan(&raw, &target, &operationID, &applicationID, &inspectionID)
 	if err != nil {
 		return command, errExecutionAuthorization
 	}
@@ -216,7 +216,7 @@ func (s *Store) completeReinstallMonitorRotation(ctx context.Context, commit pro
 	state := "failed"
 	if succeeded {
 		var result struct {
-			Rotation *pulse.RotationResult `json:"pulseRotation"`
+			Rotation *senulun.RotationResult `json:"pulseRotation"`
 		}
 		if json.Unmarshal(raw, &result) != nil || result.Rotation == nil || result.Rotation.Validate(command.Task) != nil {
 			return errors.New("center: invalid original monitoring credential rotation result")

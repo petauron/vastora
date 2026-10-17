@@ -49,13 +49,13 @@
 
 原生 Komari 的旧 Docker 清理兼容分支也已删除：安装后不再强删旧容器，清理失败不再补偿卸载原生探针；卸载主机服务失败后不继续发 Docker 删除。新增安装/卸载 × 主机成功/失败四场景，使用可观测 HTTP 服务断言零 Docker 请求且无补偿调用。`go test ./internal/agent -run 'TestApplicationExecutor.*Komari' -count=1` 通过（1.303s），`git diff --check` 通过；未改生产。
 
-ApplicationExecutor.Restore/Maintain、containerMatchesInstallation、OfflineRestore、HostApplicationRestorer、RestoreKomari/RestorePulse 及对应恢复错误类型已删除；不再保留由已安装快照构造离线安装任务、自动启动容器或重写探针配置的入口。仅验证旧恢复语义的测试已移除，原生安装/升级/卸载和身份保留测试保留。Agent 全包回归通过（6.224s），已删除符号在 internal/cmd 中无引用，diff 检查通过。
+ApplicationExecutor.Restore/Maintain、containerMatchesInstallation、OfflineRestore、HostApplicationRestorer、RestoreKomari/RestoreSenulun 及对应恢复错误类型已删除；不再保留由已安装快照构造离线安装任务、自动启动容器或重写探针配置的入口。仅验证旧恢复语义的测试已移除，原生安装/升级/卸载和身份保留测试保留。Agent 全包回归通过（6.224s），已删除符号在 internal/cmd 中无引用，diff 检查通过。
 
 REALITY 创建的失败删除补偿、次数阈值回滚、响应丢失后继续配置及半成品递归重建已删除。已存在同命令入站时停止并要求显式核对，不覆盖或删除。五个原有故障测试改为保留现场、不重复创建及不删除的断言，REALITY 定向测试通过（1.210s）；不是全部命令路径已完成的证据。
 
 旧 deferred 双错误类型、次数阈值和延后/阈值转人工判定已全部删除，所有调用点统一使用 uncertainTaskOutcome；不再保留旧名称别名。不确定结果的上报不依赖 attempt，第一次就需要处置。普通错误与不确定结果区分、原因解包及高次数不回滚测试保留；Agent 全包通过（6.335s），已删除符号无引用，diff 检查通过。
 
-探针 ApplyKomari/ApplyPulse 的失败回滚、取消后继续 stop/disable/reload/restart 已删除。变更前将已有受管文件保存在权限 0600 的 .previous 备份；已有备份未核对时拒绝覆盖；成功后清理备份，失败保留现状及 Senulun 身份。旧恢复测试断言改为保留备份/现场。按用户最新要求，本轮仅格式与 diff 检查，未重跑测试。
+探针 ApplyKomari/ApplySenulun 的失败回滚、取消后继续 stop/disable/reload/restart 已删除。变更前将已有受管文件保存在权限 0600 的 .previous 备份；已有备份未核对时拒绝覆盖；成功后清理备份，失败保留现状及 Senulun 身份。旧恢复测试断言改为保留备份/现场。按用户最新要求，本轮仅格式与 diff 检查，未重跑测试。
 
 补充：逐文件写入、备份建立/删除、Senulun token 清理前检查取消，取消后不再进入下一步。补充取消备份/清理的最小测试代码，但本轮未运行。
 

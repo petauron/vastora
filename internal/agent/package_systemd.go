@@ -44,7 +44,7 @@ func (b *SystemdPackageBackend) Prepare(ctx context.Context, task DeploymentTask
 		return nil
 	}
 	var err error
-	task, err = b.preparePulseInputs(task, receipt)
+	task, err = b.prepareSenulunInputs(task, receipt)
 	if err != nil {
 		return err
 	}
@@ -201,6 +201,9 @@ func (b *SystemdPackageBackend) Prepare(ctx context.Context, task DeploymentTask
 		fmt.Fprintf(&environment, "%s=%s\n", key, strconv.Quote(text))
 	}
 	b.files[environmentPath], b.modes[environmentPath], b.logicalNames[environmentPath] = []byte(environment.String()), 0600, "environment"
+	if err := b.preserveSenulunEnvironment(task, receipt, environmentPath); err != nil {
+		return err
+	}
 	unit, err := compilePackageUnit(task, receipt, installedFiles[spec.Executable], environmentPath, credentials, config, secrets, runtimeValues)
 	if err != nil {
 		return err
@@ -577,7 +580,7 @@ func (b *SystemdPackageBackend) Apply(ctx context.Context, task DeploymentTask, 
 			return err
 		}
 	}
-	if err := b.restorePulseIdentity(ctx, task, receipt); err != nil {
+	if err := b.restoreSenulunIdentity(ctx, task, receipt); err != nil {
 		return err
 	}
 	if err := b.Manager.run(ctx, "systemctl", "daemon-reload"); err != nil {
@@ -628,7 +631,7 @@ func (b *SystemdPackageBackend) Healthy(ctx context.Context, task DeploymentTask
 		return err
 	}
 	unit.MainPID, unit.InvocationID, unit.StartedAt = observed.MainPID, observed.InvocationID, observed.StartedAt
-	if err := b.completePulseEnrollment(ctx, task, receipt); err != nil {
+	if err := b.completeSenulunEnrollment(ctx, task, receipt); err != nil {
 		return err
 	}
 	check := b.CheckHealth

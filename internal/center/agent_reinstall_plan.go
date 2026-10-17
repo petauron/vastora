@@ -275,7 +275,7 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 				case app.AppKey == meridianAppKey:
 					app.Recovery = "rebuild_configuration"
 					app.Requirements = append(app.Requirements, "validate_saved_meridian_intent_and_credentials")
-				case app.AppKey == pulseAgentAppKey:
+				case app.AppKey == senulunAgentAppKey:
 					app.Recovery = "reenroll_monitor"
 					app.Requirements = append(app.Requirements, "replace_managed_monitor_enrollment")
 				case reconstructible && policy.Consistency == "reconstructible":

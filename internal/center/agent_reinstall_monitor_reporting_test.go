@@ -20,7 +20,7 @@ func TestAgentReinstallMonitorReportingRetainsSampleAge(t *testing.T) {
 				t.Fatal(err)
 			}
 			task, err := s.claimExecutionTask(ctx, service.ID, service.Credential, "monitor-registration-evidence-session", 0)
-			if err != nil || task == nil || task.PulseReporting == nil {
+			if err != nil || task == nil || task.SenulunReporting == nil {
 				t.Fatalf("report claim: %v", err)
 			}
 			// The Service observed a sample already nine minutes old. Its
@@ -89,7 +89,7 @@ func monitorReportingFixture(t *testing.T) (*Store, AgentCredential, AgentCreden
 	if response.Code != http.StatusOK {
 		t.Fatal(response.Body.String())
 	}
-	if _, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.pulseReporting',json('true')) WHERE id=?`, service.ID); err != nil {
+	if _, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.senulunReporting',json('true')) WHERE id=?`, service.ID); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
@@ -114,10 +114,10 @@ func TestAgentReinstallMonitorReportingActualExecutionAndReceipt(t *testing.T) {
 				t.Fatal("credential leaked into command metadata")
 			}
 			task, err := s.claimExecutionTask(ctx, service.ID, service.Credential, "monitor-registration-evidence-session", 0)
-			if err != nil || task == nil || task.PulseReporting == nil || task.ID != receipt.CommandID {
+			if err != nil || task == nil || task.SenulunReporting == nil || task.ID != receipt.CommandID {
 				t.Fatalf("report claim: %v", err)
 			}
-			if task.PulseReporting.Credentials.Token != "test-rotated-credential-never-publish" {
+			if task.SenulunReporting.Credentials.Token != "test-rotated-credential-never-publish" {
 				t.Fatal("did not use the original rotated credential")
 			}
 			raw := `{"pulseReporting":{"node_id":"11111111-1111-4111-8111-111111111111","observed_at_unix_ms":3000,"rotated_at_unix_ms":1000,"last_seen_at_unix_ms":2000}}`
@@ -240,7 +240,7 @@ func TestAgentReinstallMonitorReportingRejectsChangedAuthority(t *testing.T) {
 			case "network":
 				_, err = s.db.Exec(`DELETE FROM agent_reinstall_network_approvals`)
 			case "capability":
-				_, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_remove(capabilities_json,'$.pulseReporting') WHERE id=?`, service.ID)
+				_, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_remove(capabilities_json,'$.senulunReporting') WHERE id=?`, service.ID)
 			case "service":
 				_, err = s.db.Exec(`UPDATE applications SET status='stopped' WHERE id=(SELECT application_id FROM application_commands WHERE kind='pulse.node.reporting')`)
 			case "key":
@@ -250,7 +250,7 @@ func TestAgentReinstallMonitorReportingRejectsChangedAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 			task, _ := s.claimExecutionTask(context.Background(), service.ID, service.Credential, "monitor-registration-evidence-session", 0)
-			if task != nil && task.PulseReporting != nil {
+			if task != nil && task.SenulunReporting != nil {
 				t.Fatal("reporting task issued after authority changed")
 			}
 		})

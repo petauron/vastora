@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
-func TestPulseGenericRecipeCopiesPrivateBootstrap(t *testing.T) {
+func TestSenulunGenericRecipeCopiesPrivateBootstrap(t *testing.T) {
 	task := packageTestTask(t)
 	for _, app := range officialContractFixture(t).Apps {
 		if app.ID == "pulse" {
@@ -20,8 +20,8 @@ func TestPulseGenericRecipeCopiesPrivateBootstrap(t *testing.T) {
 		}
 	}
 	const token = "test-only-pulse-setup-token-0000000000"
-	task.AppKey = pulse.ServiceKey
-	task.Config = json.RawMessage(`{"public_url":"https://pulse.example.com"}`)
+	task.AppKey = senulun.ServiceKey
+	task.Config = json.RawMessage(`{"public_url":"https://senulun.example.com"}`)
 	task.Secrets = json.RawMessage(`{"setup_token":"` + token + `"}`)
 	task.AuthorizedCapabilities = task.Manifest.Runtime.RequiredCapabilities
 	packageTaskDigest(t, &task)
@@ -66,15 +66,15 @@ func TestPulseGenericRecipeCopiesPrivateBootstrap(t *testing.T) {
 	}
 }
 
-func TestPulseAuthenticationConfigRejectedBeforeDocker(t *testing.T) {
+func TestSenulunAuthenticationConfigRejectedBeforeDocker(t *testing.T) {
 	task := packageTestTask(t)
 	for _, app := range officialContractFixture(t).Apps {
 		if app.ID == "pulse" {
 			task.Manifest = app
 		}
 	}
-	task.AppKey = pulse.ServiceKey
-	task.Config = json.RawMessage(`{"public_url":"https://pulse.example.com"}`)
+	task.AppKey = senulun.ServiceKey
+	task.Config = json.RawMessage(`{"public_url":"https://senulun.example.com"}`)
 	task.AuthorizedCapabilities = task.Manifest.Runtime.RequiredCapabilities
 	packageTaskDigest(t, &task)
 	_, err := (ApplicationExecutor{DockerSocket: "not-a-docker-socket"}).Deploy(context.Background(), task)

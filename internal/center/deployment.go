@@ -15,7 +15,7 @@ import (
 	"github.com/distribution/reference"
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/platform"
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 	"golang.org/x/mod/semver"
 )
 
@@ -148,7 +148,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if request.Operation == "" {
 		request.Operation = "install"
 	}
-	offersCredentials := request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role != threeXUIRoleWorker || request.AppKey == pulseAppKey && (request.Operation == "install" || request.Operation == "upgrade")
+	offersCredentials := request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role != threeXUIRoleWorker || request.AppKey == senulunAppKey && (request.Operation == "install" || request.Operation == "upgrade")
 	producesCredentials := request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role != threeXUIRoleWorker
 	var secretOwner string
 	var operationKeyHash, secretRequestHash []byte
@@ -181,7 +181,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if request.Operation != "install" && request.Operation != "upgrade" && request.Operation != "configure" && request.Operation != "uninstall" {
 		return DeploymentView{}, errors.New("center: invalid deployment operation")
 	}
-	if err := s.validatePulseDeployment(ctx, request); err != nil {
+	if err := s.validateSenulunDeployment(ctx, request); err != nil {
 		return DeploymentView{}, err
 	}
 	var exists int
@@ -339,7 +339,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	}
 	var config, secrets []byte
-	var oneTimePulseToken string
+	var oneTimeSenulunToken string
 	if request.Operation == "uninstall" {
 		config, secrets = []byte(`{}`), []byte(`{}`)
 	} else {
@@ -368,7 +368,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				}
 			}
 		}
-		if request.AppKey == pulseAgentAppKey {
+		if request.AppKey == senulunAgentAppKey {
 			// Collector identity and endpoint are managed by Center, never form
 			// fields. Upgrades keep the established endpoint and node identity.
 			options, _, normalizeErr := normalizeDeploymentConfig(userInputManifest(manifest, request.AppKey), request.Config)
@@ -376,11 +376,11 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				return DeploymentView{}, normalizeErr
 			}
 			if request.Operation == "install" {
-				config, err = s.pulseAgentConfig(ctx, request.AgentID, options)
+				config, err = s.senulunAgentConfig(ctx, request.AgentID, options)
 			} else {
 				config, err = removeJSONObjectKeys(deploymentConfig, "enrollment_token")
 			}
-			var collectorConfig pulse.AgentConfig
+			var collectorConfig senulun.AgentConfig
 			if err == nil && json.Unmarshal(config, &collectorConfig) != nil {
 				err = errors.New("center: invalid Senulun collector configuration")
 			}
@@ -392,15 +392,15 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			}
 			secrets = []byte(`{}`)
 		} else {
-			if request.AppKey == pulseAppKey {
+			if request.AppKey == senulunAppKey {
 				var generatedToken string
-				deploymentConfig, generatedToken, err = s.withPulseHostDefaults(ctx, request.AgentID, request.Operation, deploymentConfig)
+				deploymentConfig, generatedToken, err = s.withSenulunHostDefaults(ctx, request.AgentID, request.Operation, deploymentConfig)
 				if err != nil {
 					return DeploymentView{}, err
 				}
 				if generatedToken != "" {
 					producesCredentials = true
-					oneTimePulseToken = generatedToken
+					oneTimeSenulunToken = generatedToken
 				}
 			}
 			config, secrets, err = normalizeDeploymentConfig(userInputManifest(manifest, request.AppKey), deploymentConfig)
@@ -409,8 +409,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if request.AppKey == pulseAppKey && request.Operation != "uninstall" {
-		if _, _, err := pulse.DecodeServiceConfig(config, secrets); err != nil {
+	if request.AppKey == senulunAppKey && request.Operation != "uninstall" {
+		if _, _, err := senulun.DecodeServiceConfig(config, secrets); err != nil {
 			return DeploymentView{}, err
 		}
 	}
@@ -435,8 +435,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	}
 	var oneTimeCredentials *OneTimeCredentials
-	if oneTimePulseToken != "" {
-		oneTimeCredentials = &OneTimeCredentials{SetupToken: oneTimePulseToken}
+	if oneTimeSenulunToken != "" {
+		oneTimeCredentials = &OneTimeCredentials{SetupToken: oneTimeSenulunToken}
 	}
 	if request.AppKey == threeXUIAppKey && request.Operation != "uninstall" {
 		role := request.Role
@@ -561,8 +561,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET package_revision=?,manifest_sha256=?,authorized_capabilities_json=? WHERE id=?`, manifest.PackageRevision, manifestDigest, grantsJSON, deployment.ID); err != nil {
 		return DeploymentView{}, err
 	}
-	if request.AppKey == pulseAgentAppKey && request.Operation == "install" {
-		if err := s.queuePulseEnrollment(ctx, tx, deployment, config, now); err != nil {
+	if request.AppKey == senulunAgentAppKey && request.Operation == "install" {
+		if err := s.queueSenulunEnrollment(ctx, tx, deployment, config, now); err != nil {
 			return DeploymentView{}, err
 		}
 	}

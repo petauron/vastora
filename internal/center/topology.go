@@ -31,11 +31,11 @@ type NodeCapabilities struct {
 	ExecutorVersions      map[string]int `json:"executorVersions,omitempty"`
 	RuntimeCapabilities   []string       `json:"runtimeCapabilities,omitempty"`
 	NativeEgress          bool           `json:"nativeEgress"`
-	PulseRestore          bool           `json:"pulseRestore"`
+	SenulunRestore        bool           `json:"pulseRestore"`
 	MeridianAcceptance    bool           `json:"meridianAcceptance"`
-	PulseReporting        bool           `json:"pulseReporting"`
-	PulseRotation         bool           `json:"pulseRotation"`
-	PulseInspection       bool           `json:"pulseInspection"`
+	SenulunReporting      bool           `json:"pulseReporting"`
+	SenulunRotation       bool           `json:"pulseRotation"`
+	SenulunInspection     bool           `json:"pulseInspection"`
 	IPQuality             bool           `json:"ipQuality"`
 	NetworkDiagnostics    bool           `json:"networkDiagnostics"`
 	ReturnRoute           bool           `json:"returnRoute"`

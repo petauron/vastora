@@ -2,11 +2,11 @@ import { ActivityIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { AppData } from "../types";
 import type { Language } from "../translations";
-import { isInstalledApplication, pulsePrivateAccess } from "./appAccess";
+import { isInstalledApplication, senulunPrivateAccess } from "./appAccess";
 import { copy } from "./shared";
 
-export function PulseSetupNotice({ data, language }: { data: AppData; language: Language }) {
-  const ready = Boolean(pulsePrivateAccess(data));
+export function SenulunSetupNotice({ data, language }: { data: AppData; language: Language }) {
+  const ready = Boolean(senulunPrivateAccess(data));
   const collectors = data.applications.filter((app) => app.appKey === "vastora-official/pulse-agent" && isInstalledApplication(app)).length;
   return <Alert>
     <ActivityIcon aria-hidden="true" />

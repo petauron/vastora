@@ -1,6 +1,7 @@
-// Package pulse defines the fixed Pulse integration contract shared by Center
-// and Agent. Pulse remains a separate monitoring service and native collector.
-package pulse
+// Package senulun defines the monitoring integration shared by Center and Agent.
+// Immutable catalog and task identifiers are retained as protocol identities,
+// not aliases or alternate product implementations.
+package senulun
 
 import (
 	"errors"
@@ -41,23 +42,23 @@ type EnrollmentResult struct {
 func (config AgentConfig) Validate() error {
 	u, err := url.Parse(config.ServiceURL)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "/" || strings.ContainsAny(config.ServiceURL, "\r\n") {
-		return errors.New("pulse: a private HTTPS service URL is required")
+		return errors.New("senulun: a private HTTPS service URL is required")
 	}
 	if config.ServiceApplicationID == "" || strings.TrimSpace(config.NodeName) == "" || len(config.NodeName) > 128 || len(config.NodeGroup) > 128 || strings.ContainsAny(config.NodeName+config.NodeGroup, "\r\n\x00") {
-		return errors.New("pulse: invalid monitoring node identity")
+		return errors.New("senulun: invalid monitoring node identity")
 	}
 	if config.NodeRegion != nil && *config.NodeRegion != "" {
 		code := *config.NodeRegion
 		region, err := language.ParseRegion(code)
 		if len(code) != 2 || err != nil || !region.IsCountry() || region.IsPrivateUse() {
-			return errors.New("pulse: node region must be an ISO 3166-1 alpha-2 country code or empty")
+			return errors.New("senulun: node region must be an ISO 3166-1 alpha-2 country code or empty")
 		}
 	}
 	if config.GeoIPProvider != nil {
 		switch *config.GeoIPProvider {
 		case "", "geojs", "ipinfo", "disabled":
 		default:
-			return errors.New("pulse: GeoIP provider must be geojs, ipinfo, or disabled")
+			return errors.New("senulun: GeoIP provider must be geojs, ipinfo, or disabled")
 		}
 	}
 	return nil

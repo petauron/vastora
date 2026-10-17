@@ -12,7 +12,7 @@ import (
 
 	"github.com/moby/moby/client"
 	"github.com/petauron/catalog/catalog"
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 func (e ApplicationExecutor) packageDirectory() string {
@@ -44,7 +44,7 @@ func (e ApplicationExecutor) CompleteCommandResources(applicationID, taskID stri
 }
 
 func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentTask) (ApplicationTaskResult, error) {
-	if task.PulseRestore != nil && (task.AppKey != pulse.AgentKey || task.Operation != "install" || task.PulseRestore.Validate() != nil) {
+	if task.SenulunRestore != nil && (task.AppKey != senulun.AgentKey || task.Operation != "install" || task.SenulunRestore.Validate() != nil) {
 		return ApplicationTaskResult{}, errors.New("agent: invalid Senulun restoration task")
 	}
 	if task.Operation == "adopt" {
@@ -73,8 +73,8 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 		}
 		backend := &SystemdPackageBackend{Manager: manager, StateDirectory: e.packageDirectory()}
 		result, err := (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: backend}).Deploy(ctx, task)
-		if err == nil && task.PulseRestore != nil {
-			result.PulseRestored = &pulse.RestoreResult{NodeID: task.PulseRestore.NodeID}
+		if err == nil && task.SenulunRestore != nil {
+			result.SenulunRestored = &senulun.RestoreResult{NodeID: task.SenulunRestore.NodeID}
 		}
 		return result, err
 	}
@@ -154,7 +154,7 @@ func (e ApplicationExecutor) Adopt(ctx context.Context, task DeploymentTask) (Ap
 	task.Operation = "adopt"
 	var backend PackageBackend
 	var receipt *InstanceResources
-	if task.AppKey == pulse.AgentKey || task.AppKey == komariKey {
+	if task.AppKey == senulun.AgentKey || task.AppKey == komariKey {
 		manager, ok := e.Host.(SystemdHostApplicationManager)
 		if !ok {
 			return ApplicationTaskResult{}, errors.New("agent: systemd historical inspection unavailable")

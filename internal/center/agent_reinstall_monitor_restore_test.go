@@ -32,7 +32,7 @@ func monitorRestoreFixture(t *testing.T) (*Store, AgentCredential, AgentCredenti
 	if err = s.db.QueryRow(`SELECT x25519_public_key FROM agents WHERE id=?`, node.ID).Scan(&key); err != nil {
 		t.Fatal(err)
 	}
-	heartbeat := NodeHeartbeat{Version: Version, PublicKey: key, Capabilities: testRuntimeCapabilities(NodeCapabilities{PulseRestore: true}), Roles: []string{"worker"}, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, NetworkCandidates: []networking.Candidate{{Address: "10.0.0.8", Interface: "eth0", Kind: "lan"}}}
+	heartbeat := NodeHeartbeat{Version: Version, PublicKey: key, Capabilities: testRuntimeCapabilities(NodeCapabilities{SenulunRestore: true}), Roles: []string{"worker"}, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, NetworkCandidates: []networking.Candidate{{Address: "10.0.0.8", Interface: "eth0", Kind: "lan"}}}
 	if err = s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
 		t.Fatal(err)
 	}
@@ -87,10 +87,10 @@ func TestAgentReinstallMonitorRestoreOriginalCredentialsRoundTrip(t *testing.T) 
 		t.Fatal("new recovery install can be cancelled as historical work")
 	}
 	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "monitor-original-restore-session", 0)
-	if err != nil || task == nil || task.ID != receipt.DeploymentID || task.PulseRestore == nil {
+	if err != nil || task == nil || task.ID != receipt.DeploymentID || task.SenulunRestore == nil {
 		t.Fatalf("restore claim: %+v %v", task, err)
 	}
-	if task.PulseRestore.NodeID != "11111111-1111-4111-8111-111111111111" || task.PulseRestore.Token != "test-rotated-credential-never-publish" || string(task.Secrets) != "{}" || task.PulseEnrollment != nil || task.Operation != "install" {
+	if task.SenulunRestore.NodeID != "11111111-1111-4111-8111-111111111111" || task.SenulunRestore.Token != "test-rotated-credential-never-publish" || string(task.Secrets) != "{}" || task.SenulunEnrollment != nil || task.Operation != "install" {
 		t.Fatal("wrong credential or enrollment replay")
 	}
 	if task.Manifest.Version != before.Applications[0].Version {
@@ -172,7 +172,7 @@ func TestAgentReinstallMonitorRestoreRequiresAuthenticCurrentEvidence(t *testing
 				case "network":
 					_, err = s.db.Exec(`DELETE FROM agent_reinstall_network_approvals`)
 				case "capability":
-					_, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_remove(capabilities_json,'$.pulseRestore') WHERE id=?`, node.ID)
+					_, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_remove(capabilities_json,'$.senulunRestore') WHERE id=?`, node.ID)
 				}
 				if err != nil {
 					t.Fatal(err)

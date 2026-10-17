@@ -1,4 +1,4 @@
-package pulse
+package senulun
 
 import (
 	"errors"
@@ -15,7 +15,7 @@ type ReportingTask struct {
 
 func (task ReportingTask) Validate() error {
 	if task.ApplicationID == "" || task.DeploymentID == "" || task.Credentials.Validate() != nil {
-		return errors.New("pulse: invalid original monitoring reporting task")
+		return errors.New("senulun: invalid original monitoring reporting task")
 	}
 	return nil
 }
@@ -33,7 +33,7 @@ func (result ReportingResult) Validate(task ReportingTask) error {
 	if task.Validate() != nil || result.NodeID != task.Credentials.NodeID || result.ObservedAt <= 0 ||
 		(result.RotatedAt != nil && (*result.RotatedAt <= 0 || *result.RotatedAt > result.ObservedAt)) ||
 		(result.LastSeenAt != nil && (*result.LastSeenAt <= 0 || *result.LastSeenAt > result.ObservedAt)) {
-		return errors.New("pulse: invalid original monitoring reporting response")
+		return errors.New("senulun: invalid original monitoring reporting response")
 	}
 	return nil
 }

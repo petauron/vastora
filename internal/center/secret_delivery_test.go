@@ -35,8 +35,8 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 	node := enrollOrchestrationNode(t, store, "secret-replay", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
 	request := DeploymentRequest{
 		AgentID:              node.ID,
-		AppKey:               pulseAppKey,
-		Config:               json.RawMessage(`{"public_url":"https://pulse.example.test"}`),
+		AppKey:               senulunAppKey,
+		Config:               json.RawMessage(`{"public_url":"https://senulun.example.test"}`),
 		Operation:            "install",
 		SecretOperationOwner: "test-admin-session",
 		SecretOperationKey:   "deployment-operation-key-0001",
@@ -68,7 +68,7 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 	}
 	credentials := *results[0].OneTimeCredentials
 	changed := request
-	changed.Config = json.RawMessage(`{"public_url":"https://changed-pulse.example.test"}`)
+	changed.Config = json.RawMessage(`{"public_url":"https://changed-senulun.example.test"}`)
 	if _, err := store.CreateDeployment(ctx, changed); err == nil || !strings.Contains(err.Error(), "different operation") {
 		store.Close()
 		t.Fatalf("same key accepted a changed deployment: %v", err)

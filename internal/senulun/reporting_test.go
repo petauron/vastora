@@ -1,8 +1,8 @@
-package pulse
+package senulun
 
 import "testing"
 
-func TestPulseReportingRequiresFreshSampleAfterRotation(t *testing.T) {
+func TestSenulunReportingRequiresFreshSampleAfterRotation(t *testing.T) {
 	task := ReportingTask{ApplicationID: "monitor", DeploymentID: "deployment", Credentials: RestoreCredentials{NodeID: "11111111-1111-4111-8111-111111111111", Token: "test-rotated-credential-never-publish"}}
 	for _, mode := range []string{"fresh", "missing", "before", "equal", "stale", "future", "wrong-node"} {
 		t.Run(mode, func(t *testing.T) {

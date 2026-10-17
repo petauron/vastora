@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
-func TestPulseServiceAuthenticationSecretIsEncryptedAndRetainedOnUpgrade(t *testing.T) {
-	store, service, _, deployment := pulseFixture(t)
+func TestSenulunServiceAuthenticationSecretIsEncryptedAndRetainedOnUpgrade(t *testing.T) {
+	store, service, _, deployment := senulunFixture(t)
 	ctx := context.Background()
 	const token = "test-only-pulse-setup-token-0000000000"
 	var publicConfig, sealed []byte
@@ -25,38 +25,38 @@ func TestPulseServiceAuthenticationSecretIsEncryptedAndRetainedOnUpgrade(t *test
 	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET app_version = '0.1.0-alpha.1' WHERE id = ?`, deployment.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: service.ID, AppKey: pulseAppKey, Operation: "upgrade", Config: json.RawMessage(`{"public_url":"https://monitor.example.com"}`)}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: service.ID, AppKey: senulunAppKey, Operation: "upgrade", Config: json.RawMessage(`{"public_url":"https://monitor.example.com"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, service)
-	config, secrets, err := pulse.DecodeServiceConfig(task.Config, task.Secrets)
+	config, secrets, err := senulun.DecodeServiceConfig(task.Config, task.Secrets)
 	if err != nil || config.PublicURL != "https://monitor.example.com" || secrets.SetupToken != token || strings.Contains(string(task.Config), token) {
 		t.Fatal("upgrade did not preserve the encrypted setup token separately from the new dashboard origin")
 	}
 }
 
-func TestPulseServiceRejectsInvalidAuthenticationChange(t *testing.T) {
-	store, service, _, _ := pulseFixture(t)
+func TestSenulunServiceRejectsInvalidAuthenticationChange(t *testing.T) {
+	store, service, _, _ := senulunFixture(t)
 	for _, config := range []string{
-		`{"public_url":"http://pulse.example.com"}`,
-		`{"public_url":"https://pulse.example.com/login"}`,
+		`{"public_url":"http://senulun.example.com"}`,
+		`{"public_url":"https://senulun.example.com/login"}`,
 		`{"setup_token":""}`,
 		`{"setup_token":"too-short"}`,
 	} {
-		if _, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: service.ID, AppKey: pulseAppKey, Operation: "configure", Config: json.RawMessage(config)}); err == nil {
+		if _, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: service.ID, AppKey: senulunAppKey, Operation: "configure", Config: json.RawMessage(config)}); err == nil {
 			t.Fatal("invalid Senulun authentication configuration was accepted")
 		}
 	}
 }
 
-func TestPulseUpgradeFillsMissingLegacyHostSettings(t *testing.T) {
-	store, service, _, previous := pulseFixture(t)
+func TestSenulunUpgradeFillsMissingLegacyHostSettings(t *testing.T) {
+	store, service, _, previous := senulunFixture(t)
 	ctx := context.Background()
 	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET app_version = '0.1.0-alpha.2', config_json = '{}', secret_id = NULL WHERE id = ?`, previous.ID); err != nil {
 		t.Fatal(err)
 	}
-	addPulsePrivateFixture(t, store, previous.ApplicationID, service.ID)
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: service.ID, AppKey: pulseAppKey, Operation: "upgrade", Config: json.RawMessage(`{}`)})
+	addSenulunPrivateFixture(t, store, previous.ApplicationID, service.ID)
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: service.ID, AppKey: senulunAppKey, Operation: "upgrade", Config: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,8 +64,8 @@ func TestPulseUpgradeFillsMissingLegacyHostSettings(t *testing.T) {
 		t.Fatal("generated Senulun setup token was not delivered once")
 	}
 	task := claimTask(t, store, service)
-	config, secrets, err := pulse.DecodeServiceConfig(task.Config, task.Secrets)
-	if err != nil || config.PublicURL != "https://pulse.private.example.com" || secrets.SetupToken != created.OneTimeCredentials.SetupToken {
+	config, secrets, err := senulun.DecodeServiceConfig(task.Config, task.Secrets)
+	if err != nil || config.PublicURL != "https://senulun.private.example.com" || secrets.SetupToken != created.OneTimeCredentials.SetupToken {
 		t.Fatal("legacy Senulun upgrade did not use its ready HTTPS entry and generated token")
 	}
 	if strings.Contains(string(task.Config), secrets.SetupToken) {

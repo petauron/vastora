@@ -15,8 +15,8 @@ import (
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
-	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/realitytarget"
+	"github.com/petauron/vastora/internal/senulun"
 	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
@@ -115,11 +115,11 @@ type Capabilities struct {
 	ExecutorVersions      map[string]int `json:"executorVersions,omitempty"`
 	RuntimeCapabilities   []string       `json:"runtimeCapabilities,omitempty"`
 	NativeEgress          bool           `json:"nativeEgress"`
-	PulseRestore          bool           `json:"pulseRestore"`
+	SenulunRestore        bool           `json:"pulseRestore"`
 	MeridianAcceptance    bool           `json:"meridianAcceptance"`
-	PulseReporting        bool           `json:"pulseReporting"`
-	PulseRotation         bool           `json:"pulseRotation"`
-	PulseInspection       bool           `json:"pulseInspection"`
+	SenulunReporting      bool           `json:"pulseReporting"`
+	SenulunRotation       bool           `json:"pulseRotation"`
+	SenulunInspection     bool           `json:"pulseInspection"`
 	IPQuality             bool           `json:"ipQuality"`
 	NetworkDiagnostics    bool           `json:"networkDiagnostics"`
 	ReturnRoute           bool           `json:"returnRoute"`
@@ -156,11 +156,11 @@ type DeploymentTask struct {
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
-	PulseRestore              *pulse.RestoreCredentials            `json:"pulseRestore,omitempty"`
-	PulseReporting            *pulse.ReportingTask                 `json:"pulseReporting,omitempty"`
-	PulseRotation             *pulse.RotationTask                  `json:"pulseRotation,omitempty"`
-	PulseInspection           *pulse.InspectionTask                `json:"pulseInspection,omitempty"`
-	PulseEnrollment           *pulse.EnrollmentTask                `json:"pulseEnrollment,omitempty"`
+	SenulunRestore            *senulun.RestoreCredentials          `json:"pulseRestore,omitempty"`
+	SenulunReporting          *senulun.ReportingTask               `json:"pulseReporting,omitempty"`
+	SenulunRotation           *senulun.RotationTask                `json:"pulseRotation,omitempty"`
+	SenulunInspection         *senulun.InspectionTask              `json:"pulseInspection,omitempty"`
+	SenulunEnrollment         *senulun.EnrollmentTask              `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                   `json:"protocolCommand,omitempty"`
 	XrayRecovery              *xrayrecovery.Task                   `json:"xrayRecovery,omitempty"`
 	Kind                      string                               `json:"kind"`
@@ -222,11 +222,11 @@ type ApplicationTaskResult struct {
 	MeridianAcceptance   *meridianruntime.AcceptanceResult   `json:"meridianAcceptance,omitempty"`
 	IPQuality            *ipquality.Result                   `json:"ipQuality,omitempty"`
 	NodeDiagnostics      *nodediagnostics.Result             `json:"nodeDiagnostics,omitempty"`
-	PulseRestored        *pulse.RestoreResult                `json:"pulseRestored,omitempty"`
-	PulseReporting       *pulse.ReportingResult              `json:"pulseReporting,omitempty"`
-	PulseRotation        *pulse.RotationResult               `json:"pulseRotation,omitempty"`
-	PulseInspection      *pulse.InspectionResult             `json:"pulseInspection,omitempty"`
-	PulseEnrollment      *pulse.EnrollmentResult             `json:"pulseEnrollment,omitempty"`
+	SenulunRestored      *senulun.RestoreResult              `json:"pulseRestored,omitempty"`
+	SenulunReporting     *senulun.ReportingResult            `json:"pulseReporting,omitempty"`
+	SenulunRotation      *senulun.RotationResult             `json:"pulseRotation,omitempty"`
+	SenulunInspection    *senulun.InspectionResult           `json:"pulseInspection,omitempty"`
+	SenulunEnrollment    *senulun.EnrollmentResult           `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand      *nodeprotocol.Result                `json:"protocolCommand,omitempty"`
 	XrayRecovery         *xrayrecovery.Result                `json:"xrayRecovery,omitempty"`
 	LandingPeer          *landing.PeerIdentity               `json:"landingPeer,omitempty"`

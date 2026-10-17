@@ -7,7 +7,7 @@ the first upgrade from Alpha.2:
 
 | Configuration key | Behavior |
 | --- | --- |
-| `public_url` | Required HTTPS browser origin, for example `https://pulse.example.com`. A root slash is allowed; credentials, subpaths, queries, and fragments are rejected. Configure the matching access entry before opening `/login`. This origin is separate from the collector's private HTTPS URL. |
+| `public_url` | Required HTTPS browser origin, for example `https://senulun.example.com`. A root slash is allowed; credentials, subpaths, queries, and fragments are rejected. Configure the matching access entry before opening `/login`. This origin is separate from the collector's private HTTPS URL. |
 | `setup_token` | Required write-only secret, 32–4096 bytes without surrounding whitespace or line breaks. The operator supplies a private random value and retains it for first administrator setup at `/login`. It has no default and is not an Agent enrollment token or administrator password. |
 
 The existing manifest `secret: true` path separates the token from public
@@ -52,8 +52,8 @@ macOS checkout using separate temporary Go and staticcheck caches:
 
 ```text
 make go-format-check go-static-check
-go test ./internal/pulse -count=1
-go test ./internal/agent ./internal/center -run '^TestPulse' -count=1
+go test ./internal/senulun -count=1
+go test ./internal/agent ./internal/center -run '^TestSenulun' -count=1
 ```
 
 The existing updater-download tests in `cmd/vastora` require a supported Linux

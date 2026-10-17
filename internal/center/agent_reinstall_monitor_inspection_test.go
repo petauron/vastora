@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 func monitorInspectionFixture(t *testing.T) (*Store, AgentCredential, AgentCredential, AgentReinstallMonitorInput) {
@@ -24,7 +24,7 @@ func monitorInspectionFixture(t *testing.T) (*Store, AgentCredential, AgentCrede
 	if _, err := s.db.Exec(`UPDATE agents SET last_seen_at='2020-01-01T00:00:00Z', roles_json='["worker"]', capabilities_json=json_set(capabilities_json,'$.docker',json('true')) WHERE id=?`, collector.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.pulseInspection',json('true')) WHERE id=?`, service.ID); err != nil {
+	if _, err := s.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.senulunInspection',json('true')) WHERE id=?`, service.ID); err != nil {
 		t.Fatal(err)
 	}
 	enrollment, err := createReviewedReconnect(t, s, ctx, collector.ID)
@@ -88,10 +88,10 @@ func TestAgentReinstallMonitorInspectionReadOnlyRoundTrip(t *testing.T) {
 		t.Fatalf("lost response duplicated read: %+v %v", replay, err)
 	}
 	task, err := s.claimExecutionTask(ctx, service.ID, service.Credential, "monitor-registration-evidence-session", 0)
-	if err != nil || task == nil || task.ID != receipt.CommandID || task.PulseInspection == nil {
+	if err != nil || task == nil || task.ID != receipt.CommandID || task.SenulunInspection == nil {
 		t.Fatalf("approved inspection blocked: %+v %v", task, err)
 	}
-	if task.PulseEnrollment != nil || task.PulseInspection.ApplicationID == input.ApplicationID {
+	if task.SenulunEnrollment != nil || task.SenulunInspection.ApplicationID == input.ApplicationID {
 		t.Fatal("inspection became collector installation or enrollment")
 	}
 	response := submitMonitorInspection(t, s, service, task, successfulInspectionJSON(), true)
@@ -114,7 +114,7 @@ func TestAgentReinstallMonitorInspectionReadOnlyRoundTrip(t *testing.T) {
 		t.Fatalf("inspection released recovery fence: %v", err)
 	}
 	var count int
-	if err = s.db.QueryRow(`SELECT COUNT(*) FROM application_commands WHERE kind=?`, pulse.InspectionKind).Scan(&count); err != nil || count != 1 {
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM application_commands WHERE kind=?`, senulun.InspectionKind).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("duplicate task: %d %v", count, err)
 	}
 	var state string

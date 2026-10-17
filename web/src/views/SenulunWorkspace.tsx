@@ -4,15 +4,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { AppWorkspaceProps } from "@/app-workspaces/types";
 import { ApplicationStatus } from "./apps/InstalledApplicationPrimitives";
-import { localized, pulseDashboardURL } from "./appAccess";
+import { localized, senulunDashboardURL } from "./appAccess";
 import { copy } from "./shared";
 
 // Senulun serves and owns its dashboard. Center only shows installation state,
 // access publication, and a link to the dashboard's authenticated origin.
-export function PulseWorkspace({ group, data, language, onManage, onUpgrade }: AppWorkspaceProps) {
+export function SenulunWorkspace({ group, data, language, onManage, onUpgrade }: AppWorkspaceProps) {
   const instance = group.instances[0];
   const name = group.app ? localized(group.app, language, "name") : instance.application.name;
-  const accessURL = pulseDashboardURL(data);
+  const accessURL = senulunDashboardURL(data);
 
   return <Card aria-label={name} data-app-workspace="vastora-official/pulse">
     <CardHeader className="flex flex-row items-center justify-between gap-3">

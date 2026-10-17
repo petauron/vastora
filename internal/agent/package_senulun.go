@@ -13,16 +13,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 // Pulse contributes enrollment semantics only. File deployment, credentials,
 // systemd confinement, backups and ownership remain in the generic executor.
-func (b *SystemdPackageBackend) preparePulseInputs(task DeploymentTask, receipt *InstanceResources) (DeploymentTask, error) {
-	if task.AppKey != pulse.AgentKey {
+func (b *SystemdPackageBackend) prepareSenulunInputs(task DeploymentTask, receipt *InstanceResources) (DeploymentTask, error) {
+	if task.AppKey != senulun.AgentKey {
 		return task, nil
 	}
-	var settings pulse.AgentConfig
+	var settings senulun.AgentConfig
 	if json.Unmarshal(task.Config, &settings) != nil {
 		return task, errors.New("agent: invalid Senulun configuration")
 	}
@@ -30,7 +30,7 @@ func (b *SystemdPackageBackend) preparePulseInputs(task DeploymentTask, receipt 
 		return task, err
 	}
 	release, err := os.ReadFile(b.Manager.path("/etc/os-release"))
-	if err != nil || !pulseSupportedOS(release) {
+	if err != nil || !senulunSupportedOS(release) {
 		return task, errors.New("agent: Senulun requires Debian 12/13 or Ubuntu 24.04/26.04")
 	}
 	if environment := resourceNamed(receipt, "file", "environment"); environment != nil {
@@ -38,12 +38,12 @@ func (b *SystemdPackageBackend) preparePulseInputs(task DeploymentTask, receipt 
 		if err != nil {
 			return task, err
 		}
-		settings, err = pulseRetainLocation(settings, raw)
+		settings, err = senulunRetainLocation(settings, raw)
 		if err != nil {
 			return task, err
 		}
 	}
-	credentials, err := readPulsePackageCredentials(b.Manager.path(pulsePackageIdentityPath(task, receipt)), settings.ServiceURL)
+	credentials, err := readSenulunPackageCredentials(b.Manager.path(senulunPackageIdentityPath(task, receipt)), settings.ServiceURL)
 	if err != nil {
 		return task, err
 	}
@@ -51,8 +51,8 @@ func (b *SystemdPackageBackend) preparePulseInputs(task DeploymentTask, receipt 
 	if json.Unmarshal(task.Secrets, &secrets) != nil || secrets == nil {
 		return task, errors.New("agent: invalid Senulun credentials")
 	}
-	if task.PulseRestore != nil {
-		if task.Operation != "install" || task.PulseRestore.Validate() != nil {
+	if task.SenulunRestore != nil {
+		if task.Operation != "install" || task.SenulunRestore.Validate() != nil {
 			return task, errors.New("agent: invalid Senulun restoration task")
 		}
 		secrets["enrollment_token"] = ""
@@ -94,7 +94,7 @@ func (b *SystemdPackageBackend) preparePulseInputs(task DeploymentTask, receipt 
 	return task, err
 }
 
-func pulsePackageIdentityPath(task DeploymentTask, receipt *InstanceResources) string {
+func senulunPackageIdentityPath(task DeploymentTask, receipt *InstanceResources) string {
 	state := "/var/lib/" + packageIdentity(task.ApplicationID) + "-state"
 	if resource := resourceNamed(receipt, "directory", "state"); resource != nil {
 		state = resource.Path
@@ -102,7 +102,7 @@ func pulsePackageIdentityPath(task DeploymentTask, receipt *InstanceResources) s
 	return filepath.Join(state, "agent-credentials.json")
 }
 
-func readPulsePackageCredentials(path, serviceURL string) ([]byte, error) {
+func readSenulunPackageCredentials(path, serviceURL string) ([]byte, error) {
 	if err := checkPackageParents(path); err != nil {
 		return nil, err
 	}
@@ -132,11 +132,11 @@ func readPulsePackageCredentials(path, serviceURL string) ([]byte, error) {
 	return raw, nil
 }
 
-func (b *SystemdPackageBackend) completePulseEnrollment(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
-	if task.AppKey != pulse.AgentKey {
+func (b *SystemdPackageBackend) completeSenulunEnrollment(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
+	if task.AppKey != senulun.AgentKey {
 		return nil
 	}
-	var settings pulse.AgentConfig
+	var settings senulun.AgentConfig
 	if json.Unmarshal(task.Config, &settings) != nil {
 		return errors.New("agent: invalid Senulun configuration")
 	}
@@ -145,7 +145,7 @@ func (b *SystemdPackageBackend) completePulseEnrollment(ctx context.Context, tas
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		raw, err := readPulsePackageCredentials(b.Manager.path(pulsePackageIdentityPath(task, receipt)), settings.ServiceURL)
+		raw, err := readSenulunPackageCredentials(b.Manager.path(senulunPackageIdentityPath(task, receipt)), settings.ServiceURL)
 		if err != nil {
 			return err
 		}
@@ -171,14 +171,14 @@ func (b *SystemdPackageBackend) completePulseEnrollment(ctx context.Context, tas
 	return removeHostFile(b.Manager.path("/run/" + packageIdentity(task.ApplicationID) + "/enrollment-token"))
 }
 
-func (b *SystemdPackageBackend) restorePulseIdentity(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
-	if task.PulseRestore == nil {
+func (b *SystemdPackageBackend) restoreSenulunIdentity(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
+	if task.SenulunRestore == nil {
 		return nil
 	}
-	if task.AppKey != pulse.AgentKey || task.Operation != "install" || task.PulseRestore.Validate() != nil {
+	if task.AppKey != senulun.AgentKey || task.Operation != "install" || task.SenulunRestore.Validate() != nil {
 		return errors.New("agent: invalid Senulun restoration task")
 	}
-	var settings pulse.AgentConfig
+	var settings senulun.AgentConfig
 	if json.Unmarshal(task.Config, &settings) != nil || settings.Validate() != nil {
 		return errors.New("agent: invalid Senulun restoration configuration")
 	}
@@ -186,7 +186,7 @@ func (b *SystemdPackageBackend) restorePulseIdentity(ctx context.Context, task D
 	if binary == nil {
 		return errors.New("agent: Senulun executable receipt missing")
 	}
-	path := b.Manager.path(pulsePackageIdentityPath(task, receipt))
+	path := b.Manager.path(senulunPackageIdentityPath(task, receipt))
 	if err := checkPackageParents(path); err != nil {
 		return err
 	}
@@ -212,8 +212,14 @@ func (b *SystemdPackageBackend) restorePulseIdentity(ctx context.Context, task D
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	args := []string{"-u", user, "--", "env", "-i", "PULSE_SERVICE_URL=" + settings.ServiceURL, "PULSE_CREDENTIALS_PATH=" + path, b.Manager.path(binary.Path), "credentials", "import", task.PulseRestore.NodeID}
-	input := strings.NewReader(task.PulseRestore.Token + "\n")
+	// The executable comes from the verified installed recipe, not a command
+	// fallback. Retained historical versions still speak their original CLI.
+	prefix := "SENULUN_"
+	if task.Manifest.Runtime.Systemd.Executable == "pulse-agent" {
+		prefix = "PULSE_"
+	}
+	args := []string{"-u", user, "--", "env", "-i", prefix + "SERVICE_URL=" + settings.ServiceURL, prefix + "CREDENTIALS_PATH=" + path, b.Manager.path(binary.Path), "credentials", "import", task.SenulunRestore.NodeID}
+	input := strings.NewReader(task.SenulunRestore.Token + "\n")
 	var err error
 	if b.Manager.RunInputCommand != nil {
 		err = b.Manager.RunInputCommand(ctx, input, "runuser", args...)
@@ -227,12 +233,12 @@ func (b *SystemdPackageBackend) restorePulseIdentity(ctx context.Context, task D
 	if err != nil {
 		return errors.New("agent: Senulun identity import requires inspection")
 	}
-	raw, err := readPulsePackageCredentials(path, settings.ServiceURL)
+	raw, err := readSenulunPackageCredentials(path, settings.ServiceURL)
 	var saved struct {
 		NodeID string `json:"node_id"`
 		Token  string `json:"agent_token"`
 	}
-	if err != nil || json.Unmarshal(raw, &saved) != nil || saved.NodeID != task.PulseRestore.NodeID || saved.Token != task.PulseRestore.Token {
+	if err != nil || json.Unmarshal(raw, &saved) != nil || saved.NodeID != task.SenulunRestore.NodeID || saved.Token != task.SenulunRestore.Token {
 		return errors.New("agent: Senulun importer did not retain approved identity")
 	}
 	return nil

@@ -43,7 +43,7 @@ func reinstallLocalWorkFixture(t *testing.T) (*Store, AgentCredential, AgentRein
 		t.Fatal(err)
 	}
 	addReinstallSealedExecution(t, store, node.ID, "old-update", AgentTask{ID: "old-update", Kind: "agent.update", Attempt: 1, TargetVersion: Version})
-	for _, app := range []struct{ id, key string }{{"meridian", meridianAppKey}, {"collector", pulseAgentAppKey}} {
+	for _, app := range []struct{ id, key string }{{"meridian", meridianAppKey}, {"collector", senulunAgentAppKey}} {
 		addReinstallApplication(t, store, node, app.id, app.key, "0.1.0-alpha.12", "install", "running")
 		if _, err := store.db.Exec(`UPDATE deployments SET attempt=1 WHERE id=?`, app.id+"-deployment"); err != nil {
 			t.Fatal(err)

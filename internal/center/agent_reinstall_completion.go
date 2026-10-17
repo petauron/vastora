@@ -58,7 +58,7 @@ func (s *Store) requireReinstallCompletion(ctx context.Context, tx *sql.Tx, targ
 			}
 		case app.Recovery == "restore_data":
 			return evidence, errors.New("center: business data restoration has not been verified")
-		case app.AppKey == pulseAgentAppKey && app.Recovery == "reenroll_monitor":
+		case app.AppKey == senulunAgentAppKey && app.Recovery == "reenroll_monitor":
 			verified := false
 			for _, monitor := range plan.Monitoring {
 				if monitor.ApplicationID != app.ApplicationID {
