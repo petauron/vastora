@@ -30,7 +30,11 @@ func TestLandingLatencyFreshnessAndSelection(t *testing.T) {
 	if len(views) != 1 || views[0].State != "unavailable" || views[0].LatencyMS != nil {
 		t.Fatal("relay result exposed a direct latency")
 	}
-	now = now.Add(landingHealthFreshness + time.Second)
+	now = now.Add(time.Minute + time.Second)
+	if len(s.landingLatencyViews(selection)) != 1 {
+		t.Fatal("latency expired before the next one-minute sample could arrive")
+	}
+	now = now.Add(landingLatencyFreshness)
 	if len(s.landingLatencyViews(selection)) != 0 {
 		t.Fatal("stale latency remained visible")
 	}
