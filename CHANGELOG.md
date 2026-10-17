@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.323](https://github.com/petauron/vastora/compare/v0.1.0-alpha.322...v0.1.0-alpha.323) (2026-10-17)
+
+
+### Bug Fixes
+
+* restore Meridian latency probes and align sample freshness ([#933](https://github.com/petauron/vastora/issues/933)) ([269fc79](https://github.com/petauron/vastora/commit/269fc79e26421fe289effc1846a7d4be36110eda))
+
 ## [0.1.0-alpha.322](https://github.com/petauron/vastora/compare/v0.1.0-alpha.321...v0.1.0-alpha.322) (2026-10-17)
 
 
