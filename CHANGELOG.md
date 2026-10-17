@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.321](https://github.com/petauron/vastora/compare/v0.1.0-alpha.320...v0.1.0-alpha.321) (2026-10-17)
+
+
+### Bug Fixes
+
+* **glivela:** automate entry DNS and verify authenticated proxy health ([0087a21](https://github.com/petauron/vastora/commit/0087a21b463af06855465d9a73265f57a45b015e))
+
 ## [0.1.0-alpha.320](https://github.com/petauron/vastora/compare/v0.1.0-alpha.319...v0.1.0-alpha.320) (2026-10-17)
 
 
