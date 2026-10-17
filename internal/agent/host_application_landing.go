@@ -306,7 +306,7 @@ func RemoveLanding(ctx context.Context, nodeID string, revision uint64) error {
 
 // ApplyLanding installs a native service; it never installs Docker, x-ui or
 // compilers. The caller has persisted the desired revision and serialized tasks.
-func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) error {
+func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) (applyErr error) {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 || nodeID == "" {
 		return errors.New("agent: landing installation requires a managed Linux root Agent")
 	}
@@ -349,6 +349,26 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 	if err := verifyLandingFiles(journal); err != nil {
 		return err
 	}
+	recovery, err := prepareLandingRecovery(ctx, journal)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		preserve := false
+		if applyErr != nil && recovery.stopped {
+			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+			defer cancel()
+			if err := recovery.restore(recoveryCtx, journal); err != nil {
+				preserve = true
+				applyErr = errors.Join(applyErr, errors.New("agent: previous landing service recovery failed"), err)
+			} else {
+				applyErr = errors.Join(applyErr, errors.New("agent: previous landing service restored; requested revision was not applied"))
+			}
+		}
+		if !preserve {
+			recovery.cleanup()
+		}
+	}()
 	journal.Revision, journal.PlanDigest, journal.Removed = plan.Revision, digest, false
 	if err := saveLandingHostJournal(journal); err != nil {
 		return err
@@ -374,13 +394,6 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 	if err := saveLandingHostJournal(journal); err != nil {
 		return err
 	}
-	// A failed explicit binding must not leave the previous egress serving
-	// traffic while the requested revision is reported as failed.
-	if plan.EgressIP != "" {
-		if err := stopLandingService(ctx); err != nil {
-			return err
-		}
-	}
 	device, egress, err := landingHostAddresses(plan.Address, plan.EgressIP)
 	if err != nil {
 		return err
@@ -405,6 +418,9 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 			policy.TCPOnlySources = append(policy.TCPOnlySources, source.Address)
 		}
 	}
+	// All non-disruptive validation and file preparation precedes cutover.
+	// Arm recovery before stopping: even a failed stop may have taken effect.
+	recovery.stopped = recovery.directory != ""
 	if err := stopLandingService(ctx); err != nil {
 		return err
 	}
