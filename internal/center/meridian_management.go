@@ -627,6 +627,9 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 	if err := tx.Commit(); err != nil {
 		return MeridianEndpointView{}, err
 	}
+	if err := s.reconcileMeridianEndpointDNS(ctx, serviceID); err != nil {
+		return MeridianEndpointView{}, err
+	}
 	values, err := s.listMeridianEndpoints(ctx)
 	if err != nil {
 		return MeridianEndpointView{}, err
@@ -640,6 +643,10 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 }
 
 func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceID, nodeID, hostname, serverName, stamp string) error {
+	dnsProvider, err := meridianEndpointDNSProvider(ctx, tx, hostname)
+	if err != nil {
+		return err
+	}
 	var duplicate int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications
 		WHERE entry_node_id=? AND sni_hostname=? AND status<>'stopped' AND service_id<>?`, nodeID, serverName, serviceID).Scan(&duplicate); err != nil {
@@ -652,7 +659,7 @@ func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceI
 	var publicationID, status string
 	var cleanupPending int
 	var revision int64
-	err := tx.QueryRowContext(ctx, `SELECT id,status,cleanup_pending,desired_revision FROM publications
+	err = tx.QueryRowContext(ctx, `SELECT id,status,cleanup_pending,desired_revision FROM publications
 		WHERE service_id=? AND kind=? ORDER BY updated_at DESC LIMIT 1`, serviceID, publicationShared443).Scan(&publicationID, &status, &cleanupPending, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		publicationID, err = randomToken(18)
@@ -660,7 +667,7 @@ func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceI
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,status,created_at,updated_at)
-			VALUES(?,?,?,'application_node',?,?,?,'manual',0,'pending',?,?)`, publicationID, serviceID, publicationShared443, nodeID, hostname, serverName, stamp, stamp)
+			VALUES(?,?,?,'application_node',?,?,?,?,0,'pending',?,?)`, publicationID, serviceID, publicationShared443, nodeID, hostname, serverName, dnsProvider, stamp, stamp)
 		if err != nil {
 			return fmt.Errorf("center: create Glivela public entry: %w", err)
 		}
@@ -675,9 +682,9 @@ func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceI
 	if cleanupPending != 0 {
 		return errors.New("center: the previous Glivela publication is still removing external resources")
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE publications SET ingress_owner='application_node',entry_node_id=?,hostname=?,sni_hostname=?,dns_provider='manual',
+	_, err = tx.ExecContext(ctx, `UPDATE publications SET ingress_owner='application_node',entry_node_id=?,hostname=?,sni_hostname=?,dns_provider=?,
 		dns_record_id='',access_application_id='',tls_enabled=0,desired_revision=?,applied_revision=0,status='pending',last_error='',action_required=0,
-		cleanup_pending=0,cleanup_attempt=0,cleanup_retry_at='',updated_at=? WHERE id=?`, nodeID, hostname, serverName, revision+1, stamp, publicationID)
+		cleanup_pending=0,cleanup_attempt=0,cleanup_retry_at='',updated_at=? WHERE id=?`, nodeID, hostname, serverName, dnsProvider, revision+1, stamp, publicationID)
 	if err != nil {
 		return fmt.Errorf("center: restore Glivela public entry: %w", err)
 	}

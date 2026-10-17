@@ -48,6 +48,7 @@ type Server struct {
 
 func (s *Server) WithInfrastructureManager(manager deployapi.InfrastructureManager) *Server {
 	s.infrastructure = manager
+	s.store.meridianProber, _ = manager.(deployapi.MeridianProber)
 	s.startupReady.Store(false)
 	return s
 }
