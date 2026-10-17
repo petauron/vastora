@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/senulun"
 	"slices"
 	"testing"
 )
@@ -18,5 +20,19 @@ func TestSenulunUpgradeEnvironmentPreservesConfiguration(t *testing.T) {
 	}
 	if _, err := senulunUpgradeEnvironment([]string{"PULSE_DATABASE_PATH=/custom/data.db"}, nil); err == nil {
 		t.Fatal("custom data path silently replaced")
+	}
+}
+
+func TestSenulunEnvironmentConversionDoesNotRelaxThirdPartyRetention(t *testing.T) {
+	task := DeploymentTask{AppKey: senulun.AgentKey, Operation: "upgrade", Manifest: catalog.AppManifest{Runtime: &catalog.RuntimeSpec{Kind: "systemd", Systemd: &catalog.SystemdRuntime{Executable: "senulun-agent"}}}}
+	if applicationOwnedNativeFileForTask(task, "environment") {
+		t.Fatal("converted Senulun environment would be overwritten by legacy bytes")
+	}
+	if !applicationOwnedNativeFileForTask(task, "credential:node") {
+		t.Fatal("credential retention was weakened")
+	}
+	task.AppKey = "example/third-party"
+	if !applicationOwnedNativeFileForTask(task, "environment") {
+		t.Fatal("third-party environment retention changed")
 	}
 }

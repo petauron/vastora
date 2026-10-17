@@ -13,3 +13,9 @@ f4b353af85ed0c1656f8a9c0f1ebcd37ea19d68f:web/src/api.test.ts:generic-api-key:67
 c9c974eadfc6c846c870042956d99a0befb04bcc:internal/center/meridian_subscription_snapshot_lifecycle_test.go:generic-api-key:68
 # SQL JOIN on certificate secret IDs; contains no credential value.
 111e98d586b977bb2a0a5f58193f493e774846b6:internal/center/agent_reinstall_runtime_evidence.go:generic-api-key:38
+# Reviewed synthetic environment assignments in migration regressions. These
+# contain credential-file paths and test-only client IDs, not credential values.
+2e64636d0e06cefd442df91bef913911f9e72771:internal/agent/senulun_brand_environment_test.go:generic-api-key:9
+2e64636d0e06cefd442df91bef913911f9e72771:internal/agent/senulun_brand_environment_test.go:generic-api-key:14
+2e64636d0e06cefd442df91bef913911f9e72771:internal/senulun/brand_environment_test.go:generic-api-key:9
+2e64636d0e06cefd442df91bef913911f9e72771:internal/senulun/brand_environment_test.go:generic-api-key:10

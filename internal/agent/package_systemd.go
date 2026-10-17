@@ -506,7 +506,7 @@ func (b *SystemdPackageBackend) Apply(ctx context.Context, task DeploymentTask, 
 	// An upgrade cannot initialize a missing file or introduce a new config path.
 	if task.Operation == "upgrade" {
 		for path, logical := range b.logicalNames {
-			if !applicationOwnedNativeFile(logical) {
+			if !applicationOwnedNativeFileForTask(task, logical) {
 				continue
 			}
 			old := resourceNamed(receipt, "file", logical)
@@ -528,7 +528,7 @@ func (b *SystemdPackageBackend) Apply(ctx context.Context, task DeploymentTask, 
 	}
 	if task.Operation == "upgrade" {
 		for path, logical := range b.logicalNames {
-			if !applicationOwnedNativeFile(logical) {
+			if !applicationOwnedNativeFileForTask(task, logical) {
 				continue
 			}
 			current, err := captureApplicationConfiguration(b.Manager.path(path))
@@ -553,7 +553,7 @@ func (b *SystemdPackageBackend) Apply(ctx context.Context, task DeploymentTask, 
 		if err := checkPackageParents(actual); err != nil {
 			return err
 		}
-		if task.Operation != "upgrade" || !applicationOwnedNativeFile(b.logicalNames[path]) {
+		if task.Operation != "upgrade" || !applicationOwnedNativeFileForTask(task, b.logicalNames[path]) {
 			if err := writeHostFileAtomic(actual, b.files[path], b.modes[path]); err != nil {
 				return err
 			}

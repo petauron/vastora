@@ -8,7 +8,7 @@ existing Komari installations.
 
 1. Install **Senulun 监控主机** from the application store on one Docker-capable node.
    Supply the browser's exact HTTPS origin and a private administrator setup token.
-   See [authentication configuration](../../../docs/pulse-collector-config.md).
+   See [authentication configuration](../../../docs/senulun-collector-config.md).
 2. Add a **private HTTPS** access point to its dashboard service. Prefer the
    Headscale network when collectors span Sites; every selected collector must
    resolve and reach this name. A LAN entry only works for nodes that can reach

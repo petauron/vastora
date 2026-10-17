@@ -18,6 +18,16 @@ func senulunCanonicalEnvironment(environment []string) bool {
 	return false
 }
 
+func applicationOwnedNativeFileForTask(task DeploymentTask, logical string) bool {
+	// Only the explicitly converted first-party environment is replaced. Its
+	// values have already been merged and validated before the old unit stops.
+	// Node credential files and every third-party config retain the old rule.
+	if logical == "environment" && task.AppKey == senulun.AgentKey && task.Operation == "upgrade" && task.Manifest.Runtime != nil && task.Manifest.Runtime.Systemd != nil && task.Manifest.Runtime.Systemd.Executable == "senulun-agent" {
+		return false
+	}
+	return applicationOwnedNativeFile(logical)
+}
+
 func (b *SystemdPackageBackend) preserveSenulunEnvironment(task DeploymentTask, receipt *InstanceResources, path string) error {
 	if task.AppKey != senulun.AgentKey || task.Operation != "upgrade" || task.Manifest.Runtime.Systemd.Executable != "senulun-agent" {
 		return nil
