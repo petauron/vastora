@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.322](https://github.com/petauron/vastora/compare/v0.1.0-alpha.321...v0.1.0-alpha.322) (2026-10-17)
+
+
+### Bug Fixes
+
+* **agent:** check nftables ownership support before proxy cutover ([#930](https://github.com/petauron/vastora/issues/930)) ([bf2a54f](https://github.com/petauron/vastora/commit/bf2a54f1f313e3f63803f3d0e0e654c8bd889a7c))
+* **agent:** reduce landing latency sampling to once per minute ([#931](https://github.com/petauron/vastora/issues/931)) ([83ad1ca](https://github.com/petauron/vastora/commit/83ad1cadd45b08ffdfdd96efe620551e21504a75))
+
 ## [0.1.0-alpha.321](https://github.com/petauron/vastora/compare/v0.1.0-alpha.320...v0.1.0-alpha.321) (2026-10-17)
 
 
