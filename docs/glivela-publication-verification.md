@@ -9,6 +9,9 @@ This is separate from node heartbeat and landing-route health.
 The Center calls the Deployer through its restricted Unix socket. The Deployer
 runs on the runtime bridge; `127.0.0.1` there does not address the Docker host.
 
+Concurrent checks wait for one available slot within their request deadline.
+Queue contention is not reported as a failed connectivity observation.
+
 For each serialized check:
 
 1. Create a labelled private bridge and a temporary pinned Xray client. Feed the

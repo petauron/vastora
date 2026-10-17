@@ -15,14 +15,31 @@ import (
 type MeridianProbeService struct {
 	Socket       string
 	RuntimeImage string
-	mu           sync.Mutex
+	once         sync.Once
+	gate         chan struct{}
+}
+
+// Contention is not a failed connectivity observation. Wait for the existing
+// probe within the caller's deadline rather than consuming Center retry attempts.
+func (service *MeridianProbeService) acquire(ctx context.Context) error {
+	service.once.Do(func() { service.gate = make(chan struct{}, 1) })
+	select {
+	case service.gate <- struct{}{}:
+		if ctx.Err() != nil {
+			<-service.gate
+			return errors.New("deployer: proxy verification canceled")
+		}
+		return nil
+	case <-ctx.Done():
+		return errors.New("deployer: proxy verification canceled while queued")
+	}
 }
 
 func (service *MeridianProbeService) VerifyMeridianEntry(ctx context.Context, input deployapi.MeridianProbeRequest) error {
-	if !service.mu.TryLock() {
-		return errors.New("deployer: proxy verification is busy; retry later")
+	if err := service.acquire(ctx); err != nil {
+		return err
 	}
-	defer service.mu.Unlock()
+	defer func() { <-service.gate }()
 	if err := (agent.ApplicationExecutor{DockerSocket: service.Socket}).VerifyMeridianClientInContainer(ctx, input.Client, input.ExpectedExit, service.RuntimeImage); err != nil {
 		// No runtime or request errors containing credentials cross this boundary.
 		return errors.New("deployer: authenticated proxy HTTPS or exit verification failed")
