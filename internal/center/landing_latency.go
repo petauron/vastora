@@ -39,7 +39,7 @@ func (s *Store) landingLatencyTargets(ctx context.Context, nodeID string) ([]lan
  WHERE selection.key=? AND target.id<>source.id AND server.status='ready'
  AND target.status='active' AND target.credential_revoked_at='' AND target.tailscale_ownership='managed' AND target.last_seen_at>?
  AND source.status='active' AND source.credential_revoked_at=''
- AND EXISTS(SELECT 1 FROM applications WHERE node_id=source.id AND app_key='vastora-official/3x-ui' AND runtime='docker')
+ AND EXISTS(SELECT 1 FROM applications WHERE node_id=source.id AND app_key='vastora-official/meridian' AND runtime='docker')
  ORDER BY server.node_id LIMIT ?`, nodeID, landingSelectionKey, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano), landing.MaxServers)
 	if err != nil {
 		return nil, err
