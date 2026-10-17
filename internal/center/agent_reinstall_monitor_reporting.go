@@ -92,7 +92,7 @@ func (s *Store) validateReinstallMonitorReporting(ctx context.Context, tx *sql.T
 	var target string
 	err := tx.QueryRowContext(ctx, `SELECT c.input_json,c.gateway_node_id FROM application_commands c JOIN agents service ON service.id=c.agent_id
  WHERE c.id=? AND c.agent_id=? AND c.attempt<=1 AND (c.state<>'pending' OR c.attempt=0)
- AND c.reconciliation_requested=0 AND c.reconciliation_required=0 AND json_extract(service.capabilities_json,'$.senulunReporting')=1
+ AND c.reconciliation_requested=0 AND c.reconciliation_required=0 AND json_extract(service.capabilities_json,'$.pulseReporting')=1
  AND `+reinstallReportingAuthoritySQL, commandID, serviceID).Scan(&raw, &target)
 	if err != nil || json.Unmarshal(raw, &command) != nil {
 		return command, task, errExecutionAuthorization

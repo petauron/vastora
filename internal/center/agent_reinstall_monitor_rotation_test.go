@@ -18,7 +18,7 @@ import (
 func monitorRotationFixture(t *testing.T) (*Store, AgentCredential, AgentCredential, AgentReinstallMonitorInput) {
 	t.Helper()
 	s, service, collector, input := monitorInspectionFixture(t)
-	if _, err := s.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.senulunRotation',json('true')) WHERE id=?`, service.ID); err != nil {
+	if _, err := s.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.pulseRotation',json('true')) WHERE id=?`, service.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.QueueAgentReinstallMonitorInspection(context.Background(), collector.ID, "reinstall-review-admin", input); err != nil {
@@ -144,7 +144,7 @@ func TestAgentReinstallMonitorRotationRequiresReviewAndFreshOriginalIdentity(t *
 			case "remote-work":
 				_, _ = s.db.Exec(`UPDATE application_commands SET state='pending',attempt=0 WHERE kind=?`, senulun.InspectionKind)
 			case "capability":
-				_, _ = s.db.Exec(`UPDATE agents SET capabilities_json=json_remove(capabilities_json,'$.senulunRotation') WHERE id=?`, service.ID)
+				_, _ = s.db.Exec(`UPDATE agents SET capabilities_json=json_remove(capabilities_json,'$.pulseRotation') WHERE id=?`, service.ID)
 			}
 			if mode != "plan" {
 				plan, err := s.AgentReinstallPlan(context.Background(), collector.ID)

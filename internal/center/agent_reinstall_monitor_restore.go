@@ -201,7 +201,7 @@ func (s *Store) reinstallMonitorRestoreTask(ctx context.Context, tx *sql.Tx, age
  JOIN agent_reinstall_monitor_rotations r ON r.command_id=c.id JOIN applications a ON a.id=d.application_id JOIN agents n ON n.id=d.agent_id JOIN secrets sealed ON sealed.id=d.secret_id
  WHERE d.id=? AND d.agent_id=? AND a.node_id=d.agent_id AND d.app_key=? AND a.app_key=d.app_key AND d.application_id=r.application_id
  AND d.operation='install' AND d.delete_data=0 AND d.registry_credential_id IS NULL AND d.service_address='' AND d.runtime_generation=? AND d.reconciliation_required=0 AND d.reconciliation_requested=0
- AND (d.state<>'pending' OR d.attempt=0) AND json_extract(n.capabilities_json,'$.senulunRestore')=1`, taskID, agentID, senulunAgentAppKey, platform.ApplicationRuntimeGeneration).Scan(&rotationID, &serviceAgentID, &expected, &approval, &task.AppKey, &version, &manifest, &config, &task.ApplicationID, &task.ApplicationRole, &sealed, &attempt)
+ AND (d.state<>'pending' OR d.attempt=0) AND json_extract(n.capabilities_json,'$.pulseRestore')=1`, taskID, agentID, senulunAgentAppKey, platform.ApplicationRuntimeGeneration).Scan(&rotationID, &serviceAgentID, &expected, &approval, &task.AppKey, &version, &manifest, &config, &task.ApplicationID, &task.ApplicationRole, &sealed, &attempt)
 	if errors.Is(err, sql.ErrNoRows) && !strings.HasPrefix(taskID, "reinstall-monitor-collector-") {
 		return nil, nil
 	}

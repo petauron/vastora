@@ -192,7 +192,7 @@ func (s *Store) reinstallInspectionService(ctx context.Context, tx *sql.Tx, agen
 	err := tx.QueryRowContext(ctx, `SELECT d.id FROM applications a JOIN agents n ON n.id=a.node_id
 	 JOIN deployments d ON d.rowid=(SELECT latest.rowid FROM deployments latest WHERE latest.application_id=a.id ORDER BY latest.created_at DESC,latest.rowid DESC LIMIT 1)
 	 WHERE a.id=? AND a.node_id=? AND a.app_key=? AND a.status='running' AND n.status='active' AND n.credential_revoked_at=''
-	 AND json_extract(n.capabilities_json,'$.senulunInspection')=1 AND json_extract(n.capabilities_json,'$.docker')=1
+	 AND json_extract(n.capabilities_json,'$.pulseInspection')=1 AND json_extract(n.capabilities_json,'$.docker')=1
 	 AND d.state='succeeded' AND d.operation IN ('install','upgrade','configure') AND d.reconciliation_required=0
 	 AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=n.id AND r.state NOT IN ('superseded','completed'))`, applicationID, agentID, senulunAppKey).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {

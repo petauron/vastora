@@ -172,7 +172,7 @@ func TestAgentReinstallMonitorRestoreRequiresAuthenticCurrentEvidence(t *testing
 				case "network":
 					_, err = s.db.Exec(`DELETE FROM agent_reinstall_network_approvals`)
 				case "capability":
-					_, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_remove(capabilities_json,'$.senulunRestore') WHERE id=?`, node.ID)
+					_, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_remove(capabilities_json,'$.pulseRestore') WHERE id=?`, node.ID)
 				}
 				if err != nil {
 					t.Fatal(err)

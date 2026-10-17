@@ -172,7 +172,7 @@ func (s *Store) validateReinstallMonitorRotation(ctx context.Context, tx *sql.Tx
 	err := tx.QueryRowContext(ctx, `SELECT c.input_json,c.gateway_node_id,m.operation_id,m.application_id,m.inspection_id FROM application_commands c
  JOIN agent_reinstall_monitor_rotations m ON m.command_id=c.id JOIN agents service ON service.id=c.agent_id
  WHERE c.id=? AND c.agent_id=? AND c.attempt<=1 AND (c.state<>'pending' OR c.attempt=0) AND c.reconciliation_requested=0 AND c.reconciliation_required=0
- AND json_extract(service.capabilities_json,'$.senulunRotation')=1 AND `+reinstallRotationAuthoritySQL, commandID, serviceAgentID).Scan(&raw, &target, &operationID, &applicationID, &inspectionID)
+ AND json_extract(service.capabilities_json,'$.pulseRotation')=1 AND `+reinstallRotationAuthoritySQL, commandID, serviceAgentID).Scan(&raw, &target, &operationID, &applicationID, &inspectionID)
 	if err != nil {
 		return command, errExecutionAuthorization
 	}

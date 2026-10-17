@@ -24,7 +24,7 @@ func monitorInspectionFixture(t *testing.T) (*Store, AgentCredential, AgentCrede
 	if _, err := s.db.Exec(`UPDATE agents SET last_seen_at='2020-01-01T00:00:00Z', roles_json='["worker"]', capabilities_json=json_set(capabilities_json,'$.docker',json('true')) WHERE id=?`, collector.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.senulunInspection',json('true')) WHERE id=?`, service.ID); err != nil {
+	if _, err := s.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.pulseInspection',json('true')) WHERE id=?`, service.ID); err != nil {
 		t.Fatal(err)
 	}
 	enrollment, err := createReviewedReconnect(t, s, ctx, collector.ID)

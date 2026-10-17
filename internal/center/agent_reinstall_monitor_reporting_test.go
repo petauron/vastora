@@ -89,7 +89,7 @@ func monitorReportingFixture(t *testing.T) (*Store, AgentCredential, AgentCreden
 	if response.Code != http.StatusOK {
 		t.Fatal(response.Body.String())
 	}
-	if _, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.senulunReporting',json('true')) WHERE id=?`, service.ID); err != nil {
+	if _, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.pulseReporting',json('true')) WHERE id=?`, service.ID); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
@@ -240,7 +240,7 @@ func TestAgentReinstallMonitorReportingRejectsChangedAuthority(t *testing.T) {
 			case "network":
 				_, err = s.db.Exec(`DELETE FROM agent_reinstall_network_approvals`)
 			case "capability":
-				_, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_remove(capabilities_json,'$.senulunReporting') WHERE id=?`, service.ID)
+				_, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_remove(capabilities_json,'$.pulseReporting') WHERE id=?`, service.ID)
 			case "service":
 				_, err = s.db.Exec(`UPDATE applications SET status='stopped' WHERE id=(SELECT application_id FROM application_commands WHERE kind='pulse.node.reporting')`)
 			case "key":
