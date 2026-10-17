@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.321](https://github.com/petauron/vastora/compare/v0.1.0-alpha.320...v0.1.0-alpha.321) (2026-10-17)
+
+
+### Bug Fixes
+
+* **glivela:** automate entry DNS and verify authenticated proxy health ([0087a21](https://github.com/petauron/vastora/commit/0087a21b463af06855465d9a73265f57a45b015e))
+* **integrations:** adopt canonical Glivela package and versioned UI targets ([5803cb0](https://github.com/petauron/vastora/commit/5803cb0bdcdea0f548fa447c1f25334ccfa5664b))
+* **integrations:** migrate Senulun and Glivela naming with retained application data ([#929](https://github.com/petauron/vastora/issues/929)) ([f41b887](https://github.com/petauron/vastora/commit/f41b8877e1788cfea271b0b1ea3007524f0234a2))
+* **openapi:** retain egress policy schema after Glivela package rename ([7f85d53](https://github.com/petauron/vastora/commit/7f85d53c1d0d6178f1dfcb596fd1eb86a94e0c87))
+* **senulun:** apply converted probe environments without resetting credentials ([83c5e5b](https://github.com/petauron/vastora/commit/83c5e5b38d8e98ba0beb9f9c76a063e0d959f094))
+* **senulun:** migrate monitoring symbols and preserve upgrade configuration ([2e64636](https://github.com/petauron/vastora/commit/2e64636d0e06cefd442df91bef913911f9e72771))
+* **senulun:** retain persisted capability paths during code migration ([c85888a](https://github.com/petauron/vastora/commit/c85888a7d98717fdd4143dd4c70f022f6563632c))
+
 ## [0.1.0-alpha.320](https://github.com/petauron/vastora/compare/v0.1.0-alpha.319...v0.1.0-alpha.320) (2026-10-17)
 
 
