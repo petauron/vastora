@@ -164,6 +164,10 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 			values["state-directory:"+name] = plan.State[name].Path
 		}
 		credentials := map[string]string{}
+		for name, source := range unit.StateCredentials {
+			credentials[name] = filepath.Join(plan.State[source.Storage].Path, source.Path)
+			values["credential-file:"+name] = "/run/" + unit.RuntimeDirectory + "/" + name
+		}
 		for _, file := range unit.Process.ConfigFiles {
 			values["config-file:"+file.Path] = "/run/" + unit.RuntimeDirectory + "/config-" + strings.ReplaceAll(file.Path, "/", "-")
 		}

@@ -47,6 +47,10 @@ func TestNativePackagePrepareAuthenticatesAndScopesAllServices(t *testing.T) {
 			app.ID = "example"
 			app.Artifacts = []catalog.Artifact{{Name: "bundle", OperatingSystem: "linux", Architecture: arch, URL: server.URL + "/bundle", SHA256: hex.EncodeToString(digest[:]), Format: "tar.gz"}}
 			app.Runtime.NativeServices.Services[0].WritableState = []string{"data"}
+			app.Runtime.Storage = append(app.Runtime.Storage, catalog.Storage{Name: "private", Persistent: true})
+			app.Runtime.NativeServices.Services[0].Process.StateDirectories = []string{"private"}
+			app.Runtime.NativeServices.Services[1].StateCredentials = map[string]catalog.StateCredential{"runtime": {Storage: "private", Path: "runtime.json"}}
+			app.Runtime.NativeServices.Services[1].Process.Arguments = []catalog.Value{{Runtime: &catalog.RuntimeValue{Kind: "credential-file", Name: "runtime"}}}
 			app.Runtime.NativeServices.Services[0].Process.ConfigFiles = []catalog.ConfigFile{{Path: "config.json", Format: "json", Values: map[string]catalog.Value{
 				"worker":       {Runtime: &catalog.RuntimeValue{Kind: "native-unit", Name: "worker"}},
 				"account":      {Runtime: &catalog.RuntimeValue{Kind: "managed-user", Name: "worker"}},
@@ -84,12 +88,21 @@ func TestNativePackagePrepareAuthenticatesAndScopesAllServices(t *testing.T) {
 					t.Fatal("sandbox/account missing")
 				}
 				if unit.LogicalName == "controller" {
-					if !strings.Contains(text, "ReadWritePaths="+prepared.Plan.State["data"].Path+"\n") || strings.Contains(text, "StateDirectory=") {
+					if !strings.Contains(text, "ReadWritePaths="+prepared.Plan.State["data"].Path+"\n") || strings.Contains(text, "StateDirectory="+strings.TrimPrefix(prepared.Plan.State["data"].Path, "/var/lib/")+"\n") {
 						t.Fatal("controller claimed worker state ownership")
 					}
 					config := prepared.Files[unit.ConfigDirectory+"/config/config.json"]
 					if !config.ApplicationOwned || config.Mode != 0600 || !bytes.Contains(config.Data, []byte(prepared.Plan.Users["worker"])) || !bytes.Contains(config.Data, []byte(inventory.Path)) {
 						t.Fatal("private bootstrap references missing")
+					}
+				}
+				if unit.LogicalName == "worker" {
+					source := prepared.Plan.State["private"].Path + "/runtime.json"
+					if !strings.Contains(text, "LoadCredential=runtime:"+source+"\n") || !strings.Contains(text, "/run/"+unit.RuntimeDirectory+"/runtime") {
+						t.Fatal("state credential not bound to private service copy")
+					}
+					if _, exists := prepared.Files[source]; exists {
+						t.Fatal("installer initialized application-owned runtime source")
 					}
 				}
 			}

@@ -28,6 +28,7 @@ type nativeUnitPlan struct {
 	ConfigDirectory  string
 	Automatic        bool
 	WritableState    []string
+	StateCredentials map[string]catalog.StateCredential
 	Process          catalog.SystemdRuntime
 }
 
@@ -78,6 +79,7 @@ func planNativePackage(applicationID string, app catalog.AppManifest) (nativePac
 			RuntimeDirectory: name,
 			ConfigDirectory:  filepath.Join("/etc/vastora/packages", base, service.Name),
 			Automatic:        service.Start == "automatic", Process: process, WritableState: append([]string(nil), service.WritableState...),
+			StateCredentials: service.StateCredentials,
 		})
 		for _, state := range process.StateDirectories {
 			p.State[state] = nativeStatePlan{Path: filepath.Join("/var/lib", base+"-"+state), User: process.User, Persistent: persistent[state]}

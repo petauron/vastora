@@ -89,13 +89,15 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 					worker := *task.Manifest.Runtime.Systemd
 					controller := worker
 					controller.User, controller.StateDirectories = "root", nil
+					controller.StateDirectories = []string{"private"}
+					task.Manifest.Runtime.Storage = append(task.Manifest.Runtime.Storage, catalog.Storage{Name: "private", Persistent: true})
 					task.Manifest.Runtime.Version = 2
 					task.Manifest.Runtime.Systemd = nil
 					task.Manifest.Runtime.RequiredCapabilities = []string{"root", "native-services"}
 					task.AuthorizedCapabilities = []string{"root", "native-services"}
 					task.Manifest.Runtime.NativeServices = &catalog.NativeServicesRuntime{Users: []string{"worker"}, Services: []catalog.NativeService{
 						{Name: "controller", Start: "automatic", Process: controller},
-						{Name: "worker", Start: "manual", ManagedUser: "worker", Process: worker},
+						{Name: "worker", Start: "manual", ManagedUser: "worker", StateCredentials: map[string]catalog.StateCredential{"runtime": {Storage: "private", Path: "runtime.json"}}, Process: worker},
 					}}
 					backend = &NativeServicesPackageBackend{Manager: SystemdHostApplicationManager{HTTPClient: server.Client()}, StateDirectory: directory}
 				}
@@ -114,6 +116,13 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 				}
 				if err := exec.CommandContext(ctx, "systemctl", "is-enabled", "--quiet", worker.Name).Run(); err == nil {
 					t.Fatal("manual worker unexpectedly enabled")
+				}
+				private := resourceNamed(installed.Resources, "directory", "private")
+				if private == nil {
+					t.Fatal("private state missing")
+				}
+				if err := os.WriteFile(filepath.Join(private.Path, "runtime.json"), []byte("private-runtime-fixture"), 0600); err != nil {
+					t.Fatal(err)
 				}
 			}
 			// Compare real runtime identities across metadata-only adoption.
@@ -165,6 +174,17 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 				if output, err := exec.CommandContext(ctx, "systemctl", "start", worker.Name).CombinedOutput(); err != nil {
 					t.Fatalf("activate app-owned worker: %v: %s", err, output)
 				}
+				account := resourceNamed(installed.Resources, "user", "worker")
+				source := filepath.Join(resourceNamed(installed.Resources, "directory", "private").Path, "runtime.json")
+				if exec.CommandContext(ctx, "runuser", "-u", account.Name, "--", "cat", source).Run() == nil {
+					t.Fatal("worker can read root-private credential source")
+				}
+				copyPath := filepath.Join("/run", strings.TrimSuffix(worker.Name, ".service"), "runtime")
+				copied, err := exec.CommandContext(ctx, "runuser", "-u", account.Name, "--", "cat", copyPath).Output()
+				if err != nil || string(copied) != "private-runtime-fixture" {
+					t.Fatal("worker cannot read scoped credential copy", err)
+				}
+				t.Log("non-root worker denied private source and read scoped systemd credential copy")
 			}
 			task.ID, task.PackageMaintenance = "snapshot", &PackageMaintenanceTask{Action: "backup"}
 			backed, err := maintainPackage(ctx, executor, backend, task)
