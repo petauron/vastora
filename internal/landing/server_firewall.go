@@ -156,23 +156,20 @@ func (policy ServerFirewall) Install(ctx context.Context) error {
 	return policy.install(ctx, runNFT)
 }
 
-// Check validates an existing policy without mutating it before cutover.
-func (policy ServerFirewall) Check(ctx context.Context) error {
+// Verify is read-only: a health observation must not silently repair drift.
+func (policy ServerFirewall) Verify(ctx context.Context) error {
 	if err := policy.validate(); err != nil {
 		return err
 	}
+	table, _ := policy.identity()
 	data, err := runNFT(ctx, nil, "--json", "list", "ruleset")
 	var document nftDocument
 	if err != nil || len(data) > nftOutputLimit || json.Unmarshal(data, &document) != nil {
 		return errors.New("landing: cannot inspect native firewall")
 	}
-	table, _ := policy.identity()
 	found, err := validateNFTPolicy(document, table, policy.objects(), false)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return errors.New("landing: native firewall is missing")
+	if err != nil || !found {
+		return errors.New("landing: native firewall is missing or changed")
 	}
 	return nil
 }
@@ -200,8 +197,8 @@ func (policy ServerFirewall) remove(ctx context.Context, run func(context.Contex
 	command, _ := json.Marshal(nftObject{"nftables": []any{nftObject{"delete": nftObject{"table": nftObject{"family": "inet", "name": table}}}}})
 	_, removeErr := run(ctx, command, "--json", "--file", "-")
 	data, err = run(ctx, nil, "--json", "list", "ruleset")
-	// Unmarshal reuses maps inside slice elements. A shorter ruleset can
-	// otherwise retain deleted table/chain keys from the previous snapshot.
+	// Unmarshal reuses slice elements and their maps. A reordered ruleset
+	// would otherwise retain keys from deleted objects and invent drift.
 	document = nftDocument{}
 	if err != nil || len(data) > nftOutputLimit || json.Unmarshal(data, &document) != nil {
 		return errors.New("landing: cannot confirm native firewall removal")

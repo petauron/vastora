@@ -67,6 +67,7 @@ func (s *Server) handleListAgents(writer http.ResponseWriter, request *http.Requ
 func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
 		SiteID           string `json:"siteId"`
+		LandingOnly      bool   `json:"landingOnly"`
 		Name             string `json:"name"`
 		CenterURL        string `json:"centerUrl"`
 		UseHeadscale     bool   `json:"useHeadscale"`
@@ -92,7 +93,8 @@ func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request
 		}
 	}
 	enrollment, err := s.store.CreateAgentEnrollment(request.Context(), AgentEnrollmentSpec{
-		SiteID: input.SiteID, Name: input.Name, CenterURL: input.CenterURL,
+		LandingOnly: input.LandingOnly,
+		SiteID:      input.SiteID, Name: input.Name, CenterURL: input.CenterURL,
 		UseHeadscale: input.UseHeadscale, Gateway: input.Gateway, Tunnel: input.Tunnel,
 		CAFingerprint: input.CAFingerprint, CACertificatePEM: input.CACertificatePEM,
 	})
@@ -254,6 +256,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		GatewayConfigHash            string                             `json:"gatewayConfigHash"`
 		NodeListenerHealthy          bool                               `json:"nodeListenerHealthy"`
 		LandingHealth                *landing.Health                    `json:"landingHealth"`
+		LandingServerHealth          *landing.ServerHealth              `json:"landingServerHealth"`
 		PrivateNetworkPeer           *landing.PeerIdentity              `json:"privateNetworkPeer"`
 		LandingClientRuntime         *landing.ClientRuntime             `json:"landingClientRuntime"`
 		NodeListenerRevision         int64                              `json:"nodeListenerRevision"`
@@ -277,7 +280,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
-	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{PrivateNetworkPeer: input.PrivateNetworkPeer, LandingEgressAddresses: input.LandingEgressAddresses, LandingClientRuntime: input.LandingClientRuntime, LandingHealth: input.LandingHealth, PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, MeridianRuntime: input.MeridianRuntime, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, RuntimeRecoveryApplications: input.RuntimeRecoveryApplications, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{LandingServerHealth: input.LandingServerHealth, PrivateNetworkPeer: input.PrivateNetworkPeer, LandingEgressAddresses: input.LandingEgressAddresses, LandingClientRuntime: input.LandingClientRuntime, LandingHealth: input.LandingHealth, PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, MeridianRuntime: input.MeridianRuntime, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, RuntimeRecoveryApplications: input.RuntimeRecoveryApplications, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
 		slog.ErrorContext(request.Context(), "Agent heartbeat projection failed", "agent_id", request.PathValue("id"), "error", controlplane.SafeError(err.Error()))
 		writeError(writer, http.StatusInternalServerError, err)
 		return

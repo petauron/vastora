@@ -189,7 +189,7 @@ func addMeridianSnapshotSecondEndpoint(t *testing.T, store *Store) {
 		VALUES('snapshot-second-publication','snapshot-second-service','public_shared_443','application_node',?,'second.example.test','www.example.com','manual',0,1,1,'ready',?,?)`, node.ID, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.insertMeridianCredential(ctx, tx, sharedSnapshotAccountB, "snapshot-second-endpoint", "snapshot-second-app", meridian.NativeCredential, "", true, stamp); err != nil {
+	if _, err := store.insertMeridianCredential(ctx, tx, sharedSnapshotAccountB, "snapshot-second-endpoint", "snapshot-second-app", glivela.NativeCredential, "", true, stamp); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

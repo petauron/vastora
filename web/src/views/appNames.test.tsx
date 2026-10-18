@@ -2,7 +2,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { localized } from "./appAccess";
-import { PulseWorkspace } from "./PulseWorkspace";
+import { SenulunWorkspace } from "./SenulunWorkspace";
 import { dashboard } from "./views.test-support";
 import type { AppWorkspaceProps } from "@/app-workspaces/types";
 import type { AppView } from "@/types";
@@ -32,7 +32,7 @@ describe("catalog-owned application names", () => {
       data, language: "zh-CN", showSite: false, mutate: vi.fn(), onManage: vi.fn(), onUpgrade: vi.fn(), onClients: vi.fn(), onReality: vi.fn(),
       group: { id: app.key, appKey: app.key, app, legacyControllers: [], instances: [{ application, app, siteName: "Test", services: [], publications: [], realityServices: [], realityPublications: [], locked: false }] },
     };
-    const html = renderToStaticMarkup(<PulseWorkspace {...props} />);
+    const html = renderToStaticMarkup(<SenulunWorkspace {...props} />);
     expect(html).toContain('aria-label="目录监控名称"');
     expect(html).not.toContain("Old installed name");
   });

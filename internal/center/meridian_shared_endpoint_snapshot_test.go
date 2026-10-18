@@ -288,7 +288,7 @@ func openMeridianSharedEndpointSnapshotFixture(t *testing.T) *Store {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
-			VALUES(?,?,1000,1,?,?,1,1,'active',?,?)`, account.id, account.id, tokenSecretID, meridian.SubscriptionTokenFingerprint(account.token), now, now); err != nil {
+			VALUES(?,?,1000,1,?,?,1,1,'active',?,?)`, account.id, account.id, tokenSecretID, glivela.SubscriptionTokenFingerprint(account.token), now, now); err != nil {
 			t.Fatal(err)
 		}
 		credentialID := account.id + "-native"
@@ -297,7 +297,7 @@ func openMeridianSharedEndpointSnapshotFixture(t *testing.T) *Store {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at)
-			VALUES(?,?,?,'native',?,?,?,1,?,?)`, credentialID, account.id, sharedSnapshotEndpointID, credentialID, meridian.Identity(account.protocolID), credentialSecretID, now, now); err != nil {
+			VALUES(?,?,?,'native',?,?,?,1,?,?)`, credentialID, account.id, sharedSnapshotEndpointID, credentialID, glivela.Identity(account.protocolID), credentialSecretID, now, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,observed_bytes,observed_at) VALUES(?,?,?)`, credentialID, account.usage, now); err != nil {

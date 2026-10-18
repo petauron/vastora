@@ -178,7 +178,7 @@ func ensureLandingPackage(ctx context.Context) error {
 	nftState, _ := landingCommand(ctx, "dpkg-query", "-W", "-f=${Status}", "nftables")
 	cryptState, _ := landingCommand(ctx, "dpkg-query", "-W", "-f=${Status}", "libcrypt1")
 	if nftState == "install ok installed" && cryptState == "install ok installed" {
-		return nil
+		return landing.RequireNFTables(ctx)
 	}
 	if _, err := landingCommand(ctx, "apt-get", "update", "-qq"); err != nil {
 		return err
@@ -186,7 +186,7 @@ func ensureLandingPackage(ctx context.Context) error {
 	if _, err := landingCommand(ctx, "apt-get", "install", "-y", "--no-install-recommends", "nftables", "libcrypt1"); err != nil {
 		return err
 	}
-	return nil
+	return landing.RequireNFTables(ctx)
 }
 
 func landingHostAddresses(privateAddress, selectedEgress string) (string, string, error) {
@@ -394,6 +394,13 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) (
 	if err := saveLandingHostJournal(journal); err != nil {
 		return err
 	}
+	// An explicit exit change must fail closed, never keep serving through
+	// the previous exit when validation of the requested address fails.
+	if plan.EgressIP != "" && (journal.Policy == nil || journal.Policy.EgressIP != plan.EgressIP) {
+		if err := stopLandingService(ctx); err != nil {
+			return err
+		}
+	}
 	device, egress, err := landingHostAddresses(plan.Address, plan.EgressIP)
 	if err != nil {
 		return err
@@ -420,7 +427,7 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) (
 	}
 	// All non-disruptive validation and file preparation precedes cutover.
 	// Arm recovery before stopping: even a failed stop may have taken effect.
-	recovery.stopped = recovery.directory != ""
+	recovery.stopped = recovery.directory != "" && recovery.journal.Policy.Address == plan.Address && recovery.journal.Policy.EgressIP == plan.EgressIP
 	if err := stopLandingService(ctx); err != nil {
 		return err
 	}

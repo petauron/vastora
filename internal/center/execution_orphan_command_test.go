@@ -12,13 +12,13 @@ import (
 	"github.com/petauron/vastora/internal/secret"
 )
 
-func TestAbandonOrphanCommandReleasesPulseEnrollment(t *testing.T) {
+func TestAbandonOrphanCommandReleasesSenulunEnrollment(t *testing.T) {
 	for _, mode := range []string{"orphan", "changed-attempt", "reexecute", "not-admin", "not-stopped", "audit-failure", "invalid-evidence"} {
 		t.Run(mode, func(t *testing.T) {
-			store, service, collector, deployment := pulseFixture(t)
+			store, service, collector, deployment := senulunFixture(t)
 			ctx := context.Background()
-			addPulsePrivateFixture(t, store, deployment.ApplicationID, service.ID)
-			if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Config: json.RawMessage(`{"node_region":"SG","geoip_provider":"disabled"}`)}); err != nil {
+			addSenulunPrivateFixture(t, store, deployment.ApplicationID, service.ID)
+			if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey, Config: json.RawMessage(`{"node_region":"SG","geoip_provider":"disabled"}`)}); err != nil {
 				t.Fatal(err)
 			}
 			session := "orphan-command-current-process-session"
@@ -97,7 +97,7 @@ func TestAbandonOrphanCommandReleasesPulseEnrollment(t *testing.T) {
 				t.Fatal("duplicate abandonment accepted")
 			}
 			next, err := store.claimExecutionTask(ctx, service.ID, service.Credential, session, 0)
-			if err != nil || next == nil || next.PulseEnrollment == nil {
+			if err != nil || next == nil || next.SenulunEnrollment == nil {
 				t.Fatalf("Senulun enrollment remained blocked: %v", err)
 			}
 		})

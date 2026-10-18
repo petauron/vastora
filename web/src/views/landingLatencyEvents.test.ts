@@ -23,5 +23,9 @@ it("expires individual samples without allocating when everything remains fresh"
   const fresh: LandingLatencyView = { nodeId: "one", landingNodeId: "a", state: "direct", latencyMs: 12, checkedAt: new Date(now).toISOString() };
   const samples = [fresh];
   expect(freshLandingLatencies(samples, now)).toBe(samples);
-  expect(freshLandingLatencies([fresh, { ...fresh, nodeId: "two", checkedAt: new Date(now-46_000).toISOString() }], now)).toEqual(samples);
+  expect(freshLandingLatencies(samples, now + 61_000)).toBe(samples);
+  expect(freshLandingLatencies(samples, now + 180_000)).toBe(samples);
+  expect(freshLandingLatencies(samples, now + 180_001)).toEqual([]);
+  expect(freshLandingLatencies([fresh, { ...fresh, nodeId: "two", checkedAt: new Date(now-180_001).toISOString() }], now)).toEqual(samples);
+  expect(freshLandingLatencies([{ ...fresh, checkedAt: new Date(now+5_001).toISOString() }], now)).toEqual([]);
 });

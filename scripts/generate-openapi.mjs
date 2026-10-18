@@ -159,7 +159,7 @@ function schemaForGoType(rawType, scope) {
   } else if (type.startsWith("map[")) {
     const valueType = /^map\[string\](.+)$/.exec(type)?.[1];
     schema = { type: "object", additionalProperties: valueType ? schemaForGoType(valueType, scope) : true };
-  } else if (type === "meridian.EgressPolicy") {
+  } else if (type === "glivela.EgressPolicy") {
     schema = { type: "string", enum: ["auto", "ipv4_only", "ipv6_only"] };
   } else if (type === "string" || type === "time.Time") {
     schema = type === "time.Time" ? { type: "string", format: "date-time" } : { type: "string" };

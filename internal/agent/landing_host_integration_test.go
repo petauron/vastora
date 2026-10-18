@@ -114,13 +114,15 @@ func TestLandingNativeHostLifecycle(t *testing.T) {
 	if err != nil || restored.Revision != 3 || len(restored.PendingFiles) != 0 {
 		t.Fatal("recovery lost revision fence or retained partial intent", err)
 	}
-	// Non-disruptive validation failure must leave the recovered service up.
+	// An invalid explicit exit change must not retain the old egress.
 	plan.Revision = 4
 	plan.EgressIP = "10.255.254.253"
 	if err := ApplyLanding(ctx, "landing-ci", plan); err == nil || !strings.Contains(err.Error(), "egress") {
 		t.Fatal("unavailable local egress was accepted", err)
 	}
-	command("systemctl", "is-active", "--quiet", "vastora-landing.service")
+	if err := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", "vastora-landing.service").Run(); err == nil {
+		t.Fatal("invalid explicit exit left the old landing service active")
+	}
 	if err := RemoveLanding(ctx, "landing-ci", 5); err != nil {
 		t.Fatal("disable native landing service", err)
 	}

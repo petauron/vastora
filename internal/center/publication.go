@@ -186,7 +186,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 	if management == 1 && input.Kind == publicationPublic && !input.ConfirmHighRisk {
 		return PublicationView{}, errors.New("center: publishing a management page publicly requires explicit high-risk confirmation")
 	}
-	if appKey == pulseAppKey && input.Kind == publicationPublic {
+	if appKey == senulunAppKey && input.Kind == publicationPublic {
 		return PublicationView{}, errors.New("center: Senulun has no built-in dashboard authentication; use private access or an Access-protected Tunnel")
 	}
 	if _, _, err := net.SplitHostPort(endpoint); err != nil {

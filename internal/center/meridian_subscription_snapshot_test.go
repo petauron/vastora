@@ -26,7 +26,7 @@ func TestMeridianRecoveryWithoutAvailableSubscriptionDoesNotInventSnapshot(t *te
 	}
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
-		VALUES(?, 'Waiting for restored entry', 1, ?, ?, 1, 1, 'active', ?, ?)`, accountID, secretID, meridian.SubscriptionTokenFingerprint("snapshot-recovery-token"), stamp, stamp); err != nil {
+		VALUES(?, 'Waiting for restored entry', 1, ?, ?, 1, 1, 'active', ?, ?)`, accountID, secretID, glivela.SubscriptionTokenFingerprint("snapshot-recovery-token"), stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.ensureMeridianSubscriptionSnapshotInTx(ctx, tx, accountID); err != nil {

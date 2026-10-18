@@ -8,13 +8,13 @@ import (
 
 func TestNativeEgressReceiptRequiresFreshMatchingFamily(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	task := Task{NativeEgress: meridian.EgressIPv6Only, EgressClients: []AcceptanceClient{acceptanceFixture()}, Desired: meridian.DesiredArtifact{ConfigSHA256: "digest"}}
+	task := Task{NativeEgress: glivela.EgressIPv6Only, EgressClients: []AcceptanceClient{acceptanceFixture()}, Desired: glivela.DesiredArtifact{ConfigSHA256: "digest"}}
 	valid := EgressObservation{Policy: task.NativeEgress, ConfigSHA256: "digest", Exits: []string{"2001:4860:4860::8888"}, CheckedAt: now}
 	if err := (Result{Egress: &valid}).VerifyEgress(task, now); err != nil {
 		t.Fatal(err)
 	}
 	for _, mutate := range []func(*EgressObservation){
-		func(o *EgressObservation) { o.Policy = meridian.EgressAuto },
+		func(o *EgressObservation) { o.Policy = glivela.EgressAuto },
 		func(o *EgressObservation) { o.ConfigSHA256 = "other" },
 		func(o *EgressObservation) { o.Exits = nil },
 		func(o *EgressObservation) { o.Exits = []string{"1.1.1.1"} },
@@ -39,7 +39,7 @@ func TestNativeEgressReceiptRequiresFreshMatchingFamily(t *testing.T) {
 }
 
 func TestNativeEgressTaskRequiresCapableCoreAndNativeIdentity(t *testing.T) {
-	task := Task{NativeEgress: meridian.EgressIPv4Only, ImageReference: EgressImage, EgressClients: []AcceptanceClient{acceptanceFixture()}}
+	task := Task{NativeEgress: glivela.EgressIPv4Only, ImageReference: EgressImage, EgressClients: []AcceptanceClient{acceptanceFixture()}}
 	if err := task.validateEgress(); err != nil {
 		t.Fatal(err)
 	}
@@ -53,12 +53,12 @@ func TestNativeEgressTaskRequiresCapableCoreAndNativeIdentity(t *testing.T) {
 		t.Fatal("duplicate protocol accepted")
 	}
 	task.EgressClients = task.EgressClients[:1]
-	task.EgressClients[0].Material.Credential.Kind = meridian.RouteCredential
+	task.EgressClients[0].Material.Credential.Kind = glivela.RouteCredential
 	if task.validateEgress() == nil {
 		t.Fatal("remote landing credential accepted")
 	}
 	task.EgressClients = nil
-	task.NativeEgress = meridian.EgressPolicy("prefer_ipv6")
+	task.NativeEgress = glivela.EgressPolicy("prefer_ipv6")
 	if task.validateEgress() == nil {
 		t.Fatal("unimplemented fallback mode accepted")
 	}

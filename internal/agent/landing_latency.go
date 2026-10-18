@@ -41,7 +41,7 @@ func (c Client) RunLandingLatencyChecks(ctx context.Context, store *Store, repor
 	checker := landing.NewLinkChecker()
 	defer checker.Close()
 	slots := make(chan struct{}, 4)
-	store.runLandingLatencyChecks(ctx, 15*time.Second, func(ctx context.Context, target landing.LatencyTarget) {
+	store.runLandingLatencyChecks(ctx, time.Minute, func(ctx context.Context, target landing.LatencyTarget) {
 		select {
 		case slots <- struct{}{}:
 		case <-ctx.Done():

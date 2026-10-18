@@ -20,7 +20,7 @@ func TestAgentReinstallMonitorReportingRetainsSampleAge(t *testing.T) {
 				t.Fatal(err)
 			}
 			task, err := s.claimExecutionTask(ctx, service.ID, service.Credential, "monitor-registration-evidence-session", 0)
-			if err != nil || task == nil || task.PulseReporting == nil {
+			if err != nil || task == nil || task.SenulunReporting == nil {
 				t.Fatalf("report claim: %v", err)
 			}
 			// The Service observed a sample already nine minutes old. Its
@@ -114,10 +114,10 @@ func TestAgentReinstallMonitorReportingActualExecutionAndReceipt(t *testing.T) {
 				t.Fatal("credential leaked into command metadata")
 			}
 			task, err := s.claimExecutionTask(ctx, service.ID, service.Credential, "monitor-registration-evidence-session", 0)
-			if err != nil || task == nil || task.PulseReporting == nil || task.ID != receipt.CommandID {
+			if err != nil || task == nil || task.SenulunReporting == nil || task.ID != receipt.CommandID {
 				t.Fatalf("report claim: %v", err)
 			}
-			if task.PulseReporting.Credentials.Token != "test-rotated-credential-never-publish" {
+			if task.SenulunReporting.Credentials.Token != "test-rotated-credential-never-publish" {
 				t.Fatal("did not use the original rotated credential")
 			}
 			raw := `{"pulseReporting":{"node_id":"11111111-1111-4111-8111-111111111111","observed_at_unix_ms":3000,"rotated_at_unix_ms":1000,"last_seen_at_unix_ms":2000}}`
@@ -250,7 +250,7 @@ func TestAgentReinstallMonitorReportingRejectsChangedAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 			task, _ := s.claimExecutionTask(context.Background(), service.ID, service.Credential, "monitor-registration-evidence-session", 0)
-			if task != nil && task.PulseReporting != nil {
+			if task != nil && task.SenulunReporting != nil {
 				t.Fatal("reporting task issued after authority changed")
 			}
 		})

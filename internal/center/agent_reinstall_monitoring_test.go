@@ -14,16 +14,16 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/controlplane"
-	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/secret"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 func reinstallMonitorFixture(t *testing.T) (*Store, AgentCredential, AgentCredential, DeploymentView, *AgentTask) {
 	t.Helper()
-	s, service, collector, serviceDeployment := pulseFixture(t)
+	s, service, collector, serviceDeployment := senulunFixture(t)
 	ctx := context.Background()
-	addPulsePrivateFixture(t, s, serviceDeployment.ApplicationID, service.ID)
-	install, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey})
+	addSenulunPrivateFixture(t, s, serviceDeployment.ApplicationID, service.ID)
+	install, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,13 +32,13 @@ func reinstallMonitorFixture(t *testing.T) (*Store, AgentCredential, AgentCreden
 		t.Fatal(err)
 	}
 	task, err := s.claimExecutionTask(ctx, service.ID, service.Credential, session, 0)
-	if err != nil || task == nil || task.PulseEnrollment == nil {
+	if err != nil || task == nil || task.SenulunEnrollment == nil {
 		t.Fatalf("registration claim: %v", err)
 	}
 	if err = s.StartExecution(ctx, service.ID, session, task.Authorization.ID, task.Authorization.Digest); err != nil {
 		t.Fatal(err)
 	}
-	result, _ := json.Marshal(map[string]any{"pulseEnrollment": pulse.EnrollmentResult{ID: "original-registration", Token: strings.Repeat("test-secret-", 3), ExpiresAtUnixMS: s.now().Add(time.Hour).UnixMilli()}})
+	result, _ := json.Marshal(map[string]any{"pulseEnrollment": senulun.EnrollmentResult{ID: "original-registration", Token: strings.Repeat("test-secret-", 3), ExpiresAtUnixMS: s.now().Add(time.Hour).UnixMilli()}})
 	input, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": session, "attempt": task.Attempt, "succeeded": true, "result": json.RawMessage(result)})
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+service.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(input))
 	request.Header.Set("Authorization", "Bearer "+service.Credential)
@@ -55,7 +55,7 @@ func reinstallMonitorFixture(t *testing.T) (*Store, AgentCredential, AgentCreden
 func TestAgentReinstallMonitoringReadsOriginalRegistrationAfterConfigureAndExpiry(t *testing.T) {
 	s, service, collector, installed, task := reinstallMonitorFixture(t)
 	ctx := context.Background()
-	if _, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"node_region":"US"}`)}); err != nil {
+	if _, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"node_region":"US"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	completeNextTask(t, s, collector, "application.apply", json.RawMessage(`{"services":[]}`))
@@ -70,7 +70,7 @@ func TestAgentReinstallMonitoringReadsOriginalRegistrationAfterConfigureAndExpir
 		t.Fatalf("monitor inventory: %+v %v", plan.Monitoring, err)
 	}
 	review := plan.Monitoring[0]
-	if review.State != "inspection_required" || review.ApplicationID != installed.ApplicationID || review.ServiceAgentID != service.ID || review.ServiceApplicationID != task.PulseEnrollment.ApplicationID || len(review.Enrollments) != 1 || review.Enrollments[0].EnrollmentID != "original-registration" || review.Enrollments[0].ExecutionID != task.Authorization.ID {
+	if review.State != "inspection_required" || review.ApplicationID != installed.ApplicationID || review.ServiceAgentID != service.ID || review.ServiceApplicationID != task.SenulunEnrollment.ApplicationID || len(review.Enrollments) != 1 || review.Enrollments[0].EnrollmentID != "original-registration" || review.Enrollments[0].ExecutionID != task.Authorization.ID {
 		t.Fatalf("wrong original registration association: %+v", review)
 	}
 	if err := s.db.QueryRow(`SELECT total_changes()`).Scan(&after); err != nil || before != after {
@@ -91,7 +91,7 @@ func TestAgentReinstallMonitoringReadsOriginalRegistrationAfterConfigureAndExpir
 	if err != nil || plan.Monitoring[0].State != "inspection_required" {
 		t.Fatalf("retired execution erased historical registration: %v", err)
 	}
-	if _, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Operation: "uninstall"}); err != nil {
+	if _, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey, Operation: "uninstall"}); err != nil {
 		t.Fatal(err)
 	}
 	plan, err = s.AgentReinstallPlan(ctx, collector.ID)
@@ -117,7 +117,7 @@ func TestAgentReinstallMonitoringRejectsUnverifiableAssociations(t *testing.T) {
 			case "task-digest":
 				statement, arguments = `UPDATE task_executions SET digest='invalid' WHERE id=?`, []any{id}
 			case "service-owner":
-				statement, arguments = `UPDATE applications SET node_id=? WHERE id=?`, []any{collector.ID, task.PulseEnrollment.ApplicationID}
+				statement, arguments = `UPDATE applications SET node_id=? WHERE id=?`, []any{collector.ID, task.SenulunEnrollment.ApplicationID}
 			case "configuration":
 				statement, arguments = `UPDATE deployments SET config_json='{}' WHERE id=?`, []any{install.ID}
 			default:
@@ -140,9 +140,9 @@ func TestAgentReinstallMonitoringRejectsUnverifiableAssociations(t *testing.T) {
 					}
 					switch mode {
 					case "task-deployment":
-						original.PulseEnrollment.DeploymentID = "different-collector-deployment"
+						original.SenulunEnrollment.DeploymentID = "different-collector-deployment"
 					case "task-service":
-						original.PulseEnrollment.ApplicationID = "different-monitor-service"
+						original.SenulunEnrollment.ApplicationID = "different-monitor-service"
 					case "task-attempt":
 						original.Attempt++
 					}

@@ -37,6 +37,20 @@ the current unlimited-account MVP scope.
   and rejects drift. Private addresses and occupied TCP/UDP ports are checked
   before stopping the applied runtime.
 
+## Firewall prerequisites
+
+Landing entry and exit nodes require nftables **1.0.8 or newer**. Older
+userspace silently omits table ownership comments from JSON writes and
+readback. Agent checks this prerequisite before stopping the current proxy,
+closing its monitor, or recovering a pending handover. An unsupported or
+unreadable version fails closed with an actionable error. Native-only routes
+without retained landing gates do not acquire this requirement.
+
+Debian 13 supplies a supported version. Upgrade the node OS through an
+explicitly authorized maintenance operation; Agent does not change distribution
+repositories or weaken table ownership validation. Existing unowned tables
+remain rejected and need evidence-backed operator recovery.
+
 ## Forward migration and rollout
 
 Schema 102 adds the private backend address and changes internal backend ports

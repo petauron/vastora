@@ -13,13 +13,13 @@ import (
 )
 
 type NodeEgressInput struct {
-	Policy   meridian.EgressPolicy `json:"policy"`
-	Revision int64                 `json:"revision"`
+	Policy   glivela.EgressPolicy `json:"policy"`
+	Revision int64                `json:"revision"`
 }
 
 type NodeEgressView struct {
-	Policy        meridian.EgressPolicy              `json:"policy"`
-	AppliedPolicy meridian.EgressPolicy              `json:"appliedPolicy"`
+	Policy        glivela.EgressPolicy               `json:"policy"`
+	AppliedPolicy glivela.EgressPolicy               `json:"appliedPolicy"`
 	Revision      int64                              `json:"revision"`
 	State         string                             `json:"state"`
 	Error         string                             `json:"error,omitempty"`
@@ -127,8 +127,8 @@ func (s *Store) SetNodeEgress(ctx context.Context, nodeID string, input NodeEgre
 	return id, tx.Commit()
 }
 
-func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRuntimeProjection, endpoint meridian.RealityEndpoint, hy2 meridian.HysteriaEndpoint, vlessEnabled, hy2Enabled int, materials []meridian.CredentialMaterial) error {
-	var policy meridian.EgressPolicy
+func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRuntimeProjection, endpoint glivela.RealityEndpoint, hy2 glivela.HysteriaEndpoint, vlessEnabled, hy2Enabled int, materials []glivela.CredentialMaterial) error {
+	var policy glivela.EgressPolicy
 	var needsVerification bool
 	err := tx.QueryRowContext(ctx, `SELECT policy,revision<>verified_revision FROM node_egress_policies WHERE node_id=?`, p.agentID).Scan(&policy, &needsVerification)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -142,9 +142,9 @@ func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRun
 	if !needsVerification {
 		return nil
 	}
-	var material *meridian.CredentialMaterial
+	var material *glivela.CredentialMaterial
 	for i := range materials {
-		if materials[i].Credential.Kind == meridian.NativeCredential && materials[i].Credential.Enabled {
+		if materials[i].Credential.Kind == glivela.NativeCredential && materials[i].Credential.Enabled {
 			material = &materials[i]
 			break
 		}
@@ -156,12 +156,12 @@ func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRun
 	// a PROXY header from HAProxy and is not a direct client endpoint.
 	if vlessEnabled == 1 {
 		endpoint.PrivateKey = ""
-		p.task.EgressClients = append(p.task.EgressClients, meridianruntime.AcceptanceClient{Protocol: meridian.VLESSReality, Reality: &endpoint, Material: *material})
+		p.task.EgressClients = append(p.task.EgressClients, meridianruntime.AcceptanceClient{Protocol: glivela.VLESSReality, Reality: &endpoint, Material: *material})
 	}
 	if hy2Enabled == 1 {
 		hy2.PrivateKeyPEM = ""
 		hy2.CertificatePEM = ""
-		p.task.EgressClients = append(p.task.EgressClients, meridianruntime.AcceptanceClient{Protocol: meridian.Hysteria2, Hysteria: &hy2, Material: *material})
+		p.task.EgressClients = append(p.task.EgressClients, meridianruntime.AcceptanceClient{Protocol: glivela.Hysteria2, Hysteria: &hy2, Material: *material})
 	}
 	return nil
 }

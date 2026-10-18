@@ -77,10 +77,10 @@ github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJwooC2xJA040=
 github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
-github.com/petauron/catalog v0.2.0 h1:BfNUnTncNl3eI96f/fFWOTDOLBa+cC9x+ZrnOOIp3Ps=
-github.com/petauron/catalog v0.2.0/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
-github.com/petauron/glivela v0.1.0-alpha.19 h1:4/hsU1s6Dk60i+iOTmiR9kG5FRdHDGHQiqYPbD1KHBs=
-github.com/petauron/glivela v0.1.0-alpha.19/go.mod h1:FQftrZdVkgelHse92MsZq85pAYTE6qZpAnT9jBIo4lY=
+github.com/petauron/catalog v0.3.1-0.20261017182737-a896f24d7577 h1:4/yEzZCh9tJ43G8tjq+tRqVuot/QpaNVFPzZuZtFvUg=
+github.com/petauron/catalog v0.3.1-0.20261017182737-a896f24d7577/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
+github.com/petauron/glivela v0.1.0-alpha.21.0.20261017182649-fb8298167478 h1:3NWhkammGDCtPIJVGklOybBsR3fbbNeNQUJEy2ZibRA=
+github.com/petauron/glivela v0.1.0-alpha.21.0.20261017182649-fb8298167478/go.mod h1:FQftrZdVkgelHse92MsZq85pAYTE6qZpAnT9jBIo4lY=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pressly/goose/v3 v3.28.0 h1:D2M+iL31GmpZxSHOhX8mqyqAT3CXnokUmm0eKoSP+Vc=

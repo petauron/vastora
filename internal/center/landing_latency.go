@@ -12,6 +12,10 @@ import (
 	"github.com/petauron/vastora/internal/landing"
 )
 
+// Display telemetry tolerates missed one-minute samples; business health keeps
+// its separate, stricter freshness window.
+const landingLatencyFreshness = 3 * time.Minute
+
 type landingLatencySample struct {
 	Observation landing.LatencyObservation
 	ReceivedAt  time.Time
@@ -35,7 +39,7 @@ func (s *Store) landingLatencyTargets(ctx context.Context, nodeID string) ([]lan
  WHERE selection.key=? AND target.id<>source.id AND server.status='ready'
  AND target.status='active' AND target.credential_revoked_at='' AND target.tailscale_ownership='managed' AND target.last_seen_at>?
  AND source.status='active' AND source.credential_revoked_at=''
- AND EXISTS(SELECT 1 FROM applications WHERE node_id=source.id AND app_key='vastora-official/3x-ui' AND runtime='docker')
+ AND EXISTS(SELECT 1 FROM applications WHERE node_id=source.id AND app_key='vastora-official/meridian' AND runtime='docker')
  ORDER BY server.node_id LIMIT ?`, nodeID, landingSelectionKey, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano), landing.MaxServers)
 	if err != nil {
 		return nil, err
@@ -66,7 +70,7 @@ func (s *Store) recordLandingLatency(nodeID string, targets []landing.LatencyTar
 	defer s.landingLatencyMu.Unlock()
 	for key, sample := range s.landingLatencies {
 		target, ok := allowed[key.LandingNodeID]
-		if now.Sub(sample.ReceivedAt) > landingHealthFreshness || key.NodeID == nodeID && (!ok || target != sample.Observation.Target) {
+		if now.Sub(sample.ReceivedAt) > landingLatencyFreshness || key.NodeID == nodeID && (!ok || target != sample.Observation.Target) {
 			delete(s.landingLatencies, key)
 		}
 	}
@@ -78,7 +82,7 @@ func (s *Store) recordLandingLatency(nodeID string, targets []landing.LatencyTar
 	}
 	value := *observation
 	target, ok := allowed[value.Target.NodeID]
-	if !ok || value.Target != target || value.CheckedAt.Before(now.Add(-landingHealthFreshness)) || value.CheckedAt.After(now.Add(5*time.Second)) {
+	if !ok || value.Target != target || value.CheckedAt.Before(now.Add(-landingLatencyFreshness)) || value.CheckedAt.After(now.Add(5*time.Second)) {
 		return false
 	}
 	if value.State != "direct" {
@@ -102,7 +106,7 @@ func (s *Store) landingLatencyViews(selection LandingSelection) []LandingLatency
 	now := s.now().UTC()
 	for key, sample := range s.landingLatencies {
 		value := sample.Observation
-		if value.Target.Revision != selection.Revision || !slices.Contains(selection.NodeIDs, key.LandingNodeID) || now.Sub(value.CheckedAt) > landingHealthFreshness || now.Sub(sample.ReceivedAt) > landingHealthFreshness {
+		if value.Target.Revision != selection.Revision || !slices.Contains(selection.NodeIDs, key.LandingNodeID) || now.Sub(value.CheckedAt) > landingLatencyFreshness || now.Sub(sample.ReceivedAt) > landingLatencyFreshness {
 			continue
 		}
 		views = append(views, LandingLatencyView{NodeID: key.NodeID, LandingNodeID: key.LandingNodeID, State: value.State, LatencyMS: value.LatencyMS, CheckedAt: value.CheckedAt})

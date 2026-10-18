@@ -12,7 +12,7 @@ func TestMeridianLegacyChildCoverageFencesUnimportedAgentGrant(t *testing.T) {
 	const fixedUUID = "22222222-2222-4222-8222-222222222222"
 	grant := landing.ClientGrant{ID: "old-child", Mode: landing.FixedMode, Enabled: true, FixedIdentity: landing.Identity(fixedUUID)}
 	config := []byte(fmt.Sprintf(`{"inbounds":[{"protocol":"vless","settings":{"clients":[{"email":%q,"id":%q}]}}]}`,
-		meridian.RouteUser(grant.ID), fixedUUID))
+		glivela.RouteUser(grant.ID), fixedUUID))
 	if err := meridianLegacyChildCoverage([]landing.ClientGrant{grant}, config); err != nil {
 		t.Fatalf("matching fixed child was rejected: %v", err)
 	}
@@ -20,7 +20,7 @@ func TestMeridianLegacyChildCoverageFencesUnimportedAgentGrant(t *testing.T) {
 		t.Fatal("unimported fixed child did not block retirement")
 	}
 	if err := meridianLegacyChildCoverage([]landing.ClientGrant{grant}, []byte(fmt.Sprintf(`{"inbounds":[{"protocol":"vless","settings":{"clients":[{"email":%q,"id":"33333333-3333-4333-8333-333333333333"}]}}]}`,
-		meridian.RouteUser(grant.ID)))); err == nil {
+		glivela.RouteUser(grant.ID)))); err == nil {
 		t.Fatal("changed child UUID did not block retirement")
 	}
 	grant.Enabled = false

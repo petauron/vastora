@@ -35,7 +35,7 @@ func validateAgentNodeListenerState(state gateway.NodeListenerState) error {
 			}
 			continue
 		}
-		upstreamOK := (len(route.Upstreams) == 1 && route.Upstreams[0].Port == threeXUIRealityPort && (route.Upstreams[0].Address == dockerruntime.MeridianAlias || route.Upstreams[0].Address == dockerruntime.LegacyXrayAlias || route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias)) || len(route.Upstreams) == 1 && route.Upstreams[0].Port == meridian.RealityBackendPort && networking.IsPrivateServiceAddress(route.Upstreams[0].Address)
+		upstreamOK := (len(route.Upstreams) == 1 && route.Upstreams[0].Port == threeXUIRealityPort && (route.Upstreams[0].Address == dockerruntime.MeridianAlias || route.Upstreams[0].Address == dockerruntime.LegacyXrayAlias || route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias)) || len(route.Upstreams) == 1 && route.Upstreams[0].Port == glivela.RealityBackendPort && networking.IsPrivateServiceAddress(route.Upstreams[0].Address)
 		if route.ProxyProtocol != gateway.ProxyProtocolV2 || !upstreamOK {
 			return errors.New("agent: managed REALITY listener must target the approved managed backend with Proxy Protocol v2")
 		}

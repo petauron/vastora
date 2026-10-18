@@ -319,7 +319,7 @@ func (s *Store) configureMeridianNodeProtocols(ctx context.Context, serviceID st
 			if secretErr != nil {
 				return ApplicationCommandView{}, secretErr
 			}
-			if _, updateErr := tx.ExecContext(ctx, `UPDATE meridian_credentials SET hy2_auth_secret_id=?,hy2_identity_sha256=?,updated_at=? WHERE id=? AND hy2_auth_secret_id IS NULL`, secretID, meridian.Identity(auth), s.now().UTC().Format(time.RFC3339Nano), credentialID); updateErr != nil {
+			if _, updateErr := tx.ExecContext(ctx, `UPDATE meridian_credentials SET hy2_auth_secret_id=?,hy2_identity_sha256=?,updated_at=? WHERE id=? AND hy2_auth_secret_id IS NULL`, secretID, glivela.Identity(auth), s.now().UTC().Format(time.RFC3339Nano), credentialID); updateErr != nil {
 				return ApplicationCommandView{}, updateErr
 			}
 		}

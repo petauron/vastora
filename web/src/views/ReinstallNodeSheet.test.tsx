@@ -95,7 +95,7 @@ describe("node reinstall review", () => {
     expect(settle).not.toHaveBeenCalled();
   });
   it("identifies related work on other hosts before replacement", async () => {
-    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue({ ...review(), pendingWork: [{ agentId: "monitor", kind: "pulse.enrollment.create", count: 1 }], requirements: ["inspect_remote_effects_before_restore"] });
+    vi.spyOn(api, "agentReinstallPlan").mockResolvedValue({ ...review(), pendingWork: [{ agentId: "monitor", kind: "senulun.enrollment.create", count: 1 }], requirements: ["inspect_remote_effects_before_restore"] });
     const post = vi.spyOn(api, "createAgentReconnectEnrollment").mockResolvedValue(command);
     await show();
     expect(document.body.textContent).toContain("包含其他主机上关联此节点的任务");

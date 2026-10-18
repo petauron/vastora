@@ -32,7 +32,7 @@ func prepareLandingRecovery(ctx context.Context, journal *landingHostJournal) (*
 	if state != "active" {
 		return r, nil
 	}
-	if err := journal.Policy.Check(ctx); err != nil {
+	if err := journal.Policy.Verify(ctx); err != nil {
 		return nil, err // Do not stop a working daemon on ownership drift.
 	}
 	encoded, err := json.Marshal(journal)

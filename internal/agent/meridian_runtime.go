@@ -35,22 +35,22 @@ var errMeridianExplicitRecoveryRequired = errors.New("agent: Glivela runtime req
 // cutover. Pending is journaled before Docker mutation; Applied is advanced
 // only after the promoted container and its exact configuration are healthy.
 type meridianRuntimeState struct {
-	ApplicationID       string                    `json:"applicationId"`
-	ImageReference      string                    `json:"imageReference"`
-	Applied             *meridian.DesiredArtifact `json:"applied,omitempty"`
-	Pending             *meridian.DesiredArtifact `json:"pending,omitempty"`
-	AppliedPeers        []meridianruntime.Peer    `json:"appliedPeers,omitempty"`
-	PendingPeers        []meridianruntime.Peer    `json:"pendingPeers,omitempty"`
-	AppliedSource       *landing.PeerIdentity     `json:"appliedSource,omitempty"`
-	PendingSource       *landing.PeerIdentity     `json:"pendingSource,omitempty"`
-	GateRevision        uint64                    `json:"gateRevision,omitempty"`
-	AppliedGID          uint32                    `json:"appliedGid,omitempty"`
-	PendingGID          uint32                    `json:"pendingGid,omitempty"`
-	Bridge              string                    `json:"bridge,omitempty"`
-	RetiringGates       []meridianGateIdentity    `json:"retiringGates,omitempty"`
-	HandoverPending     bool                      `json:"handoverPending,omitempty"`
-	LegacyLandingSealed []byte                    `json:"legacyLandingSealed,omitempty"`
-	LegacyRuntimeSHA256 string                    `json:"legacyRuntimeSha256,omitempty"`
+	ApplicationID       string                   `json:"applicationId"`
+	ImageReference      string                   `json:"imageReference"`
+	Applied             *glivela.DesiredArtifact `json:"applied,omitempty"`
+	Pending             *glivela.DesiredArtifact `json:"pending,omitempty"`
+	AppliedPeers        []meridianruntime.Peer   `json:"appliedPeers,omitempty"`
+	PendingPeers        []meridianruntime.Peer   `json:"pendingPeers,omitempty"`
+	AppliedSource       *landing.PeerIdentity    `json:"appliedSource,omitempty"`
+	PendingSource       *landing.PeerIdentity    `json:"pendingSource,omitempty"`
+	GateRevision        uint64                   `json:"gateRevision,omitempty"`
+	AppliedGID          uint32                   `json:"appliedGid,omitempty"`
+	PendingGID          uint32                   `json:"pendingGid,omitempty"`
+	Bridge              string                   `json:"bridge,omitempty"`
+	RetiringGates       []meridianGateIdentity   `json:"retiringGates,omitempty"`
+	HandoverPending     bool                     `json:"handoverPending,omitempty"`
+	LegacyLandingSealed []byte                   `json:"legacyLandingSealed,omitempty"`
+	LegacyRuntimeSHA256 string                   `json:"legacyRuntimeSha256,omitempty"`
 }
 
 func (state meridianRuntimeState) validate() error {
@@ -200,7 +200,11 @@ func (e ApplicationExecutor) replaceMeridianPendingState(ctx context.Context, st
 	return candidate, nil
 }
 
-func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meridianruntime.Task) (result meridianruntime.Result, resultErr error) {
+func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meridianruntime.Task) (meridianruntime.Result, error) {
+	return e.applyMeridianRuntime(ctx, task, ensureLandingPackage)
+}
+
+func (e ApplicationExecutor) applyMeridianRuntime(ctx context.Context, task meridianruntime.Task, ensureFirewall func(context.Context) error) (result meridianruntime.Result, resultErr error) {
 	if e.Store == nil || task.Validate() != nil {
 		return result, errors.New("agent: invalid Glivela runtime task")
 	}
@@ -232,7 +236,14 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	} else if err != nil {
 		return result, err
 	}
-	if len(task.EgressClients) != 0 && task.NativeEgress != meridian.EgressAuto {
+	// Reject unsupported firewall userspace before pending recovery or handover
+	// can stop an otherwise healthy runtime. Existing gates also need readback.
+	if len(task.Peers) != 0 || len(state.knownLandingGates()) != 0 {
+		if err := ensureFirewall(ctx); err != nil {
+			return result, err
+		}
+	}
+	if len(task.EgressClients) != 0 && task.NativeEgress != glivela.EgressAuto {
 		if err := e.checkNativeEgressNetwork(ctx, task, state); err != nil {
 			return result, err
 		}
@@ -383,11 +394,6 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	defer os.Remove(staged)
 	if err := validateXrayWorkerConfigAs(ctx, docker, task.ImageReference, staged, meridianAppliedRuntimeUID(state)); err != nil {
 		return result, err
-	}
-	if len(task.Peers) != 0 {
-		if err := ensureLandingPackage(ctx); err != nil {
-			return result, err
-		}
 	}
 	if err := validateMeridianHostPorts(ctx, docker, task.Desired, state); err != nil {
 		return result, err
@@ -665,7 +671,7 @@ func (e ApplicationExecutor) observeAppliedMeridianRuntimeWithDocker(ctx context
 	if err != nil || !json.Valid(stats) {
 		return meridianruntime.Result{}, errors.Join(errors.New("agent: read Glivela Xray statistics"), err)
 	}
-	result := meridianruntime.Result{Receipt: meridian.AppliedReceipt{Revision: state.Applied.Revision, ConfigSHA256: state.Applied.ConfigSHA256, RuntimeReady: true}, Stats: json.RawMessage(stats), Peers: e.Store.meridianPeerObservations(state), Source: cloneMeridianSource(state.AppliedSource)}
+	result := meridianruntime.Result{Receipt: glivela.AppliedReceipt{Revision: state.Applied.Revision, ConfigSHA256: state.Applied.ConfigSHA256, RuntimeReady: true}, Stats: json.RawMessage(stats), Peers: e.Store.meridianPeerObservations(state), Source: cloneMeridianSource(state.AppliedSource)}
 	if err := result.Validate(*state.Applied); err != nil {
 		return meridianruntime.Result{}, err
 	}
@@ -715,7 +721,7 @@ func (s *Store) stageMeridianConfig(encoded []byte, uid int) (string, string, er
 	return name, filepath.Join(directory, "config.json"), nil
 }
 
-func sameMeridianArtifact(left, right meridian.DesiredArtifact) bool {
+func sameMeridianArtifact(left, right glivela.DesiredArtifact) bool {
 	return left.Revision == right.Revision && subtle.ConstantTimeCompare([]byte(left.ConfigSHA256), []byte(right.ConfigSHA256)) == 1
 }
 
@@ -760,7 +766,7 @@ func (e ApplicationExecutor) advanceMeridianRevision(ctx context.Context, state 
 	return result, err
 }
 
-func artifactMatchesBytes(artifact meridian.DesiredArtifact, encoded []byte) bool {
+func artifactMatchesBytes(artifact glivela.DesiredArtifact, encoded []byte) bool {
 	if artifact.Validate() != nil || len(encoded) == 0 || len(encoded) > xrayWorkerMaxBody {
 		return false
 	}
@@ -768,7 +774,7 @@ func artifactMatchesBytes(artifact meridian.DesiredArtifact, encoded []byte) boo
 	return subtle.ConstantTimeCompare([]byte(artifact.ConfigSHA256), []byte(hex.EncodeToString(digest[:]))) == 1
 }
 
-func meridianArtifactHY2Enabled(artifact meridian.DesiredArtifact) (bool, error) {
+func meridianArtifactHY2Enabled(artifact glivela.DesiredArtifact) (bool, error) {
 	if artifact.Validate() != nil {
 		return false, errors.New("agent: invalid Glivela runtime artifact")
 	}

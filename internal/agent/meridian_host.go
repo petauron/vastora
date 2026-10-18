@@ -42,7 +42,7 @@ func ensureMeridianRuntimeGroup(ctx context.Context) (uint32, error) {
 
 // Configuration checks happen before touching the applied runtime. Binding to
 // a missing private address must not silently become a wildcard listener.
-func validateMeridianHostListeners(artifact meridian.DesiredArtifact) error {
+func validateMeridianHostListeners(artifact glivela.DesiredArtifact) error {
 	var config struct {
 		Inbounds []struct {
 			Protocol string
@@ -72,12 +72,12 @@ func validateMeridianHostListeners(artifact meridian.DesiredArtifact) error {
 		seen[inbound.Protocol] = true
 		switch inbound.Protocol {
 		case "dokodemo-door":
-			if inbound.Tag != "api" || inbound.Listen != "127.0.0.1" || inbound.Port != meridian.XrayAPIListenPort {
+			if inbound.Tag != "api" || inbound.Listen != "127.0.0.1" || inbound.Port != glivela.XrayAPIListenPort {
 				return errors.New("agent: Glivela API must stay on loopback")
 			}
 		case "vless":
 			address, err := netip.ParseAddr(inbound.Listen)
-			if err != nil || !address.Is4() || !(address.IsPrivate() || netip.MustParsePrefix("100.64.0.0/10").Contains(address)) || !local[inbound.Listen] || inbound.Port != meridian.RealityBackendPort {
+			if err != nil || !address.Is4() || !(address.IsPrivate() || netip.MustParsePrefix("100.64.0.0/10").Contains(address)) || !local[inbound.Listen] || inbound.Port != glivela.RealityBackendPort {
 				return errors.New("agent: Glivela private backend address is missing or invalid")
 			}
 		case "hysteria":
@@ -94,7 +94,7 @@ func validateMeridianHostListeners(artifact meridian.DesiredArtifact) error {
 	return nil
 }
 
-func verifyMeridianHostContainer(inspected client.ContainerInspectResult, gid uint32, artifact *meridian.DesiredArtifact) error {
+func verifyMeridianHostContainer(inspected client.ContainerInspectResult, gid uint32, artifact *glivela.DesiredArtifact) error {
 	c, h := inspected.Container.Config, inspected.Container.HostConfig
 	if c == nil || h == nil || gid == 0 || c.User != "0:"+strconv.FormatUint(uint64(gid), 10) || h.NetworkMode != "host" || h.UsernsMode != "host" || h.RestartPolicy.Name != "no" || !h.ReadonlyRootfs || h.Privileged || len(h.PortBindings) != 0 || len(h.Sysctls) != 0 || len(h.GroupAdd) != 0 || h.PidMode != "" || h.IpcMode.IsHost() || !slices.Equal(h.CapDrop, []string{"ALL"}) || !slices.Contains(h.SecurityOpt, "no-new-privileges:true") {
 		return errors.New("agent: Glivela host runtime security settings changed")

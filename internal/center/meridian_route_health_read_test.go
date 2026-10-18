@@ -162,7 +162,7 @@ func TestMeridianImportedRoutesUseLegacySnapshotOnlyUntilFirstAppliedEndpoint(t 
 	if err != nil || len(legacy.Entries) != 1 || len(legacy.Routes) != 1 {
 		t.Fatalf("pre-switch legacy route disappeared: entries=%d routes=%d err=%v", len(legacy.Entries), len(legacy.Routes), err)
 	}
-	links, err := meridian.RenderLinks(legacy.Entries, sharedSnapshotAccountB, meridian.FixedMode, legacy.Routes, false)
+	links, err := glivela.RenderLinks(legacy.Entries, sharedSnapshotAccountB, glivela.FixedMode, legacy.Routes, false)
 	if err != nil || strings.Count(string(links), "vless://") != 2 {
 		t.Fatalf("imported pending revisions were not rendered as existing legacy links: links=%q err=%v", links, err)
 	}

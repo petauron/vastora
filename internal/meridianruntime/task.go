@@ -24,26 +24,26 @@ type Command struct {
 }
 
 func (c Command) Validate() error {
-	if strings.TrimSpace(c.EndpointID) == "" || len(c.EndpointID) > meridian.MaxIdentifierLength {
+	if strings.TrimSpace(c.EndpointID) == "" || len(c.EndpointID) > glivela.MaxIdentifierLength {
 		return errors.New("meridian runtime: invalid endpoint command")
 	}
 	return nil
 }
 
 type Task struct {
-	NativeEgress        meridian.EgressPolicy    `json:"nativeEgress,omitempty"`
-	EgressClients       []AcceptanceClient       `json:"egressClients,omitempty"`
-	ApplicationID       string                   `json:"applicationId"`
-	ImageReference      string                   `json:"imageReference"`
-	Desired             meridian.DesiredArtifact `json:"desired"`
-	RetireLegacy        bool                     `json:"retireLegacy"`
-	ReplacePendingState bool                     `json:"replacePendingState,omitempty"`
-	Peers               []Peer                   `json:"peers,omitempty"`
-	Source              *landing.PeerIdentity    `json:"source,omitempty"`
+	NativeEgress        glivela.EgressPolicy    `json:"nativeEgress,omitempty"`
+	EgressClients       []AcceptanceClient      `json:"egressClients,omitempty"`
+	ApplicationID       string                  `json:"applicationId"`
+	ImageReference      string                  `json:"imageReference"`
+	Desired             glivela.DesiredArtifact `json:"desired"`
+	RetireLegacy        bool                    `json:"retireLegacy"`
+	ReplacePendingState bool                    `json:"replacePendingState,omitempty"`
+	Peers               []Peer                  `json:"peers,omitempty"`
+	Source              *landing.PeerIdentity   `json:"source,omitempty"`
 }
 
 func (t Task) Validate() error {
-	if strings.TrimSpace(t.ApplicationID) == "" || len(t.ApplicationID) > meridian.MaxIdentifierLength || strings.TrimSpace(t.ImageReference) == "" || len(t.ImageReference) > 1024 || t.ReplacePendingState && t.RetireLegacy {
+	if strings.TrimSpace(t.ApplicationID) == "" || len(t.ApplicationID) > glivela.MaxIdentifierLength || strings.TrimSpace(t.ImageReference) == "" || len(t.ImageReference) > 1024 || t.ReplacePendingState && t.RetireLegacy {
 		return errors.New("meridian runtime: invalid task identity")
 	}
 	if err := t.Desired.Validate(); err != nil {
@@ -56,12 +56,12 @@ func (t Task) Validate() error {
 }
 
 type Result struct {
-	Egress        *EgressObservation      `json:"egress,omitempty"`
-	Receipt       meridian.AppliedReceipt `json:"receipt"`
-	Stats         json.RawMessage         `json:"stats"`
-	LegacyRetired bool                    `json:"legacyRetired"`
-	Peers         []PeerObservation       `json:"peers,omitempty"`
-	Source        *landing.PeerIdentity   `json:"source,omitempty"`
+	Egress        *EgressObservation     `json:"egress,omitempty"`
+	Receipt       glivela.AppliedReceipt `json:"receipt"`
+	Stats         json.RawMessage        `json:"stats"`
+	LegacyRetired bool                   `json:"legacyRetired"`
+	Peers         []PeerObservation      `json:"peers,omitempty"`
+	Source        *landing.PeerIdentity  `json:"source,omitempty"`
 }
 
 // LegacyRetireTask authorizes removal of the superseded 3x-ui installation
@@ -72,7 +72,7 @@ type LegacyRetireTask struct {
 }
 
 func (t LegacyRetireTask) Validate() error {
-	if strings.TrimSpace(t.ApplicationID) == "" || len(t.ApplicationID) > meridian.MaxIdentifierLength {
+	if strings.TrimSpace(t.ApplicationID) == "" || len(t.ApplicationID) > glivela.MaxIdentifierLength {
 		return errors.New("meridian runtime: invalid legacy retirement task")
 	}
 	return nil
@@ -89,8 +89,8 @@ func (r LegacyRetireResult) Validate() error {
 	return nil
 }
 
-func (r Result) Validate(desired meridian.DesiredArtifact) error {
-	if meridian.VerifyAppliedReceipt(desired, r.Receipt) != nil || len(r.Stats) == 0 || len(r.Stats) > 4<<20 || !json.Valid(r.Stats) {
+func (r Result) Validate(desired glivela.DesiredArtifact) error {
+	if glivela.VerifyAppliedReceipt(desired, r.Receipt) != nil || len(r.Stats) == 0 || len(r.Stats) > 4<<20 || !json.Valid(r.Stats) {
 		return errors.New("meridian runtime: invalid applied result")
 	}
 	return nil

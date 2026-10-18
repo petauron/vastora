@@ -631,6 +631,20 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 21
 		}
+		if version == 21 {
+			backupDir, migrateErr := os.MkdirTemp(dataDir, "schema-21-backup-")
+			if migrateErr == nil {
+				_, migrateErr = db.Exec(`VACUUM INTO ?`, filepath.Join(backupDir, "agent.db"))
+			}
+			if migrateErr == nil {
+				_, migrateErr = db.Exec(`BEGIN; ALTER TABLE control_plane_connection ADD COLUMN landing_only INTEGER NOT NULL DEFAULT 0 CHECK(landing_only IN (0,1)); PRAGMA user_version=22; COMMIT;`)
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 21 to 22: %w", migrateErr)
+			}
+			version = 22
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -655,6 +669,7 @@ func Open(dataDir string) (*Store, error) {
 		);
 		CREATE TABLE control_plane_connection (
 			id INTEGER PRIMARY KEY CHECK(id = 1),
+			landing_only INTEGER NOT NULL DEFAULT 0 CHECK(landing_only IN (0,1)),
 			agent_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			center_url TEXT NOT NULL,
@@ -757,7 +772,7 @@ func Open(dataDir string) (*Store, error) {
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed_state BLOB NOT NULL
 		);
-		` + taskReceiptIndexesSQL + `PRAGMA user_version = 21;`); err != nil {
+		` + taskReceiptIndexesSQL + `PRAGMA user_version = 22;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}

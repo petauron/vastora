@@ -44,7 +44,7 @@ func TestAgentReinstallRemainingDoesNotTreatEntryAsClientAcceptance(t *testing.T
 
 func TestAgentReinstallRemainingDistinguishesMissingMonitorAndBackups(t *testing.T) {
 	plan := AgentReinstallPlan{Recovery: &AgentReinstallOperation{}, Applications: []AgentReinstallApplication{
-		{ApplicationID: "monitor", AppKey: pulseAgentAppKey, Recovery: "reenroll_monitor"},
+		{ApplicationID: "monitor", AppKey: senulunAgentAppKey, Recovery: "reenroll_monitor"},
 		{ApplicationID: "data", Recovery: "restore_data"},
 		{ApplicationID: "removed", Recovery: "keep_stopped"},
 	}}

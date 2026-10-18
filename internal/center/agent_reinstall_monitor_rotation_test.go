@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/secret"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 func monitorRotationFixture(t *testing.T) (*Store, AgentCredential, AgentCredential, AgentReinstallMonitorInput) {
@@ -55,10 +55,10 @@ func TestAgentReinstallMonitorRotationKeepsOriginalIdentityAndSealsSecret(t *tes
 		t.Fatalf("pending replay: %+v %v", replay, err)
 	}
 	task, err := s.claimExecutionTask(ctx, service.ID, service.Credential, "monitor-registration-evidence-session", 0)
-	if err != nil || task == nil || task.PulseRotation == nil || task.ID != receipt.CommandID || task.PulseEnrollment != nil || task.PulseInspection != nil {
+	if err != nil || task == nil || task.SenulunRotation == nil || task.ID != receipt.CommandID || task.SenulunEnrollment != nil || task.SenulunInspection != nil {
 		t.Fatalf("rotation task: %+v %v", task, err)
 	}
-	if task.PulseRotation.NodeID != "11111111-1111-4111-8111-111111111111" || len(task.PulseRotation.Inspection.EnrollmentIDs) != 1 {
+	if task.SenulunRotation.NodeID != "11111111-1111-4111-8111-111111111111" || len(task.SenulunRotation.Inspection.EnrollmentIDs) != 1 {
 		t.Fatal("original node lost")
 	}
 	if response := submitMonitorInspection(t, s, service, task, successfulMonitorRotationJSON(), true); response.Code != http.StatusOK {
@@ -69,7 +69,7 @@ func TestAgentReinstallMonitorRotationKeepsOriginalIdentityAndSealsSecret(t *tes
 		t.Fatal(err)
 	}
 	saved := plan.Monitoring[0].Rotation
-	if saved == nil || saved.State != "rotated" || saved.RotatedAt == "" || saved.NodeID != task.PulseRotation.NodeID {
+	if saved == nil || saved.State != "rotated" || saved.RotatedAt == "" || saved.NodeID != task.SenulunRotation.NodeID {
 		t.Fatalf("receipt: %+v", saved)
 	}
 	input.PlanRevision = plan.Revision
@@ -78,7 +78,7 @@ func TestAgentReinstallMonitorRotationKeepsOriginalIdentityAndSealsSecret(t *tes
 		t.Fatalf("new review rotated again: %+v %v", replay, err)
 	}
 	var count int
-	if err = s.db.QueryRow(`SELECT COUNT(*) FROM application_commands WHERE kind=?`, pulse.RotationKind).Scan(&count); err != nil || count != 1 {
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM application_commands WHERE kind=?`, senulun.RotationKind).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("duplicate rotation: %d %v", count, err)
 	}
 	if _, err = s.ClaimNextTask(ctx, collector.ID, collector.Credential); !errors.Is(err, errExecutionBlocked) {
@@ -142,7 +142,7 @@ func TestAgentReinstallMonitorRotationRequiresReviewAndFreshOriginalIdentity(t *
 				}
 				_, _ = s.db.Exec(`UPDATE agent_reinstall_monitor_inspections SET result_json=json_set(result_json,'$.inspectedAt',?)`, s.now().Add(delta).UTC().Format(time.RFC3339Nano))
 			case "remote-work":
-				_, _ = s.db.Exec(`UPDATE application_commands SET state='pending',attempt=0 WHERE kind=?`, pulse.InspectionKind)
+				_, _ = s.db.Exec(`UPDATE application_commands SET state='pending',attempt=0 WHERE kind=?`, senulun.InspectionKind)
 			case "capability":
 				_, _ = s.db.Exec(`UPDATE agents SET capabilities_json=json_remove(capabilities_json,'$.pulseRotation') WHERE id=?`, service.ID)
 			}
@@ -157,7 +157,7 @@ func TestAgentReinstallMonitorRotationRequiresReviewAndFreshOriginalIdentity(t *
 				t.Fatal("unreviewed rotation accepted")
 			}
 			var count int
-			if err := s.db.QueryRow(`SELECT COUNT(*) FROM application_commands WHERE kind=?`, pulse.RotationKind).Scan(&count); err != nil || count != 0 {
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM application_commands WHERE kind=?`, senulun.RotationKind).Scan(&count); err != nil || count != 0 {
 				t.Fatal("invalid request persisted a rotation")
 			}
 		})
@@ -288,7 +288,7 @@ func TestAgentReinstallMonitorRotationNeverReplaysFailedOrUnknownWrites(t *testi
 			if err != nil || replay.CommandID != receipt.CommandID {
 				t.Fatalf("uncertain operation not retained: %+v %v", replay, err)
 			}
-			if next, _ := s.claimExecutionTask(ctx, service.ID, service.Credential, "monitor-registration-evidence-session", 0); next != nil && next.PulseRotation != nil {
+			if next, _ := s.claimExecutionTask(ctx, service.ID, service.Credential, "monitor-registration-evidence-session", 0); next != nil && next.SenulunRotation != nil {
 				t.Fatal("rotation replayed")
 			}
 		})

@@ -203,7 +203,7 @@ func (s *Store) listMeridianEndpoints(ctx context.Context) ([]MeridianEndpointVi
 func (s *Store) UpdateMeridianEndpointName(ctx context.Context, endpointID string, input MeridianEndpointNameInput) (MeridianEndpointView, error) {
 	endpointID = strings.TrimSpace(endpointID)
 	region, _, displayName, err := composeRealityDisplayName(input.RegionCode, input.Name)
-	if err != nil || !meridian.ValidIdentifier(endpointID) {
+	if err != nil || !glivela.ValidIdentifier(endpointID) {
 		return MeridianEndpointView{}, errors.New("center: Glivela endpoint, region, and a valid node name are required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -385,7 +385,7 @@ func (s *Store) listMeridianAccounts(ctx context.Context) ([]MeridianAccountView
 		if err != nil {
 			return nil, err
 		}
-		projection, err := meridian.ProjectQuota(meridian.AccountPlan{TotalBytes: value.TotalBytes, ExpiryTime: value.ExpiryTime, ResetDays: value.ResetDays, Enabled: value.Enabled && value.Status == "active"}, usage)
+		projection, err := glivela.ProjectQuota(glivela.AccountPlan{TotalBytes: value.TotalBytes, ExpiryTime: value.ExpiryTime, ResetDays: value.ResetDays, Enabled: value.Enabled && value.Status == "active"}, usage)
 		if err != nil {
 			return nil, err
 		}
@@ -472,8 +472,8 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 	}
 	privateValue := base64.RawURLEncoding.EncodeToString(privateKey.Bytes())
 	publicValue := base64.RawURLEncoding.EncodeToString(privateKey.PublicKey().Bytes())
-	endpoint := meridian.RealityEndpoint{ID: endpointID, EntryID: input.ApplicationID, InboundTag: "meridian-" + inboundToken,
-		ListenPort: meridian.RealityBackendPort, AdvertiseHost: input.AdvertiseHost, AdvertisePort: meridian.DefaultRealityPort,
+	endpoint := glivela.RealityEndpoint{ID: endpointID, EntryID: input.ApplicationID, InboundTag: "meridian-" + inboundToken,
+		ListenPort: glivela.RealityBackendPort, AdvertiseHost: input.AdvertiseHost, AdvertisePort: glivela.DefaultRealityPort,
 		PrivateKey: privateValue, PublicKey: publicValue,
 		ShortIDs: []string{hex.EncodeToString(shortIDRaw)}, Fingerprint: input.Fingerprint}
 
@@ -627,6 +627,9 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 	if err := tx.Commit(); err != nil {
 		return MeridianEndpointView{}, err
 	}
+	if err := s.reconcileMeridianEndpointDNS(ctx, serviceID); err != nil {
+		return MeridianEndpointView{}, err
+	}
 	values, err := s.listMeridianEndpoints(ctx)
 	if err != nil {
 		return MeridianEndpointView{}, err
@@ -640,6 +643,10 @@ func (s *Store) CreateMeridianEndpoint(ctx context.Context, input MeridianEndpoi
 }
 
 func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceID, nodeID, hostname, serverName, stamp string) error {
+	dnsProvider, err := meridianEndpointDNSProvider(ctx, tx, hostname)
+	if err != nil {
+		return err
+	}
 	var duplicate int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications
 		WHERE entry_node_id=? AND sni_hostname=? AND status<>'stopped' AND service_id<>?`, nodeID, serverName, serviceID).Scan(&duplicate); err != nil {
@@ -652,7 +659,7 @@ func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceI
 	var publicationID, status string
 	var cleanupPending int
 	var revision int64
-	err := tx.QueryRowContext(ctx, `SELECT id,status,cleanup_pending,desired_revision FROM publications
+	err = tx.QueryRowContext(ctx, `SELECT id,status,cleanup_pending,desired_revision FROM publications
 		WHERE service_id=? AND kind=? ORDER BY updated_at DESC LIMIT 1`, serviceID, publicationShared443).Scan(&publicationID, &status, &cleanupPending, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		publicationID, err = randomToken(18)
@@ -660,7 +667,7 @@ func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceI
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,status,created_at,updated_at)
-			VALUES(?,?,?,'application_node',?,?,?,'manual',0,'pending',?,?)`, publicationID, serviceID, publicationShared443, nodeID, hostname, serverName, stamp, stamp)
+			VALUES(?,?,?,'application_node',?,?,?,?,0,'pending',?,?)`, publicationID, serviceID, publicationShared443, nodeID, hostname, serverName, dnsProvider, stamp, stamp)
 		if err != nil {
 			return fmt.Errorf("center: create Glivela public entry: %w", err)
 		}
@@ -675,9 +682,9 @@ func ensureMeridianEndpointPublication(ctx context.Context, tx *sql.Tx, serviceI
 	if cleanupPending != 0 {
 		return errors.New("center: the previous Glivela publication is still removing external resources")
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE publications SET ingress_owner='application_node',entry_node_id=?,hostname=?,sni_hostname=?,dns_provider='manual',
+	_, err = tx.ExecContext(ctx, `UPDATE publications SET ingress_owner='application_node',entry_node_id=?,hostname=?,sni_hostname=?,dns_provider=?,
 		dns_record_id='',access_application_id='',tls_enabled=0,desired_revision=?,applied_revision=0,status='pending',last_error='',action_required=0,
-		cleanup_pending=0,cleanup_attempt=0,cleanup_retry_at='',updated_at=? WHERE id=?`, nodeID, hostname, serverName, revision+1, stamp, publicationID)
+		cleanup_pending=0,cleanup_attempt=0,cleanup_retry_at='',updated_at=? WHERE id=?`, nodeID, hostname, serverName, dnsProvider, revision+1, stamp, publicationID)
 	if err != nil {
 		return fmt.Errorf("center: restore Glivela public entry: %w", err)
 	}
@@ -690,8 +697,8 @@ func (s *Store) CreateMeridianAccount(ctx context.Context, input MeridianAccount
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
-	plan := meridian.AccountPlan{TotalBytes: input.TotalBytes, ExpiryTime: input.ExpiryTime, ResetDays: input.ResetDays, Enabled: enabled}
-	if input.DisplayName == "" || len([]rune(input.DisplayName)) > meridian.MaxDisplayNameLength || plan.Validate() != nil || input.ExpiryTime > 0 && input.ExpiryTime <= s.now().UTC().UnixMilli() {
+	plan := glivela.AccountPlan{TotalBytes: input.TotalBytes, ExpiryTime: input.ExpiryTime, ResetDays: input.ResetDays, Enabled: enabled}
+	if input.DisplayName == "" || len([]rune(input.DisplayName)) > glivela.MaxDisplayNameLength || plan.Validate() != nil || input.ExpiryTime > 0 && input.ExpiryTime <= s.now().UTC().UnixMilli() {
 		return MeridianAccountCreated{}, errors.New("center: invalid Glivela account plan")
 	}
 	accountID, err := randomToken(18)
@@ -734,7 +741,7 @@ func (s *Store) CreateMeridianAccount(ctx context.Context, input MeridianAccount
 		status = "disabled"
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,expiry_time,reset_days,next_reset_at,enabled,subscription_token_secret_id,subscription_token_sha256,status,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, accountID, input.DisplayName, input.TotalBytes, input.ExpiryTime, input.ResetDays, nextReset, boolInt(enabled), secretID, meridian.SubscriptionTokenFingerprint(token), status, now, now); err != nil {
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, accountID, input.DisplayName, input.TotalBytes, input.ExpiryTime, input.ResetDays, nextReset, boolInt(enabled), secretID, glivela.SubscriptionTokenFingerprint(token), status, now, now); err != nil {
 		return MeridianAccountCreated{}, fmt.Errorf("center: create Glivela account: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id,application_id FROM meridian_endpoints WHERE status<>'retired' ORDER BY id`)
@@ -755,7 +762,7 @@ func (s *Store) CreateMeridianAccount(ctx context.Context, input MeridianAccount
 		return MeridianAccountCreated{}, err
 	}
 	for _, ref := range refs {
-		if _, err := s.insertMeridianCredential(ctx, tx, accountID, ref.id, ref.applicationID, meridian.NativeCredential, "", true, now); err != nil {
+		if _, err := s.insertMeridianCredential(ctx, tx, accountID, ref.id, ref.applicationID, glivela.NativeCredential, "", true, now); err != nil {
 			return MeridianAccountCreated{}, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE id=?`, now, ref.id); err != nil {
@@ -784,8 +791,8 @@ func (s *Store) UpdateMeridianAccount(ctx context.Context, accountID string, inp
 	if input.Enabled == nil {
 		return MeridianAccountView{}, errors.New("center: Glivela account enabled state is required")
 	}
-	plan := meridian.AccountPlan{TotalBytes: input.TotalBytes, ExpiryTime: input.ExpiryTime, ResetDays: input.ResetDays, Enabled: *input.Enabled}
-	if !meridian.ValidIdentifier(accountID) || input.DisplayName == "" || len([]rune(input.DisplayName)) > meridian.MaxDisplayNameLength || plan.Validate() != nil || input.ExpiryTime > 0 && input.ExpiryTime <= s.now().UTC().UnixMilli() {
+	plan := glivela.AccountPlan{TotalBytes: input.TotalBytes, ExpiryTime: input.ExpiryTime, ResetDays: input.ResetDays, Enabled: *input.Enabled}
+	if !glivela.ValidIdentifier(accountID) || input.DisplayName == "" || len([]rune(input.DisplayName)) > glivela.MaxDisplayNameLength || plan.Validate() != nil || input.ExpiryTime > 0 && input.ExpiryTime <= s.now().UTC().UnixMilli() {
 		return MeridianAccountView{}, errors.New("center: invalid Glivela account plan")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -851,10 +858,10 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 	input.EndpointID = strings.TrimSpace(input.EndpointID)
 	input.EgressNodeID = strings.TrimSpace(input.EgressNodeID)
 	input.IPv4EgressNodeID = strings.TrimSpace(input.IPv4EgressNodeID)
-	if !meridian.ValidIdentifier(input.AccountID) || !meridian.ValidIdentifier(input.EndpointID) || !meridian.ValidIdentifier(input.EgressNodeID) {
+	if !glivela.ValidIdentifier(input.AccountID) || !glivela.ValidIdentifier(input.EndpointID) || !glivela.ValidIdentifier(input.EgressNodeID) {
 		return MeridianRouteGrantView{}, errors.New("center: invalid Glivela route grant")
 	}
-	if input.IPv4EgressNodeID != "" && (!meridian.ValidIdentifier(input.IPv4EgressNodeID) || input.IPv4EgressNodeID == input.EgressNodeID) {
+	if input.IPv4EgressNodeID != "" && (!glivela.ValidIdentifier(input.IPv4EgressNodeID) || input.IPv4EgressNodeID == input.EgressNodeID) {
 		return MeridianRouteGrantView{}, errors.New("center: choose a distinct IPv4 exit")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -911,12 +918,12 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 		return MeridianRouteGrantView{}, err
 	}
 	if input.IPv4EgressNodeID != "" {
-		if _, _, err := s.readCompositeRoutePeers(ctx, tx, input.EndpointID, input.EgressNodeID, input.IPv4EgressNodeID, false); err != nil {
+		if _, _, err := s.readCompositeRoutePeers(ctx, tx, input.EndpointID, input.EgressNodeID, input.IPv4EgressNodeID, false, true); err != nil {
 			return MeridianRouteGrantView{}, err
 		}
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	routeCredentialID, err := s.insertMeridianCredential(ctx, tx, input.AccountID, input.EndpointID, applicationID, meridian.RouteCredential, input.EgressNodeID, true, now)
+	routeCredentialID, err := s.insertMeridianCredential(ctx, tx, input.AccountID, input.EndpointID, applicationID, glivela.RouteCredential, input.EgressNodeID, true, now)
 	if err != nil {
 		return MeridianRouteGrantView{}, err
 	}
@@ -962,7 +969,7 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 
 func (s *Store) RevokeMeridianRouteGrant(ctx context.Context, grantID string) error {
 	grantID = strings.TrimSpace(grantID)
-	if !meridian.ValidIdentifier(grantID) {
+	if !glivela.ValidIdentifier(grantID) {
 		return errors.New("center: invalid Glivela route grant")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1025,7 +1032,7 @@ func (s *Store) addExistingAccountsToMeridianEndpoint(ctx context.Context, tx *s
 				return err
 			}
 		} else {
-			if _, err := s.insertMeridianCredential(ctx, tx, account.id, endpointID, applicationID, meridian.NativeCredential, "", true, now); err != nil {
+			if _, err := s.insertMeridianCredential(ctx, tx, account.id, endpointID, applicationID, glivela.NativeCredential, "", true, now); err != nil {
 				return err
 			}
 		}
@@ -1033,7 +1040,7 @@ func (s *Store) addExistingAccountsToMeridianEndpoint(ctx context.Context, tx *s
 	return nil
 }
 
-func (s *Store) insertMeridianCredential(ctx context.Context, tx *sql.Tx, accountID, endpointID, applicationID string, kind meridian.CredentialKind, egressNodeID string, enabled bool, now string) (string, error) {
+func (s *Store) insertMeridianCredential(ctx context.Context, tx *sql.Tx, accountID, endpointID, applicationID string, kind glivela.CredentialKind, egressNodeID string, enabled bool, now string) (string, error) {
 	credentialID, err := randomToken(18)
 	if err != nil {
 		return "", err
@@ -1050,7 +1057,7 @@ func (s *Store) insertMeridianCredential(ctx context.Context, tx *sql.Tx, accoun
 	if err := tx.QueryRowContext(ctx, `SELECT hy2_inbound_tag<>'' FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&hy2Configured); err != nil {
 		return "", errors.New("center: Glivela endpoint is unavailable")
 	}
-	if kind == meridian.NativeCredential && hy2Configured == 1 {
+	if kind == glivela.NativeCredential && hy2Configured == 1 {
 		hy2Auth, tokenErr := randomToken(32)
 		if tokenErr != nil {
 			return "", tokenErr
@@ -1059,13 +1066,13 @@ func (s *Store) insertMeridianCredential(ctx context.Context, tx *sql.Tx, accoun
 		if secretErr != nil {
 			return "", secretErr
 		}
-		hy2SecretID, hy2Identity = value, meridian.Identity(hy2Auth)
+		hy2SecretID, hy2Identity = value, glivela.Identity(hy2Auth)
 	}
 	var egress any
 	if egressNodeID != "" {
 		egress = egressNodeID
 	}
-	credential := meridian.Credential{ID: credentialID, AccountID: accountID, Kind: kind, User: user, Identity: meridian.Identity(protocolID), EntryID: applicationID, EgressID: egressNodeID, Enabled: enabled}
+	credential := glivela.Credential{ID: credentialID, AccountID: accountID, Kind: kind, User: user, Identity: glivela.Identity(protocolID), EntryID: applicationID, EgressID: egressNodeID, Enabled: enabled}
 	if credential.Validate() != nil {
 		return "", errors.New("center: generated Glivela credential is invalid")
 	}
