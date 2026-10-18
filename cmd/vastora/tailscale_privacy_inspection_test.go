@@ -28,10 +28,10 @@ func TestTailscaleIsolationInspectionFailurePreservesCurrentState(t *testing.T) 
 				}
 				environment := tailscaleIsolationEnvironment{overridePath: filepath.Join(root, "privacy.conf"), hostsPath: filepath.Join(root, "hosts"), derpCache: filepath.Join(root, "cache.json")}
 				files := map[string]string{
-					environment.overridePath: tailscalePrivacyOverride,
-					environment.hostsPath: hosts,
+					environment.overridePath:                              tailscalePrivacyOverride,
+					environment.hostsPath:                                 hosts,
 					tailscalePrivacyAppliedPath(environment.overridePath): marker,
-					filepath.Join(root, "tailscaled.state"): "synthetic-node-identity",
+					filepath.Join(root, "tailscaled.state"):               "synthetic-node-identity",
 				}
 				for path, value := range files {
 					if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
