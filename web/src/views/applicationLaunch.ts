@@ -10,6 +10,7 @@ export function isBackgroundApplication(app: AppView | undefined) {
 }
 
 export function desktopApplications(data: AppData, language: Language): DesktopApplication[] {
+  if (data.desktopDataUnavailable) return [];
   const catalog = new Map(data.apps.map((app) => [app.key, app]));
   const groups = new Map<string, DesktopApplication>();
   for (const application of data.applications.filter(isInstalledApplication)) {
@@ -27,6 +28,7 @@ export function desktopApplications(data: AppData, language: Language): DesktopA
 // A single ready management entry can open directly. Multiple installations or
 // web entries need the application's workspace so the user can choose a host.
 export function applicationLaunchURL(data: AppData, appKey: string): string | undefined {
+  if (data.desktopDataUnavailable) return undefined;
   if (appKey === "vastora-official/meridian" || appKey === "vastora-official/3x-ui") return undefined;
   if (appKey === "vastora-official/pulse") return senulunDashboardURL(data);
   const applications = data.applications.filter((app) => app.appKey === appKey && isInstalledApplication(app));
