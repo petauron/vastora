@@ -386,7 +386,7 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 			if legacySnapshot {
 				continue
 			}
-			if _, _, err := s.readCompositeRoutePeers(ctx, tx, endpointID, grant.EgressID, grant.IPv4EgressID, true); err != nil {
+			if _, _, err := s.readCompositeRoutePeers(ctx, tx, endpointID, grant.EgressID, grant.IPv4EgressID, true, true); err != nil {
 				continue
 			}
 		}

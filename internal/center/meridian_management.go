@@ -918,7 +918,7 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 		return MeridianRouteGrantView{}, err
 	}
 	if input.IPv4EgressNodeID != "" {
-		if _, _, err := s.readCompositeRoutePeers(ctx, tx, input.EndpointID, input.EgressNodeID, input.IPv4EgressNodeID, false); err != nil {
+		if _, _, err := s.readCompositeRoutePeers(ctx, tx, input.EndpointID, input.EgressNodeID, input.IPv4EgressNodeID, false, true); err != nil {
 			return MeridianRouteGrantView{}, err
 		}
 	}

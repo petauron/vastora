@@ -635,7 +635,7 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		// identity belongs to Tailscale and must retain its separate ID domain.
 		projectedPeer := glivela.RoutePeer{EgressID: grant.EgressID, Address: peer.Address, Port: landing.SOCKSPort}
 		if grant.IPv4EgressID != "" {
-			pair, runtimePair, pairErr := s.readCompositeRoutePeers(ctx, tx, endpointID, grant.EgressID, grant.IPv4EgressID, true)
+			pair, runtimePair, pairErr := s.readCompositeRoutePeers(ctx, tx, endpointID, grant.EgressID, grant.IPv4EgressID, true, false)
 			if pairErr != nil {
 				result.blockedGrants[grant.ID] = pairErr.Error()
 				result.disabledCredentialIDs[grant.Route.ID] = true

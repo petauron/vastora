@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/petauron/glivela"
+	"strings"
 	"testing"
 	"time"
 
@@ -191,7 +192,7 @@ func TestCompositeCreationCoexistsWithSingleExitWithoutDuplicatingAccounts(t *te
 }
 
 func TestCompositeSecondaryAuthorizationAndFamilyFailClosed(t *testing.T) {
-	for _, condition := range []string{"source removed", "offline", "wrong family", "desired family changed"} {
+	for _, condition := range []string{"source removed", "wrong family", "desired family changed"} {
 		t.Run(condition, func(t *testing.T) {
 			store, six, four, single := compositeCenterFixture(t)
 			combo, err := store.CreateMeridianRouteGrant(context.Background(), MeridianRouteGrantInput{AccountID: sharedSnapshotAccountA, EndpointID: sharedSnapshotEndpointID, EgressNodeID: six, IPv4EgressNodeID: four})
@@ -202,10 +203,6 @@ func TestCompositeSecondaryAuthorizationAndFamilyFailClosed(t *testing.T) {
 			switch condition {
 			case "source removed":
 				desired.Plan.Sources = nil
-			case "offline":
-				if _, err := store.db.Exec(`UPDATE agents SET last_seen_at='' WHERE id=?`, four); err != nil {
-					t.Fatal(err)
-				}
 			case "wrong family":
 				desired.Plan.EgressIP = "2001:4860:4860::8844"
 				applied.Plan.EgressIP = desired.Plan.EgressIP
@@ -241,7 +238,96 @@ func TestCompositeExitPairBindsDistinctPrivateIdentities(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, _, err := store.readCompositeRoutePeers(context.Background(), tx, sharedSnapshotEndpointID, six, four, true); err == nil {
+	if _, _, err := store.readCompositeRoutePeers(context.Background(), tx, sharedSnapshotEndpointID, six, four, true, true); err == nil {
 		t.Fatal("same Tailscale machine identity accepted twice")
+	}
+}
+
+func TestCompositeLandingLivenessDoesNotChangeRuntimeOrRejectObservation(t *testing.T) {
+	store, six, four, _ := compositeCenterFixture(t)
+	ctx := context.Background()
+	if _, err := store.CreateMeridianRouteGrant(ctx, MeridianRouteGrantInput{AccountID: sharedSnapshotAccountA, EndpointID: sharedSnapshotEndpointID, EgressNodeID: six, IPv4EgressNodeID: four}); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := store.queueMeridianRuntime(ctx, tx, sharedSnapshotEndpointID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := store.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, command); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	result := meridianHealthResult(projection, store.now(), true)
+	for i := range result.Peers {
+		if result.Peers[i].EgressID == six {
+			result.Peers[i].Status.ExitIP = "2001:4860:4860::8888"
+		}
+	}
+	completeMeridianHealthFixture(t, store, projection, command, result)
+	const credential = "synthetic-heartbeat-test"
+	if _, err := store.db.Exec(`UPDATE agents SET credential_hash=? WHERE id=?`, tokenHash(credential), projection.agentID); err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range []string{six, four} {
+		for _, online := range []bool{false, true, false, true} {
+			stamp := ""
+			if online {
+				stamp = store.now().UTC().Format(time.RFC3339Nano)
+			}
+			if _, err := store.db.Exec(`UPDATE agents SET last_seen_at=? WHERE id=?`, stamp, node); err != nil {
+				t.Fatal(err)
+			}
+			tx, err := store.db.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := store.readCompositeRoutePeers(ctx, tx, sharedSnapshotEndpointID, six, four, false, true); (err == nil) != online {
+				tx.Rollback()
+				t.Fatalf("creation liveness gate: online=%v err=%v", online, err)
+			}
+			next, err := store.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, projection.agentID)
+			if err != nil {
+				tx.Rollback()
+				t.Fatal(err)
+			}
+			if next.task.Desired.ConfigSHA256 != projection.task.Desired.ConfigSHA256 || next.task.Desired.Revision != projection.task.Desired.Revision {
+				tx.Rollback()
+				t.Fatal("landing liveness changed applied runtime identity")
+			}
+			if err := store.recordMeridianRuntimeObservation(ctx, tx, projection.agentID, result, store.now()); err != nil {
+				tx.Rollback()
+				t.Fatal(err)
+			}
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.Exec(`UPDATE agents SET last_seen_at='' WHERE id=?`, projection.agentID); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.RecordAgentHeartbeat(ctx, projection.agentID, credential, NodeHeartbeat{Version: "test", TailscaleOwnership: "managed", MeridianRuntime: &result}); err != nil {
+				t.Fatal(err)
+			}
+			var seen string
+			if err := store.db.QueryRow(`SELECT last_seen_at FROM agents WHERE id=?`, projection.agentID).Scan(&seen); err != nil || seen == "" {
+				t.Fatalf("heartbeat rolled back: %q %v", seen, err)
+			}
+
+		}
+	}
+
+	forged := result
+	forged.Receipt.ConfigSHA256 = strings.Repeat("0", 64)
+	if err := store.RecordAgentHeartbeat(ctx, projection.agentID, credential, NodeHeartbeat{TailscaleOwnership: "managed", MeridianRuntime: &forged}); err == nil {
+		t.Fatal("forged runtime digest accepted")
 	}
 }
