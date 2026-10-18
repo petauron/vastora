@@ -19,4 +19,3 @@ func (Host) VerifySSH(context.Context, string) error {
 }
 func (Host) CheckPorts([]Rule) error { return nil }
 func (Host) CheckRemoval() error     { return nil }
-func (Host) CheckDynamicUDP() error  { return nil }

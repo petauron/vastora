@@ -122,6 +122,29 @@ func TestNodeSecurityPendingReceiptExpiresWithoutClaimingRollbackSucceeded(t *te
 	}
 }
 
+func TestOrdinaryProxyAndLandingNodesCanPreviewWithoutPublicUDP(t *testing.T) {
+	s := openOrchestrationStore(t)
+	defer s.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, s, "ordinary-proxy-security", NodeCapabilities{Docker: true, NodeSecurity: true}, []networking.Candidate{{Address: "10.0.0.9", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.9", LANAddress: "10.0.0.9", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := s.db.Exec(`INSERT INTO admins(id,username,password_hash,created_at) VALUES('security-admin','security-admin','test-hash','')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{meridianAppKey, threeXUIAppKey} {
+		if _, err := s.db.Exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,created_at,updated_at) VALUES(?,?,?,?,?,'running','','')`, "fixture-"+key, key, node.ID, testSiteID(t, s), key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.Exec(`INSERT INTO landing_server_states(node_id,desired_revision,desired_json,status,updated_at) VALUES(?,1,?,'ready','')`, node.ID, `{"revision":1,"address":"100.64.0.8","sources":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	p := nodesecurity.Policy{PublicInterfaces: []string{"eth0"}, ManagementSources: []string{"203.0.113.10/32"}, SSHPorts: []int{22}, PublicRules: []nodesecurity.Rule{{Protocol: "tcp", Port: 443}}}
+	view, err := s.QueueNodeSecurity(ctx, node.ID, "security-admin", nodesecurity.Task{Action: "preview", Policy: p})
+	if err != nil || view.State != "pending" {
+		t.Fatal("ordinary proxy/landing topology was refused", err)
+	}
+}
+
 func TestSecurityMigration114MatchesFreshSchema(t *testing.T) {
 	s := openOrchestrationStore(t)
 	defer s.Close()

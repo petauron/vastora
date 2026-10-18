@@ -165,15 +165,8 @@ func (s *Store) QueueNodeSecurity(ctx context.Context, agentID, adminID string, 
 }
 
 func preserveSecurityPublicPorts(ctx context.Context, tx *sql.Tx, agentID string, p nodesecurity.Policy) error {
-	// Port 443 does not cover different-source replies to a proxy's dynamically
-	// bound UDP sockets. Refuse, rather than regress, this unsupported topology.
-	var dynamicUDP bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM landing_server_states WHERE node_id=? AND status<>'stopped') OR EXISTS(SELECT 1 FROM applications WHERE node_id=? AND app_key IN (?,?) AND status<>'stopped')`, agentID, agentID, meridianAppKey, threeXUIAppKey).Scan(&dynamicUDP); err != nil {
-		return err
-	}
-	if dynamicUDP {
-		return errors.New("center: this MVP refuses proxy/landing nodes until dynamic UDP return traffic can be preserved and independently verified")
-	}
+	// Ordinary proxy UDP replies use connection tracking. FullCone/P2P and
+	// different-source replies are outside this baseline's explicit MVP scope.
 	required := []nodesecurity.Rule{}
 	var raw []byte
 	if err := tx.QueryRowContext(ctx, `SELECT desired_json FROM node_listener_states WHERE node_id=? AND status<>'stopped'`, agentID).Scan(&raw); err == nil {

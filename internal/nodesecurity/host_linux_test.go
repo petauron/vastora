@@ -37,6 +37,25 @@ func TestPublicGuardPreservesPrivateAndRequiredNetworkTraffic(t *testing.T) {
 	}
 }
 
+func TestOrdinaryProxyRepliesDoNotRequirePublicUDPPortGrants(t *testing.T) {
+	p := fixturePolicy()
+	p.PublicRules = []Rule{{Protocol: "tcp", Port: 443}}
+	for _, v6 := range []bool{false, true} {
+		rules := inputRules(p, v6)
+		if !strings.Contains(rules, "--ctstate ESTABLISHED,RELATED -j RETURN") || !strings.HasSuffix(rules, "-A "+chain+" -j DROP\n") {
+			t.Fatal("ordinary replies or default-deny boundary lost")
+		}
+		for _, line := range strings.Split(rules, "\n") {
+			if strings.Contains(line, "-p udp") && !strings.Contains(line, "--sport 67 --dport 68") && !strings.Contains(line, "--sport 547 --dport 546") {
+				t.Fatal("ordinary proxy scope added a public UDP grant", line)
+			}
+		}
+		if strings.Contains(rules, "cgroup") || strings.Contains(rules, "--mark") || strings.Contains(rules, "--dports") {
+			t.Fatal("experimental dynamic UDP authorization entered product rules")
+		}
+	}
+}
+
 func TestUFWEmptyRuleInventoryDoesNotMistakeHeaderForRule(t *testing.T) {
 	const header = "Added user rules (see 'ufw status' for running firewall):\n"
 	if !emptyUFWUserRules(header + "(None)\n") {
@@ -142,12 +161,64 @@ func TestDockerUsesOnlyUserChainAndOriginalPublishedPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(calls, "\n")
-	if !strings.Contains(joined, "--ctorigdstport 443") || !strings.Contains(joined, "--ctstatus DNAT -j DROP") || !strings.Contains(joined, "-I DOCKER-USER 1 -j VASTORA-DOCKER") {
+	if !strings.Contains(joined, "--ctorigdstport 443") || !strings.Contains(joined, "--ctstate DNAT -j DROP") || strings.Contains(joined, "--ctstatus DNAT") || !strings.Contains(joined, "-I DOCKER-USER 1 -j VASTORA-DOCKER") {
 		t.Fatal("Docker published port guard missing")
 	}
 	for _, bad := range []string{"-F DOCKER", "-P FORWARD", "-I FORWARD", "--dport 1080", " -j ACCEPT"} {
 		if strings.Contains(joined, bad) {
 			t.Fatal("Docker isolation changed", bad)
+		}
+	}
+}
+
+func TestDockerRollbackRemovesAnOwnedPartialChainWithoutAParentHook(t *testing.T) {
+	p := fixturePolicy()
+	first := strings.Join(dockerGuardRules(p)[0], " ")
+	for _, foreign := range []bool{false, true} {
+		var calls []string
+		h := Host{run: func(_ context.Context, tool string, args ...string) (string, error) {
+			call := strings.Join(args, " ")
+			calls = append(calls, call)
+			switch call {
+			case "-S":
+				return "-N VASTORA-DOCKER", nil
+			case "-S VASTORA-DOCKER":
+				return "-N VASTORA-DOCKER\n-A VASTORA-DOCKER " + first, nil
+			case "-C DOCKER-USER -j VASTORA-DOCKER":
+				return "", errors.New("fixture: installation did not reach parent hook")
+			case "-C VASTORA-DOCKER " + first:
+				if foreign {
+					return "", errors.New("fixture: administrator changed the rule")
+				}
+			}
+			return "", nil
+		}}
+		err := h.dockerRules(context.Background(), "iptables", p, false)
+		flushed := strings.Contains(strings.Join(calls, "\n"), "-F VASTORA-DOCKER")
+		if foreign {
+			if err == nil || flushed {
+				t.Fatal("rollback overwrote an unknown Docker child rule")
+			}
+		} else if err != nil || !flushed || !strings.Contains(strings.Join(calls, "\n"), "-X VASTORA-DOCKER") {
+			t.Fatal("owned interrupted installation was not cleaned", err)
+		}
+	}
+}
+
+func TestDockerRuleComparisonNormalizesOptionsButNotPolicy(t *testing.T) {
+	rule := dockerGuardRules(fixturePolicy())[0]
+	actual := "-A VASTORA-DOCKER -i eth0 -p tcp -m conntrack --ctorigdstport 443 --ctdir ORIGINAL -j RETURN"
+	if !sameDockerRule(actual, rule) {
+		t.Fatal("iptables canonical option order rejected")
+	}
+	for _, changed := range []string{
+		strings.Replace(actual, "443", "8443", 1),
+		strings.Replace(actual, "RETURN", "ACCEPT", 1),
+		strings.Replace(actual, "ORIGINAL", "REPLY", 1),
+		actual + " -m comment --comment foreign",
+	} {
+		if sameDockerRule(changed, rule) {
+			t.Fatal("changed Docker rule adopted", changed)
 		}
 	}
 }

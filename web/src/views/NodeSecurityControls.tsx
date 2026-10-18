@@ -58,7 +58,7 @@ export function NodeSecurityControls({ nodeId, language }: { nodeId: string; lan
   return <FieldSet>
     <FieldLegend>{copy(language, "公网安全基线", "Public-node security baseline")}</FieldLegend>
     <FieldDescription>{copy(language, "逐台显式启用。仅保护批准的公网网卡与 SSH；不重置 Docker、私网或落地防火墙。请先准备独立恢复通道。", "Opt in per node. Protects approved public interfaces and SSH without resetting Docker, private networking or landing firewalls. Prepare an independent recovery path first.")}</FieldDescription>
-    <FieldDescription>{copy(language, "草稿限制：代理与落地节点暂不允许启用，动态 UDP 回包尚未完成独立验收。", "Draft limitation: proxy and landing nodes are refused until dynamic UDP return traffic has independent acceptance.")}</FieldDescription>
+    <FieldDescription>{copy(language, "首期仅支持普通 TCP/UDP 代理请求及对应回包，不保证 FullCone、P2P 打洞或不同来源的 UDP 回包；不会自动开放代理 UDP 入站端口。", "MVP scope: ordinary TCP/UDP proxy requests and their replies, not FullCone, P2P hole punching or different-source UDP replies. Proxy UDP ingress ports are not opened automatically.")}</FieldDescription>
     <FieldDescription role="status">{active ? copy(language, "正在等待节点执行…", "Waiting for the node…") : labels[state]}</FieldDescription>
     {result?.deadline ? <FieldDescription>{copy(language, "验证/回滚截止时间：", "Verification/rollback deadline: ")}{new Date(result.deadline).toLocaleString()}</FieldDescription> : null}
     {!result?.revision || state === "rolled_back" || state === "preview" && !result?.supported ? <Button type="button" variant="outline" disabled={active} onClick={() => void queue("prepare")}>{copy(language, "准备缺少的系统依赖（不启用防护）", "Prepare missing system packages (protection stays off)")}</Button> : null}

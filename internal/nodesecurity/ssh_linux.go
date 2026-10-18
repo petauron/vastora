@@ -234,10 +234,22 @@ func (h Host) verifyRuntime(ctx context.Context, s *checkpoint) error {
 	}
 	if s.Docker {
 		for _, tool := range []string{"iptables", "ip6tables"} {
-			if _, e := h.run(ctx, tool, "-S", "DOCKER-USER"); e == nil {
-				if _, e = h.run(ctx, tool, "-C", "DOCKER-USER", "-j", "VASTORA-DOCKER"); e != nil {
-					return errors.New("security: Docker guard is missing")
-				}
+			if _, e := h.run(ctx, tool, "-S", "DOCKER-USER"); e != nil {
+				return errors.New("security: Docker user-chain backend is unavailable")
+			}
+			if _, e := h.run(ctx, tool, "-C", "FORWARD", "-j", "DOCKER-USER"); e != nil {
+				return errors.New("security: Docker user chain is detached")
+			}
+			if _, e := h.run(ctx, tool, "-C", "DOCKER-USER", "-j", "VASTORA-DOCKER"); e != nil {
+				return errors.New("security: Docker guard is missing")
+			}
+			parent, e := h.run(ctx, tool, "-S", "DOCKER-USER")
+			lines := strings.Split(parent, "\n")
+			if e != nil || len(lines) < 2 || lines[1] != "-A DOCKER-USER -j VASTORA-DOCKER" {
+				return errors.New("security: Docker guard is no longer first")
+			}
+			if e := h.verifyDockerRules(ctx, tool, s.View.Policy, false); e != nil {
+				return e
 			}
 		}
 	}

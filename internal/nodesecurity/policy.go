@@ -16,10 +16,6 @@ import (
 const Kind = "node.security"
 const ConfirmationWindowSeconds = 300
 
-func DynamicUDPApplication(key string) bool {
-	return key == "vastora-official/meridian" || key == "vastora-official/3x-ui"
-}
-
 type Rule struct {
 	Protocol string `json:"protocol"`
 	Port     int    `json:"port"`

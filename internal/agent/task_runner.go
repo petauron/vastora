@@ -194,9 +194,6 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	if err == nil && task.Kind == "agent.decommission" {
 		err = nodesecurity.NewHost().CheckRemoval()
 	}
-	if err == nil && (task.LandingServerState != nil || task.MeridianRuntime != nil || nodesecurity.DynamicUDPApplication(task.AppKey)) {
-		err = nodesecurity.NewHost().CheckDynamicUDP()
-	}
 	if err != nil {
 		// Preserve the normal authenticated failure/receipt lifecycle below.
 	} else if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) {
@@ -208,23 +205,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				err = errors.New("agent: node security capability is not configured")
 			} else {
 				store.landingMutationMu.Lock()
-				var value nodesecurity.View
-				var securityErr error
-				if task.NodeSecurity.Action == "preview" || task.NodeSecurity.Action == "apply" {
-					var installations []InstallationStatus
-					installations, securityErr = store.ListApplied(ctx)
-					if securityErr == nil {
-						for _, installation := range installations {
-							if nodesecurity.DynamicUDPApplication(installation.AppKey) {
-								securityErr = errors.New("security: this MVP refuses installed dynamic-UDP proxy runtimes")
-								break
-							}
-						}
-					}
-				}
-				if securityErr == nil {
-					value, securityErr = nodesecurity.NewHost().Execute(ctx, *task.NodeSecurity)
-				}
+				value, securityErr := nodesecurity.NewHost().Execute(ctx, *task.NodeSecurity)
 				store.landingMutationMu.Unlock()
 				result.NodeSecurity, err = &value, securityErr
 			}

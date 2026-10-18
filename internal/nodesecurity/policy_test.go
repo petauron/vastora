@@ -79,14 +79,3 @@ func TestEvidenceCannotClaimProtectionWithoutPolicy(t *testing.T) {
 		t.Fatal("oversized result accepted")
 	}
 }
-
-func TestDynamicUDPWorkloadsAreExplicitlyRecognized(t *testing.T) {
-	for _, key := range []string{"vastora-official/meridian", "vastora-official/3x-ui"} {
-		if !DynamicUDPApplication(key) {
-			t.Fatal("dynamic UDP runtime was not fenced")
-		}
-	}
-	if DynamicUDPApplication("vastora-official/cpa") {
-		t.Fatal("ordinary web runtime misclassified")
-	}
-}

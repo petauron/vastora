@@ -292,16 +292,7 @@ func (h Host) Execute(ctx context.Context, t Task) (View, error) {
 			return View{}, err
 		}
 		if t.Action == "confirm" {
-			if s.View.State == "verified" {
-				return s.View, nil
-			}
-			if s.View.State != "pending_confirmation" || !s.SSHVerified {
-				return View{}, errors.New("security: fresh SSH verification is required before confirming")
-			}
-			s.View.State = "verified"
-			s.View.Deadline = ""
-			err = saveCheckpoint(s)
-			return s.View, err
+			return h.confirm(ctx, s)
 		}
 		if s.View.State != "verified" {
 			return View{}, errors.New("security: only a verified SSH jail can be managed")
@@ -309,6 +300,28 @@ func (h Host) Execute(ctx context.Context, t Task) (View, error) {
 		_, err = h.run(ctx, "fail2ban-client", "set", "sshd", "unbanip", t.Address)
 		return s.View, err
 	}
+}
+
+func (h Host) confirm(ctx context.Context, s *checkpoint) (View, error) {
+	if s.View.State != "verified" && (s.View.State != "pending_confirmation" || !s.SSHVerified) {
+		return View{}, errors.New("security: fresh SSH verification is required before confirming")
+	}
+	// A fresh SSH receipt and unchanged files do not prove that the current
+	// firewall/jail still enforce them. Never cancel recovery on stale evidence,
+	// including a replay of an already confirmed operation.
+	if err := h.verifyRuntime(ctx, s); err != nil {
+		return s.View, err
+	}
+	if s.View.State == "verified" {
+		return s.View, nil
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, s.View.Deadline)
+	if err != nil || !h.now().Before(deadline) {
+		return s.View, errors.New("security: confirmation window expired during runtime verification")
+	}
+	s.View.State = "verified"
+	s.View.Deadline = ""
+	return s.View, saveCheckpoint(s)
 }
 
 func (h Host) preview(ctx context.Context, p Policy, s *checkpoint) (View, error) {
@@ -420,9 +433,6 @@ func (h Host) preview(ctx context.Context, p Policy, s *checkpoint) (View, error
 		}
 	}
 	// Snapshot all listening ports for operator review, without process arguments.
-	if _, e := os.Lstat("/etc/vastora-landing/danted.conf"); e == nil {
-		reject("This MVP refuses native landing hosts until dynamic UDP return traffic has independent acceptance.")
-	}
 	if listeners, e := h.run(ctx, "ss", "-H", "-lntu"); e == nil {
 		for _, line := range strings.Split(listeners, "\n") {
 			if len(v.Listeners) < 256 && len(line) <= 256 {
@@ -804,28 +814,34 @@ func (h Host) verifyFiles(s *checkpoint) error {
 func (h Host) dockerRules(ctx context.Context, tool string, p Policy, enable bool) error {
 	name := "VASTORA-DOCKER"
 	if !enable {
-		if _, err := h.run(ctx, tool, "-C", "DOCKER-USER", "-j", name); err != nil {
+		inventory, err := h.run(ctx, tool, "-S")
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(strings.Split(inventory, "\n"), "-N "+name) {
 			return nil
 		}
-		if _, err := h.run(ctx, tool, "-D", "DOCKER-USER", "-j", name); err != nil {
+		// An interrupted install can leave a known prefix before its parent
+		// hook exists. Refuse unknown edits rather than flushing by name alone.
+		if err := h.verifyDockerRules(ctx, tool, p, true); err != nil {
 			return err
+		}
+		if _, err := h.run(ctx, tool, "-C", "DOCKER-USER", "-j", name); err == nil {
+			if _, err = h.run(ctx, tool, "-D", "DOCKER-USER", "-j", name); err != nil {
+				return err
+			}
 		}
 		if _, err := h.run(ctx, tool, "-F", name); err != nil {
 			return err
 		}
-		_, err := h.run(ctx, tool, "-X", name)
+		_, err = h.run(ctx, tool, "-X", name)
 		return err
 	}
 	if _, err := h.run(ctx, tool, "-N", name); err != nil {
 		return err
 	}
-	for _, iface := range p.PublicInterfaces {
-		for _, rule := range p.PublicRules {
-			if _, err := h.run(ctx, tool, "-A", name, "-i", iface, "-p", rule.Protocol, "-m", "conntrack", "--ctdir", "ORIGINAL", "--ctorigdstport", strconv.Itoa(rule.Port), "-j", "RETURN"); err != nil {
-				return err
-			}
-		}
-		if _, err := h.run(ctx, tool, "-A", name, "-i", iface, "-m", "conntrack", "--ctdir", "ORIGINAL", "--ctstatus", "DNAT", "-j", "DROP"); err != nil {
+	for _, rule := range dockerGuardRules(p) {
+		if _, err := h.run(ctx, tool, append([]string{"-A", name}, rule...)...); err != nil {
 			return err
 		}
 	}
@@ -833,10 +849,66 @@ func (h Host) dockerRules(ctx context.Context, tool string, p Policy, enable boo
 	return err
 }
 
+func dockerGuardRules(p Policy) [][]string {
+	var rules [][]string
+	for _, iface := range p.PublicInterfaces {
+		for _, rule := range p.PublicRules {
+			rules = append(rules, []string{"-i", iface, "-p", rule.Protocol, "-m", "conntrack", "--ctdir", "ORIGINAL", "--ctorigdstport", strconv.Itoa(rule.Port), "-j", "RETURN"})
+		}
+		rules = append(rules, []string{"-i", iface, "-m", "conntrack", "--ctdir", "ORIGINAL", "--ctstate", "DNAT", "-j", "DROP"})
+	}
+	return rules
+}
+
+func (h Host) verifyDockerRules(ctx context.Context, tool string, p Policy, partial bool) error {
+	const name = "VASTORA-DOCKER"
+	actual, err := h.run(ctx, tool, "-S", name)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(strings.TrimSpace(actual), "\n")
+	rules := dockerGuardRules(p)
+	n := len(lines) - 1
+	if lines[0] != "-N "+name || n > len(rules) || !partial && n != len(rules) {
+		return errors.New("security: Docker guard ownership or rule count changed")
+	}
+	for i, rule := range rules[:n] {
+		if !sameDockerRule(lines[i+1], rule) {
+			return errors.New("security: Docker guard rule order or ownership changed")
+		}
+		if _, err := h.run(ctx, tool, append([]string{"-C", name}, rule...)...); err != nil {
+			return errors.New("security: Docker guard policy changed")
+		}
+	}
+	return nil
+}
+
+// Only the generated Docker guard grammar is accepted: flag/value pairs with
+// validated interfaces, numeric ports and fixed targets. iptables -S reorders
+// conntrack options; normalize those pairs, not the order of firewall rules.
+func sameDockerRule(actual string, expected []string) bool {
+	fields := strings.Fields(actual)
+	if len(fields) != len(expected)+2 || fields[0] != "-A" || fields[1] != "VASTORA-DOCKER" || len(expected)%2 != 0 {
+		return false
+	}
+	pairs := func(args []string) []string {
+		values := make([]string, 0, len(args)/2)
+		for i := 0; i < len(args); i += 2 {
+			values = append(values, args[i]+"\x00"+args[i+1])
+		}
+		slices.Sort(values)
+		return values
+	}
+	return slices.Equal(pairs(fields[2:]), pairs(expected))
+}
+
 func (h Host) rollback(ctx context.Context, s *checkpoint) error {
 	if s.View.State == "rolled_back" {
 		for _, tool := range []string{"iptables", "ip6tables"} {
 			if err := h.removeInputGuard(ctx, tool, s.View.Policy); err != nil {
+				return err
+			}
+			if err := h.dockerRules(ctx, tool, s.View.Policy, false); err != nil {
 				return err
 			}
 		}
@@ -942,17 +1014,6 @@ func (h Host) CheckRemoval() error {
 		return err
 	}
 	return nil
-}
-
-func (h Host) CheckDynamicUDP() error {
-	s, err := loadCheckpoint()
-	if err != nil {
-		return err
-	}
-	if s == nil || s.View.State == "unconfigured" || s.View.State == "preview" || s.View.State == "rolled_back" {
-		return nil
-	}
-	return errors.New("security: explicitly revert this MVP baseline before configuring a dynamic-UDP proxy or landing runtime")
 }
 
 func (h Host) restoreDockerGuard(ctx context.Context, s *checkpoint) error {

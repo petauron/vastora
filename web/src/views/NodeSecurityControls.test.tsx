@@ -23,6 +23,9 @@ it("does not install or enable anything on opening the node page", async () => {
   const container = await render({ id: "", state: "unconfigured" });
   expect(mutate).not.toHaveBeenCalled();
   expect(container.textContent).toContain("尚未配置");
+  expect(container.textContent).toContain("普通 TCP/UDP 代理请求及对应回包");
+  expect(container.textContent).toContain("不会自动开放代理 UDP 入站端口");
+  expect(container.textContent).not.toContain("代理与落地节点暂不允许启用");
   expect(findButton(container, "应用，5 分钟内验证确认")).toBeUndefined();
 });
 

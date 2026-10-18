@@ -5,13 +5,15 @@ enable this baseline automatically. A public egress IP is not proof of public
 ingress: the administrator explicitly reviews default-route interfaces, globally
 routed IPv6, cloud NAT mappings, management sources and service ports.
 
-**Draft limitation / merge blocker:** managed Meridian/3x-ui and native landing
-nodes currently reject enablement. A default-deny public INPUT chain can block
-different-source replies to dynamically bound outbound UDP sockets; approving
-443/udp alone does not preserve FullCone behavior. The Agent also fences adding
-these runtimes while this baseline is active. Socket/cgroup-scoped return rules
-and real-host UDP acceptance are concrete remaining work for #955. Do not close
-the issue or deploy this draft as protection for the proxy fleet.
+**Current MVP scope, clarified by the owner on 2026-10-19:** ordinary proxy TCP
+and UDP requests and their corresponding replies, with a TCP 443 public proxy
+entry. FullCone, P2P hole punching and different-source UDP replies are not
+required. Existing connection-tracking rules handle ordinary replies; no proxy
+UDP port range, socket classifier, packet mark or dynamic port cache is added.
+Necessary existing private-transport/service ports still require explicit review.
+Proxy/landing topology alone no longer rejects enablement. Existing SSH,
+ownership, backend, publication and rollback checks remain mandatory. This PR
+remains a draft pending review, new CI and the remaining applicable matrix checks.
 
 ## Workflow
 
@@ -125,8 +127,9 @@ This was not a production rollout or full Center/catalog enrollment.
   different-source UDP replies after a multi-target association.
 - With the baseline enabled, TCP and normal UDP still passed, including
   Xray → SOCKS5 → Dante → synthetic target. Different-source UDP replies failed
-  for both runtimes, with the owned public deny counter increasing. This is a
-  reproduced merge blocker, not a hypothetical FullCone feature request.
+  for both runtimes, with the owned public deny counter increasing. This was a
+  reproduced blocker under the original scope; different-source replies were
+  explicitly excluded by the subsequent owner clarification above.
 - The approved public TCP port remained reachable; an unapproved listening port
   and public SSH from a non-management source were denied. The native landing
   source restriction continued rejecting an unauthorized private source.
@@ -158,9 +161,160 @@ This was not a production rollout or full Center/catalog enrollment.
 
 These results do not establish Docker bridge/container acceptance, a complete
 VLESS/REALITY handshake, real Tailscale, IPv6 packet delivery, Ubuntu coverage,
-or reboot recovery. Dynamic UDP preservation remains required before merge.
+or reboot recovery. Those applicable checks remain necessary; preservation of
+different-source UDP replies is no longer part of the clarified MVP.
+
+### Follow-up isolated socket experiments, 2026-10-19
+
+A new dedicated unprivileged Debian 13.6 LXC was used, without reusing other
+tests or opening public ingress: 1 CPU, 1 GiB RAM, 256 MiB swap and an 8 GiB
+disk. Public-shaped IPv4/IPv6 peers were synthetic namespaces inside that LXC.
+Neither production nodes nor host networking were changed. No project
+dependency or application capability was added.
+
+The socket experiments are **not a shipped implementation**:
+
+- The existing deny-by-default guard reproduced the failure in both families:
+  ordinary replies passed, but replies from a different address/port failed.
+- A separately owned nft table classified sockets by their actual cgroup and
+  passed a test-only packet mark to a persistent UFW child chain. This restored
+  both families without editing an iptables-nft-owned table through native nft.
+  Explicitly excluded test listeners remained blocked across UFW reload.
+- Restarting the service left the old nft cgroup selector referring to the old
+  kernel identity; alternative-source replies failed closed until the selector
+  was regenerated. Fixture-only start/stop hooks regenerated it from the new
+  cgroup; a subsequent LXC reboot restored the synthetic paths and listener
+  exclusions. Fixed fixture unit names are not production ownership evidence.
+- A counterexample invalidated blanket cgroup authorization: another UDP
+  listener in the same service, not explicitly excluded, became reachable.
+  Process ownership alone does not establish an outbound socket's purpose.
+- A second counterexample invalidated a recent-outbound-port cache, even when
+  combined with the current socket's cgroup: an outbound socket sent traffic and
+  closed; a new, otherwise unapproved listener in the same process rebound its
+  port and inherited the cached permission. A timeout does not bind a grant to
+  the lifetime of the original socket.
+
+Therefore neither workaround is enabled in the product. Under the original
+scope, a required next capability would have been trustworthy
+outbound-socket identity, or a demonstrably complete runtime listener/egress
+contract that excludes internal listeners throughout configuration changes and
+socket reuse. Current Docker inspection/systemd invocation evidence establishes
+process ownership, not socket purpose. nft socket/cgroup lookup and timed sets
+are available but do not by themselves close the demonstrated gap. Do not
+substitute port polling, blanket UDP permission, or wider application privileges.
+After the owner's ordinary-proxy clarification, this experimental authorization
+is unnecessary and the topology-only refusal is removed without adding it.
+
+An independent confirmation defect was fixed: both first confirmation and an
+already-verified replay now recheck effective UFW rules and the live SSH jail
+before accepting success. Docker evidence also requires an available
+DOCKER-USER chain actually reached from FORWARD, rather than silently accepting
+a missing/detached backend. Confirmation also rechecks its deadline after the
+runtime inspection, so a slow check cannot confirm an expired revision. Failed
+checks leave recovery state/deadline intact.
+
+- All nodesecurity unit tests passed in the new LXC, including confirmation
+  failure/replay and missing/detached Docker-chain fixtures.
+- A temporary, restricted acceptance driver exercised the real host verifier:
+  UFW stopped, IPv4 DROP removed, IPv6 DROP removed and SSH jail stopped each
+  refused confirmation without changing pending recovery state. Restoring each
+  component permitted a healthy verified replay. The driver waited for jail
+  readiness; its first run had correctly refused a not-yet-ready jail.
+- This is not new SSH-authentication, complete apply/watchdog, real Docker,
+  Dante/Xray, bridge/NAT, Tailscale or Ubuntu acceptance. The synthetic reboot
+  experiment does not establish production runtime reconciliation or complete
+  security-policy reboot recovery. #955/#957 remain incomplete.
+
+No permission expansion is implicit in this investigation. Xray documents an
+outbound `SO_MARK` option, but using it is not a firewall-only change: the current
+managed runtimes drop capabilities and native landing has an empty capability
+bounding set. Its permission requirements and Dante parity would need a separate
+reviewed runtime contract. Introducing a new dependency/kernel mechanism,
+widening application capabilities, or relaxing preservation of existing UDP
+behavior requires an explicit decision, not an automatic workaround.
+
+### Clarified ordinary-proxy acceptance, 2026-10-19
+
+Following the owner's clarification, the same dedicated LXC exercised an actual
+synthetic chain: client → HAProxy TCP 443 with exact SNI → VLESS+REALITY → native
+Dante 1.4.4 → local synthetic HTTP/UDP target. Xray 26.9.30 was used as the entry
+and client, not as a replacement landing runtime. Its official release archive
+digest matched the cached archive. Native landing configuration, unit and nft
+policy were generated by the existing project implementation; its non-root and
+empty-capability boundary was retained. Docker 29.9.1 used its existing
+iptables/DOCKER-USER backend, without switching the daemon firewall backend.
+
+The narrowed slice removes the topology-only refusals in Center/Agent/Host and
+their unused helpers. Publication-port checks, typed task authorization,
+serialization, ownership refusal, fresh SSH evidence and rollback remain.
+The node page states the ordinary TCP/UDP scope using its existing components.
+No experimental socket classifier, mark, port cache, blanket UDP range or new
+project dependency is shipped.
+
+Real Docker acceptance exposed and corrected two additional defects:
+
+- DNAT is a conntrack **state**, not `--ctstatus DNAT`; use `--ctstate DNAT`.
+- A failed installation could leave the owned child chain before attaching its
+  parent hook. Rollback/reconciliation now removes a verified generated prefix
+  even without that hook, and refuses unknown/edited rules instead of flushing
+  arbitrary contents. The observed failed apply rolled back and the orphan was
+  subsequently reconciled before a supported preview and successful apply.
+
+Confirmation checks parent reachability/first position and the child's complete
+ordered policy, not only rule membership/count. Comparison accepts iptables'
+canonical conntrack-option order, while retaining exact firewall rule order.
+A real same-count/same-members DROP-before-allow reordering was refused by
+confirmation and restored exactly; regression tests cover that counterexample.
+
+Passed in the isolated fixture:
+
+- IPv4 TCP and corresponding UDP replies through the REALITY/Dante chain
+  before enablement, while pending, after UFW reload, after confirmation and
+  after confirmed-policy reboots. IPv6 client entry passed under the confirmed
+  policy and after reboot; both entry families also passed after boot rollback.
+  This does not claim IPv6 Dante egress or different-source UDP support.
+- An old multiplexed SSH connection was refused for the new revision; fresh
+  pre/post-apply SSH evidence passed, as did a new authenticated SSH connection
+  after reboot. Internal proxy backends and unapproved SSH sources stayed denied.
+- Approved IPv4 bridge/host and IPv6 bridge Docker TCP 443 bindings passed; a subsequently created
+  unapproved published port was blocked. Container outbound NAT and internal
+  DNS/interconnect remained usable after apply/reload/reboot.
+- IPv6 tests covered real listeners through both INPUT and Docker FORWARD:
+  approved 443 passed, unapproved published/host ports and SSH source failed.
+  With IPv6 FORWARD policy ACCEPT after reload, the owned Docker DNAT DROP and
+  public INPUT DROP counters increased for the respective negative probes.
+- Without a running Agent/Center or an explicit disable, the genuine five-minute
+  watchdog expired the pending policy and rolled it back. Separately, reboot of
+  an unconfirmed revision triggered independent rollback **before its original
+  deadline**, with SSH and ordinary proxy access still working.
+- Native landing policy survived reload and reboot. The first raw-hash mismatch
+  was exactly reproduced by changing only table handle 4 back to 2; the original
+  digest was not replaced. A subsequent captured before/after reboot comparison
+  had no normalized semantic difference. The existing read-only policy verifier
+  passed; the exact authorized private source worked and another private source
+  was still denied. No actual rule change was hidden by accepting a new hash.
+- Final nodesecurity tests, the focused Center security/task/migration tests,
+  and focused Agent task tests passed inside the LXC. Temporary acceptance
+  drivers are not part of the PR or a release.
+- The final idle fixture snapshot was 163 MiB used / 860 MiB available out of
+  1 GiB, with no swap use. This is not a peak-memory or production-load budget.
+
+Boundaries: not an enrolled production Center/Agent run, Ubuntu matrix, real
+Headscale/Tailscale deployment, public WAN/NAT or throughput benchmark. The LXC
+shares the PVE kernel and is not an independent VPS-kernel acceptance. Future
+Xray landing replacement needs its own ordinary TCP/UDP, private/UID boundary,
+reload and reboot verification; Dante results do not establish that result.
+FullCone/P2P/different-source UDP remain out of scope. Frontend assertions were
+updated but not executed locally; exact-head CI/CodeQL results must be checked
+separately on PR #957 after the authorized push. No production node, dependency
+manifest or original draft was changed. Submission does not authorize merge,
+release or production deployment.
+The fixture policy was rolled back, its services/containers stopped, ephemeral
+SSH credentials removed, and the dedicated LXC stopped with disk/evidence retained.
 
 Sources: [UFW manual](https://manpages.ubuntu.com/manpages/noble/man8/ufw.8.html),
 [Docker iptables user rules](https://docs.docker.com/engine/network/firewall-iptables/),
 [Docker nftables backend](https://docs.docker.com/engine/network/firewall-nftables/),
-[Fail2ban configuration](https://github.com/fail2ban/fail2ban/tree/master/config).
+[Fail2ban configuration](https://github.com/fail2ban/fail2ban/tree/master/config),
+[Xray socket options](https://xtls.github.io/en/config/transports/sockopt.html),
+[Xray 26.9.30 release](https://github.com/XTLS/Xray-core/releases/tag/v26.9.30).
