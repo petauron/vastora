@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -105,6 +106,9 @@ func senulunUpgradeEnvironment(previous, desired []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	converted = slices.DeleteFunc(converted, func(entry string) bool {
+		return strings.HasPrefix(entry, "SENULUN_SETUP_TOKEN_FILE=")
+	})
 	for i, entry := range converted {
 		if strings.HasPrefix(entry, "SENULUN_DATABASE_PATH=") {
 			if entry != "SENULUN_DATABASE_PATH=/var/lib/senulun/pulse.db" && entry != "SENULUN_DATABASE_PATH=/var/lib/senulun/store/senulun.db" {
@@ -114,8 +118,8 @@ func senulunUpgradeEnvironment(previous, desired []string) ([]string, error) {
 		}
 	}
 	// Preserve all existing choices, including OAuth, limits and the traffic
-	// credential key. Only the current managed public origin/token path are
-	// authoritative replacements. Nothing is printed or persisted to Center.
+	// credential key. Desired package assignments replace matching values.
+	// Nothing is printed or persisted to Center.
 	for _, assignment := range desired {
 		key, _, _ := strings.Cut(assignment, "=")
 		found := false

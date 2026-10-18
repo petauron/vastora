@@ -11,7 +11,7 @@ func TestCollectorRequiresCredentialFreeHTTPSRoot(t *testing.T) {
 			t.Fatalf("accepted unsafe endpoint %s", endpoint)
 		}
 	}
-	if err := (AgentConfig{ServiceURL: "https://senulun.example.com/", ServiceApplicationID: "service", NodeName: "node"}).Validate(); err != nil {
+	if err := (AgentConfig{ServiceURL: "https://senulun.example.com/", NodeName: "node"}).Validate(); err != nil {
 		t.Fatal(err)
 	}
 }

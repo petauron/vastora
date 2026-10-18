@@ -162,9 +162,6 @@ func (s *Store) deploymentCredentials(ctx context.Context, queryer interface {
 	if json.Unmarshal(plain, &values) != nil {
 		return OneTimeCredentials{}, errors.New("center: one-time deployment credentials are invalid")
 	}
-	if appKey == senulunAppKey && (operation == "install" || operation == "upgrade") && len(values["setup_token"]) >= 32 {
-		return OneTimeCredentials{SetupToken: values["setup_token"]}, nil
-	}
 	if appKey == threeXUIAppKey && operation == "install" && strings.TrimSpace(values["username"]) != "" && strings.TrimSpace(values["password"]) != "" {
 		return OneTimeCredentials{Username: values["username"], Password: values["password"]}, nil
 	}

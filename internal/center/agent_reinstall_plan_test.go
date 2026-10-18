@@ -81,7 +81,7 @@ func TestAgentReinstallPlanKeepsSavedVersionsAndRecoveryRequirements(t *testing.
 	store, node := reinstallPlanFixture(t)
 	cases := []struct{ id, key, version, recovery, requirement string }{
 		{"meridian", meridianAppKey, "0.1.0-alpha.12", "rebuild_configuration", "validate_saved_meridian_intent_and_credentials"},
-		{"collector", senulunAgentAppKey, "0.1.0-alpha.5", "reenroll_monitor", "replace_managed_monitor_enrollment"},
+		{"collector", senulunAgentAppKey, "0.1.0-alpha.5", "restore_data", "restore_backup_on_replacement"},
 		{"monitor", senulunAppKey, "0.1.0-alpha.5", "restore_data", "restore_backup_on_replacement"},
 		{"cpa", "vastora-official/cpa", "7.2.130", "restore_data", "restore_backup_on_replacement"},
 		{"custom", "external/custom", "1.0.0", "restore_data", "restore_backup_on_replacement"},

@@ -1,19 +1,13 @@
 import { ActivityIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import type { AppData } from "../types";
 import type { Language } from "../translations";
-import { isInstalledApplication, senulunPrivateAccess } from "./appAccess";
 import { copy } from "./shared";
 
-export function SenulunSetupNotice({ data, language }: { data: AppData; language: Language }) {
-  const ready = Boolean(senulunPrivateAccess(data));
-  const collectors = data.applications.filter((app) => app.appKey === "vastora-official/pulse-agent" && isInstalledApplication(app)).length;
+export function SenulunSetupNotice({ language }: { language: Language }) {
   return <Alert>
     <ActivityIcon aria-hidden="true" />
-    <AlertTitle>{copy(language, "全局节点监控", "Global node monitoring")}</AlertTitle>
-    <AlertDescription>{ready
-      ? copy(language, `已安装 ${collectors} 个探针。可从应用商店为其他节点安装“Senulun 探针”，接入信息自动配置。`, `${collectors} collector(s) installed. Install Senulun Agent on other nodes from the App Store; enrollment is automatic.`)
-      : copy(language, "先在下方添加私网 HTTPS 入口，再从应用商店安装 Senulun 探针。现有 Komari 不受影响。", "Add a private HTTPS access point below, then install Senulun Agent from the App Store. Existing Komari installations are unchanged.")}
+    <AlertTitle>{copy(language, "在 Senulun 中管理监控", "Manage monitoring in Senulun")}</AlertTitle>
+    <AlertDescription>{copy(language, "打开 Senulun 完成管理员设置，并在其中创建探针配对令牌。安装探针时填写可访问的 Senulun HTTPS 地址、节点名称和令牌；监控主机可以独立部署在 Vastora 之外。", "Open Senulun to set up its administrator and create an Agent enrollment token. Install the Agent with a reachable Senulun HTTPS URL, node name and token. The monitoring service can run outside Vastora.")}
     </AlertDescription>
   </Alert>;
 }

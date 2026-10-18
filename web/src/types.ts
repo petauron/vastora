@@ -520,7 +520,7 @@ export type Deployment = {
   error?: string;
   reconciliationRequired?: boolean;
   applicationId?: string;
-  oneTimeCredentials?: { username?: string; password?: string; setupToken?: string };
+  oneTimeCredentials?: { username?: string; password?: string };
   oneTimeCredentialsAvailable?: boolean;
   createdAt: string;
   updatedAt: string;

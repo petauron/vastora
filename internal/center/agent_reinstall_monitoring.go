@@ -44,7 +44,7 @@ func (s *Store) readReinstallMonitoring(ctx context.Context, tx *sql.Tx, plan *A
 		return "", err
 	}
 	for _, app := range plan.Applications {
-		if app.AppKey != senulunAgentAppKey || app.Recovery == "keep_stopped" || app.DeploymentID == "" {
+		if app.AppKey != senulunAgentAppKey || app.Recovery != "reenroll_monitor" || app.DeploymentID == "" {
 			continue
 		}
 		review, evidence, err := s.reinstallMonitorEvidence(ctx, tx, plan.AgentID, app)

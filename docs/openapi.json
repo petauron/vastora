@@ -1350,9 +1350,6 @@
                                   },
                                   "password": {
                                     "type": "string"
-                                  },
-                                  "setupToken": {
-                                    "type": "string"
                                   }
                                 }
                               },
@@ -1465,9 +1462,6 @@
                               "type": "string"
                             },
                             "password": {
-                              "type": "string"
-                            },
-                            "setupToken": {
                               "type": "string"
                             }
                           }
