@@ -15,7 +15,9 @@ import (
 
 // Creation validates both existing exits without granting authority. Runtime
 // projection and publication additionally demand their applied source grants.
-func (s *Store) readCompositeRoutePeers(ctx context.Context, tx *sql.Tx, endpointID, ipv6ID, ipv4ID string, authorized bool) ([]glivela.RoutePeer, []meridianruntime.Peer, error) {
+// Liveness gates creation/publication only: an applied runtime must keep the
+// same digest when a landing misses a heartbeat. Transport leases fail closed.
+func (s *Store) readCompositeRoutePeers(ctx context.Context, tx *sql.Tx, endpointID, ipv6ID, ipv4ID string, authorized, requireOnline bool) ([]glivela.RoutePeer, []meridianruntime.Peer, error) {
 	var entryID string
 	var sourceJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT application.node_id,endpoint.source_peer_json FROM meridian_endpoints endpoint
@@ -37,8 +39,8 @@ func (s *Store) readCompositeRoutePeers(ctx context.Context, tx *sql.Tx, endpoin
 		if err := tx.QueryRowContext(ctx, `SELECT server.applied_json,server.desired_json,server.peer_json,server.applied_revision
 			FROM landing_server_states server JOIN agents agent ON agent.id=server.node_id
 			WHERE server.node_id=? AND server.applied_revision>0 AND server.status IN ('ready','pending','applying')
-			AND agent.status='active' AND agent.credential_revoked_at='' AND agent.tailscale_ownership='managed' AND agent.last_seen_at>?`,
-			id, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano)).Scan(&appliedJSON, &desiredJSON, &peerJSON, &revision); err != nil {
+			AND agent.status='active' AND agent.credential_revoked_at='' AND agent.tailscale_ownership='managed' AND (?=0 OR agent.last_seen_at>?)`,
+			id, requireOnline, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano)).Scan(&appliedJSON, &desiredJSON, &peerJSON, &revision); err != nil {
 			return nil, nil, errors.New("center: both composite landing Agents must be online with an applied service")
 		}
 		var applied, desired landing.ServerState

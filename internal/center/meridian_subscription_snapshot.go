@@ -201,7 +201,7 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 		}
 		if live == 1 {
 			if secondaryID != "" {
-				_, _, pairErr := s.readCompositeRoutePeers(ctx, tx, endpointID, egressID, secondaryID, true)
+				_, _, pairErr := s.readCompositeRoutePeers(ctx, tx, endpointID, egressID, secondaryID, true, true)
 				live = boolInt(!legacySnapshot && pairErr == nil)
 			}
 			if live != 1 {
