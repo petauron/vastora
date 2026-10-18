@@ -134,7 +134,7 @@ func applyNativePackage(ctx context.Context, manager SystemdHostApplicationManag
 		if err := checkPackageParents(actual); err != nil {
 			return err
 		}
-		if task.Operation == "upgrade" && file.ApplicationOwned {
+		if file.ApplicationOwned && resourceNamed(receipt, "file", file.LogicalName) != nil {
 			snapshot, err := captureApplicationConfiguration(actual)
 			if err != nil || !snapshot.Exists {
 				return errors.New("agent: native configuration changed during update")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -66,6 +67,24 @@ func TestNativeApplyPreservesConfigurationAndManualStart(t *testing.T) {
 	if len(calls) < 2 || calls[0] != "systemctl stop "+p.Plan.Units[0].Name || calls[1] != "systemctl stop "+p.Plan.Units[1].Name {
 		t.Fatal("writers not stopped in order", calls)
 	}
+	// Reinstallation after a data-preserving uninstall is not first-time
+	// initialization. Retained application configuration must survive too.
+	for _, unit := range p.Plan.Units {
+		if err := os.Remove(manager.path(unit.Path)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	receipt.Resources = slices.DeleteFunc(receipt.Resources, func(r RuntimeResource) bool { return r.Kind == "unit" })
+	receipt.State = "retained"
+	task.Operation = "install"
+	if err := applyNativePackage(context.Background(), manager, task, p, receipt, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(manager.path(path))
+	if err != nil || string(raw) != string(custom) {
+		t.Fatal("retained config reinitialized", err)
+	}
+	task.Operation = "upgrade"
 	if err := os.Remove(manager.path(path)); err != nil {
 		t.Fatal(err)
 	}
