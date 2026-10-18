@@ -1,7 +1,43 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APIError, api } from "./api";
+import { APIError, api, isAPIError } from "./api";
+
+describe("application HTTP error contract", () => {
+  class WorkspaceAPIError extends Error {
+    constructor(readonly status: number, readonly code = "request_failed", readonly captchaRequired = false) {
+      super("Workspace request failed");
+    }
+  }
+
+  it.each([400, 401, 409, 500, 599])("recognizes HTTP %s from an independently built class", (status) => {
+    const error = new WorkspaceAPIError(status);
+    expect(error).not.toBeInstanceOf(APIError);
+    expect(isAPIError(error)).toBe(true);
+    expect(isAPIError(new APIError("Host request failed", status))).toBe(true);
+  });
+
+  it.each([undefined, null, "409", 0, 200, 399, 600, NaN, Infinity, 409.5])("rejects invalid status %s", (status) => {
+    expect(isAPIError({ message: "Failure", status, code: "request_failed", captchaRequired: false })).toBe(false);
+  });
+
+  it.each([
+    null, "Failed to fetch", new TypeError("Failed to fetch"), { status: 409 },
+    { message: 5, status: 409, code: "conflict", captchaRequired: false },
+    { message: "Failure", status: 409, code: 5, captchaRequired: false },
+    { message: "Failure", status: 409, code: "conflict", captchaRequired: "false" },
+    Object.assign([], { message: "Failure", status: 409, code: "conflict", captchaRequired: false }),
+  ])("rejects incomplete or malformed error objects %#", (error) => {
+    expect(isAPIError(error)).toBe(false);
+  });
+
+  it("does not execute a status getter on a pseudo error", () => {
+    const getter = vi.fn(() => 401);
+    const error = Object.defineProperty({ message: "Failure", code: "conflict", captchaRequired: false }, "status", { get: getter });
+    expect(isAPIError(error)).toBe(false);
+    expect(getter).not.toHaveBeenCalled();
+  });
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();

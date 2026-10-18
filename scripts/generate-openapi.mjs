@@ -433,6 +433,11 @@ for (const route of routes) {
       schema: { type: "string", const: "no-store" },
     },
   };
+  if (route.handler === "handleMeridianSubscriptionPreview") {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.responses[status].content["application/json"].schema = schemaForGoType("MeridianSubscriptionPreview");
+    operation.description = "Administrator-only, credential-free preview of the actual subscription inventory. Uses the public live/applied-snapshot resolution and rendering paths without saving snapshots, launching tasks or revealing subscription tokens, connection URLs or credentials.";
+  }
   if (route.handler === "handleMeridianRouteHealth") {
     operation.responses[status].headers = noStoreHeaders;
     operation.responses[status].content["application/json"].schema = schemaForGoType("MeridianRouteHealthView");
