@@ -223,12 +223,16 @@ func (h Host) Execute(ctx context.Context, t Task) (View, error) {
 	case "prepare":
 		return h.prepare(ctx, s)
 	case "inspect":
+		if _, e := os.Lstat(preparationPath); e == nil {
+			v := View{State: "action_required", Listeners: []string{}, Banned: []string{}, Reasons: []string{"Dependency preparation is incomplete; reconcile the owned Fail2ban mask before enabling."}}
+			if s != nil {
+				v.Policy = s.View.Policy
+				v.Revision = s.View.Revision
+			}
+			return v, nil
+		}
 		if s == nil {
 			v := View{State: "unconfigured", Listeners: []string{}, Banned: []string{}, Reasons: []string{}}
-			if _, e := os.Lstat(preparationPath); e == nil {
-				v.State = "action_required"
-				v.Reasons = []string{"Dependency preparation was interrupted. Retry preparation to reconcile the owned Fail2ban mask; do not enable manually."}
-			}
 			return v, nil
 		}
 		v := s.View
@@ -301,6 +305,10 @@ func (h Host) preview(ctx context.Context, p Policy, s *checkpoint) (View, error
 		if len(v.Reasons) < 16 {
 			v.Reasons = append(v.Reasons, reason)
 		}
+	}
+	if _, e := os.Lstat(preparationPath); e == nil || !errors.Is(e, os.ErrNotExist) {
+		reject("Finish the explicit dependency preparation operation before reviewing a firewall policy.")
+		return v, nil
 	}
 	if s != nil && (s.View.State == "pending_confirmation" || s.View.State == "verified" || s.View.State == "action_required") {
 		reject("Disable the existing baseline before replacing its policy.")
