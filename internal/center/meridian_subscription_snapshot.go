@@ -236,6 +236,7 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 			routes = append(routes, route)
 			continue
 		}
+		recordSubscriptionExclusion(ctx, MeridianSubscriptionExclusion{RouteID: route.Grant.ID, Name: route.EntryName, Reason: "route_unavailable"})
 		if !exists && route.Grant.HideNative {
 			hiddenVLESSCredentials[route.Grant.Base.ID] = true
 		}
@@ -245,9 +246,11 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 	for _, entry := range value.Entries {
 		native, exists := nativeStates[entry.Material.Credential.ID]
 		if !exists || entry.Protocol == glivela.VLESSReality && !native.vless || entry.Protocol == glivela.Hysteria2 && !native.hy2 {
+			recordSubscriptionNativeExclusion(ctx, tx, entry, "native_unavailable")
 			continue
 		}
 		if entry.Protocol == glivela.VLESSReality && hiddenVLESSCredentials[entry.Material.Credential.ID] {
+			recordSubscriptionNativeExclusion(ctx, tx, entry, "native_hidden")
 			continue
 		}
 		entries = append(entries, entry)
