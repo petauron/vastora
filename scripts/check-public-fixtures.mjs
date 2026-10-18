@@ -12,7 +12,10 @@ const projectDirectory = resolve(scriptDirectory, "..");
 const policy = JSON.parse(readFileSync(resolve(scriptDirectory, "privacy-policy.json"), "utf8"));
 const zeroOID = /^0+$/;
 const ipv4Pattern = /(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9.])/g;
-const ipv6Pattern = /(?<![0-9a-f:])(?:[0-9a-f]{0,4}:){2,}[0-9a-f]{0,4}(?![0-9a-f:])/gi;
+// Consume an embedded dotted IPv4 tail as part of the IPv6 token. Otherwise a
+// documentation fixture such as ::ffff:203.0.113.1 is otherwise truncated and
+// incorrectly classified as an unrelated routable IPv6 address.
+const ipv6Pattern = /(?<![0-9a-f:])(?:(?:[0-9a-f]{0,4}:){2,}(?:[0-9]{1,3}\.){3}[0-9]{1,3}|(?:[0-9a-f]{0,4}:){2,}[0-9a-f]{0,4})(?![0-9a-f:.])/gi;
 const domainPattern = /(?<![a-z0-9_-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|dev|cloud|top|xyz|cn|co|me|tech|site|online|no|gov|edu|invalid|test)(?![a-z0-9_-])/gi;
 const wordPattern = /[a-z0-9][a-z0-9._-]*/gi;
 const allowedPublicIPv4 = new Set(policy.allowedPublicIPv4.map((entry) => entry.value));
@@ -79,6 +82,16 @@ function publicIPv4(value) {
 function publicIPv6(value) {
   if (isIP(value) !== 6) return false;
   const normalized = value.toLowerCase();
+  // Apply the same reserved-address policy to the underlying IPv4 address in
+  // both dotted and hexadecimal mapped forms. Routable mappings still fail;
+  // this is classification, not an allowlist or scanner bypass.
+  const canonical = new URL(`http://[${value}]/`).hostname.slice(1, -1);
+  const mapped = /^::ffff:([0-9a-f]+):([0-9a-f]+)$/i.exec(canonical);
+  if (mapped) {
+    const high = Number.parseInt(mapped[1], 16);
+    const low = Number.parseInt(mapped[2], 16);
+    return publicIPv4([high >>> 8, high & 255, low >>> 8, low & 255].join("."));
+  }
   return normalized !== "::" && normalized !== "::1" && !normalized.startsWith("fc") && !normalized.startsWith("fd") && !normalized.startsWith("fe8") && !normalized.startsWith("fe9") && !normalized.startsWith("fea") && !normalized.startsWith("feb") && !normalized.startsWith("ff") && !/^2001:0*db8:/i.test(normalized) && !normalized.startsWith("64:ff9b:1:") && !normalized.startsWith("100:");
 }
 
