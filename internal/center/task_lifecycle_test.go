@@ -1,7 +1,6 @@
 package center
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -737,7 +736,7 @@ func TestTaskIDsAreScopedByAgentAndRevision(t *testing.T) {
 	}
 }
 
-func TestSenulunCredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
+func TestSenulunInstallationDoesNotGenerateAdministratorCredentials(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -746,13 +745,13 @@ func TestSenulunCredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.OneTimeCredentials == nil || len(created.OneTimeCredentials.SetupToken) < 32 {
-		t.Fatal("Senulun did not return a strong one-time setup token")
+	if created.OneTimeCredentials != nil || created.OneTimeCredentialsAvailable {
+		t.Fatal("Senulun administrator setup was moved into the package manager")
 	}
 	task := claimTask(t, store, node)
 	var secrets map[string]string
-	if json.Unmarshal(task.Secrets, &secrets) != nil || secrets["setup_token"] != created.OneTimeCredentials.SetupToken {
-		t.Fatal("Agent task did not receive the matching encrypted setup token")
+	if json.Unmarshal(task.Secrets, &secrets) != nil || len(secrets) != 0 {
+		t.Fatal("Service installation received an obsolete bootstrap secret")
 	}
 	result := json.RawMessage(`{"services":[{"name":"dashboard","protocol":"http","containerPort":8080,"hostPort":18080,"address":"10.0.0.40"}]}`)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", mockPackageResult(t, task, result), task.RequiredRuntimeGeneration); err != nil {
@@ -763,8 +762,8 @@ func TestSenulunCredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(listed)
-	if len(listed) != 1 || bytes.Contains(encoded, []byte(created.OneTimeCredentials.SetupToken)) || listed[0].OneTimeCredentials != nil {
-		t.Fatalf("deployment list leaked one-time credentials: %s", encoded)
+	if len(listed) != 1 || listed[0].OneTimeCredentialsAvailable || listed[0].OneTimeCredentials != nil {
+		t.Fatalf("deployment list offered nonexistent Service credentials: %s", encoded)
 	}
 }
 

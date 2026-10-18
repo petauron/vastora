@@ -9,16 +9,11 @@ import (
 	"github.com/petauron/vastora/internal/senulun"
 )
 
-func TestSenulunServiceAuthenticationSecretIsEncryptedAndRetainedOnUpgrade(t *testing.T) {
+func TestSenulunServiceOwnsAdministratorSetup(t *testing.T) {
 	store, service, _, deployment := senulunFixture(t)
 	ctx := context.Background()
-	const token = "test-only-pulse-setup-token-0000000000"
-	var publicConfig, sealed []byte
-	if err := store.db.QueryRow(`SELECT d.config_json,s.sealed FROM deployments d JOIN secrets s ON s.id = d.secret_id WHERE d.id = ?`, deployment.ID).Scan(&publicConfig, &sealed); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(publicConfig), token) || strings.Contains(string(publicConfig), "setup_token") || strings.Contains(string(sealed), token) {
-		t.Fatal("setup token leaked into public configuration or plaintext persistence")
+	if deployment.OneTimeCredentials != nil || deployment.OneTimeCredentialsAvailable {
+		t.Fatal("Center generated credentials for Senulun's own administrator setup")
 	}
 	// The fixture installs the current catalog version. Model an older installed
 	// release so this exercises an upgrade rather than same-version rejection.
@@ -29,9 +24,9 @@ func TestSenulunServiceAuthenticationSecretIsEncryptedAndRetainedOnUpgrade(t *te
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, service)
-	config, secrets, err := senulun.DecodeServiceConfig(task.Config, task.Secrets)
-	if err != nil || config.PublicURL != "https://monitor.example.com" || secrets.SetupToken != token || strings.Contains(string(task.Config), token) {
-		t.Fatal("upgrade did not preserve the encrypted setup token separately from the new dashboard origin")
+	config, err := senulun.DecodeServiceConfig(task.Config)
+	if err != nil || config.PublicURL != "https://monitor.example.com" || string(task.Secrets) != `{}` {
+		t.Fatal("upgrade must deliver only the application origin, without a bootstrap token")
 	}
 }
 
@@ -40,8 +35,6 @@ func TestSenulunServiceRejectsInvalidAuthenticationChange(t *testing.T) {
 	for _, config := range []string{
 		`{"public_url":"http://senulun.example.com"}`,
 		`{"public_url":"https://senulun.example.com/login"}`,
-		`{"setup_token":""}`,
-		`{"setup_token":"too-short"}`,
 	} {
 		if _, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: service.ID, AppKey: senulunAppKey, Operation: "configure", Config: json.RawMessage(config)}); err == nil {
 			t.Fatal("invalid Senulun authentication configuration was accepted")
@@ -60,15 +53,15 @@ func TestSenulunUpgradeFillsMissingLegacyHostSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.OneTimeCredentials == nil || len(created.OneTimeCredentials.SetupToken) < 32 || !created.OneTimeCredentialsAvailable {
-		t.Fatal("generated Senulun setup token was not delivered once")
+	if created.OneTimeCredentials != nil || created.OneTimeCredentialsAvailable {
+		t.Fatal("legacy origin completion generated an obsolete initialization token")
 	}
 	task := claimTask(t, store, service)
-	config, secrets, err := senulun.DecodeServiceConfig(task.Config, task.Secrets)
-	if err != nil || config.PublicURL != "https://senulun.private.example.com" || secrets.SetupToken != created.OneTimeCredentials.SetupToken {
-		t.Fatal("legacy Senulun upgrade did not use its ready HTTPS entry and generated token")
+	config, err := senulun.DecodeServiceConfig(task.Config)
+	if err != nil || config.PublicURL != "https://senulun.private.example.com" || string(task.Secrets) != `{}` {
+		t.Fatal("legacy Senulun upgrade did not retain its ready HTTPS origin")
 	}
-	if strings.Contains(string(task.Config), secrets.SetupToken) {
-		t.Fatal("setup token leaked into public deployment configuration")
+	if strings.Contains(string(task.Config), "setup_token") {
+		t.Fatal("obsolete setup token reached the current configuration")
 	}
 }

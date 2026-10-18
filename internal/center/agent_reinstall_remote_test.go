@@ -20,7 +20,7 @@ func TestAgentReinstallFencesRemoteSenulunEnrollment(t *testing.T) {
 			store, monitor, collector, deployment := senulunFixture(t)
 			ctx := context.Background()
 			addSenulunPrivateFixture(t, store, deployment.ApplicationID, monitor.ID)
-			install, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey})
+			install, err := createHistoricalSenulunCollector(t, store, deployment.ApplicationID, collector.ID, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

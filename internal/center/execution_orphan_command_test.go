@@ -18,7 +18,7 @@ func TestAbandonOrphanCommandReleasesSenulunEnrollment(t *testing.T) {
 			store, service, collector, deployment := senulunFixture(t)
 			ctx := context.Background()
 			addSenulunPrivateFixture(t, store, deployment.ApplicationID, service.ID)
-			if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey, Config: json.RawMessage(`{"node_region":"SG","geoip_provider":"disabled"}`)}); err != nil {
+			if _, err := createHistoricalSenulunCollector(t, store, deployment.ApplicationID, collector.ID, json.RawMessage(`{"node_region":"SG","geoip_provider":"disabled"}`)); err != nil {
 				t.Fatal(err)
 			}
 			session := "orphan-command-current-process-session"

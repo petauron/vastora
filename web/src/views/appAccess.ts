@@ -109,16 +109,12 @@ export function canInstall(agent: AgentView, app?: AppView) {
   return agent.connected && !packageNodeBlocker(agent, app, "en") && Boolean(agent.networkProfile);
 }
 
-export function senulunPrivateAccess(data: AppData) {
-  const service = data.applications.find((app) => app.appKey === "vastora-official/pulse" && app.status === "running");
-  const dashboard = data.services.find((value) => value.applicationId === service?.id && value.name === "dashboard" && ["ready", "publishing"].includes(value.status));
-  return data.publications.find((value) => value.serviceId === dashboard?.id && value.status === "ready" && value.tlsEnabled && (value.kind === "headscale_gateway" || value.kind === "lan_gateway"));
-}
-
-// Browser links use an existing public tunnel when one is configured. Agent
-// enrollment continues to use senulunPrivateAccess and its private origin.
+// Browser links refer only to this app's published entry points. Collectors
+// are configured independently with the URL chosen in Senulun.
 export function senulunDashboardURL(data: AppData) {
-  const application = data.applications.find((app) => app.appKey === "vastora-official/pulse" && app.status === "running");
+  const installations = data.applications.filter((app) => app.appKey === "vastora-official/pulse" && isInstalledApplication(app));
+  if (installations.length !== 1 || installations[0].status !== "running") return undefined;
+  const application = installations[0];
   const dashboard = data.services.find((value) => value.applicationId === application?.id && value.name === "dashboard" && ["ready", "publishing"].includes(value.status));
   if (!dashboard) return undefined;
   const entries = data.publications.filter((value) => value.serviceId === dashboard.id && value.status === "ready" && value.tlsEnabled && !value.actionRequired && !value.lastError);
@@ -132,8 +128,6 @@ export function senulunDashboardURL(data: AppData) {
 }
 
 export function eligibleAppNodes(data: AppData, appKey: string) {
-  if (appKey === "vastora-official/pulse" && data.applications.some((app) => app.appKey === appKey && (isInstalledApplication(app) || isActiveApplication(app.status)))) return [];
-  if (appKey === "vastora-official/pulse-agent" && !senulunPrivateAccess(data)) return [];
   const manifest = data.apps.find((app) => app.key === appKey);
   return data.agents.filter((agent) => canInstall(agent, manifest) && !data.applications.some((app) => app.nodeId === agent.id && app.appKey === appKey && (isInstalledApplication(app) || isActiveApplication(app.status))));
 }
@@ -177,8 +171,6 @@ export function operationLabel(language: Language, operation: Deployment["operat
 }
 
 export function installBlocker(data: AppData, appKey: string, language: Language) {
-  if (appKey === "vastora-official/pulse" && data.applications.some((app) => app.appKey === appKey && (isInstalledApplication(app) || isActiveApplication(app.status)))) return copy(language, "已有全局监控主机，各地区无需重复安装。", "A global monitoring service already exists; regions share it.");
-  if (appKey === "vastora-official/pulse-agent" && !senulunPrivateAccess(data)) return copy(language, "先为 Senulun 监控主机添加私网 HTTPS 入口。", "Add a private HTTPS access point to the Senulun service first.");
   if (data.agents.length === 0) return copy(language, "先添加一台节点，再安装应用。", "Add a node before installing apps.");
   if (!data.agents.some((agent) => agent.connected)) return copy(language, "没有在线节点。请检查 Agent 服务。", "No node is online. Check the Agent service.");
   const manifest = data.apps.find((app) => app.key === appKey);

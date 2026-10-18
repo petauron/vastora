@@ -15,16 +15,16 @@ import (
 const senulunAppKey = senulun.ServiceKey
 const senulunAgentAppKey = senulun.AgentKey
 
-// Older Pulse installations have no host settings to retain. Fill only
-// absent values; explicit updates and already stored secrets remain intact.
-func (s *Store) withSenulunHostDefaults(ctx context.Context, agentID, operation string, raw []byte) ([]byte, string, error) {
+// Fill a missing historical browser origin from the existing access entry.
+// Administrator setup belongs to Senulun, not Center.
+func (s *Store) withSenulunPublicOrigin(ctx context.Context, agentID, operation string, raw []byte) ([]byte, error) {
 	values, err := decodeJSONObject(raw, "center: Senulun configuration must be a JSON object")
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	var publicURL string
 	if field, exists := values["public_url"]; exists && json.Unmarshal(field, &publicURL) != nil {
-		return nil, "", errors.New("center: Senulun dashboard HTTPS address is invalid")
+		return nil, errors.New("center: Senulun dashboard HTTPS address is invalid")
 	}
 	if strings.TrimSpace(publicURL) == "" && operation == "upgrade" {
 		var hostname string
@@ -36,120 +36,36 @@ func (s *Store) withSenulunHostDefaults(ctx context.Context, agentID, operation 
 			ORDER BY CASE p.kind WHEN 'cloudflare_tunnel' THEN 0 WHEN 'public_direct' THEN 1
 				WHEN 'headscale_gateway' THEN 2 WHEN 'lan_gateway' THEN 3 ELSE 4 END, p.updated_at DESC LIMIT 1`, agentID, senulunAppKey).Scan(&hostname)
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, "", errors.New("center: add a ready Senulun dashboard HTTPS access point before upgrading")
+			return nil, errors.New("center: add a ready Senulun dashboard HTTPS access point before upgrading")
 		}
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		encoded, _ := json.Marshal((&url.URL{Scheme: "https", Host: hostname}).String())
 		values["public_url"] = encoded
 	}
-	var setupToken string
-	if field, exists := values["setup_token"]; exists && json.Unmarshal(field, &setupToken) != nil {
-		return nil, "", errors.New("center: Senulun administrator setup token is invalid")
-	}
-	generated := ""
-	if setupToken == "" && (operation == "install" || operation == "upgrade") {
-		generated, err = randomToken(32)
-		if err != nil {
-			return nil, "", err
-		}
-		values["setup_token"], _ = json.Marshal(generated)
-	}
-	encoded, err := json.Marshal(values)
-	return encoded, generated, err
+	// Superseded bootstrap values remain in historical deployment evidence;
+	// current Senulun creates its administrator through its own login page.
+	delete(values, "setup_token")
+	return json.Marshal(values)
 }
 
-// Called under deploymentCreateMu. A Pulse controller is global, not one per
-// Site. Failed first installs may be retried; retained successful installs count.
+// A service can be independently installed on any eligible host. Retained
+// lifecycle commands still have to finish before replacing their actual owner.
 func (s *Store) validateSenulunDeployment(ctx context.Context, request DeploymentRequest) error {
 	if request.AppKey != senulunAppKey {
 		return nil
 	}
 	if request.Operation != "install" {
 		var pending int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands c JOIN applications a ON a.id = c.application_id WHERE a.app_key = ? AND c.kind IN (?,?,?,?) AND c.state IN ('pending','running')`, senulunAppKey, senulun.EnrollmentKind, senulun.InspectionKind, senulun.RotationKind, senulun.ReportingKind).Scan(&pending); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands c JOIN applications a ON a.id = c.application_id WHERE a.app_key = ? AND a.node_id = ? AND c.kind IN (?,?,?,?) AND c.state IN ('pending','running')`, senulunAppKey, request.AgentID, senulun.EnrollmentKind, senulun.InspectionKind, senulun.RotationKind, senulun.ReportingKind).Scan(&pending); err != nil {
 			return err
 		}
 		if pending != 0 {
 			return errors.New("center: wait for Senulun collector enrollment before changing the monitoring service")
 		}
 	}
-	key := senulunAppKey
-	if request.Operation == "uninstall" {
-		key = senulunAgentAppKey
-	}
-	if request.Operation != "install" && request.Operation != "uninstall" {
-		return nil
-	}
-	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments d WHERE d.app_key = ? AND (
-		d.state IN ('pending','running') OR d.reconciliation_required = 1 OR
-		(d.state = 'succeeded' AND d.operation <> 'uninstall' AND NOT EXISTS (
-			SELECT 1 FROM deployments removed WHERE removed.agent_id = d.agent_id AND removed.app_key = d.app_key
-			AND removed.operation = 'uninstall' AND removed.state = 'succeeded' AND removed.created_at > d.created_at)))`, key).Scan(&count)
-	if err != nil {
-		return err
-	}
-	if count > 0 && request.Operation == "install" {
-		return errors.New("center: a global Senulun monitoring service already exists")
-	}
-	if count > 0 {
-		return errors.New("center: remove Senulun collectors before uninstalling the monitoring service")
-	}
 	return nil
-}
-
-func (s *Store) senulunAgentConfig(ctx context.Context, nodeID string, options []byte) ([]byte, error) {
-	var config senulun.AgentConfig
-	if json.Unmarshal(options, &config) != nil {
-		return nil, errors.New("center: invalid Senulun collector options")
-	}
-	var hostname string
-	err := s.db.QueryRowContext(ctx, `SELECT a.id, p.hostname FROM applications a
-		JOIN services sv ON sv.application_id = a.id AND sv.name = 'dashboard'
-		JOIN publications p ON p.service_id = sv.id
-		WHERE a.app_key = ? AND a.status = 'running' AND sv.status IN ('ready','publishing')
-		AND p.kind IN ('headscale_gateway','lan_gateway') AND p.status = 'ready' AND p.tls_enabled = 1
-		ORDER BY CASE p.kind WHEN 'headscale_gateway' THEN 0 ELSE 1 END, p.created_at LIMIT 1`, senulunAppKey).Scan(&config.ServiceApplicationID, &hostname)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errors.New("center: add a private HTTPS access point to the Senulun monitoring service first")
-	}
-	if err != nil {
-		return nil, err
-	}
-	config.ServiceURL = (&url.URL{Scheme: "https", Host: hostname, Path: "/"}).String()
-	if err := s.db.QueryRowContext(ctx, `SELECT a.name, s.name FROM agents a JOIN sites s ON s.id = a.site_id WHERE a.id = ?`, nodeID).Scan(&config.NodeName, &config.NodeGroup); err != nil {
-		return nil, err
-	}
-	if err := config.Validate(); err != nil {
-		return nil, err
-	}
-	return json.Marshal(config)
-}
-
-func (s *Store) queueSenulunEnrollment(ctx context.Context, tx *sql.Tx, deployment DeploymentView, configJSON []byte, now time.Time) error {
-	var config senulun.AgentConfig
-	if json.Unmarshal(configJSON, &config) != nil || config.Validate() != nil {
-		return errors.New("center: invalid Senulun enrollment configuration")
-	}
-	var serviceAgentID string
-	if err := tx.QueryRowContext(ctx, `SELECT node_id FROM applications WHERE id = ? AND app_key = ? AND status = 'running'`, config.ServiceApplicationID, senulunAppKey).Scan(&serviceAgentID); err != nil {
-		return errors.New("center: Senulun monitoring service is unavailable")
-	}
-	id, err := randomToken(18)
-	if err != nil {
-		return err
-	}
-	id = "application-command-" + id
-	input, err := json.Marshal(senulun.EnrollmentTask{ApplicationID: config.ServiceApplicationID, DeploymentID: deployment.ID})
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, config.ServiceApplicationID, serviceAgentID, deployment.AgentID, senulun.EnrollmentKind, input, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
-		return err
-	}
-	return s.recordTaskEvent(ctx, tx, id, serviceAgentID, "application.command", 1, "queued", "Prepare Senulun collector enrollment")
 }
 
 func (s *Store) completeSenulunEnrollment(ctx context.Context, commit projectionCommit, tx *sql.Tx, commandID, agentID string, inputJSON []byte, succeeded bool, rawResult json.RawMessage) error {

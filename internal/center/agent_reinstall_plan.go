@@ -226,6 +226,11 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 		COALESCE(d.operation,''),COALESCE(d.state,''),COALESCE(d.manifest_json,'{}'),COALESCE(d.reconciliation_required,0),
 		EXISTS(SELECT 1 FROM publications p JOIN services service ON service.id=p.service_id WHERE service.application_id=a.id AND service.status<>'stopped'
  AND p.ingress_owner='application_node' AND p.entry_node_id=a.node_id AND p.kind='public_shared_443' AND p.status<>'stopped'),
+		(EXISTS(SELECT 1 FROM deployments historical WHERE historical.application_id=a.id
+		 AND COALESCE(json_extract(historical.config_json,'$.service_application_id'),'')<>'')
+		 OR EXISTS(SELECT 1 FROM application_commands command JOIN deployments historical
+		 ON json_extract(command.input_json,'$.deploymentId')=historical.id
+		 WHERE historical.application_id=a.id AND command.kind='pulse.enrollment.create')),
 		json_array(d.id,d.agent_id,d.application_id,d.app_key,d.app_version,CAST(d.manifest_json AS TEXT),CAST(d.config_json AS TEXT),
 		 d.operation,d.delete_data,d.service_address,d.secret_id,hex(saved.sealed),d.registry_credential_id,d.runtime_generation,
 		 registry.host,registry.username,registry.secret_id,hex(registry_secret.sealed))
@@ -243,9 +248,9 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 	for rows.Next() {
 		app := AgentReinstallApplication{Requirements: []string{}}
 		var manifestJSON []byte
-		var reconciliation bool
+		var reconciliation, managedMonitorEvidence bool
 		var intent string
-		if err := rows.Scan(&app.ApplicationID, &app.Name, &app.AppKey, &app.DeploymentID, &app.Version, &app.Operation, &app.State, &manifestJSON, &reconciliation, &app.SharedEntry, &intent); err != nil {
+		if err := rows.Scan(&app.ApplicationID, &app.Name, &app.AppKey, &app.DeploymentID, &app.Version, &app.Operation, &app.State, &manifestJSON, &reconciliation, &app.SharedEntry, &managedMonitorEvidence, &intent); err != nil {
 			return "", err
 		}
 		// Successful deployments are restoration input too. Changes to their
@@ -275,9 +280,14 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 				case app.AppKey == meridianAppKey:
 					app.Recovery = "rebuild_configuration"
 					app.Requirements = append(app.Requirements, "validate_saved_meridian_intent_and_credentials")
-				case app.AppKey == senulunAgentAppKey:
+				case app.AppKey == senulunAgentAppKey && managedMonitorEvidence:
 					app.Recovery = "reenroll_monitor"
 					app.Requirements = append(app.Requirements, "replace_managed_monitor_enrollment")
+				case app.AppKey == senulunAgentAppKey:
+					// An independently enrolled Agent owns a credential in its
+					// persistent state. Restore that data instead of rotating an
+					// account on a service Center does not manage.
+					app.Requirements = append(app.Requirements, "restore_backup_on_replacement")
 				case reconstructible && policy.Consistency == "reconstructible":
 					app.Recovery = "rebuild_configuration"
 				default:

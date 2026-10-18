@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/senulun"
@@ -19,7 +18,7 @@ func senulunFixture(t *testing.T) (*Store, AgentCredential, AgentCredential, Dep
 	t.Cleanup(func() { _ = store.Close() })
 	service := enrollOrchestrationNode(t, store, "monitor", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
 	collector := enrollOrchestrationNode(t, store, "collector", NodeCapabilities{}, []networking.Candidate{{Address: "10.0.0.11", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.11", LANAddress: "10.0.0.11", EnabledKinds: []string{networking.KindLAN}})
-	deployment, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: service.ID, AppKey: senulunAppKey, Config: json.RawMessage(`{"public_url":"https://senulun.example.com","setup_token":"test-only-pulse-setup-token-0000000000"}`)})
+	deployment, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: service.ID, AppKey: senulunAppKey, Config: json.RawMessage(`{"public_url":"https://senulun.example.com"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,47 +35,23 @@ func addSenulunPrivateFixture(t *testing.T, store *Store, applicationID, nodeID 
 	}
 }
 
-func TestSenulunEnrollmentPrivateHTTPSAndNativeInstall(t *testing.T) {
-	store, service, collector, deployment := senulunFixture(t)
+func TestSenulunAgentInstallsAgainstIndependentService(t *testing.T) {
+	store := openOrchestrationStore(t)
+	t.Cleanup(func() { _ = store.Close() })
+	collector := enrollOrchestrationNode(t, store, "collector", NodeCapabilities{}, []networking.Candidate{{Address: "10.0.0.11", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.11", LANAddress: "10.0.0.11", EnabledKinds: []string{networking.KindLAN}})
 	ctx := context.Background()
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAppKey}); err == nil {
-		t.Fatal("second global monitoring service accepted")
-	}
-	request := DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey, Config: json.RawMessage(`{"node_region":"SG","geoip_provider":"disabled"}`)}
-	if _, err := store.CreateDeployment(ctx, request); err == nil {
-		t.Fatal("collector accepted without private HTTPS")
-	}
-	addSenulunPrivateFixture(t, store, deployment.ApplicationID, service.ID)
+	request := DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey, Config: json.RawMessage(`{"service_url":"https://independent.example.test/","node_name":"my-node","node_group":"servers","node_region":"SG","geoip_provider":"disabled","enrollment_token":"test-test-test-test"}`)}
 	installed, err := store.CreateDeployment(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task, err := store.ClaimNextTask(ctx, collector.ID, collector.Credential); err != nil || task != nil {
-		t.Fatalf("installation claimed before enrollment: %+v %v", task, err)
-	}
-	task := claimTask(t, store, service)
-	if task.SenulunEnrollment == nil || task.SenulunEnrollment.DeploymentID != installed.ID {
-		t.Fatal("wrong enrollment recipient")
-	}
-	token := strings.Repeat("e", 32)
-	raw, _ := json.Marshal(map[string]any{"pulseEnrollment": senulun.EnrollmentResult{ID: "enrollment-id", Token: token, ExpiresAtUnixMS: store.now().Add(time.Hour).UnixMilli()}})
-	if err := store.CompleteTask(ctx, service.ID, service.Credential, task.ID, task.Attempt, true, "", raw, 0); err != nil {
-		t.Fatal(err)
-	}
-	var resultJSON []byte
-	if err := store.db.QueryRow(`SELECT result_json FROM application_commands WHERE id = ?`, task.ID).Scan(&resultJSON); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(resultJSON), token) {
-		t.Fatal("enrollment token leaked into command result")
-	}
 	installTask := claimTask(t, store, collector)
-	if installTask.AppKey != senulunAgentAppKey || !strings.Contains(string(installTask.Secrets), token) {
-		t.Fatal("enrollment secret not delivered to the collector")
+	if installTask.AppKey != senulunAgentAppKey || !strings.Contains(string(installTask.Secrets), "test-test-test-test") || strings.Contains(string(installTask.Config), "test-test-test-test") {
+		t.Fatal("manual enrollment token was not delivered as a private package secret")
 	}
 	var config senulun.AgentConfig
-	if json.Unmarshal(installTask.Config, &config) != nil || config.NodeName != "collector" || config.ServiceApplicationID != deployment.ApplicationID {
-		t.Fatal("collector identity was not inherited")
+	if json.Unmarshal(installTask.Config, &config) != nil || config.NodeName != "my-node" || config.ServiceURL != "https://independent.example.test/" || config.ServiceApplicationID != "" {
+		t.Fatal("installation depended on a Center-managed monitoring service")
 	}
 	if config.NodeRegion == nil || *config.NodeRegion != "SG" || config.GeoIPProvider == nil || *config.GeoIPProvider != "disabled" {
 		t.Fatal("administrator location choices were not delivered to the collector")
@@ -91,14 +66,15 @@ func TestSenulunEnrollmentPrivateHTTPSAndNativeInstall(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT runtime FROM applications WHERE id = ?`, installed.ApplicationID).Scan(&runtime); err != nil || runtime != "host" {
 		t.Fatalf("collector runtime=%s err=%v", runtime, err)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: service.ID, AppKey: senulunAppKey, Operation: "uninstall"}); err == nil {
-		t.Fatal("monitor removed while collectors still installed")
+	plan, err := store.AgentReinstallPlan(ctx, collector.ID)
+	if err != nil || len(plan.Applications) != 1 || plan.Applications[0].Recovery != "restore_data" || len(plan.Monitoring) != 0 {
+		t.Fatalf("independent Agent recovery must preserve its data without remote credential operations: %+v %v", plan, err)
 	}
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"geoip_provider":"arbitrary"}`)}); err == nil {
 		t.Fatal("invalid provider accepted by Center")
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"service_url":"https://attacker.example.com/"}`)}); err == nil {
-		t.Fatal("administrator form was allowed to replace the managed service identity")
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"service_application_id":"unrelated-service"}`)}); err == nil {
+		t.Fatal("administrator input forged a historical service association")
 	}
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"node_region":""}`)}); err != nil {
 		t.Fatal(err)
@@ -108,28 +84,32 @@ func TestSenulunEnrollmentPrivateHTTPSAndNativeInstall(t *testing.T) {
 	if json.Unmarshal(changedTask.Config, &changed) != nil || changed.NodeRegion == nil || *changed.NodeRegion != "" || changed.GeoIPProvider == nil || *changed.GeoIPProvider != "disabled" || changed.ServiceURL != config.ServiceURL || changed.NodeName != config.NodeName {
 		t.Fatal("configuration did not preserve identity, retain omitted options, and clear explicit empty region")
 	}
-	if strings.Contains(string(changedTask.Config), `"interval_seconds"`) {
-		t.Fatal("configuration changes must leave the metrics interval to Senulun")
+	if strings.Contains(string(changedTask.Secrets), "test-test-test-test") {
+		t.Fatal("configuration changes replayed the initial enrollment token")
 	}
 }
 
-func TestSenulunEnrollmentFailureEndsPendingInstallation(t *testing.T) {
-	store, service, collector, deployment := senulunFixture(t)
-	addSenulunPrivateFixture(t, store, deployment.ApplicationID, service.ID)
-	installed, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey})
-	if err != nil {
-		t.Fatal(err)
+func TestSenulunAgentRequiresExplicitEnrollmentAndCreatesNoServiceCommand(t *testing.T) {
+	store, service, collector, _ := senulunFixture(t)
+	_, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey, Config: json.RawMessage(`{"service_url":"https://independent.example.test/","node_name":"my-node","node_group":"servers"}`)})
+	if err == nil {
+		t.Fatal("initial installation accepted no enrollment token")
 	}
-	task := claimTask(t, store, service)
-	if err := store.CompleteTask(context.Background(), service.ID, service.Credential, task.ID, task.Attempt, false, "private upstream error", nil, 0); err != nil {
-		t.Fatal(err)
+	if task, err := store.ClaimNextTask(context.Background(), service.ID, service.Credential); err != nil || task != nil {
+		t.Fatalf("installation created an unexpected monitoring-service command: %+v %v", task, err)
 	}
-	var state, message string
-	if err := store.db.QueryRow(`SELECT state,error FROM deployments WHERE id = ?`, installed.ID).Scan(&state, &message); err != nil {
-		t.Fatal(err)
+}
+
+func TestSenulunServicesAreIndependentPerHost(t *testing.T) {
+	store, service, _, first := senulunFixture(t)
+	other := enrollOrchestrationNode(t, store, "other-monitor", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.12", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.12", LANAddress: "10.0.0.12", EnabledKinds: []string{networking.KindLAN}})
+	second, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: other.ID, AppKey: senulunAppKey, Config: json.RawMessage(`{"public_url":"https://other-monitor.example.test"}`)})
+	if err != nil || first.ApplicationID == second.ApplicationID {
+		t.Fatalf("a global monitoring-service singleton blocked an independent installation: %+v %v", second, err)
 	}
-	if state != "failed" || strings.Contains(message, "private upstream error") {
-		t.Fatalf("wrong failure state: %s %s", state, message)
+	completeNextTask(t, store, other, "application.apply", json.RawMessage(`{"services":[{"name":"dashboard","protocol":"http","containerPort":8080,"hostPort":18080,"address":"10.0.0.12"}]}`))
+	if _, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: service.ID, AppKey: senulunAppKey, Operation: "uninstall"}); err != nil {
+		t.Fatalf("another independent service prevented uninstall: %v", err)
 	}
 }
 
