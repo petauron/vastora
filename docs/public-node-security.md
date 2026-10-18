@@ -114,6 +114,52 @@ landing SOCKS and real VLESS/REALITY/UDP requests, ban/unban, conflict recovery,
 and small-node memory overhead. Do not test by applying a firewall to production.
 This document does not claim those real-host checks have already passed.
 
+### Isolated Debian acceptance, 2026-10-18
+
+An explicitly authorized disposable unprivileged Debian 13 LXC (1 CPU, 1 GiB
+RAM, 256 MiB swap, 4 GiB disk) exercised the real Host security engine, generated
+native Dante policy and Xray 26.9.30 with synthetic namespace-local endpoints.
+This was not a production rollout or full Center/catalog enrollment.
+
+- Before enablement, Dante and host-network Xray passed TCP, normal UDP and
+  different-source UDP replies after a multi-target association.
+- With the baseline enabled, TCP and normal UDP still passed, including
+  Xray → SOCKS5 → Dante → synthetic target. Different-source UDP replies failed
+  for both runtimes, with the owned public deny counter increasing. This is a
+  reproduced merge blocker, not a hypothetical FullCone feature request.
+- The approved public TCP port remained reachable; an unapproved listening port
+  and public SSH from a non-management source were denied. The native landing
+  source restriction continued rejecting an unauthorized private source.
+- Old SSH multiplexed connections were rejected; genuinely fresh approved SSH
+  connections were accepted before and after application. The tests uncovered
+  and corrected LXCFS/kernel boot-clock mismatch and dual-stack mapped socket
+  display handling; neither correction widens management CIDRs.
+- UFW reload preserved the native landing nftables table byte-for-byte and
+  normal UDP on all three tested paths remained usable.
+- Without confirmation or a running Agent/Center, the real five-minute systemd
+  watchdog rolled back the pending policy. UFW/Fail2ban stopped and all three
+  different-source UDP probes recovered. Reapplying revealed leftover unhooked
+  UFW chains; cleanup now removes only the owned input child, and preflight
+  accepts only known, empty inactive distribution hooks, never active rules.
+- A separate temporary experiment matching each test service's actual socket
+  cgroup restored different-source UDP while keeping unapproved ports blocked.
+  Those native nft rules were removed after the experiment: inserting them into
+  an iptables-nft-owned table is not a supported production integration. Correct
+  ownership, reload, container replacement and boot ordering remain unresolved.
+  Production identities must come from verified applied runtime ownership (the
+  inspected container/process and its actual cgroup, or the owned native service
+  receipt), not the experiment's unit names or an assumed global Xray service.
+  Unmerged service-identity changes are not treated as an available dependency;
+  missing/stale ownership evidence must continue to reject enablement.
+- Distribution application-profile preparation, actual IPv6 UFW chain names,
+  empty user-rule inventory and executable ownership/size checks were corrected.
+  Known package profiles require exact ownership and package integrity; custom,
+  changed, symlinked or rule-bearing configurations remain refused.
+
+These results do not establish Docker bridge/container acceptance, a complete
+VLESS/REALITY handshake, real Tailscale, IPv6 packet delivery, Ubuntu coverage,
+or reboot recovery. Dynamic UDP preservation remains required before merge.
+
 Sources: [UFW manual](https://manpages.ubuntu.com/manpages/noble/man8/ufw.8.html),
 [Docker iptables user rules](https://docs.docker.com/engine/network/firewall-iptables/),
 [Docker nftables backend](https://docs.docker.com/engine/network/firewall-nftables/),

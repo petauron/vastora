@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -45,7 +46,7 @@ func (h Host) prepare(ctx context.Context, s *checkpoint) (View, error) {
 		installed, e := h.run(ctx, "dpkg-query", "-W", "-f=${db:Status-Status}", entry.pkg)
 		if e != nil || installed != "installed" {
 			if entry.config != "" && !owned {
-				if _, e := os.Lstat(entry.config); e == nil {
+				if _, e := os.Lstat(entry.config); e == nil && !(entry.pkg == "ufw" && h.distributionUFWProfiles(ctx, entry.config)) {
 					return v, errors.New("security: unowned residual package configuration requires review")
 				}
 			}
@@ -110,6 +111,43 @@ func (h Host) prepare(ctx context.Context, s *checkpoint) (View, error) {
 		}
 	}
 	return v, nil
+}
+
+// Debian templates can contain these two distribution-owned application
+// profiles before UFW is installed. Do not adopt arbitrary profiles or rules.
+func (h Host) distributionUFWProfiles(ctx context.Context, path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "applications.d" || !entries[0].IsDir() {
+		return false
+	}
+	profiles, err := os.ReadDir(filepath.Join(path, "applications.d"))
+	if err != nil || len(profiles) == 0 || len(profiles) > 2 {
+		return false
+	}
+	for _, profile := range profiles {
+		pkg := profile.Name()
+		if pkg != "openssh-server" && pkg != "postfix" {
+			return false
+		}
+		info, err := profile.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return false
+		}
+		file := filepath.Join(path, "applications.d", pkg)
+		owner, err := h.run(ctx, "dpkg-query", "-S", file)
+		if err != nil || owner != pkg+": "+file {
+			return false
+		}
+		changed, err := h.run(ctx, "dpkg", "--verify", pkg)
+		if err != nil || changed != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func holdPackageLocks(paths []string) (func(), error) {

@@ -93,13 +93,17 @@ func locked() (func(), error) {
 }
 
 func securePath(path string, directory bool) error {
+	return securePathLimit(path, directory, 256*1024)
+}
+
+func securePathLimit(path string, directory bool, maxBytes int64) error {
 	for p := path; ; p = filepath.Dir(p) {
 		s, err := os.Lstat(p)
 		if err != nil {
 			return err
 		}
 		st, ok := s.Sys().(*syscall.Stat_t)
-		if !ok || st.Uid != 0 || s.Mode()&os.ModeSymlink != 0 || s.Mode().Perm()&0022 != 0 || p == path && (directory != s.IsDir() || !directory && (!s.Mode().IsRegular() || s.Size() > 256*1024)) {
+		if !ok || st.Uid != 0 || s.Mode()&os.ModeSymlink != 0 || s.Mode().Perm()&0022 != 0 || p == path && (directory != s.IsDir() || !directory && (!s.Mode().IsRegular() || s.Size() > maxBytes)) {
 			return errors.New("security: untrusted host file ownership or type")
 		}
 		if p == "/" {
@@ -264,6 +268,15 @@ func (h Host) Execute(ctx context.Context, t Task) (View, error) {
 		return v, e
 	case "apply":
 		if s != nil && s.View.Revision == t.Revision && (s.View.State == "pending_confirmation" || s.View.State == "verified") {
+			if s.View.AppliedAt == "" || s.View.Policy.Digest() != t.Policy.Digest() {
+				return View{}, errors.New("security: incomplete or mismatched application requires explicit recovery")
+			}
+			if err = h.verifyFiles(s); err != nil {
+				return View{}, err
+			}
+			if err = h.verifyRuntime(ctx, s); err != nil {
+				return View{}, err
+			}
 			return s.View, nil
 		}
 		return h.apply(ctx, t, s)
@@ -357,7 +370,7 @@ func (h Host) preview(ctx context.Context, p Policy, s *checkpoint) (View, error
 	if status, e := h.run(ctx, "ufw", "status"); e != nil || status != "Status: inactive" {
 		reject("UFW must be inactive and unowned.")
 	}
-	if added, e := h.run(ctx, "ufw", "show", "added"); e != nil || strings.Contains(added, "ufw ") {
+	if added, e := h.run(ctx, "ufw", "show", "added"); e != nil || !emptyUFWUserRules(added) {
 		reject("Existing UFW user rules require manual review.")
 	}
 	for _, path := range []string{jailPath, "/etc/systemd/system/" + watchdog + ".service", "/etc/systemd/system/" + watchdog + ".timer"} {
@@ -452,7 +465,7 @@ func (h Host) preview(ctx context.Context, p Policy, s *checkpoint) (View, error
 			}
 		}
 		for _, line := range strings.Split(rules, "\n") {
-			if strings.HasPrefix(line, "-A INPUT ") && line != "-A INPUT -j ts-input" {
+			if strings.HasPrefix(line, "-A INPUT ") && line != "-A INPUT -j ts-input" && !h.emptyInactiveUFWInput(ctx, tool, line) {
 				reject("Unowned INPUT rules require manual review.")
 			}
 		}
@@ -516,6 +529,50 @@ func (h Host) preview(ctx context.Context, p Policy, s *checkpoint) (View, error
 	return v, nil
 }
 
+func emptyUFWUserRules(raw string) bool {
+	return strings.TrimSpace(raw) == "Added user rules (see 'ufw status' for running firewall):\n(None)"
+}
+
+// UFW stop leaves its standard, empty hook chains attached. Empty hooks have
+// no filtering behavior; nonempty or unknown hooks still require review.
+func (h Host) emptyInactiveUFWInput(ctx context.Context, tool, line string) bool {
+	prefix := "ufw-"
+	if tool == "ip6tables" {
+		prefix = "ufw6-"
+	}
+	for _, suffix := range []string{"before-logging-input", "before-input", "after-input", "after-logging-input", "reject-input", "track-input"} {
+		name := prefix + suffix
+		if line == "-A INPUT -j "+name {
+			raw, err := h.run(ctx, tool, "-S", name)
+			return err == nil && strings.TrimSpace(raw) == "-N "+name
+		}
+	}
+	return false
+}
+
+func (h Host) removeInputGuard(ctx context.Context, tool string, p Policy) error {
+	raw, err := h.run(ctx, tool, "-S")
+	if err != nil {
+		return err
+	}
+	if !strings.Contains("\n"+raw+"\n", "\n-N "+chain+"\n") {
+		return nil
+	}
+	for _, iface := range p.PublicInterfaces {
+		args := []string{ufwBeforeInput(tool == "ip6tables"), "-i", iface, "-j", chain}
+		if strings.Contains("\n"+raw+"\n", "\n-A "+strings.Join(args, " ")+"\n") {
+			if _, err := h.run(ctx, tool, append([]string{"-D"}, args...)...); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := h.run(ctx, tool, "-F", chain); err != nil {
+		return err
+	}
+	_, err = h.run(ctx, tool, "-X", chain)
+	return err
+}
+
 func supportedDistro(raw string) bool {
 	values := map[string]string{}
 	for _, line := range strings.Split(raw, "\n") {
@@ -529,7 +586,7 @@ func supportedDistro(raw string) bool {
 func inputRules(p Policy, ipv6 bool) string {
 	var b strings.Builder
 	for _, iface := range p.PublicInterfaces {
-		fmt.Fprintf(&b, "-A ufw-before-input -i %s -j %s\n", iface, chain)
+		fmt.Fprintf(&b, "-A %s -i %s -j %s\n", ufwBeforeInput(ipv6), iface, chain)
 	}
 	fmt.Fprintf(&b, "-A %s -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN\n", chain)
 	if ipv6 {
@@ -558,10 +615,17 @@ func inputRules(p Policy, ipv6 bool) string {
 	return b.String()
 }
 
+func ufwBeforeInput(ipv6 bool) string {
+	if ipv6 {
+		return "ufw6-before-input"
+	}
+	return "ufw-before-input"
+}
+
 func integrateBefore(original []byte, p Policy, ipv6 bool) ([]byte, error) {
 	raw := string(original)
 	at := strings.Index(raw, "\n-A ")
-	if strings.Count(raw, "*filter") != 1 || at < 0 || !strings.Contains(raw, "\n:ufw-before-input ") || strings.Contains(raw, chain) {
+	if strings.Count(raw, "*filter") != 1 || at < 0 || !strings.Contains(raw, "\n:"+ufwBeforeInput(ipv6)+" ") || strings.Contains(raw, chain) {
 		return nil, errors.New("security: unsupported UFW before-rules format")
 	}
 	return []byte(raw[:at] + "\n:" + chain + " - [0:0]\n" + inputRules(p, ipv6) + raw[at:]), nil
@@ -697,7 +761,7 @@ func (h Host) installWatchdog(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err = securePath(exe, false); err != nil {
+	if err = securePathLimit(exe, false, 128<<20); err != nil {
 		return err
 	}
 	if strings.ContainsAny(exe, " \t\n%\\\"") {
@@ -771,6 +835,11 @@ func (h Host) dockerRules(ctx context.Context, tool string, p Policy, enable boo
 
 func (h Host) rollback(ctx context.Context, s *checkpoint) error {
 	if s.View.State == "rolled_back" {
+		for _, tool := range []string{"iptables", "ip6tables"} {
+			if err := h.removeInputGuard(ctx, tool, s.View.Policy); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 	if s.View.State == "preview" || s.View.State == "unconfigured" {
@@ -800,6 +869,9 @@ func (h Host) rollback(ctx context.Context, s *checkpoint) error {
 		return err
 	}
 	for _, tool := range []string{"iptables", "ip6tables"} {
+		if err := h.removeInputGuard(ctx, tool, s.View.Policy); err != nil {
+			return err
+		}
 		if err := h.dockerRules(ctx, tool, s.View.Policy, false); err != nil {
 			return err
 		}

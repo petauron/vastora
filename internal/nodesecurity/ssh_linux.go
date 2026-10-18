@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // VerifySSH is deliberately a local root command, not an Agent task. It must
@@ -78,18 +80,14 @@ func (h Host) VerifySSH(ctx context.Context, revision string) error {
 	if err != nil || hz <= 0 {
 		return errors.New("security: cannot determine process clock")
 	}
-	uptimeRaw, err := os.ReadFile("/proc/uptime")
-	if err != nil {
-		return err
+	// LXCFS virtualizes /proc/uptime to container age, while /proc/PID/stat
+	// start ticks use the kernel boot clock. Mixing them makes old sshd
+	// connections appear to start in the future. Use the matching kernel clock.
+	var bootClock unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_BOOTTIME, &bootClock); err != nil {
+		return errors.New("security: cannot determine process boot clock")
 	}
-	fields := strings.Fields(string(uptimeRaw))
-	if len(fields) == 0 {
-		return errors.New("security: cannot determine boot time")
-	}
-	uptime, err := strconv.ParseFloat(fields[0], 64)
-	if err != nil {
-		return err
-	}
+	uptime := float64(bootClock.Sec) + float64(bootClock.Nsec)/1e9
 	ancestors := map[int]time.Time{}
 	for pid, depth := os.Getppid(), 0; pid > 1 && depth < 32; depth++ {
 		raw, e := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
@@ -150,8 +148,8 @@ func freshSSHSocket(raw string, peer []string, ancestors map[int]time.Time, afte
 			}
 			source, e1 := netip.ParseAddr(peer[0])
 			target, e2 := netip.ParseAddr(peer[2])
-			local = local || e2 == nil && ip == target && port == peer[3]
-			remote = remote || e1 == nil && ip == source && port == peer[1]
+			local = local || e2 == nil && ip.Unmap() == target.Unmap() && port == peer[3]
+			remote = remote || e1 == nil && ip.Unmap() == source.Unmap() && port == peer[1]
 		}
 		if !local || !remote {
 			continue
@@ -215,13 +213,14 @@ func (h Host) verifyRuntime(ctx context.Context, s *checkpoint) error {
 		if e != nil || len(strings.Split(strings.TrimSpace(actual), "\n")) != count+1 {
 			return errors.New("security: public ingress guard changed")
 		}
-		before, e := h.run(ctx, tool, "-S", "ufw-before-input")
+		beforeChain := ufwBeforeInput(tool == "ip6tables")
+		before, e := h.run(ctx, tool, "-S", beforeChain)
 		if e != nil {
 			return e
 		}
 		lines := strings.Split(before, "\n")
 		for i, iface := range s.View.Policy.PublicInterfaces {
-			if len(lines) <= i+1 || lines[i+1] != "-A ufw-before-input -i "+iface+" -j "+chain {
+			if len(lines) <= i+1 || lines[i+1] != "-A "+beforeChain+" -i "+iface+" -j "+chain {
 				return errors.New("security: public guard is no longer first")
 			}
 		}

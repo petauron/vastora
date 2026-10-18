@@ -14,7 +14,7 @@ func TestPublicGuardPreservesPrivateAndRequiredNetworkTraffic(t *testing.T) {
 	p := fixturePolicy()
 	for _, v6 := range []bool{false, true} {
 		rules := inputRules(p, v6)
-		for _, must := range []string{"-A ufw-before-input -i eth0 -j ufw-vastora-security", "ESTABLISHED,RELATED -j RETURN", "--dport 443 -j RETURN", "--dport 41641 -j RETURN", "-j DROP"} {
+		for _, must := range []string{"-A " + ufwBeforeInput(v6) + " -i eth0 -j ufw-vastora-security", "ESTABLISHED,RELATED -j RETURN", "--dport 443 -j RETURN", "--dport 41641 -j RETURN", "-j DROP"} {
 			if !strings.Contains(rules, must) {
 				t.Fatalf("missing %q", must)
 			}
@@ -37,6 +37,65 @@ func TestPublicGuardPreservesPrivateAndRequiredNetworkTraffic(t *testing.T) {
 	}
 }
 
+func TestUFWEmptyRuleInventoryDoesNotMistakeHeaderForRule(t *testing.T) {
+	const header = "Added user rules (see 'ufw status' for running firewall):\n"
+	if !emptyUFWUserRules(header + "(None)\n") {
+		t.Fatal("distribution empty inventory rejected")
+	}
+	for _, raw := range []string{"", header, header + "ufw allow 22/tcp", header + "(None)\nufw allow 443", "unknown output"} {
+		if emptyUFWUserRules(raw) {
+			t.Fatalf("accepted nonempty/unknown inventory %q", raw)
+		}
+	}
+}
+
+func TestInactiveUFWInputHooksMustBeKnownAndEmpty(t *testing.T) {
+	for _, tool := range []string{"iptables", "ip6tables"} {
+		name := ufwBeforeInput(tool == "ip6tables")
+		h := Host{run: func(_ context.Context, got string, args ...string) (string, error) {
+			if got != tool || strings.Join(args, " ") != "-S "+name {
+				t.Fatalf("unexpected inspection %s %v", got, args)
+			}
+			return "-N " + name, nil
+		}}
+		if !h.emptyInactiveUFWInput(context.Background(), tool, "-A INPUT -j "+name) {
+			t.Fatal("empty distribution hook rejected")
+		}
+		if h.emptyInactiveUFWInput(context.Background(), tool, "-A INPUT -j administrator") {
+			t.Fatal("unowned chain accepted")
+		}
+		h.run = func(context.Context, string, ...string) (string, error) {
+			return "-N " + name + "\n-A " + name + " -j ACCEPT", nil
+		}
+		if h.emptyInactiveUFWInput(context.Background(), tool, "-A INPUT -j "+name) {
+			t.Fatal("nonempty chain accepted")
+		}
+	}
+}
+
+func TestRollbackRemovesOnlyOwnedInputGuard(t *testing.T) {
+	calls := []string{}
+	h := Host{run: func(_ context.Context, tool string, args ...string) (string, error) {
+		calls = append(calls, tool+" "+strings.Join(args, " "))
+		if strings.Join(args, " ") == "-S" {
+			return "-N ufw-vastora-security\n-A ufw-before-input -i eth0 -j ufw-vastora-security", nil
+		}
+		return "", nil
+	}}
+	if err := h.removeInputGuard(context.Background(), "iptables", fixturePolicy()); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(calls, "\n")
+	for _, want := range []string{"-D ufw-before-input -i eth0 -j ufw-vastora-security", "-F ufw-vastora-security", "-X ufw-vastora-security"} {
+		if !strings.Contains(got, want) {
+			t.Fatal("missing owned cleanup", want)
+		}
+	}
+	if strings.Contains(got, "-F INPUT") || strings.Contains(got, "-F ufw-before-input") {
+		t.Fatal("shared chain altered")
+	}
+}
+
 func TestIntegrateBeforeDoesNotReplaceLandingOrAdministratorRules(t *testing.T) {
 	base := []byte("# original\n*filter\n:ufw-before-input - [0:0]\n:ufw-before-output - [0:0]\n-A ufw-before-input -i lo -j ACCEPT\nCOMMIT\n")
 	got, err := integrateBefore(base, fixturePolicy(), false)
@@ -54,6 +113,10 @@ func TestIntegrateBeforeDoesNotReplaceLandingOrAdministratorRules(t *testing.T) 
 	}
 	if _, err = integrateBefore([]byte("*filter\nCOMMIT"), fixturePolicy(), false); err == nil {
 		t.Fatal("unknown format accepted")
+	}
+	v6 := strings.ReplaceAll(string(base), "ufw-before-", "ufw6-before-")
+	if got, err := integrateBefore([]byte(v6), fixturePolicy(), true); err != nil || !strings.Contains(string(got), "-A ufw6-before-input -i eth0") {
+		t.Fatalf("distribution IPv6 chain not supported: %v", err)
 	}
 }
 
@@ -115,6 +178,10 @@ func TestSSHReceiptBindsActualTCPConnectionNotANewMultiplexedChild(t *testing.T)
 	}
 	if !freshSSHSocket(line, peer, map[int]time.Time{100: now.Add(2 * time.Second), 200: now.Add(3 * time.Second)}, now) {
 		t.Fatal("fresh TCP socket rejected")
+	}
+	mappedLine := strings.ReplaceAll(strings.ReplaceAll(line, "192.0.2.10:2222", "[::ffff:192.0.2.10]:2222"), "203.0.113.10:55000", "[::ffff:203.0.113.10]:55000")
+	if !freshSSHSocket(mappedLine, peer, map[int]time.Time{100: now.Add(2 * time.Second), 200: now.Add(3 * time.Second)}, now) {
+		t.Fatal("dual-stack sshd mapped socket display rejected")
 	}
 	if freshSSHSocket(line, peer, map[int]time.Time{300: now.Add(2 * time.Second)}, now) {
 		t.Fatal("unrelated process accepted")
