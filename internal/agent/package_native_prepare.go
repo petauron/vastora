@@ -3,6 +3,9 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -30,6 +33,21 @@ type nativePreparedFile struct {
 type nativePreparedPackage struct {
 	Plan  nativePackagePlan
 	Files map[string]nativePreparedFile
+}
+
+type nativeInstallationService struct {
+	Unit   string `json:"unit"`
+	User   string `json:"user"`
+	SHA256 string `json:"sha256"`
+}
+
+type nativeInstallation struct {
+	Version  int                                  `json:"version"`
+	Services map[string]nativeInstallationService `json:"services"`
+}
+
+func nativeInstallationPath(applicationID string) string {
+	return filepath.Join("/etc/vastora/packages", packageIdentity(applicationID), "installation.json")
 }
 
 // prepareNativePackage only writes private temporary staging. It authenticates
@@ -113,6 +131,7 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		}
 	}
 	common := map[string]string{"private-address:": task.ServiceAddress}
+	common["native-installation:"] = nativeInstallationPath(task.ApplicationID)
 	if task.ServiceAddress == "" {
 		common["private-address:"] = "127.0.0.1"
 	}
@@ -211,6 +230,18 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		if err := add(nativePreparedFile{Path: unit.Path, Data: raw, Mode: 0644, Kind: "unit", LogicalName: unit.LogicalName, Component: unit.LogicalName}); err != nil {
 			return nativePreparedPackage{}, err
 		}
+	}
+	installation := nativeInstallation{Version: 1, Services: map[string]nativeInstallationService{}}
+	for _, unit := range plan.Units {
+		digest := sha256.Sum256(prepared.Files[unit.Path].Data)
+		installation.Services[unit.LogicalName] = nativeInstallationService{Unit: unit.Name, User: unit.Process.User, SHA256: hex.EncodeToString(digest[:])}
+	}
+	raw, err := json.Marshal(installation)
+	if err != nil {
+		return nativePreparedPackage{}, err
+	}
+	if err := add(nativePreparedFile{Path: nativeInstallationPath(task.ApplicationID), Data: raw, Mode: 0644, Kind: "file", LogicalName: "installation"}); err != nil {
+		return nativePreparedPackage{}, err
 	}
 	return prepared, nil
 }

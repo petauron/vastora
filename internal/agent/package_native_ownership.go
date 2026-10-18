@@ -72,7 +72,9 @@ func expectedNativeResource(applicationID string, p nativePackagePlan, r Runtime
 			}
 		}
 	case "file":
-		if strings.HasPrefix(r.LogicalName, "artifact:") {
+		if r.LogicalName == "installation" {
+			expected.Path = nativeInstallationPath(applicationID)
+		} else if strings.HasPrefix(r.LogicalName, "artifact:") {
 			parts := strings.SplitN(strings.TrimPrefix(r.LogicalName, "artifact:"), ":", 2)
 			if len(parts) == 2 {
 				for _, file := range p.Artifacts[parts[0]] {

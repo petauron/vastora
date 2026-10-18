@@ -107,6 +107,7 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			if kind == "native" {
+				verifyNativeInventory(t, task.ApplicationID, installed.Resources)
 				worker := resourceNamed(installed.Resources, "unit", "worker")
 				if worker == nil || worker.MainPID != 0 {
 					t.Fatal("manual native worker was started during installation")
@@ -147,6 +148,9 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 			}
 			writeData("before-upgrade")
 			task.ID, task.Operation, task.Manifest.Version = "upgrade", "upgrade", "1.1.0"
+			if kind == "native" {
+				task.Manifest.Runtime.NativeServices.Services[1].Process.Arguments = []catalog.Value{hostFixtureValue("301")}
+			}
 			packageTaskDigest(t, &task)
 			installed, err = executor.Deploy(ctx, task)
 			if err != nil {
@@ -156,6 +160,7 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 				t.Fatal("upgrade unexpectedly created a backup")
 			}
 			if kind == "native" {
+				verifyNativeInventory(t, task.ApplicationID, installed.Resources)
 				worker := resourceNamed(installed.Resources, "unit", "worker")
 				if output, err := exec.CommandContext(ctx, "systemctl", "start", worker.Name).CombinedOutput(); err != nil {
 					t.Fatalf("activate app-owned worker: %v: %s", err, output)
@@ -194,6 +199,7 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 				t.Fatalf("restore did not recover actual data: %v", err)
 			}
 			if kind == "native" {
+				verifyNativeInventory(t, task.ApplicationID, restored.Resources)
 				worker := resourceNamed(restored.Resources, "unit", "worker")
 				if worker.MainPID <= 0 || worker.InvocationID == "" {
 					t.Fatal("restore did not resume previously active native worker")
@@ -215,10 +221,42 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			if kind == "native" {
+				if _, err := os.Lstat(nativeInstallationPath(task.ApplicationID)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("uninstall retained stale installation inventory", err)
+				}
 				verifyNativeRetainedReinstall(t, ctx, executor, task, removed.Resources)
 			}
 			t.Logf("%s/%s: real install, identity inspection/adoption, upgrade, backup, restore, logs and retained uninstall passed", kind, runtime.GOARCH)
 		})
+	}
+}
+
+func verifyNativeInventory(t *testing.T, applicationID string, receipt *InstanceResources) {
+	t.Helper()
+	raw, err := os.ReadFile(nativeInstallationPath(applicationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inventory nativeInstallation
+	if err := json.Unmarshal(raw, &inventory); err != nil {
+		t.Fatal(err)
+	}
+	if inventory.Version != 1 || len(inventory.Services) != 2 {
+		t.Fatal("incomplete installed inventory")
+	}
+	for logical, service := range inventory.Services {
+		unit := resourceNamed(receipt, "unit", logical)
+		if unit == nil || service.Unit != unit.Name || service.SHA256 != unit.SHA256 {
+			t.Fatal("inventory differs from installed receipt")
+		}
+		actual, err := os.ReadFile(unit.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(actual)
+		if service.SHA256 != hex.EncodeToString(digest[:]) || !bytes.Contains(actual, []byte("User="+service.User+"\n")) {
+			t.Fatal("inventory differs from installed service bytes")
+		}
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -47,9 +48,10 @@ func TestNativePackagePrepareAuthenticatesAndScopesAllServices(t *testing.T) {
 			app.Artifacts = []catalog.Artifact{{Name: "bundle", OperatingSystem: "linux", Architecture: arch, URL: server.URL + "/bundle", SHA256: hex.EncodeToString(digest[:]), Format: "tar.gz"}}
 			app.Runtime.NativeServices.Services[0].WritableState = []string{"data"}
 			app.Runtime.NativeServices.Services[0].Process.ConfigFiles = []catalog.ConfigFile{{Path: "config.json", Format: "json", Values: map[string]catalog.Value{
-				"worker":  {Runtime: &catalog.RuntimeValue{Kind: "native-unit", Name: "worker"}},
-				"account": {Runtime: &catalog.RuntimeValue{Kind: "managed-user", Name: "worker"}},
-				"state":   {Runtime: &catalog.RuntimeValue{Kind: "state-directory", Name: "data"}},
+				"worker":       {Runtime: &catalog.RuntimeValue{Kind: "native-unit", Name: "worker"}},
+				"account":      {Runtime: &catalog.RuntimeValue{Kind: "managed-user", Name: "worker"}},
+				"state":        {Runtime: &catalog.RuntimeValue{Kind: "state-directory", Name: "data"}},
+				"installation": {Runtime: &catalog.RuntimeValue{Kind: "native-installation"}},
 			}}}
 			task := DeploymentTask{ApplicationID: "example-instance", Manifest: app}
 			root := packageTestDirectory(t)
@@ -61,10 +63,22 @@ func TestNativePackagePrepareAuthenticatesAndScopesAllServices(t *testing.T) {
 			if requests != 1 {
 				t.Fatalf("shared artifact fetched %d times", requests)
 			}
+			inventory := prepared.Files[nativeInstallationPath(task.ApplicationID)]
+			var installation nativeInstallation
+			if err := json.Unmarshal(inventory.Data, &installation); err != nil {
+				t.Fatal(err)
+			}
+			if installation.Version != 1 || len(installation.Services) != len(prepared.Plan.Units) || inventory.ApplicationOwned || inventory.Component != "" || inventory.Mode != 0644 {
+				t.Fatal("invalid executor-owned installation inventory")
+			}
 			if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
 				t.Fatal("prepare mutated host", err)
 			}
 			for _, unit := range prepared.Plan.Units {
+				digest := sha256.Sum256(prepared.Files[unit.Path].Data)
+				if installation.Services[unit.LogicalName] != (nativeInstallationService{Unit: unit.Name, User: unit.Process.User, SHA256: hex.EncodeToString(digest[:])}) {
+					t.Fatal("installation does not identify exact compiled service")
+				}
 				text := string(prepared.Files[unit.Path].Data)
 				if !strings.Contains(text, "ProtectSystem=strict\n") || !strings.Contains(text, "User="+unit.Process.User+"\n") {
 					t.Fatal("sandbox/account missing")
@@ -74,7 +88,7 @@ func TestNativePackagePrepareAuthenticatesAndScopesAllServices(t *testing.T) {
 						t.Fatal("controller claimed worker state ownership")
 					}
 					config := prepared.Files[unit.ConfigDirectory+"/config/config.json"]
-					if !config.ApplicationOwned || config.Mode != 0600 || !bytes.Contains(config.Data, []byte(prepared.Plan.Users["worker"])) {
+					if !config.ApplicationOwned || config.Mode != 0600 || !bytes.Contains(config.Data, []byte(prepared.Plan.Users["worker"])) || !bytes.Contains(config.Data, []byte(inventory.Path)) {
 						t.Fatal("private bootstrap references missing")
 					}
 				}

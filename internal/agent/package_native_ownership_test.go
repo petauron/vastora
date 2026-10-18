@@ -12,6 +12,39 @@ import (
 
 type nativeMissingAccount struct{}
 
+func TestNativeInstallationInventoryIsImmutableAndScoped(t *testing.T) {
+	plan, err := planNativePackage("instance", nativePlanFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := nativeInstallationPath("instance")
+	data := []byte(`{"version":1,"services":{}}`)
+	digest := sha256.Sum256(data)
+	resource := RuntimeResource{Kind: "file", LogicalName: "installation", Path: path, Name: "installation.json", SHA256: hex.EncodeToString(digest[:])}
+	expected, err := expectedNativeResource("instance", plan, resource)
+	if err != nil || expected.ApplicationOwned || expected.Component != "" {
+		t.Fatal("inventory must not be restored as application data", err)
+	}
+	manager := SystemdHostApplicationManager{RootDir: packageTestDirectory(t)}
+	if err := writeHostFileAtomic(manager.path(path), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	receipt := &InstanceResources{ApplicationID: "instance", Runtime: "systemd", Resources: []RuntimeResource{resource}}
+	if err := inspectNativeOwnership(context.Background(), manager, "instance", plan, receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeHostFileAtomic(manager.path(path), []byte("changed"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := inspectNativeOwnership(context.Background(), manager, "instance", plan, receipt); err == nil {
+		t.Fatal("changed inventory accepted")
+	}
+	resource.Path = nativeInstallationPath("other-instance")
+	if _, err := expectedNativeResource("instance", plan, resource); err == nil {
+		t.Fatal("foreign inventory accepted")
+	}
+}
+
 func (nativeMissingAccount) Error() string { return "account not found" }
 func (nativeMissingAccount) ExitCode() int { return 2 }
 

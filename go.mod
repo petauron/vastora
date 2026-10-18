@@ -12,7 +12,7 @@ require (
 	github.com/miekg/dns v1.1.73
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
-	github.com/petauron/catalog v0.3.2-0.20261018112435-c299015213f4
+	github.com/petauron/catalog v0.3.2-0.20261018120742-8a4d6d4386ee
 	github.com/petauron/glivela v0.1.0-alpha.21.0.20261017182649-fb8298167478
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/projectdiscovery/cdncheck v1.3.1
