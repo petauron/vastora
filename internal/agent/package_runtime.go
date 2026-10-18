@@ -27,6 +27,7 @@ type InstanceResources struct {
 	ApplicationID          string            `json:"applicationId"`
 	AppKey                 string            `json:"appKey"`
 	Runtime                string            `json:"runtime"`
+	RuntimeVersion         int               `json:"runtimeVersion,omitempty"`
 	PackageVersion         string            `json:"packageVersion"`
 	PackageRevision        int               `json:"packageRevision"`
 	ManifestSHA256         string            `json:"manifestSha256"`
@@ -193,11 +194,11 @@ func validatePackageTask(task DeploymentTask) error {
 		return errors.New("agent: package manifest digest mismatch")
 	}
 	runtime := task.Manifest.Runtime
-	if runtime == nil || runtime.Version != 1 || runtime.Kind != "docker" && runtime.Kind != "systemd" {
+	if runtime == nil || !((runtime.Kind == "docker" && runtime.Version == 1) || (runtime.Kind == "systemd" && (runtime.Version == 1 || runtime.Version == 2))) {
 		return errors.New("agent: unsupported package executor protocol")
 	}
 	for _, capability := range runtime.RequiredCapabilities {
-		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime"}, capability) {
+		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services"}, capability) {
 			return errors.New("agent: unsupported runtime capability")
 		}
 		if capability == "meridian-runtime" && task.AppKey != meridianKey {
@@ -298,9 +299,18 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 		return result, errors.New("agent: application is already installed")
 	}
 	if receipt == nil {
-		receipt = &InstanceResources{Version: 1, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Runtime: task.Manifest.Runtime.Kind}
+		receipt = &InstanceResources{Version: 1, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Runtime: task.Manifest.Runtime.Kind, RuntimeVersion: task.Manifest.Runtime.Version}
 	} else if task.Manifest.Runtime != nil && receipt.Runtime != task.Manifest.Runtime.Kind {
 		return result, errors.New("agent: changing executor requires explicit instance migration")
+	}
+	if task.Manifest.Runtime != nil {
+		installedVersion := receipt.RuntimeVersion
+		if installedVersion == 0 {
+			installedVersion = 1
+		}
+		if installedVersion != task.Manifest.Runtime.Version {
+			return result, errors.New("agent: runtime contract change requires explicit instance migration")
+		}
 	}
 	if task.Operation == "uninstall" && (receipt.ManifestSHA256 != task.ManifestSHA256 || receipt.PackageRevision != task.PackageRevision || receipt.PackageVersion != task.Manifest.Version) {
 		return result, errors.New("agent: uninstall must identify the installed receipt, not a catalog replacement")

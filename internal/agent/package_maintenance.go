@@ -59,6 +59,9 @@ func (e ApplicationExecutor) ManagePackage(ctx context.Context, task DeploymentT
 			return ApplicationTaskResult{}, errors.New("agent: native package manager unavailable")
 		}
 		backend = &SystemdPackageBackend{Manager: manager, StateDirectory: e.packageDirectory()}
+		if receipt.RuntimeVersion == 2 {
+			backend = &NativeServicesPackageBackend{Manager: manager, StateDirectory: e.packageDirectory()}
+		}
 	} else if receipt.Runtime == "docker" {
 		socket := e.DockerSocket
 		if socket == "" {
@@ -99,6 +102,15 @@ func maintainPackage(ctx context.Context, executor PackageExecutor, backend pack
 	if receipt.AppKey != task.AppKey || receipt.State != "ready" || receipt.ManifestSHA256 != task.ManifestSHA256 || receipt.PackageRevision != task.PackageRevision {
 		return result, errors.New("agent: maintenance requires the exact healthy installed receipt")
 	}
+	if task.Manifest.Runtime != nil {
+		installedVersion := receipt.RuntimeVersion
+		if installedVersion == 0 {
+			installedVersion = 1
+		}
+		if task.Manifest.Runtime.Version != installedVersion {
+			return result, errors.New("agent: maintenance runtime contract does not match installed receipt")
+		}
+	}
 	if err := backend.Inspect(ctx, task, receipt); err != nil {
 		return result, err
 	}
@@ -127,6 +139,7 @@ func maintainPackage(ctx context.Context, executor PackageExecutor, backend pack
 	storageFound := false
 	for _, resource := range receipt.Resources {
 		storageFound = storageFound || resource.Kind == "volume" || resource.Kind == "directory" || resource.Kind == "bind"
+		storageFound = storageFound || receipt.RuntimeVersion == 2 && resource.Kind == "file" && resource.Component != ""
 	}
 	if !storageFound {
 		return result, errors.New("agent: package has no managed data to back up")
@@ -143,7 +156,15 @@ func maintainPackage(ctx context.Context, executor PackageExecutor, backend pack
 			if backup.PackageVersion != receipt.PackageVersion {
 				return result, errors.New("agent: restore cannot cross package versions; use matched offline recovery")
 			}
-			if _, err := readPackageBackup(executor.StateDirectory, task, backup); err != nil {
+			if receipt.RuntimeVersion == 2 {
+				verified, err := openNativeBackup(executor.StateDirectory, task, backup)
+				if err != nil {
+					return result, err
+				}
+				if err := verified.Close(); err != nil {
+					return result, err
+				}
+			} else if _, err := readPackageBackup(executor.StateDirectory, task, backup); err != nil {
 				return result, err
 			}
 			selected = append(selected, backup)

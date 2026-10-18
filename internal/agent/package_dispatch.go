@@ -71,6 +71,28 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 		if !ok {
 			return ApplicationTaskResult{}, errors.New("agent: generic systemd executor is unavailable")
 		}
+		version := 1
+		if task.Manifest.Runtime != nil {
+			version = task.Manifest.Runtime.Version
+		}
+		if task.Operation != "install" {
+			installed, err := e.ApplicationResources(task.ApplicationID)
+			if err != nil {
+				return ApplicationTaskResult{}, err
+			}
+			version = installed.RuntimeVersion
+			// Released single-service receipts predate this explicit field.
+			if version == 0 {
+				version = 1
+			}
+		}
+		if version == 2 {
+			bundle := &NativeServicesPackageBackend{Manager: manager, StateDirectory: e.packageDirectory()}
+			return (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: bundle}).Deploy(ctx, task)
+		}
+		if version != 1 {
+			return ApplicationTaskResult{}, errors.New("agent: installed native contract is unsupported")
+		}
 		backend := &SystemdPackageBackend{Manager: manager, StateDirectory: e.packageDirectory()}
 		result, err := (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: backend}).Deploy(ctx, task)
 		if err == nil && task.SenulunRestore != nil {
@@ -112,9 +134,12 @@ func (e ApplicationExecutor) PackageCapabilities(dockerAvailable bool) (map[stri
 		versions["docker"] = 1
 	}
 	if _, ok := e.Host.(SystemdHostApplicationManager); ok && runtime.GOOS == "linux" {
-		versions["systemd"] = 1
+		versions["systemd"] = 2
 	}
 	capabilities := []string{"root", "host-network", "host-path", "devices"}
+	if versions["systemd"] == 2 {
+		capabilities = append(capabilities, "native-services")
+	}
 	if dockerAvailable && e.Store != nil {
 		capabilities = append(capabilities, "meridian-runtime")
 	}
