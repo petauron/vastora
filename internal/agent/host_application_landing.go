@@ -349,6 +349,9 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) (
 	if err := verifyLandingFiles(journal); err != nil {
 		return err
 	}
+	if err := retireLegacyLandingDNSHook(); err != nil {
+		return err
+	}
 	recovery, err := prepareLandingRecovery(ctx, journal)
 	if err != nil {
 		return err
@@ -507,6 +510,14 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) (
 	// A self-dial is intentionally denied by the source allowlist. Inspect the
 	// kernel listener owned by the dedicated UID instead; actual remote TCP/UDP
 	// business health is established by the selected proxy node's probe.
+	if err := waitLandingListener(ctx, plan.Address, journal.UID); err != nil {
+		return err
+	}
+	journal.Files, journal.PendingFiles = journal.PendingFiles, nil
+	return saveLandingHostJournal(journal)
+}
+
+func waitLandingListener(ctx context.Context, address string, uid uint32) error {
 	readyCtx, cancelReady := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelReady()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -516,7 +527,7 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) (
 		if err != nil {
 			return errors.New("agent: landing private listener could not be inspected")
 		}
-		if landingListenerPresent(listeners, plan.Address, journal.UID) {
+		if landingListenerPresent(listeners, address, uid) {
 			break
 		}
 		select {
@@ -525,8 +536,7 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) (
 		case <-ticker.C:
 		}
 	}
-	journal.Files, journal.PendingFiles = journal.PendingFiles, nil
-	return saveLandingHostJournal(journal)
+	return nil
 }
 
 func landingListenerPresent(data []byte, address string, uid uint32) bool {
