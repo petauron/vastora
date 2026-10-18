@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.329](https://github.com/petauron/vastora/compare/v0.1.0-alpha.328...v0.1.0-alpha.329) (2026-10-18)
+
+
+### Features
+
+* support Docker-free landing-only nodes ([#950](https://github.com/petauron/vastora/issues/950)) ([1e78b08](https://github.com/petauron/vastora/commit/1e78b08f07fbcf5e7ba12bcc3254078e3309dfdf)), closes [#940](https://github.com/petauron/vastora/issues/940)
+
 ## [0.1.0-alpha.328](https://github.com/petauron/vastora/compare/v0.1.0-alpha.327...v0.1.0-alpha.328) (2026-10-18)
 
 
