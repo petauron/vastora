@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.326](https://github.com/petauron/vastora/compare/v0.1.0-alpha.325...v0.1.0-alpha.326) (2026-10-18)
+
+
+### Bug Fixes
+
+* **agent:** avoid Tailscale restarts on inspection errors ([#943](https://github.com/petauron/vastora/issues/943)) ([ad7f7f0](https://github.com/petauron/vastora/commit/ad7f7f0641d80ea80c0e584df5618ea6660463ae))
+* **web:** isolate activity recovery from desktop data failures ([#944](https://github.com/petauron/vastora/issues/944)) ([fc5adc9](https://github.com/petauron/vastora/commit/fc5adc98d01884ff9a42b115cc7fcbc46a1cd208))
+
 ## [0.1.0-alpha.325](https://github.com/petauron/vastora/compare/v0.1.0-alpha.324...v0.1.0-alpha.325) (2026-10-17)
 
 
