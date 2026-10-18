@@ -131,8 +131,8 @@ func TestAgentUninstallRemovesOnlyVastoraManagedTailscale(t *testing.T) {
 				t.Fatalf("repeated uninstall was not idempotent: %v", err)
 			}
 			joined := strings.Join(commands, "\n")
-			if !strings.Contains(joined, "tailscale logout") {
-				t.Fatalf("Headscale identity was not disconnected: %s", joined)
+			if strings.Contains(joined, "tailscale logout") != (ownership == "external") {
+				t.Fatalf("logout must be required only for retained external installations: %s", joined)
 			}
 			for _, path := range tailscalePaths {
 				_, err := os.Stat(path)

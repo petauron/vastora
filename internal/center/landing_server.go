@@ -24,7 +24,9 @@ const landingServerSchema = `CREATE TABLE landing_server_states (
  peer_json BLOB NOT NULL DEFAULT '{}',
  status TEXT NOT NULL CHECK(status IN ('pending','applying','ready','failed','stopped')),
  attempt INTEGER NOT NULL DEFAULT 0,
- lease_expires_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+ lease_expires_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL,
+ health_json BLOB NOT NULL DEFAULT '{}' CHECK(json_valid(health_json)),
+ health_received_at TEXT NOT NULL DEFAULT ''
 )`
 
 // Called inside the topology transaction after resolving managed private

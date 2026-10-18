@@ -70,7 +70,11 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err != nil {
 		return nil, fmt.Errorf("agent: discover landing egress addresses: %w", err)
 	}
-	endpoints, observeErr := observeProxyRuntime(ctx, store)
+	var endpoints []ApplicationEndpointObservation
+	var observeErr error
+	if !c.Capabilities.LandingOnly {
+		endpoints, observeErr = observeProxyRuntime(ctx, store)
+	}
 	endpointsObserved := observeErr == nil || errors.Is(observeErr, errApplicationNotInstalled)
 	if errors.Is(observeErr, errApplicationNotInstalled) || errors.Is(observeErr, errMeridianRuntimeNotConfigured) {
 		observeErr = nil
@@ -78,23 +82,29 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		observeErr = fmt.Errorf("agent: observe Glivela runtime: %w", observeErr)
 	}
 	var meridianRuntime *meridianruntime.Result
-	if _, installErr := store.AppliedInstallation(ctx, meridianKey); installErr == nil {
-		if _, stateErr := store.loadMeridianRuntimeState(ctx); stateErr == nil {
-			observer, ok := c.Executor.(interface {
-				ObserveMeridianRuntime(context.Context) (meridianruntime.Result, error)
-			})
-			if !ok {
-				observeErr = errors.Join(observeErr, errors.New("agent: Glivela runtime observer is unavailable"))
-			} else if observed, runtimeErr := observer.ObserveMeridianRuntime(ctx); runtimeErr != nil {
-				observeErr = errors.Join(observeErr, fmt.Errorf("agent: observe Glivela usage: %w", runtimeErr))
-			} else {
-				meridianRuntime = &observed
+	if !c.Capabilities.LandingOnly {
+		if _, installErr := store.AppliedInstallation(ctx, meridianKey); installErr == nil {
+			if _, stateErr := store.loadMeridianRuntimeState(ctx); stateErr == nil {
+				observer, ok := c.Executor.(interface {
+					ObserveMeridianRuntime(context.Context) (meridianruntime.Result, error)
+				})
+				if !ok {
+					observeErr = errors.Join(observeErr, errors.New("agent: Glivela runtime observer is unavailable"))
+				} else if observed, runtimeErr := observer.ObserveMeridianRuntime(ctx); runtimeErr != nil {
+					observeErr = errors.Join(observeErr, fmt.Errorf("agent: observe Glivela usage: %w", runtimeErr))
+				} else {
+					meridianRuntime = &observed
+				}
+			} else if !errors.Is(stateErr, errApplicationNotInstalled) {
+				observeErr = errors.Join(observeErr, fmt.Errorf("agent: inspect Glivela runtime state: %w", stateErr))
 			}
-		} else if !errors.Is(stateErr, errApplicationNotInstalled) {
-			observeErr = errors.Join(observeErr, fmt.Errorf("agent: inspect Glivela runtime state: %w", stateErr))
+		} else if !errors.Is(installErr, errApplicationNotInstalled) {
+			observeErr = errors.Join(observeErr, installErr)
 		}
-	} else if !errors.Is(installErr, errApplicationNotInstalled) {
-		observeErr = errors.Join(observeErr, installErr)
+	}
+	var landingClientRuntime *landing.ClientRuntime
+	if !c.Capabilities.LandingOnly {
+		landingClientRuntime = store.observeLandingClientRuntime(ctx)
 	}
 	var response struct {
 		LandingLatencyTargets    []landing.LatencyTarget         `json:"landingLatencyTargets"`
@@ -114,7 +124,14 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	}); ok {
 		c.Capabilities.ExecutorVersions, c.Capabilities.RuntimeCapabilities = executor.PackageCapabilities(c.Capabilities.Docker)
 	}
+	// The host ownership journal uses "none"; the wire schema represents
+	// absence with the empty string, not a third ownership type.
+	tailscaleOwnership := c.TailscaleOwnership
+	if tailscaleOwnership == "none" {
+		tailscaleOwnership = ""
+	}
 	payload := map[string]any{
+		"landingServerHealth":    store.observeNativeLandingHealth(ctx),
 		"landingEgressAddresses": egressAddresses,
 		"publicKey":              publicKey,
 		"version":                Version, "appliedInstallations": len(states), "roles": c.Roles,
@@ -124,14 +141,14 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"gatewayConfigHash":            gatewayConfigHash,
 		"nodeListenerHealthy":          nodeListenerHealthy,
 		"landingHealth":                store.landingHealth(),
-		"landingClientRuntime":         store.observeLandingClientRuntime(ctx),
+		"landingClientRuntime":         landingClientRuntime,
 		"privateNetworkPeer":           store.observePrivateNetworkPeer(ctx, candidates, c.TailscaleOwnership),
 		"nodeListenerRevision":         nodeListenerRevision,
 		"nodeListenerConfigHash":       nodeListenerConfigHash,
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
 		"remoteUpdateSupported":        c.Updater != nil,
 		"tailscaleEnrolled":            c.TailscaleEnrolled,
-		"tailscaleOwnership":           c.TailscaleOwnership,
+		"tailscaleOwnership":           tailscaleOwnership,
 		"startup":                      startup,
 		"publicEgress":                 nil,
 	}

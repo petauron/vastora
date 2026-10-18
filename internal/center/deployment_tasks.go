@@ -106,6 +106,17 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return nil, err
 	}
+	commitAuthorized := commitTask
+	commitTask = func(tx *sql.Tx, task *AgentTask) error {
+		var landingOnly bool
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json, '$.landingOnly'), 0) FROM agents WHERE id = ?`, agentID).Scan(&landingOnly); err != nil {
+			return err
+		}
+		if landingOnly && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" {
+			return errors.New("center: task is not authorized for a landing-only node")
+		}
+		return commitAuthorized(tx, task)
+	}
 	if blocked, err := agentReinstallBlocked(ctx, s.db, agentID); err != nil {
 		return nil, err
 	} else if blocked {

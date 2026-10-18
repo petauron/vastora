@@ -168,13 +168,13 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 		t.Fatalf("public installer status = %d", response.Code)
 	}
 	loader := response.Body.String()
-	for _, expected := range []string{"token=\"${1:-}\"", "ca_certificate=\"${2:-}\"", "bootstrap_uses_ca=\"${3:-0}\"", "exec sudo \"$0\" \"$token\" \"$ca_certificate\" \"$bootstrap_uses_ca\"", "bootstrap_url='https://center.example.com'", "bootstrap_curl", "--cacert \"$ca_certificate\"", "command -v docker", "docker info", "${bootstrap_url%/}/install/docker.sh", "sh \"$docker_installer\"", "Authorization: Bearer $token", "${bootstrap_url%/}/install/agent.sh", "printf '%s\\n' \"$token\" | sh \"$installer\" \"$ca_certificate\" \"$bootstrap_uses_ca\""} {
+	for _, expected := range []string{"token=\"${1:-}\"", "ca_certificate=\"${2:-}\"", "bootstrap_uses_ca=\"${3:-0}\"", "exec sudo \"$0\" \"$token\" \"$ca_certificate\" \"$bootstrap_uses_ca\"", "bootstrap_url='https://center.example.com'", "bootstrap_curl", "--cacert \"$ca_certificate\"", "Authorization: Bearer $token", "${bootstrap_url%/}/install/agent.sh", "printf '%s\\n' \"$token\" | sh \"$installer\" \"$ca_certificate\" \"$bootstrap_uses_ca\""} {
 		if !strings.Contains(loader, expected) {
 			t.Fatalf("installer loader is missing %q:\n%s", expected, loader)
 		}
 	}
-	if dockerCheck, dockerInstall, agentDownload := strings.Index(loader, "command -v docker"), strings.Index(loader, "/install/docker.sh"), strings.Index(loader, "Authorization: Bearer $token"); dockerCheck < 0 || dockerInstall < dockerCheck || agentDownload < dockerInstall {
-		t.Fatal("installer loader must check and, when necessary, install Docker before downloading the authenticated Agent installer")
+	if strings.Contains(loader, "docker") {
+		t.Fatal("loader must authenticate the enrollment before deciding Docker dependencies")
 	}
 	enrollment, err := store.CreateAgentEnrollment(context.Background(), AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: "bound-node", CenterURL: "https://center.example.com", Gateway: true, Tunnel: true})
 	if err != nil {

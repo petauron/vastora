@@ -172,429 +172,433 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	decommissionHandedOff := false
 	updateHandedOff := false
-	switch task.Kind {
-	case ipquality.Kind:
-		checker, ok := c.Executor.(interface {
-			CheckIPQuality(context.Context, ipquality.Task) (ipquality.Result, error)
-		})
-		if !ok || !c.Capabilities.IPQuality || !c.Capabilities.Docker || task.IPQuality == nil {
-			err = errors.New("agent: IP quality capability is not configured")
-		} else {
-			value, checkErr := checker.CheckIPQuality(ctx, *task.IPQuality)
-			result.IPQuality, err = &value, checkErr
-		}
-	case nodediagnostics.NetworkKind:
-		checker, ok := c.Executor.(interface {
-			CheckNetworkQuality(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
-		})
-		if !ok || !c.Capabilities.NetworkDiagnostics || task.NodeDiagnostics == nil {
-			err = errors.New("agent: network diagnostics capability is not configured")
-		} else {
-			value, checkErr := checker.CheckNetworkQuality(ctx, *task.NodeDiagnostics)
-			result.NodeDiagnostics, err = &value, checkErr
-		}
-	case nodediagnostics.ReturnRouteKind:
-		checker, ok := c.Executor.(interface {
-			CheckReturnRoutes(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
-		})
-		if !ok || !c.Capabilities.ReturnRoute || task.NodeDiagnostics == nil {
-			err = errors.New("agent: return-route capability is not configured")
-		} else {
-			value, checkErr := checker.CheckReturnRoutes(ctx, *task.NodeDiagnostics)
-			result.NodeDiagnostics, err = &value, checkErr
-		}
-	case nodediagnostics.BandwidthKind:
-		checker, ok := c.Executor.(interface {
-			CheckInternationalBandwidth(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
-		})
-		if !ok || !c.Capabilities.BandwidthDiagnostics || task.NodeDiagnostics == nil {
-			err = errors.New("agent: bandwidth diagnostics capability is not configured")
-		} else {
-			value, checkErr := checker.CheckInternationalBandwidth(ctx, *task.NodeDiagnostics)
-			result.NodeDiagnostics, err = &value, checkErr
-		}
-	case nodediagnostics.LinkServerKind:
-		checker, ok := c.Executor.(interface {
-			CheckMeridianLinkServer(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
-		})
-		if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
-			err = errors.New("agent: Glivela link server is unavailable")
-		} else {
-			value, checkErr := checker.CheckMeridianLinkServer(ctx, *task.NodeDiagnostics)
-			result.NodeDiagnostics, err = &value, checkErr
-		}
-	case nodediagnostics.LinkBandwidthKind:
-		checker, ok := c.Executor.(interface {
-			CheckMeridianLinkBandwidth(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
-		})
-		if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
-			err = errors.New("agent: Glivela link bandwidth is unavailable")
-		} else {
-			value, checkErr := checker.CheckMeridianLinkBandwidth(ctx, *task.NodeDiagnostics)
-			result.NodeDiagnostics, err = &value, checkErr
-		}
-	case nodediagnostics.HostProfileKind:
-		checker, ok := c.Executor.(interface {
-			CheckHostProfile(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
-		})
-		if !ok || !c.Capabilities.HostProfile || task.NodeDiagnostics == nil {
-			err = errors.New("agent: host profile capability is not configured")
-		} else {
-			value, checkErr := checker.CheckHostProfile(ctx, *task.NodeDiagnostics)
-			result.NodeDiagnostics, err = &value, checkErr
-		}
-	case xrayrecovery.InspectKind:
-		manager, ok := c.Executor.(interface {
-			InspectXrayConfiguration(context.Context, xrayrecovery.Task) (xrayrecovery.Result, error)
-		})
-		if !ok || task.XrayRecovery == nil {
-			err = errors.New("agent: Xray configuration recovery is unavailable")
-		} else {
-			value, recoveryErr := manager.InspectXrayConfiguration(ctx, *task.XrayRecovery)
-			result.XrayRecovery, err = &value, recoveryErr
-		}
-	case xrayrecovery.ApplyKind:
-		manager, ok := c.Executor.(interface {
-			ApplyXrayConfigurationRecovery(context.Context, xrayrecovery.Task) (xrayrecovery.Result, error)
-		})
-		if !ok || task.XrayRecovery == nil {
-			err = errors.New("agent: Xray configuration recovery is unavailable")
-		} else {
-			value, recoveryErr := manager.ApplyXrayConfigurationRecovery(ctx, *task.XrayRecovery)
-			result.XrayRecovery, err = &value, recoveryErr
-		}
-	case "application.maintenance":
-		manager, ok := c.Executor.(interface {
-			ManagePackage(context.Context, DeploymentTask) (ApplicationTaskResult, error)
-		})
-		if !ok {
-			err = errors.New("agent: package maintenance is unavailable")
-		} else {
-			result, err = manager.ManagePackage(ctx, task)
-		}
-	case "application.adopt":
-		manager, ok := c.Executor.(interface {
-			Adopt(context.Context, DeploymentTask) (ApplicationTaskResult, error)
-		})
-		if !ok {
-			err = errors.New("agent: package adoption is unavailable")
-		} else {
-			result, err = manager.Adopt(ctx, task)
-		}
-	case "application.apply":
-		if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
-			err = fmt.Errorf("agent: application task requires runtime generation %d, executor is generation %d", task.RequiredRuntimeGeneration, platform.ApplicationRuntimeGeneration)
-		} else if c.Executor == nil {
-			err = errors.New("agent: application capability is not configured")
-		} else if task.Manifest.Runtime != nil && task.Manifest.Runtime.Kind == "docker" && !c.Capabilities.Docker {
-			err = errors.New("agent: Docker capability is not configured")
-		} else {
-			landingState, landingErr := store.prepareLandingXrayRuntimeMigration(ctx, task)
-			if landingErr != nil {
-				err = landingErr
-			} else {
-				result, err = c.Executor.Deploy(ctx, task)
-				err = store.finishLandingXrayRuntimeMigration(ctx, landingState, err)
-			}
-		}
-	case "application.command":
-		// Mutating commands may restart the panel or replace its database.
-		// The legacy export only reads and validates identities; keeping it
-		// behind a stalled landing write would also stall the migration.
-		if task.MeridianLegacyExport == nil {
-			store.landingMutationMu.Lock()
-			defer store.landingMutationMu.Unlock()
-		}
-		commands := 0
-		if task.MeridianAcceptance != nil {
-			commands++
-		}
-		if task.SenulunReporting != nil {
-			commands++
-		}
-		if task.SenulunRotation != nil {
-			commands++
-		}
-		if task.SenulunInspection != nil {
-			commands++
-		}
-		if task.SenulunEnrollment != nil {
-			commands++
-		}
-		if task.ProtocolCommand != nil {
-			commands++
-		}
-		if task.ApplicationCommand != nil {
-			commands++
-		}
-		if task.SubscriptionCommand != nil {
-			commands++
-		}
-		if task.ClientCommand != nil {
-			commands++
-		}
-		if task.NodeCommand != nil {
-			commands++
-		}
-		if task.ControllerCommand != nil {
-			commands++
-		}
-		if task.MeridianRuntime != nil {
-			commands++
-		}
-		if task.MeridianLegacyExport != nil {
-			commands++
-		}
-		if task.MeridianLegacyRetire != nil {
-			commands++
-		}
-		if !c.Capabilities.Docker || commands != 1 {
-			err = errors.New("agent: application command received without Docker capability")
-		} else if task.MeridianAcceptance != nil {
-			executor, ok := c.Executor.(interface {
-				VerifyMeridianAcceptance(context.Context, meridianruntime.AcceptanceTask) (meridianruntime.AcceptanceResult, error)
+	if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) {
+		err = errors.New("agent: task is not authorized for a landing-only node")
+	} else {
+		switch task.Kind {
+		case ipquality.Kind:
+			checker, ok := c.Executor.(interface {
+				CheckIPQuality(context.Context, ipquality.Task) (ipquality.Result, error)
 			})
-			connection, connectionErr := store.Connection(ctx)
-			if connectionErr != nil || task.MeridianAcceptance.VerifierAgentID != connection.AgentID {
-				err = errors.New("agent: recovery verifier identity mismatch")
-			} else if !ok || !c.Capabilities.MeridianAcceptance {
-				err = errors.New("agent: recovery client capability is not configured")
+			if !ok || !c.Capabilities.IPQuality || !c.Capabilities.Docker || task.IPQuality == nil {
+				err = errors.New("agent: IP quality capability is not configured")
 			} else {
-				var acceptance meridianruntime.AcceptanceResult
-				acceptance, err = executor.VerifyMeridianAcceptance(ctx, *task.MeridianAcceptance)
-				if err == nil {
-					result.MeridianAcceptance = &acceptance
-				}
+				value, checkErr := checker.CheckIPQuality(ctx, *task.IPQuality)
+				result.IPQuality, err = &value, checkErr
 			}
-		} else if task.MeridianLegacyExport != nil {
-			var exportResult meridianruntime.LegacyExportResult
-			exportResult, err = exportLegacyMeridianState(ctx, store, *task.MeridianLegacyExport)
-			if err == nil {
-				result.MeridianLegacyExport = &exportResult
+		case nodediagnostics.NetworkKind:
+			checker, ok := c.Executor.(interface {
+				CheckNetworkQuality(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+			})
+			if !ok || !c.Capabilities.NetworkDiagnostics || task.NodeDiagnostics == nil {
+				err = errors.New("agent: network diagnostics capability is not configured")
+			} else {
+				value, checkErr := checker.CheckNetworkQuality(ctx, *task.NodeDiagnostics)
+				result.NodeDiagnostics, err = &value, checkErr
 			}
-		} else if task.MeridianRuntime != nil {
-			executor, ok := c.Executor.(interface {
-				ApplyMeridianRuntime(context.Context, meridianruntime.Task) (meridianruntime.Result, error)
+		case nodediagnostics.ReturnRouteKind:
+			checker, ok := c.Executor.(interface {
+				CheckReturnRoutes(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+			})
+			if !ok || !c.Capabilities.ReturnRoute || task.NodeDiagnostics == nil {
+				err = errors.New("agent: return-route capability is not configured")
+			} else {
+				value, checkErr := checker.CheckReturnRoutes(ctx, *task.NodeDiagnostics)
+				result.NodeDiagnostics, err = &value, checkErr
+			}
+		case nodediagnostics.BandwidthKind:
+			checker, ok := c.Executor.(interface {
+				CheckInternationalBandwidth(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+			})
+			if !ok || !c.Capabilities.BandwidthDiagnostics || task.NodeDiagnostics == nil {
+				err = errors.New("agent: bandwidth diagnostics capability is not configured")
+			} else {
+				value, checkErr := checker.CheckInternationalBandwidth(ctx, *task.NodeDiagnostics)
+				result.NodeDiagnostics, err = &value, checkErr
+			}
+		case nodediagnostics.LinkServerKind:
+			checker, ok := c.Executor.(interface {
+				CheckMeridianLinkServer(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+			})
+			if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
+				err = errors.New("agent: Glivela link server is unavailable")
+			} else {
+				value, checkErr := checker.CheckMeridianLinkServer(ctx, *task.NodeDiagnostics)
+				result.NodeDiagnostics, err = &value, checkErr
+			}
+		case nodediagnostics.LinkBandwidthKind:
+			checker, ok := c.Executor.(interface {
+				CheckMeridianLinkBandwidth(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+			})
+			if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
+				err = errors.New("agent: Glivela link bandwidth is unavailable")
+			} else {
+				value, checkErr := checker.CheckMeridianLinkBandwidth(ctx, *task.NodeDiagnostics)
+				result.NodeDiagnostics, err = &value, checkErr
+			}
+		case nodediagnostics.HostProfileKind:
+			checker, ok := c.Executor.(interface {
+				CheckHostProfile(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+			})
+			if !ok || !c.Capabilities.HostProfile || task.NodeDiagnostics == nil {
+				err = errors.New("agent: host profile capability is not configured")
+			} else {
+				value, checkErr := checker.CheckHostProfile(ctx, *task.NodeDiagnostics)
+				result.NodeDiagnostics, err = &value, checkErr
+			}
+		case xrayrecovery.InspectKind:
+			manager, ok := c.Executor.(interface {
+				InspectXrayConfiguration(context.Context, xrayrecovery.Task) (xrayrecovery.Result, error)
+			})
+			if !ok || task.XrayRecovery == nil {
+				err = errors.New("agent: Xray configuration recovery is unavailable")
+			} else {
+				value, recoveryErr := manager.InspectXrayConfiguration(ctx, *task.XrayRecovery)
+				result.XrayRecovery, err = &value, recoveryErr
+			}
+		case xrayrecovery.ApplyKind:
+			manager, ok := c.Executor.(interface {
+				ApplyXrayConfigurationRecovery(context.Context, xrayrecovery.Task) (xrayrecovery.Result, error)
+			})
+			if !ok || task.XrayRecovery == nil {
+				err = errors.New("agent: Xray configuration recovery is unavailable")
+			} else {
+				value, recoveryErr := manager.ApplyXrayConfigurationRecovery(ctx, *task.XrayRecovery)
+				result.XrayRecovery, err = &value, recoveryErr
+			}
+		case "application.maintenance":
+			manager, ok := c.Executor.(interface {
+				ManagePackage(context.Context, DeploymentTask) (ApplicationTaskResult, error)
 			})
 			if !ok {
-				err = errors.New("agent: Glivela runtime capability is not configured")
+				err = errors.New("agent: package maintenance is unavailable")
 			} else {
-				var runtimeResult meridianruntime.Result
-				runtimeResult, err = executor.ApplyMeridianRuntime(ctx, *task.MeridianRuntime)
-				if err == nil {
-					result.MeridianRuntime = &runtimeResult
-					if observer, ok := c.Executor.(interface {
-						CompleteCommandResources(string, string) (*InstanceResources, error)
-					}); ok {
-						result.Resources, err = observer.CompleteCommandResources(task.MeridianRuntime.ApplicationID, task.ID)
+				result, err = manager.ManagePackage(ctx, task)
+			}
+		case "application.adopt":
+			manager, ok := c.Executor.(interface {
+				Adopt(context.Context, DeploymentTask) (ApplicationTaskResult, error)
+			})
+			if !ok {
+				err = errors.New("agent: package adoption is unavailable")
+			} else {
+				result, err = manager.Adopt(ctx, task)
+			}
+		case "application.apply":
+			if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
+				err = fmt.Errorf("agent: application task requires runtime generation %d, executor is generation %d", task.RequiredRuntimeGeneration, platform.ApplicationRuntimeGeneration)
+			} else if c.Executor == nil {
+				err = errors.New("agent: application capability is not configured")
+			} else if task.Manifest.Runtime != nil && task.Manifest.Runtime.Kind == "docker" && !c.Capabilities.Docker {
+				err = errors.New("agent: Docker capability is not configured")
+			} else {
+				landingState, landingErr := store.prepareLandingXrayRuntimeMigration(ctx, task)
+				if landingErr != nil {
+					err = landingErr
+				} else {
+					result, err = c.Executor.Deploy(ctx, task)
+					err = store.finishLandingXrayRuntimeMigration(ctx, landingState, err)
+				}
+			}
+		case "application.command":
+			// Mutating commands may restart the panel or replace its database.
+			// The legacy export only reads and validates identities; keeping it
+			// behind a stalled landing write would also stall the migration.
+			if task.MeridianLegacyExport == nil {
+				store.landingMutationMu.Lock()
+				defer store.landingMutationMu.Unlock()
+			}
+			commands := 0
+			if task.MeridianAcceptance != nil {
+				commands++
+			}
+			if task.SenulunReporting != nil {
+				commands++
+			}
+			if task.SenulunRotation != nil {
+				commands++
+			}
+			if task.SenulunInspection != nil {
+				commands++
+			}
+			if task.SenulunEnrollment != nil {
+				commands++
+			}
+			if task.ProtocolCommand != nil {
+				commands++
+			}
+			if task.ApplicationCommand != nil {
+				commands++
+			}
+			if task.SubscriptionCommand != nil {
+				commands++
+			}
+			if task.ClientCommand != nil {
+				commands++
+			}
+			if task.NodeCommand != nil {
+				commands++
+			}
+			if task.ControllerCommand != nil {
+				commands++
+			}
+			if task.MeridianRuntime != nil {
+				commands++
+			}
+			if task.MeridianLegacyExport != nil {
+				commands++
+			}
+			if task.MeridianLegacyRetire != nil {
+				commands++
+			}
+			if !c.Capabilities.Docker || commands != 1 {
+				err = errors.New("agent: application command received without Docker capability")
+			} else if task.MeridianAcceptance != nil {
+				executor, ok := c.Executor.(interface {
+					VerifyMeridianAcceptance(context.Context, meridianruntime.AcceptanceTask) (meridianruntime.AcceptanceResult, error)
+				})
+				connection, connectionErr := store.Connection(ctx)
+				if connectionErr != nil || task.MeridianAcceptance.VerifierAgentID != connection.AgentID {
+					err = errors.New("agent: recovery verifier identity mismatch")
+				} else if !ok || !c.Capabilities.MeridianAcceptance {
+					err = errors.New("agent: recovery client capability is not configured")
+				} else {
+					var acceptance meridianruntime.AcceptanceResult
+					acceptance, err = executor.VerifyMeridianAcceptance(ctx, *task.MeridianAcceptance)
+					if err == nil {
+						result.MeridianAcceptance = &acceptance
 					}
 				}
-			}
-		} else if task.MeridianLegacyRetire != nil {
-			executor, ok := c.Executor.(interface {
-				RetireLegacyMeridianInstallation(context.Context, meridianruntime.LegacyRetireTask) (meridianruntime.LegacyRetireResult, error)
-			})
-			if !ok {
-				err = errors.New("agent: Glivela legacy retirement capability is not configured")
-			} else {
-				var retireResult meridianruntime.LegacyRetireResult
-				retireResult, err = executor.RetireLegacyMeridianInstallation(ctx, *task.MeridianLegacyRetire)
+			} else if task.MeridianLegacyExport != nil {
+				var exportResult meridianruntime.LegacyExportResult
+				exportResult, err = exportLegacyMeridianState(ctx, store, *task.MeridianLegacyExport)
 				if err == nil {
-					result.MeridianLegacyRetire = &retireResult
+					result.MeridianLegacyExport = &exportResult
 				}
-			}
-		} else if task.SenulunReporting != nil {
-			executor, ok := c.Executor.(interface {
-				InspectSenulunReporting(context.Context, senulun.ReportingTask) (senulun.ReportingResult, error)
-			})
-			if !ok {
-				err = errors.New("agent: Senulun reporting capability is not configured")
-			} else {
-				var reporting senulun.ReportingResult
-				reporting, err = executor.InspectSenulunReporting(ctx, *task.SenulunReporting)
-				if err == nil {
-					result.SenulunReporting = &reporting
-				}
-			}
-		} else if task.SenulunRotation != nil {
-			executor, ok := c.Executor.(interface {
-				RotateSenulun(context.Context, senulun.RotationTask) (senulun.RotationResult, error)
-			})
-			if !ok {
-				err = errors.New("agent: Senulun rotation capability is not configured")
-			} else {
-				var rotation senulun.RotationResult
-				rotation, err = executor.RotateSenulun(ctx, *task.SenulunRotation)
-				if err == nil {
-					result.SenulunRotation = &rotation
-				}
-			}
-		} else if task.SenulunInspection != nil {
-			executor, ok := c.Executor.(interface {
-				InspectSenulun(context.Context, senulun.InspectionTask) (senulun.InspectionResult, error)
-			})
-			if !ok {
-				err = errors.New("agent: Senulun inspection capability is not configured")
-			} else {
-				var inspection senulun.InspectionResult
-				inspection, err = executor.InspectSenulun(ctx, *task.SenulunInspection)
-				if err == nil {
-					result.SenulunInspection = &inspection
-				}
-			}
-		} else if task.SenulunEnrollment != nil {
-			executor, ok := c.Executor.(interface {
-				EnrollSenulun(context.Context, senulun.EnrollmentTask) (senulun.EnrollmentResult, error)
-			})
-			if !ok {
-				err = errors.New("agent: Senulun enrollment capability is not configured")
-			} else {
-				var enrollment senulun.EnrollmentResult
-				enrollment, err = executor.EnrollSenulun(ctx, *task.SenulunEnrollment)
-				if err == nil {
-					result.SenulunEnrollment = &enrollment
-				}
-			}
-		} else if task.ProtocolCommand != nil {
-			var commandResult nodeprotocol.Result
-			commandResult, err = c.applyNodeProtocols(ctx, store, *task.ProtocolCommand)
-			if err == nil {
-				result.ProtocolCommand = &commandResult
-			}
-		} else if task.ApplicationCommand != nil {
-			var commandResult RealityCommandResult
-			commandResult, err = applyRealityCommand(ctx, store, task.ID, task.Attempt, *task.ApplicationCommand)
-			if err == nil && task.ApplicationCommand.Action == "remove" && task.ApplicationCommand.RemoveHY2 {
+			} else if task.MeridianRuntime != nil {
 				executor, ok := c.Executor.(interface {
-					ConfigureHY2Port(context.Context, *Store, string, bool) error
+					ApplyMeridianRuntime(context.Context, meridianruntime.Task) (meridianruntime.Result, error)
 				})
 				if !ok {
-					err = uncertainTaskOutcome(errors.New("agent: protocol port cleanup is unavailable"))
+					err = errors.New("agent: Glivela runtime capability is not configured")
 				} else {
-					err = executor.ConfigureHY2Port(ctx, store, task.ApplicationCommand.TargetApplicationID, false)
+					var runtimeResult meridianruntime.Result
+					runtimeResult, err = executor.ApplyMeridianRuntime(ctx, *task.MeridianRuntime)
+					if err == nil {
+						result.MeridianRuntime = &runtimeResult
+						if observer, ok := c.Executor.(interface {
+							CompleteCommandResources(string, string) (*InstanceResources, error)
+						}); ok {
+							result.Resources, err = observer.CompleteCommandResources(task.MeridianRuntime.ApplicationID, task.ID)
+						}
+					}
 				}
-			}
-			// Preserve partial results in encrypted Center evidence even when a
-			// later step failed. This does not mark the command successful.
-			result.ApplicationCommand = &commandResult
-		} else if task.SubscriptionCommand != nil {
-			var commandResult SubscriptionCommandResult
-			commandResult, err = applySubscriptionCommand(ctx, store, *task.SubscriptionCommand)
-			if err == nil {
-				result.SubscriptionCommand = &commandResult
-			}
-		} else if task.ClientCommand != nil {
-			var commandResult ThreeXUIClientCommandResult
-			commandResult, err = applyThreeXUIClientCommand(ctx, store, *task.ClientCommand)
-			if err == nil {
-				result.ClientCommand = &commandResult
-			}
-		} else if task.NodeCommand != nil {
-			var commandResult ThreeXUINodeCommandResult
-			commandResult, err = applyThreeXUINodeCommand(ctx, store, *task.NodeCommand)
-			if err == nil {
-				result.NodeCommand = &commandResult
-			}
-		} else {
-			var commandResult ThreeXUIControllerCommandResult
-			commandResult, err = c.applyThreeXUIControllerCommand(ctx, store, task.ID, *task.ControllerCommand)
-			if err == nil {
-				result.ControllerCommand = &commandResult
-			}
-		}
-	case "gateway.routes.apply":
-		if task.GatewayState == nil || !c.Capabilities.Gateway {
-			err = errors.New("agent: gateway task received without gateway capability")
-		} else {
-			err = applyGatewayDesiredState(ctx, store, c.GatewayDriver, *task.GatewayState, task.GatewayCertificates)
-		}
-	case "gateway.component.apply":
-		if c.GatewayProvisioner == nil || !c.Capabilities.Gateway {
-			err = errors.New("agent: gateway provisioning capability is not configured")
-		} else {
-			store.gatewayMutationMu.Lock()
-			if task.Operation == "running" {
-				err = c.GatewayProvisioner.Ensure(ctx)
-				if err == nil {
-					err = waitForGateway(ctx, c.GatewayDriver)
+			} else if task.MeridianLegacyRetire != nil {
+				executor, ok := c.Executor.(interface {
+					RetireLegacyMeridianInstallation(context.Context, meridianruntime.LegacyRetireTask) (meridianruntime.LegacyRetireResult, error)
+				})
+				if !ok {
+					err = errors.New("agent: Glivela legacy retirement capability is not configured")
+				} else {
+					var retireResult meridianruntime.LegacyRetireResult
+					retireResult, err = executor.RetireLegacyMeridianInstallation(ctx, *task.MeridianLegacyRetire)
+					if err == nil {
+						result.MeridianLegacyRetire = &retireResult
+					}
 				}
-			} else if task.Operation == "stopped" {
-				err = c.GatewayProvisioner.Remove(ctx)
+			} else if task.SenulunReporting != nil {
+				executor, ok := c.Executor.(interface {
+					InspectSenulunReporting(context.Context, senulun.ReportingTask) (senulun.ReportingResult, error)
+				})
+				if !ok {
+					err = errors.New("agent: Senulun reporting capability is not configured")
+				} else {
+					var reporting senulun.ReportingResult
+					reporting, err = executor.InspectSenulunReporting(ctx, *task.SenulunReporting)
+					if err == nil {
+						result.SenulunReporting = &reporting
+					}
+				}
+			} else if task.SenulunRotation != nil {
+				executor, ok := c.Executor.(interface {
+					RotateSenulun(context.Context, senulun.RotationTask) (senulun.RotationResult, error)
+				})
+				if !ok {
+					err = errors.New("agent: Senulun rotation capability is not configured")
+				} else {
+					var rotation senulun.RotationResult
+					rotation, err = executor.RotateSenulun(ctx, *task.SenulunRotation)
+					if err == nil {
+						result.SenulunRotation = &rotation
+					}
+				}
+			} else if task.SenulunInspection != nil {
+				executor, ok := c.Executor.(interface {
+					InspectSenulun(context.Context, senulun.InspectionTask) (senulun.InspectionResult, error)
+				})
+				if !ok {
+					err = errors.New("agent: Senulun inspection capability is not configured")
+				} else {
+					var inspection senulun.InspectionResult
+					inspection, err = executor.InspectSenulun(ctx, *task.SenulunInspection)
+					if err == nil {
+						result.SenulunInspection = &inspection
+					}
+				}
+			} else if task.SenulunEnrollment != nil {
+				executor, ok := c.Executor.(interface {
+					EnrollSenulun(context.Context, senulun.EnrollmentTask) (senulun.EnrollmentResult, error)
+				})
+				if !ok {
+					err = errors.New("agent: Senulun enrollment capability is not configured")
+				} else {
+					var enrollment senulun.EnrollmentResult
+					enrollment, err = executor.EnrollSenulun(ctx, *task.SenulunEnrollment)
+					if err == nil {
+						result.SenulunEnrollment = &enrollment
+					}
+				}
+			} else if task.ProtocolCommand != nil {
+				var commandResult nodeprotocol.Result
+				commandResult, err = c.applyNodeProtocols(ctx, store, *task.ProtocolCommand)
 				if err == nil {
-					err = store.ClearGatewayState(ctx)
+					result.ProtocolCommand = &commandResult
+				}
+			} else if task.ApplicationCommand != nil {
+				var commandResult RealityCommandResult
+				commandResult, err = applyRealityCommand(ctx, store, task.ID, task.Attempt, *task.ApplicationCommand)
+				if err == nil && task.ApplicationCommand.Action == "remove" && task.ApplicationCommand.RemoveHY2 {
+					executor, ok := c.Executor.(interface {
+						ConfigureHY2Port(context.Context, *Store, string, bool) error
+					})
+					if !ok {
+						err = uncertainTaskOutcome(errors.New("agent: protocol port cleanup is unavailable"))
+					} else {
+						err = executor.ConfigureHY2Port(ctx, store, task.ApplicationCommand.TargetApplicationID, false)
+					}
+				}
+				// Preserve partial results in encrypted Center evidence even when a
+				// later step failed. This does not mark the command successful.
+				result.ApplicationCommand = &commandResult
+			} else if task.SubscriptionCommand != nil {
+				var commandResult SubscriptionCommandResult
+				commandResult, err = applySubscriptionCommand(ctx, store, *task.SubscriptionCommand)
+				if err == nil {
+					result.SubscriptionCommand = &commandResult
+				}
+			} else if task.ClientCommand != nil {
+				var commandResult ThreeXUIClientCommandResult
+				commandResult, err = applyThreeXUIClientCommand(ctx, store, *task.ClientCommand)
+				if err == nil {
+					result.ClientCommand = &commandResult
+				}
+			} else if task.NodeCommand != nil {
+				var commandResult ThreeXUINodeCommandResult
+				commandResult, err = applyThreeXUINodeCommand(ctx, store, *task.NodeCommand)
+				if err == nil {
+					result.NodeCommand = &commandResult
 				}
 			} else {
-				err = errors.New("agent: invalid gateway component operation")
+				var commandResult ThreeXUIControllerCommandResult
+				commandResult, err = c.applyThreeXUIControllerCommand(ctx, store, task.ID, *task.ControllerCommand)
+				if err == nil {
+					result.ControllerCommand = &commandResult
+				}
 			}
-			store.gatewayMutationMu.Unlock()
-		}
-	case "landing.server.apply":
-		err = c.applyLandingServerTask(ctx, store, task)
-		if err == nil && task.LandingServerState.Plan != nil {
-			var peer landing.PeerIdentity
-			peer, err = store.linkChecker.SelfIdentity(ctx, task.LandingServerState.Plan.Address)
-			if err == nil {
-				result.LandingPeer = &peer
+		case "gateway.routes.apply":
+			if task.GatewayState == nil || !c.Capabilities.Gateway {
+				err = errors.New("agent: gateway task received without gateway capability")
+			} else {
+				err = applyGatewayDesiredState(ctx, store, c.GatewayDriver, *task.GatewayState, task.GatewayCertificates)
 			}
-		}
-	case "landing.proxy.apply":
-		if !c.Capabilities.Docker || task.LandingProxyState == nil || task.Revision <= 0 || uint64(task.Revision) != task.LandingProxyState.Revision {
-			err = errors.New("agent: invalid landing proxy task")
-		} else {
-			err = store.applyLandingProxy(ctx, *task.LandingProxyState)
-		}
-	case "node.listener.apply":
-		if task.NodeListenerState == nil || !c.Capabilities.Docker {
-			err = errors.New("agent: node listener task received without Docker capability")
-		} else {
-			coordinator, _ := c.GatewayDriver.(NodeListenerCoordinator)
-			err = applyNodeListenerState(ctx, store, c.NodeListener, coordinator, *task.NodeListenerState)
-		}
-	case "tunnel.state.apply":
-		if c.TunnelProvisioner == nil || !c.Capabilities.Tunnel || task.TunnelState == nil {
-			err = errors.New("agent: tunnel task received without tunnel capability")
-		} else {
-			err = c.TunnelProvisioner.Apply(ctx, *task.TunnelState)
-		}
-	case "agent.decommission":
-		if c.Decommissioner == nil {
-			err = errors.New("agent: host decommission capability is not configured")
-		} else {
-			var callbackURL string
-			callbackURL, err = normalizeHostDecommissionCallbackURL(task.DecommissionCallbackURL, task.ID)
-			if err == nil && strings.TrimSpace(task.DecommissionCallbackToken) == "" {
-				err = errors.New("agent: host decommission callback token is missing")
+		case "gateway.component.apply":
+			if c.GatewayProvisioner == nil || !c.Capabilities.Gateway {
+				err = errors.New("agent: gateway provisioning capability is not configured")
+			} else {
+				store.gatewayMutationMu.Lock()
+				if task.Operation == "running" {
+					err = c.GatewayProvisioner.Ensure(ctx)
+					if err == nil {
+						err = waitForGateway(ctx, c.GatewayDriver)
+					}
+				} else if task.Operation == "stopped" {
+					err = c.GatewayProvisioner.Remove(ctx)
+					if err == nil {
+						err = store.ClearGatewayState(ctx)
+					}
+				} else {
+					err = errors.New("agent: invalid gateway component operation")
+				}
+				store.gatewayMutationMu.Unlock()
 			}
-			var connection Connection
-			if err == nil {
+		case "landing.server.apply":
+			err = c.applyLandingServerTask(ctx, store, task)
+			if err == nil && task.LandingServerState.Plan != nil {
+				var peer landing.PeerIdentity
+				peer, err = store.linkChecker.SelfIdentity(ctx, task.LandingServerState.Plan.Address)
+				if err == nil {
+					result.LandingPeer = &peer
+				}
+			}
+		case "landing.proxy.apply":
+			if !c.Capabilities.Docker || task.LandingProxyState == nil || task.Revision <= 0 || uint64(task.Revision) != task.LandingProxyState.Revision {
+				err = errors.New("agent: invalid landing proxy task")
+			} else {
+				err = store.applyLandingProxy(ctx, *task.LandingProxyState)
+			}
+		case "node.listener.apply":
+			if task.NodeListenerState == nil || !c.Capabilities.Docker {
+				err = errors.New("agent: node listener task received without Docker capability")
+			} else {
+				coordinator, _ := c.GatewayDriver.(NodeListenerCoordinator)
+				err = applyNodeListenerState(ctx, store, c.NodeListener, coordinator, *task.NodeListenerState)
+			}
+		case "tunnel.state.apply":
+			if c.TunnelProvisioner == nil || !c.Capabilities.Tunnel || task.TunnelState == nil {
+				err = errors.New("agent: tunnel task received without tunnel capability")
+			} else {
+				err = c.TunnelProvisioner.Apply(ctx, *task.TunnelState)
+			}
+		case "agent.decommission":
+			if c.Decommissioner == nil {
+				err = errors.New("agent: host decommission capability is not configured")
+			} else {
+				var callbackURL string
+				callbackURL, err = normalizeHostDecommissionCallbackURL(task.DecommissionCallbackURL, task.ID)
+				if err == nil && strings.TrimSpace(task.DecommissionCallbackToken) == "" {
+					err = errors.New("agent: host decommission callback token is missing")
+				}
+				var connection Connection
+				if err == nil {
+					connection, err = store.Connection(ctx)
+				}
+				if err == nil {
+					err = c.executionTransition(ctx, store, "step", "handoff", false, "")
+					if err == nil {
+						err = c.Decommissioner.ScheduleFinalRemoval(ctx, HostDecommissionRequest{ExecutionID: c.execution.ID, SessionID: c.executionSession, TaskID: task.ID, Attempt: task.Attempt, DeleteData: task.DeleteData, CallbackURL: callbackURL, CallbackToken: task.DecommissionCallbackToken, Connection: connection})
+					}
+					decommissionHandedOff = err == nil
+				}
+			}
+		case "agent.update":
+			if c.Updater == nil {
+				err = errors.New("agent: host update capability is not configured")
+			} else if strings.TrimSpace(task.TargetVersion) == "" {
+				err = errors.New("agent: update target version is missing")
+			} else {
+				var connection Connection
 				connection, err = store.Connection(ctx)
-			}
-			if err == nil {
-				err = c.executionTransition(ctx, store, "step", "handoff", false, "")
 				if err == nil {
-					err = c.Decommissioner.ScheduleFinalRemoval(ctx, HostDecommissionRequest{ExecutionID: c.execution.ID, SessionID: c.executionSession, TaskID: task.ID, Attempt: task.Attempt, DeleteData: task.DeleteData, CallbackURL: callbackURL, CallbackToken: task.DecommissionCallbackToken, Connection: connection})
+					err = c.executionTransition(ctx, store, "step", "handoff", false, "")
+					if err == nil {
+						err = c.Updater.ScheduleUpdate(ctx, HostUpdateRequest{ExecutionID: c.execution.ID, SessionID: c.executionSession, TaskID: task.ID, Attempt: task.Attempt, TargetVersion: task.TargetVersion, Connection: connection})
+					}
+					updateHandedOff = err == nil
 				}
-				decommissionHandedOff = err == nil
 			}
+		default:
+			err = errors.New("agent: unsupported task kind")
 		}
-	case "agent.update":
-		if c.Updater == nil {
-			err = errors.New("agent: host update capability is not configured")
-		} else if strings.TrimSpace(task.TargetVersion) == "" {
-			err = errors.New("agent: update target version is missing")
-		} else {
-			var connection Connection
-			connection, err = store.Connection(ctx)
-			if err == nil {
-				err = c.executionTransition(ctx, store, "step", "handoff", false, "")
-				if err == nil {
-					err = c.Updater.ScheduleUpdate(ctx, HostUpdateRequest{ExecutionID: c.execution.ID, SessionID: c.executionSession, TaskID: task.ID, Attempt: task.Attempt, TargetVersion: task.TargetVersion, Connection: connection})
-				}
-				updateHandedOff = err == nil
-			}
-		}
-	default:
-		err = errors.New("agent: unsupported task kind")
 	}
 	if decommissionHandedOff {
 		// The persistent host helper owns the terminal result. A successful

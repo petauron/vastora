@@ -104,6 +104,9 @@ func (u systemHostUpdater) ScheduleUpdate(ctx context.Context, request agent.Hos
 	if version != request.TargetVersion {
 		return fmt.Errorf("agent: Center offered version %s for update task targeting %s", version, request.TargetVersion)
 	}
+	if err := checkHostUpdateSpace(candidate, operation); err != nil {
+		return err
+	}
 	if err := persistHostUpdate(candidate, operation); err != nil {
 		return err
 	}

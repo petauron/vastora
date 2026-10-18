@@ -230,7 +230,7 @@ func TestVersion112MigrationAddsDiagnosticsWithoutInheritingHealth(t *testing.T)
 	}
 	defer s.Close()
 	var version int
-	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 112 {
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != centerSchemaVersion {
 		t.Fatalf("wrong schema: %d %v", version, err)
 	}
 	if _, err := s.db.Exec(`SELECT health_diagnostics_json FROM meridian_route_grants LIMIT 1`); err != nil {
