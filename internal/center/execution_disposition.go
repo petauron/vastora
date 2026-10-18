@@ -126,6 +126,8 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 	identity := []any{now, task.ID, agentID, task.Attempt}
 	revision := []any{now, agentID, task.Revision, task.Attempt}
 	switch task.Kind {
+	case "node.security":
+		return `UPDATE node_security_tasks SET state='failed',lease_expires_at='',error='abandoned; inspect host rollback state',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.ip-quality":
 		return `UPDATE ip_quality_checks SET state='failed',lease_expires_at='',error='abandoned',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server":
@@ -160,6 +162,9 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 // These statements only reset the exact task revision observed by the operator.
 // They never increment attempt; claiming after the decision does that once.
 func executionRequeueStatement(task AgentTask, agentID, now string) (string, []any, error) {
+	if task.Kind == "node.security" {
+		return "", nil, errors.New("center: inspect the host security checkpoint before issuing a fresh operation")
+	}
 	if task.Kind == "application.maintenance" {
 		return "", nil, errors.New("center: uncertain package maintenance cannot be replayed; inspect retained resource and backup evidence")
 	}

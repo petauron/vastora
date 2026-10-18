@@ -768,6 +768,19 @@ for (const route of routes) {
     operation.responses["200"].headers = noStoreHeaders;
     operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/ApplicationCredentialRotation" };
   }
+  if (route.handler === "handleNodeSecurity" || route.handler === "handleQueueNodeSecurity") {
+    const status = route.handler === "handleNodeSecurity" ? "200" : "202";
+    operation.summary = route.handler === "handleNodeSecurity" ? "Read last node security evidence" : "Queue an explicitly approved node security operation";
+    operation.description = "Opt-in UFW public-interface and SSH-only Fail2ban management. Pending application has a five-minute host-side rollback deadline; confirmation additionally requires a new local SSH-session receipt and fresh private/proxy health. Old evidence does not establish current host protection. Unsupported Docker backends and unowned configurations are rejected.";
+    operation.responses[status].headers = noStoreHeaders;
+    operation.responses[status].content["application/json"].schema = schemaForGoType("NodeSecurityView");
+    if (route.handler === "handleQueueNodeSecurity") {
+      const schema = schemaForGoType("nodesecurity.Task");
+      schema.required = ["action"];
+      schema.properties.action.enum = ["inspect", "prepare", "preview", "apply", "confirm", "disable", "unban"];
+      operation.requestBody = { required: true, content: { "application/json": { schema } } };
+    }
+  }
   if (route.handler === "handleListIPQuality") {
     operation.summary = "List IPQuality by exact egress address";
     operation.description = "Returns eligible targets and saved checks with agentId, canonical public address, family and selected exit metadata. Reports are independent for each node and IP.";

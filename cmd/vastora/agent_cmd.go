@@ -22,6 +22,7 @@ import (
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/nodediagnostics"
+	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/tailscalehost"
 	"github.com/sethvargo/go-retry"
@@ -32,6 +33,16 @@ func runAgent(arguments []string) error {
 		return errors.New("agent command is required")
 	}
 	switch arguments[0] {
+	case "security-watchdog":
+		if len(arguments) != 1 {
+			return errors.New("security-watchdog takes no arguments")
+		}
+		return nodesecurity.NewHost().Watchdog(context.Background())
+	case "security-verify-ssh":
+		if len(arguments) != 2 {
+			return errors.New("usage: vastora agent security-verify-ssh REVISION")
+		}
+		return nodesecurity.NewHost().VerifySSH(context.Background(), arguments[1])
 	case "landing-firewall":
 		if len(arguments) != 1 {
 			return errors.New("landing-firewall takes no arguments")
@@ -582,6 +593,7 @@ func runAgent(arguments []string) error {
 		client.Capabilities.SenulunReporting = client.Capabilities.SenulunInspection
 		client.Capabilities.SenulunRestore = capabilities.Docker && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.HostProfile = !capabilities.LandingOnly && runtime.GOOS == "linux"
+		client.Capabilities.NodeSecurity = runtime.GOOS == "linux" && os.Geteuid() == 0
 		if capabilities.Docker {
 			client.NodeListener = agent.DockerLayer4Provisioner{Image: *haproxyImage}
 		}
