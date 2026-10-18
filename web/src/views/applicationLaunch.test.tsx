@@ -21,6 +21,15 @@ function senulun() {
 }
 
 describe("Senulun browser access", () => {
+  it("does not use retained shortcuts or URLs while desktop data is unavailable", () => {
+    const data = senulun();
+    data.desktopDataUnavailable = true;
+    expect(desktopApplications(data, "en")).toEqual([]);
+    expect(applicationLaunchURL(data, "vastora-official/pulse")).toBeUndefined();
+    data.desktopDataUnavailable = false;
+    expect(desktopApplications(data, "en")[0].url).toBe("https://senulun.example.com/");
+  });
+
   it("opens the configured public tunnel while retaining private access for probes", () => {
     const data = senulun();
     expect(applicationLaunchURL(data, "vastora-official/pulse")).toBe("https://senulun.example.com/");

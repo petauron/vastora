@@ -33,6 +33,7 @@ export type AppData = {
   centerUpdate: CenterUpdateStatus;
   sources: CatalogSource[];
   catalogSourcesError?: string;
+  desktopDataUnavailable?: boolean;
   apps: AppView[];
   registryCredentials: RegistryCredential[];
   agents: AgentView[];

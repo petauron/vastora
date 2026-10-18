@@ -71,6 +71,43 @@ async function renderReadyApp() {
 }
 
 describe("application shell", () => {
+  it.each(["apps", "services", "publications"] as const)("opens activity directly when %s display data fails", async (endpoint) => {
+    window.history.replaceState({}, "", "/activity");
+    mockReadyCenter();
+    vi.mocked(api[endpoint]).mockRejectedValue(new APIError("Display data unavailable", 503));
+    vi.spyOn(api, "executions").mockResolvedValue({ executions: [], nextCursor: 0 });
+    vi.spyOn(api, "executionClaimControl").mockResolvedValue({ paused: false, actor: "", updatedAt: "" });
+
+    const container = await renderReadyApp();
+
+    await vi.waitFor(() => expect(container.querySelector(".mac-activity")).not.toBeNull());
+    expect(container.textContent).toContain("Desktop application data is unavailable");
+    expect(container.textContent).toContain("activity and execution recovery remain available");
+    expect(container.textContent).not.toContain("Center unavailable");
+    expect(container.querySelector('[aria-label="Execution history"]')).not.toBeNull();
+    expect(container.querySelector(".desktop-widget-stats")?.textContent).toContain("—");
+  });
+
+  it("opens activity after navigation and recovers optional data on explicit retry", async () => {
+    mockReadyCenter();
+    vi.spyOn(api, "executions").mockResolvedValue({ executions: [], nextCursor: 0 });
+    vi.spyOn(api, "executionClaimControl").mockResolvedValue({ paused: false, actor: "", updatedAt: "" });
+    const container = await renderReadyApp();
+    vi.mocked(api.apps).mockRejectedValueOnce(new APIError("Catalog unavailable", 503));
+
+    await act(async () => {
+      window.history.pushState({}, "", "/activity");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await vi.waitFor(() => expect(container.querySelector(".mac-activity")).not.toBeNull());
+    const warning = [...container.querySelectorAll('[role="alert"]')].find((alert) => alert.textContent?.includes("Desktop application data is unavailable"))!;
+    expect(warning).toBeDefined();
+    await act(async () => warning.querySelector<HTMLButtonElement>("button")!.click());
+
+    await vi.waitFor(() => expect(container.textContent).not.toContain("Desktop application data is unavailable"));
+    expect(container.querySelector(".mac-activity")).not.toBeNull();
+  });
+
   it("keeps desktop selection and the same surface mounted behind an opened and minimized window", async () => {
     mockReadyCenter();
     const container = await renderReadyApp();
