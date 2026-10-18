@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.328](https://github.com/petauron/vastora/compare/v0.1.0-alpha.327...v0.1.0-alpha.328) (2026-10-18)
+
+
+### Bug Fixes
+
+* **center:** enforce cascades on replacement database connections ([00b66d8](https://github.com/petauron/vastora/commit/00b66d80d37811a64fa2253b7e3cc990c872568f))
+
 ## [0.1.0-alpha.327](https://github.com/petauron/vastora/compare/v0.1.0-alpha.326...v0.1.0-alpha.327) (2026-10-18)
 
 
