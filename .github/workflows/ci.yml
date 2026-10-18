@@ -179,6 +179,7 @@ jobs:
           # Compile after staging the real embedded Dante bundle; reuse below.
           go test -c -tags=integration -o "$RUNNER_TEMP/package-systemd.test" ./internal/agent
           sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" VASTORA_PACKAGE_HOST_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test" -test.run '^TestPackageSystemdDirectivePathsRealHost$' -test.v
+          sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" VASTORA_PACKAGE_HOST_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test" -test.run '^TestPackageRealHostLifecycle$/^native$' -test.v
           VASTORA_DANTE_BUNDLE_INTEGRATION=1 go test ./internal/dantebundle -count=1
           mkdir -p "$RUNNER_TEMP/dante"
           gzip -dc "$RUNNER_TEMP/dante-bundle/danted-linux-amd64.gz" > "$RUNNER_TEMP/dante/danted"

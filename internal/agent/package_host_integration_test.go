@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -43,7 +44,7 @@ func packageHostedRunner(t *testing.T) {
 
 func TestPackageRealHostLifecycle(t *testing.T) {
 	packageHostedRunner(t)
-	for _, kind := range []string{"docker", "systemd"} {
+	for _, kind := range []string{"docker", "systemd", "native"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
@@ -83,12 +84,35 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 				task.Manifest.Artifacts = []catalog.Artifact{{Name: "app", OperatingSystem: "linux", Architecture: runtime.GOARCH, URL: server.URL + "/sleep", SHA256: hex.EncodeToString(digest[:]), Format: "raw"}}
 				task.Manifest.Runtime = &catalog.RuntimeSpec{Kind: "systemd", Version: 1, Storage: []catalog.Storage{{Name: "data", Persistent: true}}, Systemd: &catalog.SystemdRuntime{Artifact: "app", Executable: "sleep", Files: []catalog.ArtifactFile{{Path: "sleep", Executable: true}}, Arguments: []catalog.Value{hostFixtureValue("300")}, StateDirectories: []string{"data"}}}
 				backend = &SystemdPackageBackend{Manager: SystemdHostApplicationManager{HTTPClient: server.Client()}, StateDirectory: directory}
+				if kind == "native" {
+					worker := *task.Manifest.Runtime.Systemd
+					controller := worker
+					controller.User, controller.StateDirectories = "root", nil
+					task.Manifest.Runtime.Version = 2
+					task.Manifest.Runtime.Systemd = nil
+					task.Manifest.Runtime.RequiredCapabilities = []string{"root", "native-services"}
+					task.AuthorizedCapabilities = []string{"root", "native-services"}
+					task.Manifest.Runtime.NativeServices = &catalog.NativeServicesRuntime{Users: []string{"worker"}, Services: []catalog.NativeService{
+						{Name: "controller", Start: "automatic", Process: controller},
+						{Name: "worker", Start: "manual", ManagedUser: "worker", Process: worker},
+					}}
+					backend = &NativeServicesPackageBackend{Manager: SystemdHostApplicationManager{HTTPClient: server.Client()}, StateDirectory: directory}
+				}
 			}
 			packageTaskDigest(t, &task)
 			executor := PackageExecutor{StateDirectory: directory, Backend: backend}
 			installed, err := executor.Deploy(ctx, task)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if kind == "native" {
+				worker := resourceNamed(installed.Resources, "unit", "worker")
+				if worker == nil || worker.MainPID != 0 {
+					t.Fatal("manual native worker was started during installation")
+				}
+				if err := exec.CommandContext(ctx, "systemctl", "is-enabled", "--quiet", worker.Name).Run(); err == nil {
+					t.Fatal("manual worker unexpectedly enabled")
+				}
 			}
 			// Compare real runtime identities across metadata-only adoption.
 			before, err := executor.ReadResources(task.ApplicationID)
@@ -107,7 +131,7 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 			}
 			writeData := func(value string) {
 				t.Helper()
-				if kind == "systemd" {
+				if kind != "docker" {
 					p := resourceNamed(installed.Resources, "directory", "data").Path
 					if err := os.WriteFile(filepath.Join(p, "database"), []byte(value), 0600); err != nil {
 						t.Fatal(err)
@@ -130,6 +154,12 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 			if len(installed.Resources.Backups) != 0 {
 				t.Fatal("upgrade unexpectedly created a backup")
 			}
+			if kind == "native" {
+				worker := resourceNamed(installed.Resources, "unit", "worker")
+				if output, err := exec.CommandContext(ctx, "systemctl", "start", worker.Name).CombinedOutput(); err != nil {
+					t.Fatalf("activate app-owned worker: %v: %s", err, output)
+				}
+			}
 			task.ID, task.PackageMaintenance = "snapshot", &PackageMaintenanceTask{Action: "backup"}
 			backed, err := maintainPackage(ctx, executor, backend, task)
 			if err != nil {
@@ -145,7 +175,7 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			var restoredData []byte
-			if kind == "systemd" {
+			if kind != "docker" {
 				restoredData, err = os.ReadFile(filepath.Join(resourceNamed(restored.Resources, "directory", "data").Path, "database"))
 			} else {
 				var copied client.CopyFromContainerResult
@@ -161,6 +191,12 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 			}
 			if err != nil || string(restoredData) != "before-upgrade" {
 				t.Fatalf("restore did not recover actual data: %v", err)
+			}
+			if kind == "native" {
+				worker := resourceNamed(restored.Resources, "unit", "worker")
+				if worker.MainPID <= 0 || worker.InvocationID == "" {
+					t.Fatal("restore did not resume previously active native worker")
+				}
 			}
 			task.ID, task.PackageMaintenance = "logs", &PackageMaintenanceTask{Action: "logs"}
 			if _, err := maintainPackage(ctx, executor, backend, task); err != nil {
