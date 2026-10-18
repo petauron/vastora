@@ -27,7 +27,7 @@ const (
 
 var (
 	errTailscaleDERPMapNotReady = errors.New("verify Tailscale DERP map: waiting for the managed network map")
-	errTailscaleIsolationDrift  = errors.New("Tailscale isolation configuration drift")
+	errTailscaleIsolationDrift  = errors.New("tailscale isolation configuration drift")
 )
 
 type tailscaleIsolationEnvironment struct {
