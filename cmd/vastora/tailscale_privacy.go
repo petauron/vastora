@@ -25,7 +25,10 @@ const (
 	tailscaleHostsEndMarker         = "# END VASTORA TAILSCALE CONTROL"
 )
 
-var errTailscaleDERPMapNotReady = errors.New("verify Tailscale DERP map: waiting for the managed network map")
+var (
+	errTailscaleDERPMapNotReady = errors.New("verify Tailscale DERP map: waiting for the managed network map")
+	errTailscaleIsolationDrift  = errors.New("tailscale isolation configuration drift")
+)
 
 type tailscaleIsolationEnvironment struct {
 	overridePath string
@@ -92,9 +95,9 @@ func reconcileTailscaleIsolation(ctx context.Context, desired agent.TailscaleIso
 	if configureOnly {
 		return nil
 	}
-	active := true
-	if _, activeErr := environment.run(commandContext, "systemctl", "is-active", "--quiet", "tailscaled.service"); activeErr != nil {
-		active = false
+	active, err := tailscaleServiceActive(commandContext, environment.run)
+	if err != nil {
+		return err
 	}
 	var output []byte
 	if active {
@@ -106,9 +109,9 @@ func reconcileTailscaleIsolation(ctx context.Context, desired agent.TailscaleIso
 		return fmt.Errorf("start Tailscale with Vastora isolation: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	if err := verifyTailscaleRuntimePrivacy(commandContext, environment.run, desired); err != nil {
-		if errors.Is(err, errTailscaleDERPMapNotReady) {
+		if !errors.Is(err, errTailscaleIsolationDrift) {
 			// The restart completed; a later heartbeat must resume verification,
-			// not restart the daemon before it can finish receiving its map.
+			// not restart the daemon because its runtime could not be inspected.
 			if markerErr := writeAtomicHostFile(tailscalePrivacyAppliedPath(environment.overridePath), tailscalePrivacyVerifyingMarker, 0o644); markerErr != nil {
 				return errors.Join(err, markerErr)
 			}
@@ -150,7 +153,7 @@ func tailscaleIsolationCurrent(ctx context.Context, environment tailscaleIsolati
 	runtimeContext, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err := verifyTailscaleRuntimePrivacy(runtimeContext, environment.run, desired); err != nil {
-		if errors.Is(err, errTailscaleDERPMapNotReady) {
+		if !errors.Is(err, errTailscaleIsolationDrift) {
 			return false, err
 		}
 		return false, nil
@@ -164,11 +167,14 @@ func tailscaleIsolationCurrent(ctx context.Context, environment tailscaleIsolati
 }
 
 func verifyTailscaleRuntimePrivacy(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), desired agent.TailscaleIsolationDesiredState) error {
-	output, err := run(ctx, "systemctl", "is-active", "--quiet", "tailscaled.service")
+	active, err := tailscaleServiceActive(ctx, run)
 	if err != nil {
-		return fmt.Errorf("verify Tailscale service is active after isolation: %s: %w", strings.TrimSpace(string(output)), err)
+		return err
 	}
-	output, err = run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
+	if !active {
+		return fmt.Errorf("verify Tailscale service is active after isolation: %w", errTailscaleIsolationDrift)
+	}
+	output, err := run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
 	if err != nil {
 		return fmt.Errorf("verify Tailscale privacy environment: %s: %w", strings.TrimSpace(string(output)), err)
 	}
@@ -184,7 +190,24 @@ func verifyTailscaleRuntimePrivacy(ctx context.Context, run func(context.Context
 			return verifyTailscaleDERPMap(derpMap, desired)
 		}
 	}
-	return errors.New("verify Tailscale privacy environment: TS_NO_LOGS_NO_SUPPORT=true is not loaded")
+	return fmt.Errorf("verify Tailscale privacy environment: TS_NO_LOGS_NO_SUPPORT=true is not loaded: %w", errTailscaleIsolationDrift)
+}
+
+func tailscaleServiceActive(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error)) (bool, error) {
+	_, err := run(ctx, "systemctl", "is-active", "--quiet", "tailscaled.service")
+	if err == nil {
+		return true, nil
+	}
+	// A nonzero exit can also mean a bus/command failure, not an inactive
+	// daemon. Only an explicit inactive/failed state authorizes starting it.
+	state, stateErr := run(ctx, "systemctl", "show", "--property=ActiveState", "--value", "tailscaled.service")
+	if stateErr == nil && ctx.Err() == nil {
+		switch strings.TrimSpace(string(state)) {
+		case "inactive", "failed":
+			return false, nil
+		}
+	}
+	return false, fmt.Errorf("inspect Tailscale service active state: %w", errors.Join(err, stateErr, ctx.Err()))
 }
 
 func verifyTailscaleDERPMap(payload []byte, desired agent.TailscaleIsolationDesiredState) error {
@@ -206,7 +229,7 @@ func verifyTailscaleDERPMap(payload []byte, desired agent.TailscaleIsolationDesi
 		return errTailscaleDERPMapNotReady
 	}
 	if len(derpMap.Regions) != 1 {
-		return errors.New("verify Tailscale DERP map: an unexpected relay or STUN region is advertised")
+		return fmt.Errorf("verify Tailscale DERP map: an unexpected relay or STUN region is advertised: %w", errTailscaleIsolationDrift)
 	}
 	controlURL, _ := url.Parse(desired.ControlURL)
 	relayPort := 443
@@ -219,10 +242,10 @@ func verifyTailscaleDERPMap(payload []byte, desired agent.TailscaleIsolationDesi
 	}
 	for regionID, region := range derpMap.Regions {
 		if region.RegionID != 0 && region.RegionID != regionID || len(region.Nodes) == 0 {
-			return errors.New("verify Tailscale DERP map: an invalid region is advertised")
+			return fmt.Errorf("verify Tailscale DERP map: an invalid region is advertised: %w", errTailscaleIsolationDrift)
 		}
 		if regionID != desired.RelayRegionID || region.RegionCode != "vastora" {
-			return errors.New("verify Tailscale DERP map: the managed relay region is invalid")
+			return fmt.Errorf("verify Tailscale DERP map: the managed relay region is invalid: %w", errTailscaleIsolationDrift)
 		}
 		for _, node := range region.Nodes {
 			port := node.DERPPort
@@ -232,7 +255,7 @@ func verifyTailscaleDERPMap(payload []byte, desired agent.TailscaleIsolationDesi
 				port = 443
 			}
 			if node.STUNOnly || port != relayPort || !strings.EqualFold(strings.TrimSuffix(node.HostName, "."), strings.TrimSuffix(controlURL.Hostname(), ".")) {
-				return errors.New("verify Tailscale DERP map: the managed relay does not use the current Headscale endpoint")
+				return fmt.Errorf("verify Tailscale DERP map: the managed relay does not use the current Headscale endpoint: %w", errTailscaleIsolationDrift)
 			}
 		}
 	}

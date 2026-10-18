@@ -402,6 +402,9 @@ func TestTailscaleIsolationRetriesSystemdAndRuntimeVerificationFailures(t *testi
 					if command == "systemctl is-active --quiet tailscaled.service" && !*active {
 						return nil, errors.New("inactive")
 					}
+					if command == "systemctl show --property=ActiveState --value tailscaled.service" {
+						return []byte("inactive\n"), nil
+					}
 					if command == "systemctl enable --now tailscaled.service" {
 						*starts++
 						if *starts == 1 {
@@ -436,6 +439,9 @@ func TestTailscaleIsolationRetriesSystemdAndRuntimeVerificationFailures(t *testi
 						if activeChecks == 2 {
 							return []byte("inactive after restart"), errors.New("inactive")
 						}
+					}
+					if command == "systemctl show --property=ActiveState --value tailscaled.service" {
+						return []byte("inactive\n"), nil
 					}
 					if name == "systemctl" && len(arguments) > 0 && arguments[0] == "show" {
 						return []byte("TS_NO_LOGS_NO_SUPPORT=true\n"), nil
@@ -631,8 +637,8 @@ func TestTailscaleIsolationRejectsUnexpectedRuntimeDERPMap(t *testing.T) {
 	}
 	for _, port := range []string{"-1", "8443", "65536"} {
 		payload := strings.Replace(string(valid), `"DERPPort":443`, `"DERPPort":`+port, 1)
-		if err := verifyTailscaleDERPMap([]byte(payload), desired); err == nil {
-			t.Fatalf("unexpected DERP port %s was accepted", port)
+		if err := verifyTailscaleDERPMap([]byte(payload), desired); !errors.Is(err, errTailscaleIsolationDrift) {
+			t.Fatalf("unexpected DERP port %s was not classified as drift: %v", port, err)
 		}
 	}
 	for name, payload := range map[string][]byte{
@@ -642,8 +648,8 @@ func TestTailscaleIsolationRejectsUnexpectedRuntimeDERPMap(t *testing.T) {
 		"wrong relay host":       []byte(`{"Regions":{"999":{"RegionID":999,"RegionCode":"vastora","Nodes":[{"HostName":"derp.example.net","DERPPort":443}]}}}`),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := verifyTailscaleDERPMap(payload, desired); err == nil {
-				t.Fatal("unsafe DERP map was accepted")
+			if err := verifyTailscaleDERPMap(payload, desired); !errors.Is(err, errTailscaleIsolationDrift) {
+				t.Fatalf("unsafe DERP map was not classified as drift: %v", err)
 			}
 		})
 	}
