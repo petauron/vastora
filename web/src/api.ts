@@ -20,6 +20,18 @@ export class APIError extends Error {
   }
 }
 
+// Application workspaces build their own APIError class. Validate the existing
+// HTTP error contract at that boundary rather than comparing class identities.
+export function isAPIError(error: unknown): error is Pick<APIError, "message" | "status" | "code" | "captchaRequired"> {
+  if (!error || typeof error !== "object" || Array.isArray(error)) return false;
+  const fields = Object.getOwnPropertyDescriptors(error);
+  const status: unknown = fields.status?.value;
+  return typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599
+    && typeof fields.message?.value === "string"
+    && typeof fields.code?.value === "string"
+    && typeof fields.captchaRequired?.value === "boolean";
+}
+
 function csrfToken(): string {
   return document.cookie
     .split("; ")
