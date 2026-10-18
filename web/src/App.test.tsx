@@ -95,7 +95,10 @@ describe("application shell", () => {
     const container = await renderReadyApp();
     vi.mocked(api.apps).mockRejectedValueOnce(new APIError("Catalog unavailable", 503));
 
-    await act(async () => container.querySelector<HTMLButtonElement>('.desktop-dock button[aria-label="Tasks & Activity"]')!.click());
+    await act(async () => {
+      window.history.pushState({}, "", "/activity");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
     await vi.waitFor(() => expect(container.querySelector(".mac-activity")).not.toBeNull());
     const warning = [...container.querySelectorAll('[role="alert"]')].find((alert) => alert.textContent?.includes("Desktop application data is unavailable"))!;
     expect(warning).toBeDefined();
