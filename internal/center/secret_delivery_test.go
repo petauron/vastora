@@ -16,7 +16,7 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged(t *testing.T) {
+func TestHistoricalDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	store, err := Open(dataDir)
@@ -35,11 +35,43 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 	node := enrollOrchestrationNode(t, store, "secret-replay", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
 	request := DeploymentRequest{
 		AgentID:              node.ID,
-		AppKey:               senulunAppKey,
-		Config:               json.RawMessage(`{"public_url":"https://senulun.example.test"}`),
+		AppKey:               threeXUIAppKey,
+		Role:                 threeXUIRoleMaster,
+		Config:               json.RawMessage(`{}`),
 		Operation:            "install",
 		SecretOperationOwner: "test-admin-session",
 		SecretOperationKey:   "deployment-operation-key-0001",
+	}
+	// 3x-ui is no longer offered for new installation. Preserve its real
+	// historical credential-delivery contract without reinstalling it or using
+	// Senulun administrator setup as a substitute credential generator.
+	historical := seedLegacyDeployment(t, store, node, "10.0.0.90", "fixture-token", threeXUIRoleMaster)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	raw, _ := json.Marshal(map[string]string{"username": "fixture-user", "password": strings.Repeat("fixture-", 6)})
+	secretID, err := store.putSecret(ctx, tx, raw, "deployment:"+historical.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET secret_id=? WHERE id=?`, secretID, historical.ID); err != nil {
+		t.Fatal(err)
+	}
+	owner, operationHash, err := normalizeSecretOperation(request.SecretOperationOwner, request.SecretOperationKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestHash, err := deploymentSecretRequestHash(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := insertSecretDelivery(ctx, tx, deploymentCredentialsDelivery, owner, operationHash, requestHash, historical.ID, store.now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 
 	start := make(chan struct{})
@@ -68,7 +100,7 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 	}
 	credentials := *results[0].OneTimeCredentials
 	changed := request
-	changed.Config = json.RawMessage(`{"public_url":"https://changed-senulun.example.test"}`)
+	changed.Config = json.RawMessage(`{"changed":true}`)
 	if _, err := store.CreateDeployment(ctx, changed); err == nil || !strings.Contains(err.Error(), "different operation") {
 		store.Close()
 		t.Fatalf("same key accepted a changed deployment: %v", err)
@@ -85,7 +117,7 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(listed)
-	if len(credentials.SetupToken) < 32 || len(listed) != 1 || !listed[0].OneTimeCredentialsAvailable || listed[0].OneTimeCredentials != nil || bytes.Contains(encoded, []byte(credentials.SetupToken)) {
+	if len(credentials.Password) < 32 || len(listed) != 1 || !listed[0].OneTimeCredentialsAvailable || listed[0].OneTimeCredentials != nil || bytes.Contains(encoded, []byte(credentials.Password)) {
 		store.Close()
 		t.Fatalf("deployment list exposed credentials or hid recoverability: %s", encoded)
 	}

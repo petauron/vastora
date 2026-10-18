@@ -63,9 +63,8 @@ type DeploymentView struct {
 }
 
 type OneTimeCredentials struct {
-	Username   string `json:"username,omitempty"`
-	Password   string `json:"password,omitempty"`
-	SetupToken string `json:"setupToken,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
 }
 
 const applicationTaskRevision int64 = 1
@@ -148,7 +147,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if request.Operation == "" {
 		request.Operation = "install"
 	}
-	offersCredentials := request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role != threeXUIRoleWorker || request.AppKey == senulunAppKey && (request.Operation == "install" || request.Operation == "upgrade")
+	offersCredentials := request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role != threeXUIRoleWorker
 	producesCredentials := request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role != threeXUIRoleWorker
 	var secretOwner string
 	var operationKeyHash, secretRequestHash []byte
@@ -346,7 +345,6 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	}
 	var config, secrets []byte
-	var oneTimeSenulunToken string
 	if request.Operation == "uninstall" {
 		config, secrets = []byte(`{}`), []byte(`{}`)
 	} else {
@@ -376,16 +374,23 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			}
 		}
 		if request.AppKey == senulunAgentAppKey {
-			// Collector identity and endpoint are managed by Center, never form
-			// fields. Upgrades keep the established endpoint and node identity.
-			options, _, normalizeErr := normalizeDeploymentConfig(userInputManifest(manifest, request.AppKey), request.Config)
-			if normalizeErr != nil {
-				return DeploymentView{}, normalizeErr
-			}
 			if request.Operation == "install" {
-				config, err = s.senulunAgentConfig(ctx, request.AgentID, options)
+				// Senulun owns enrollment. Its administrator supplies the endpoint
+				// and short-lived token through the ordinary package configuration.
+				config, secrets, err = normalizeDeploymentConfig(userInputManifest(manifest, request.AppKey), deploymentConfig)
 			} else {
+				// Validate only submitted changes. Historical association metadata
+				// may remain in saved evidence, but is never administrator input.
+				input := userInputManifest(manifest, request.AppKey)
+				for i := range input.Config {
+					input.Config[i].Required = false
+					input.Config[i].Default = nil
+				}
+				if _, _, err := normalizeDeploymentConfig(input, request.Config); err != nil {
+					return DeploymentView{}, err
+				}
 				config, err = removeJSONObjectKeys(deploymentConfig, "enrollment_token")
+				secrets = []byte(`{}`)
 			}
 			var collectorConfig senulun.AgentConfig
 			if err == nil && json.Unmarshal(config, &collectorConfig) != nil {
@@ -397,17 +402,11 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			if err != nil {
 				return DeploymentView{}, err
 			}
-			secrets = []byte(`{}`)
 		} else {
 			if request.AppKey == senulunAppKey {
-				var generatedToken string
-				deploymentConfig, generatedToken, err = s.withSenulunHostDefaults(ctx, request.AgentID, request.Operation, deploymentConfig)
+				deploymentConfig, err = s.withSenulunPublicOrigin(ctx, request.AgentID, request.Operation, deploymentConfig)
 				if err != nil {
 					return DeploymentView{}, err
-				}
-				if generatedToken != "" {
-					producesCredentials = true
-					oneTimeSenulunToken = generatedToken
 				}
 			}
 			config, secrets, err = normalizeDeploymentConfig(userInputManifest(manifest, request.AppKey), deploymentConfig)
@@ -417,7 +416,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	}
 	if request.AppKey == senulunAppKey && request.Operation != "uninstall" {
-		if _, _, err := senulun.DecodeServiceConfig(config, secrets); err != nil {
+		if _, err := senulun.DecodeServiceConfig(config); err != nil {
 			return DeploymentView{}, err
 		}
 	}
@@ -442,9 +441,6 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	}
 	var oneTimeCredentials *OneTimeCredentials
-	if oneTimeSenulunToken != "" {
-		oneTimeCredentials = &OneTimeCredentials{SetupToken: oneTimeSenulunToken}
-	}
 	if request.AppKey == threeXUIAppKey && request.Operation != "uninstall" {
 		role := request.Role
 		if request.Operation != "install" {
@@ -568,11 +564,6 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET package_revision=?,manifest_sha256=?,authorized_capabilities_json=? WHERE id=?`, manifest.PackageRevision, manifestDigest, grantsJSON, deployment.ID); err != nil {
 		return DeploymentView{}, err
 	}
-	if request.AppKey == senulunAgentAppKey && request.Operation == "install" {
-		if err := s.queueSenulunEnrollment(ctx, tx, deployment, config, now); err != nil {
-			return DeploymentView{}, err
-		}
-	}
 	if err := s.recordTaskEvent(ctx, tx, deployment.ID, deployment.AgentID, "application.apply", applicationTaskRevision, "queued", deployment.Operation+" "+deployment.AppKey); err != nil {
 		return DeploymentView{}, err
 	}
@@ -622,7 +613,7 @@ func (s *Store) ListDeployments(ctx context.Context) ([]DeploymentView, error) {
 		homepages[app.Key] = app.App.Homepage
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT d.id, d.agent_id, d.app_key, d.app_version, d.operation, d.delete_data, d.state, d.reconciliation_required, d.error, d.created_at, d.updated_at, d.application_id,
-		EXISTS(SELECT 1 FROM secret_deliveries delivery WHERE delivery.kind = 'deployment_credentials' AND delivery.resource_id = d.id AND delivery.state = 'pending')
+		d.app_key = 'vastora-official/3x-ui' AND d.operation = 'install' AND EXISTS(SELECT 1 FROM secret_deliveries delivery WHERE delivery.kind = 'deployment_credentials' AND delivery.resource_id = d.id AND delivery.state = 'pending')
 		FROM deployments AS d WHERE d.state IN ('pending', 'running') OR d.reconciliation_required = 1 OR d.id IN (
 			SELECT recent.id FROM deployments recent ORDER BY recent.created_at DESC, recent.rowid DESC LIMIT 200
 		)

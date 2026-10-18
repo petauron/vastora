@@ -23,7 +23,7 @@ func reinstallMonitorFixture(t *testing.T) (*Store, AgentCredential, AgentCreden
 	s, service, collector, serviceDeployment := senulunFixture(t)
 	ctx := context.Background()
 	addSenulunPrivateFixture(t, s, serviceDeployment.ApplicationID, service.ID)
-	install, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: senulunAgentAppKey})
+	install, err := createHistoricalSenulunCollector(t, s, serviceDeployment.ApplicationID, collector.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

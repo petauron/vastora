@@ -128,7 +128,7 @@ func TestManagedUpgradeSenulunEnrollmentIsOneTimeAndIdentityIsRequired(t *testin
 				}
 			}
 			err := backend.Prepare(context.Background(), task, receipt)
-			allowed := scenario == "upgrade" || scenario == "configure" || scenario == "install-with-token"
+			allowed := scenario == "upgrade" || scenario == "configure" || scenario == "install-with-token" || scenario == "missing-service-association"
 			var expectedDownloads int32
 			if allowed {
 				expectedDownloads = 1

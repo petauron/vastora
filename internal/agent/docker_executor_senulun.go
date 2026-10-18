@@ -14,11 +14,7 @@ import (
 	"github.com/petauron/vastora/internal/senulun"
 )
 
-const (
-	senulunContainer          = "vastora-pulse"
-	senulunBootstrapDirectory = "pulse-bootstrap"
-	senulunSetupTokenPath     = "/" + senulunBootstrapDirectory + "/setup-token"
-)
+const senulunContainer = "vastora-pulse"
 
 // senulunServiceCLI is only used by fixed Pulse administration operations. Neither an
 // HTTP caller nor a catalog may supply an executable or arbitrary arguments.
