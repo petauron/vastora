@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.331](https://github.com/petauron/vastora/compare/v0.1.0-alpha.330...v0.1.0-alpha.331) (2026-10-18)
+
+
+### Bug Fixes
+
+* **senulun:** decouple installation and enrollment from Center ([6aefd7b](https://github.com/petauron/vastora/commit/6aefd7b71d067fe757fec053b80258f374552d80))
+
 ## [0.1.0-alpha.330](https://github.com/petauron/vastora/compare/v0.1.0-alpha.329...v0.1.0-alpha.330) (2026-10-18)
 
 
