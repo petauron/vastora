@@ -123,6 +123,23 @@ func TestCenterUpdateStatusReportsVerifiedHostProgress(t *testing.T) {
 	}
 }
 
+func TestFailedInstalledCenterReleaseRequiresHostVerificationBeforeSuccess(t *testing.T) {
+	previous := Version
+	Version = "0.1.0-alpha.47"
+	defer func() { Version = previous }()
+	image := "ghcr.io/petauron/vastora-center@sha256:" + strings.Repeat("a", 64)
+	updater := &fakeCenterUpdater{status: deployapi.CenterUpdateExecution{Available: true, InstalledImage: image, State: "failed", TargetVersion: Version}}
+	server := &Server{updates: updater, releaseChecker: fixedReleaseChecker{version: Version, image: image}}
+	status := server.centerUpdateStatus(context.Background(), false)
+	if status.State != "failed" || !status.UpdateAvailable || status.Progress == 100 {
+		t.Fatalf("installed version bypassed verification or prevented recovery: %#v", status)
+	}
+	updater.status.State = "idle"
+	if status := server.centerUpdateStatus(context.Background(), false); status.UpdateAvailable {
+		t.Fatalf("healthy same-release installation offered an unnecessary update: %#v", status)
+	}
+}
+
 func TestAgentUpdateRolloutDoesNotBlockCenterWhenUnqueuedOrOffline(t *testing.T) {
 	previousVersion := Version
 	Version = "0.1.0-alpha.99"

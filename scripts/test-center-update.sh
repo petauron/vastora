@@ -15,6 +15,7 @@ image_58="ghcr.io/petauron/vastora-center@sha256:5858585858585858585858585858585
 image_59="ghcr.io/petauron/vastora-center@sha256:5959595959595959595959595959595959595959595959595959595959595959"
 image_60="ghcr.io/petauron/vastora-center@sha256:6060606060606060606060606060606060606060606060606060606060606060"
 printf '%s\n' 'VASTORA_VERSION=0.1.0-alpha.57' "VASTORA_CENTER_IMAGE=$image_57" > "$install_dir/release.env"
+printf '%s\n' 'VASTORA_CENTER_BOOTSTRAP_PORT=8080' > "$install_dir/.env"
 
 cat > "$fake_bin/id" <<'EOF'
 #!/bin/sh
@@ -55,6 +56,7 @@ resolve=""
 url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --noproxy|--connect-timeout|--max-time) shift 2 ;;
     --proto) shift 2 ;;
     --tlsv1.2) shift ;;
     --dump-header) headers="$2"; shift 2 ;;
@@ -65,6 +67,13 @@ while [ "$#" -gt 0 ]; do
     *) url="$1"; shift ;;
   esac
 done
+case "$url" in
+  http://127.0.0.1:*/healthz|http://127.0.0.1:*/readyz)
+    [ "${FAKE_UNHEALTHY:-0}" = 0 ]
+    case "$url" in */readyz) [ "${FAKE_NOT_READY:-0}" = 0 ] ;; esac
+    exit
+    ;;
+esac
 [ "$resolve" = "vastora.petauron.com:443:203.0.113.10" ]
 [ "$url" = "https://vastora.petauron.com/releases/v$FAKE_TARGET_VERSION/install.sh" ]
 status="${FAKE_RESPONSE_STATUS:-200}"
@@ -82,7 +91,33 @@ digest="$(sha256sum "$output" | awk 'NR == 1 {print $1}')"
 } > "$headers"
 printf '%s' "$status"
 EOF
-chmod 0755 "$fake_bin/id" "$fake_bin/curl" "$temporary_dir/installer.sh"
+cat > "$fake_bin/docker" <<'EOF'
+#!/bin/sh
+set -eu
+case "$1" in
+  compose) printf '%s\n' test-center ;;
+  inspect)
+    case "$4" in
+      vastora-gateway-*)
+        if [ "${FAKE_GATEWAY_STOPPED:-0}" = 1 ]; then printf '%s\n' false; exit; fi
+        exit 1
+        ;;
+    esac
+    case "$3" in
+      *State.Running*) printf '%s\n' true ;;
+      *Config.Image*) printf '%s\n' "${FAKE_RUNNING_IMAGE:-$FAKE_TARGET_IMAGE}" ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  exec) printf '%s\n' "${FAKE_RUNNING_VERSION:-$FAKE_TARGET_VERSION}" ;;
+  *) exit 2 ;;
+esac
+EOF
+cat > "$fake_bin/systemctl" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod 0755 "$fake_bin/id" "$fake_bin/curl" "$fake_bin/docker" "$fake_bin/systemctl" "$temporary_dir/installer.sh"
 
 run_update() {
   target_version="$1"
@@ -100,6 +135,7 @@ run_update() {
   FAKE_RESPONSE_VERSION="$response_version" \
   FAKE_TARGET_VERSION="$target_version" \
   FAKE_TARGET_IMAGE="$target_image" \
+  VASTORA_AGENT_UNIT="$temporary_dir/agent.service" \
   PATH="$fake_bin:$PATH" \
     "$project_dir/deploy/center/update-center.sh" --install-dir "$install_dir"
 }
@@ -111,6 +147,29 @@ grep -Fqx 'VASTORA_VERSION=0.1.0-alpha.58' "$install_dir/release.env"
 grep -Fqx "VASTORA_CENTER_IMAGE=$image_58" "$install_dir/release.env"
 grep -Fqx 'https://vastora.petauron.com/releases/v0.1.0-alpha.58/vastora-center-install.tar.gz' "$temporary_dir/installer.log"
 test ! -e "$install_dir/.update-request"
+
+# Files matching a target are not proof that the runtime is healthy.
+for failure in unhealthy not-ready wrong-version wrong-image stopped-agent stopped-gateway; do
+  case "$failure" in
+    unhealthy) export FAKE_UNHEALTHY=1 ;;
+    not-ready) export FAKE_NOT_READY=1 ;;
+    wrong-version) export FAKE_RUNNING_VERSION=0.1.0-alpha.57 ;;
+    wrong-image) export FAKE_RUNNING_IMAGE="$image_57" ;;
+    stopped-agent) printf '%s\n' 'Description=Vastora Agent' > "$temporary_dir/agent.service" ;;
+    stopped-gateway) export FAKE_GATEWAY_STOPPED=1 ;;
+  esac
+  if run_update 0.1.0-alpha.58 0.1.0-alpha.58 "$image_58" >/dev/null 2>&1; then
+    echo "Same-release verification accepted $failure." >&2
+    exit 1
+  fi
+  grep -Fq '"state":"failed"' "$install_dir/.update-status.json"
+  unset FAKE_UNHEALTHY FAKE_NOT_READY FAKE_RUNNING_VERSION FAKE_RUNNING_IMAGE FAKE_GATEWAY_STOPPED
+  rm -f "$temporary_dir/agent.service"
+done
+printf '%s\n' untouched > "$temporary_dir/installer.log"
+run_update 0.1.0-alpha.58 0.1.0-alpha.58 "$image_58"
+grep -Fq '"state":"succeeded"' "$install_dir/.update-status.json"
+grep -Fqx untouched "$temporary_dir/installer.log"
 
 if run_update 0.1.0-alpha.59 0.1.0-alpha.58 "$image_59" >/dev/null 2>&1; then
   echo "Center updater accepted an installer for the wrong version." >&2
