@@ -229,7 +229,11 @@ func readPackageBackup(directory string, task DeploymentTask, backup RuntimeBack
 }
 
 func validateBackupTar(raw []byte) error {
-	reader := tar.NewReader(bytes.NewReader(raw))
+	return validateBackupTarStream(bytes.NewReader(raw))
+}
+
+func validateBackupTarStream(source io.Reader) error {
+	reader := tar.NewReader(source)
 	seen := map[string]bool{}
 	var size int64
 	for count := 0; ; count++ {
@@ -498,6 +502,10 @@ func extractBackupDirectory(raw []byte, destination string, original os.FileInfo
 	if err := validateBackupTar(raw); err != nil {
 		return err
 	}
+	return extractValidatedBackupDirectory(bytes.NewReader(raw), destination, original)
+}
+
+func extractValidatedBackupDirectory(source io.Reader, destination string, original os.FileInfo) error {
 	if err := os.Mkdir(destination, 0700); err != nil {
 		return err
 	}
@@ -506,7 +514,7 @@ func extractBackupDirectory(raw []byte, destination string, original os.FileInfo
 		return err
 	}
 	defer root.Close()
-	reader := tar.NewReader(bytes.NewReader(raw))
+	reader := tar.NewReader(source)
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
