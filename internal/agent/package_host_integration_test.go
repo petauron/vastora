@@ -248,6 +248,26 @@ func verifyNativeRetainedReinstall(t *testing.T, ctx context.Context, executor P
 			t.Fatal("retained configuration or data was reinitialized", err)
 		}
 	}
+	// Deliberately collide with an immutable snapshot after both services have
+	// started. Backup must fail without overwriting it, then resume the exact set.
+	worker := resourceNamed(reinstalled.Resources, "unit", "worker")
+	if output, err := exec.CommandContext(ctx, "systemctl", "start", worker.Name).CombinedOutput(); err != nil {
+		t.Fatalf("activate worker before backup failure: %v: %s", err, output)
+	}
+	failedBackup := task
+	failedBackup.ID = "snapshot"
+	native := executor.Backend.(*NativeServicesPackageBackend)
+	if err := native.Backup(ctx, failedBackup, reinstalled.Resources); err == nil {
+		t.Fatal("immutable snapshot was overwritten")
+	}
+	if err := native.Healthy(ctx, task, reinstalled.Resources); err != nil {
+		t.Fatal("backup failure did not restore healthy service state", err)
+	}
+	for _, resource := range reinstalled.Resources.Resources {
+		if resource.Kind == "unit" && (resource.MainPID <= 0 || resource.InvocationID == "") {
+			t.Fatal("backup failure left a previously active service stopped")
+		}
+	}
 	resources := append([]RuntimeResource(nil), reinstalled.Resources.Resources...)
 	task.ID, task.Operation, task.DeleteData = "delete-native-data", "uninstall", true
 	removed, err := executor.Deploy(ctx, task)
@@ -282,5 +302,5 @@ func verifyNativeRetainedReinstall(t *testing.T, ctx context.Context, executor P
 		}
 		file.Close()
 	}
-	t.Log("native retained reinstall preserved account/config/data; explicit deletion removed owned resources and retained verified backups")
+	t.Log("native retained reinstall preserved account/config/data; failed backup resumed both services; explicit deletion removed owned resources and retained verified backups")
 }
