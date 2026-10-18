@@ -115,6 +115,8 @@ grep -Fq 'Co-located Agent $new_version is staged until the updated Center becom
 grep -Fq 'write_host_update_stage "Starting the co-located Agent."' "$temporary_dir/upgrade.sh"
 grep -Fq 'Co-located Agent updated to $new_version on the host-only Center channel.' "$temporary_dir/upgrade.sh"
 grep -Fq 'http://127.0.0.1:$bootstrap_port/readyz' "$temporary_dir/upgrade.sh"
+grep -Fq 'health_deadline=$(($(date +%s) + 300))' "$temporary_dir/upgrade.sh"
+grep -Fq -- "--noproxy '*' --connect-timeout 2 --max-time 5" "$temporary_dir/upgrade.sh"
 grep -Fq 'Co-located Agent remained connected through Center reconciliation.' "$temporary_dir/upgrade.sh"
 test ! -e "$temporary_dir/headscale"
 if grep -Eq 'headscale/(config\.yaml|policy\.hujson)' "$project_dir/install.sh"; then

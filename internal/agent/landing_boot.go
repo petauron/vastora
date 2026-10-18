@@ -101,7 +101,7 @@ func resumeNativeLanding(ctx context.Context, nodeID string) error {
 	if err != nil || journal == nil || journal.Removed {
 		return err
 	}
-	if journal.NodeID != nodeID || journal.Policy == nil || journal.PreviousPolicy != nil || len(journal.PendingFiles) != 0 {
+	if journal.NodeID != nodeID || journal.Policy == nil || journal.Policy.Revision != journal.Revision || journal.PreviousPolicy != nil || len(journal.PendingFiles) != 0 {
 		return errors.New("agent: landing boot recovery requires a committed owned configuration")
 	}
 	if err := verifyLandingFiles(journal); err != nil {
