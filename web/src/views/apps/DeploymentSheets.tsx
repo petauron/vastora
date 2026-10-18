@@ -166,7 +166,6 @@ export function DeploymentSheet({
   const isThreeXUIInstall =
     editor?.operation === "install" &&
     editor.app.key === "vastora-official/3x-ui";
-  const isSenulunHost = editor?.app.key === "vastora-official/pulse";
   const globalController = isThreeXUIInstall
     ? data.applications.find(
         (application) =>
@@ -437,14 +436,7 @@ export function DeploymentSheet({
                 .filter(
                   (field) =>
                     !editor.app.managedConfigFields?.includes(field.key) &&
-                    (editor.operation !== "upgrade" || missingUpgradeFields.includes(field.key)) &&
-                    !(
-                      isSenulunHost &&
-                      editor.operation !== "configure" &&
-                      (field.key === "setup_token" ||
-                        (editor.operation === "upgrade" &&
-                          field.key === "public_url"))
-                    ),
+                    (editor.operation !== "upgrade" || missingUpgradeFields.includes(field.key)),
                 )
                 .map((field) => (
                   <ConfigField

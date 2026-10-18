@@ -3,9 +3,10 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { AgentView, AppData, Application, AppView } from "../types";
+import type { AppData, AppView } from "../types";
 import { AppStore, AppStoreCard } from "./AppStore";
 import { AppHostAccessNote, AppIdentityBadge, isOfficialProduct } from "./AppIdentity";
+import { dashboard } from "./views.test-support";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -137,17 +138,18 @@ describe("app store cards", () => {
     }
   });
 
-  it("does not bypass the private access prerequisite for the official collector", () => {
+  it("allows an independent collector without a managed monitoring service or private entry", () => {
+    const collector = dashboard().agents[0];
     const data = {
       apps: [app()],
       sources: [],
-      agents: [{ id: "collector", connected: true, credentialRevoked: false, capabilities: { docker: false }, networkProfile: { serviceAddress: "10.0.0.2" } } as AgentView],
-      applications: [{ id: "monitor", appKey: "vastora-official/pulse", status: "running", installedVersion: "0.1.0-alpha.2" } as Application],
+      agents: [{ ...collector, id: "collector", connected: true, credentialRevoked: false, capabilities: { ...collector.capabilities, docker: false, executorVersions: { systemd: 1 }, runtimeCapabilities: [] } }],
+      applications: [],
       services: [], publications: [],
     } as unknown as AppData;
     const container = markup(<AppStore data={data} language="zh-CN" onInstall={vi.fn()} />);
-    expect(container.querySelector<HTMLButtonElement>(installSelector)?.disabled).toBe(true);
-    expect(container.textContent).toContain("私网 HTTPS 入口");
+    expect(container.querySelector<HTMLButtonElement>(installSelector)?.disabled).toBe(false);
+    expect(container.textContent).not.toContain("私网 HTTPS 入口");
   });
 
   it("uses English identity and neutral host-access copy in details", async () => {

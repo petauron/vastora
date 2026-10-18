@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import type { Publication } from "../types";
-import { senulunDashboardURL, senulunPrivateAccess } from "./appAccess";
+import { senulunDashboardURL } from "./appAccess";
 import { applicationLaunchURL, desktopApplications } from "./applicationLaunch";
 import { installedAppGroups } from "./installed-apps-model";
 import { SenulunWorkspace } from "./SenulunWorkspace";
@@ -30,11 +30,16 @@ describe("Senulun browser access", () => {
     expect(desktopApplications(data, "en")[0].url).toBe("https://senulun.example.com/");
   });
 
-  it("opens the configured public tunnel while retaining private access for probes", () => {
+  it("opens the configured public tunnel", () => {
     const data = senulun();
     expect(applicationLaunchURL(data, "vastora-official/pulse")).toBe("https://senulun.example.com/");
     expect(desktopApplications(data, "en")[0].url).toBe("https://senulun.example.com/");
-    expect(senulunPrivateAccess(data)?.accessUrl).toBe("https://senulun.private.example/");
+  });
+
+  it("does not guess a global shortcut when services are installed on multiple hosts", () => {
+    const data = senulun();
+    data.applications.push({ ...data.applications[0], id: "other-senulun", nodeId: "other-node" });
+    expect(senulunDashboardURL(data)).toBeUndefined();
   });
 
   it("opens the same browser URL from the application workspace", () => {
