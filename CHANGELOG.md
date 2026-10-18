@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.327](https://github.com/petauron/vastora/compare/v0.1.0-alpha.326...v0.1.0-alpha.327) (2026-10-18)
+
+
+### Bug Fixes
+
+* **center:** keep composite runtime stable across landing outages ([e4454cb](https://github.com/petauron/vastora/commit/e4454cb725f307ba5435b719d0dd92235e2627d5))
+
 ## [0.1.0-alpha.326](https://github.com/petauron/vastora/compare/v0.1.0-alpha.325...v0.1.0-alpha.326) (2026-10-18)
 
 
