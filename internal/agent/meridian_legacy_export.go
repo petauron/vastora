@@ -16,7 +16,7 @@ import (
 
 func exportLegacyMeridianState(ctx context.Context, store *Store, command meridianruntime.LegacyExportCommand) (meridianruntime.LegacyExportResult, error) {
 	if command.Validate() != nil {
-		return meridianruntime.LegacyExportResult{}, errors.New("agent: invalid Meridian legacy export command")
+		return meridianruntime.LegacyExportResult{}, errors.New("agent: invalid Glivela legacy export command")
 	}
 	installation, err := store.AppliedInstallation(ctx, threeXUIKey)
 	if err != nil {
@@ -77,7 +77,7 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 		export.Endpoints = append(export.Endpoints, endpoint)
 	}
 	if len(export.Endpoints) == 0 {
-		return meridianruntime.LegacyExportResult{}, errors.New("agent: no managed REALITY endpoint is available for Meridian cutover")
+		return meridianruntime.LegacyExportResult{}, errors.New("agent: no managed REALITY endpoint is available for Glivela cutover")
 	}
 	slices.SortFunc(export.Endpoints, func(a, b meridianruntime.LegacyEndpoint) int { return a.InboundID - b.InboundID })
 
@@ -183,7 +183,7 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 	slices.SortFunc(export.Clients, func(a, b meridianruntime.LegacyClient) int { return strings.Compare(a.Email, b.Email) })
 	result := meridianruntime.LegacyExportResult{Export: export}
 	if err := result.Validate(command); err != nil {
-		return meridianruntime.LegacyExportResult{}, errors.New("agent: legacy Meridian export failed validation")
+		return meridianruntime.LegacyExportResult{}, errors.New("agent: legacy Glivela export failed validation")
 	}
 	return result, nil
 }

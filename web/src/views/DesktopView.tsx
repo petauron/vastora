@@ -24,7 +24,7 @@ export function DesktopView({ data, language, onNavigate, onOpenApp }: { data: A
   const itemProps = (key: string) => ({ "data-desktop-item": key, "data-selected": selection.selected.has(key), "aria-describedby": selection.selected.has(key) ? `${selectionInstructions} ${selectedDescription}` : selectionInstructions, ...order.itemProps(key) });
   const agents = data.agents.filter((agent) => agent.status === "active");
   const online = agents.filter((agent) => agent.connected && !agent.credentialRevoked).length;
-  const failed = data.applications.filter((app) => ["failed", "degraded"].includes(app.status)).length;
+  const failed = data.desktopDataUnavailable ? 0 : data.applications.filter((app) => ["failed", "degraded"].includes(app.status)).length;
   return <section className="desktop-home" ref={selection.surfaceRef} tabIndex={-1} aria-label={copy(language, "桌面", "Desktop")} {...selection.surfaceProps}>
     <h1 className="sr-only">{copy(language, "Vastora 桌面", "Vastora desktop")}</h1>
     <p className="sr-only" id={selectionInstructions}>{copy(language, "拖动图标到桌面空白处自由摆放并自动对齐，已有图标自动让位，多选后可一起移动；Alt 加方向键移动到相邻格子。拖动空白处框选；Shift、⌘ 或 Ctrl 加单击可多选，空格切换选中，Esc 取消。单击选中，双击或 Enter 打开应用；触屏点按打开。", "Drag icons anywhere on the desktop to snap to the grid, with a live placement preview and automatic displacement. Alt plus an arrow key moves an icon to the adjacent grid cell. Drag the background to select. Shift, Command or Control-click to toggle selection, Space to select, Escape to clear. Click to select, double-click or Enter to open; tap to open on touchscreens.")}</p>
@@ -33,7 +33,7 @@ export function DesktopView({ data, language, onNavigate, onOpenApp }: { data: A
     <span className="sr-only" role="status" key={order.announcement?.revision}>{order.announcement ? order.announcement.saved ? copy(language, "桌面布局已保存", "Desktop layout saved") : copy(language, "布局已调整，但当前浏览器无法保存", "Layout updated, but this browser could not save it") : ""}</span>
     <aside className="desktop-widget" data-desktop-no-select aria-label={copy(language, "系统状态", "System status")}>
       <div className="desktop-widget-heading"><span className="flex items-center gap-2"><ServerIcon className="size-4" />Vastora</span><button aria-label={copy(language, "查看系统概览", "View system overview")} onClick={() => onNavigate("overview")}><ArrowUpRightIcon className="size-4" /></button></div>
-      <dl className="desktop-widget-stats"><div><dt>{copy(language, "主机在线", "Hosts online")}</dt><dd>{online}<small> / {agents.length}</small></dd></div><div><dt>{copy(language, "运行中的安装", "Running installations")}</dt><dd>{data.applications.filter((app) => app.status === "running").length}</dd></div></dl>
+      <dl className="desktop-widget-stats"><div><dt>{copy(language, "主机在线", "Hosts online")}</dt><dd>{online}<small> / {agents.length}</small></dd></div><div><dt>{copy(language, "运行中的安装", "Running installations")}</dt><dd>{data.desktopDataUnavailable ? "—" : data.applications.filter((app) => app.status === "running").length}</dd></div></dl>
       {online < agents.length ? <button className="desktop-widget-notice" onClick={() => onNavigate("nodes")}>{copy(language, `${agents.length - online} 台主机未连接`, `${agents.length - online} hosts disconnected`)}<ArrowUpRightIcon /></button> : null}
       {failed ? <button className="desktop-widget-notice" onClick={() => onNavigate("apps")}>{copy(language, `${failed} 项应用安装需要检查`, `${failed} installations need attention`)}<ArrowUpRightIcon /></button> : null}
     </aside>

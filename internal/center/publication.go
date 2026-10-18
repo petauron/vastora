@@ -168,7 +168,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		var desiredRevision, appliedRevision int64
 		var runtimeHealthy int
 		if err := tx.QueryRowContext(ctx, `SELECT status,desired_revision,applied_revision,runtime_healthy FROM meridian_endpoints WHERE service_id=? AND status<>'retired'`, input.ServiceID).Scan(&endpointStatus, &desiredRevision, &appliedRevision, &runtimeHealthy); err != nil || endpointStatus != "ready" || runtimeHealthy != 1 || desiredRevision != appliedRevision {
-			return PublicationView{}, errors.New("center: Meridian endpoint must be fully applied before publication")
+			return PublicationView{}, errors.New("center: Glivela endpoint must be fully applied before publication")
 		}
 	}
 	if err := s.ensureServicePublicationChangeAllowed(ctx, tx, input.ServiceID); err != nil {
@@ -186,8 +186,8 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 	if management == 1 && input.Kind == publicationPublic && !input.ConfirmHighRisk {
 		return PublicationView{}, errors.New("center: publishing a management page publicly requires explicit high-risk confirmation")
 	}
-	if appKey == pulseAppKey && input.Kind == publicationPublic {
-		return PublicationView{}, errors.New("center: Pulse has no built-in dashboard authentication; use private access or an Access-protected Tunnel")
+	if appKey == senulunAppKey && input.Kind == publicationPublic {
+		return PublicationView{}, errors.New("center: Senulun has no built-in dashboard authentication; use private access or an Access-protected Tunnel")
 	}
 	if _, _, err := net.SplitHostPort(endpoint); err != nil {
 		return PublicationView{}, errors.New("center: stored service endpoint is invalid")

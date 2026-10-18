@@ -29,42 +29,42 @@ const (
 	meridianRuntimeStateAAD  = "agent-meridian-runtime"
 )
 
-var errMeridianExplicitRecoveryRequired = errors.New("agent: Meridian runtime requires explicit recovery")
+var errMeridianExplicitRecoveryRequired = errors.New("agent: Glivela runtime requires explicit recovery")
 
 // meridianRuntimeState is the only durable Agent-side authority after
 // cutover. Pending is journaled before Docker mutation; Applied is advanced
 // only after the promoted container and its exact configuration are healthy.
 type meridianRuntimeState struct {
-	ApplicationID       string                    `json:"applicationId"`
-	ImageReference      string                    `json:"imageReference"`
-	Applied             *meridian.DesiredArtifact `json:"applied,omitempty"`
-	Pending             *meridian.DesiredArtifact `json:"pending,omitempty"`
-	AppliedPeers        []meridianruntime.Peer    `json:"appliedPeers,omitempty"`
-	PendingPeers        []meridianruntime.Peer    `json:"pendingPeers,omitempty"`
-	AppliedSource       *landing.PeerIdentity     `json:"appliedSource,omitempty"`
-	PendingSource       *landing.PeerIdentity     `json:"pendingSource,omitempty"`
-	GateRevision        uint64                    `json:"gateRevision,omitempty"`
-	AppliedGID          uint32                    `json:"appliedGid,omitempty"`
-	PendingGID          uint32                    `json:"pendingGid,omitempty"`
-	Bridge              string                    `json:"bridge,omitempty"`
-	RetiringGates       []meridianGateIdentity    `json:"retiringGates,omitempty"`
-	HandoverPending     bool                      `json:"handoverPending,omitempty"`
-	LegacyLandingSealed []byte                    `json:"legacyLandingSealed,omitempty"`
-	LegacyRuntimeSHA256 string                    `json:"legacyRuntimeSha256,omitempty"`
+	ApplicationID       string                   `json:"applicationId"`
+	ImageReference      string                   `json:"imageReference"`
+	Applied             *glivela.DesiredArtifact `json:"applied,omitempty"`
+	Pending             *glivela.DesiredArtifact `json:"pending,omitempty"`
+	AppliedPeers        []meridianruntime.Peer   `json:"appliedPeers,omitempty"`
+	PendingPeers        []meridianruntime.Peer   `json:"pendingPeers,omitempty"`
+	AppliedSource       *landing.PeerIdentity    `json:"appliedSource,omitempty"`
+	PendingSource       *landing.PeerIdentity    `json:"pendingSource,omitempty"`
+	GateRevision        uint64                   `json:"gateRevision,omitempty"`
+	AppliedGID          uint32                   `json:"appliedGid,omitempty"`
+	PendingGID          uint32                   `json:"pendingGid,omitempty"`
+	Bridge              string                   `json:"bridge,omitempty"`
+	RetiringGates       []meridianGateIdentity   `json:"retiringGates,omitempty"`
+	HandoverPending     bool                     `json:"handoverPending,omitempty"`
+	LegacyLandingSealed []byte                   `json:"legacyLandingSealed,omitempty"`
+	LegacyRuntimeSHA256 string                   `json:"legacyRuntimeSha256,omitempty"`
 }
 
 func (state meridianRuntimeState) validate() error {
 	if strings.TrimSpace(state.ApplicationID) == "" || !validXrayWorkerImageReference(state.ImageReference) || state.Applied == nil && state.Pending == nil {
-		return errors.New("agent: invalid Meridian runtime state")
+		return errors.New("agent: invalid Glivela runtime state")
 	}
 	if state.Applied != nil && state.Applied.Validate() != nil || state.Pending != nil && state.Pending.Validate() != nil {
-		return errors.New("agent: invalid Meridian runtime artifact")
+		return errors.New("agent: invalid Glivela runtime artifact")
 	}
 	if state.Applied != nil && state.Pending != nil && state.Pending.Revision <= state.Applied.Revision {
-		return errors.New("agent: stale Meridian pending revision")
+		return errors.New("agent: stale Glivela pending revision")
 	}
 	if state.GateRevision != 0 && (state.Applied == nil || state.GateRevision > state.Applied.Revision) {
-		return errors.New("agent: invalid Meridian gate revision")
+		return errors.New("agent: invalid Glivela gate revision")
 	}
 	if err := state.validateLanding(); err != nil {
 		return err
@@ -82,10 +82,10 @@ func (s *Store) saveMeridianRuntimeState(ctx context.Context, state meridianRunt
 	}
 	sealed, err := secret.Seal(s.key, encoded, []byte(meridianRuntimeStateAAD))
 	if err != nil {
-		return fmt.Errorf("agent: encrypt Meridian runtime state: %w", err)
+		return fmt.Errorf("agent: encrypt Glivela runtime state: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO meridian_runtime_state(id,sealed_state) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET sealed_state=excluded.sealed_state`, sealed); err != nil {
-		return fmt.Errorf("agent: save Meridian runtime state: %w", err)
+		return fmt.Errorf("agent: save Glivela runtime state: %w", err)
 	}
 	return nil
 }
@@ -99,11 +99,11 @@ func (s *Store) loadMeridianRuntimeState(ctx context.Context) (meridianRuntimeSt
 	}
 	encoded, err := secret.Open(s.key, sealed, []byte(meridianRuntimeStateAAD))
 	if err != nil {
-		return meridianRuntimeState{}, errors.New("agent: Meridian runtime state does not match the local key")
+		return meridianRuntimeState{}, errors.New("agent: Glivela runtime state does not match the local key")
 	}
 	var state meridianRuntimeState
 	if json.Unmarshal(encoded, &state) != nil || state.validate() != nil {
-		return meridianRuntimeState{}, errors.New("agent: persisted Meridian runtime state is invalid")
+		return meridianRuntimeState{}, errors.New("agent: persisted Glivela runtime state is invalid")
 	}
 	return state, nil
 }
@@ -114,7 +114,7 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 	}
 	receipt, receiptErr := e.ApplicationResources(state.ApplicationID)
 	if receiptErr != nil || !receiptAuthorizesImage(receipt, pendingImageReference) {
-		return state, errors.New("agent: Meridian pending image is not the audited Agent runtime")
+		return state, errors.New("agent: Glivela pending image is not the audited Agent runtime")
 	}
 	active, err := os.ReadFile(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory, "config.json"))
 	if err != nil {
@@ -152,7 +152,7 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 	}
 	docker, err := client.New(client.WithHost(socket))
 	if err != nil {
-		return state, fmt.Errorf("agent: connect Docker for Meridian recovery: %w", err)
+		return state, fmt.Errorf("agent: connect Docker for Glivela recovery: %w", err)
 	}
 	defer docker.Close()
 	bootCandidate := state
@@ -161,7 +161,7 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 		return state, errors.Join(errMeridianExplicitRecoveryRequired, err)
 	}
 	if _, err := e.observeAppliedMeridianRuntimeWithDocker(ctx, docker, candidate); err != nil {
-		return state, errors.Join(errMeridianExplicitRecoveryRequired, errors.New("agent: Meridian pending revision is not a healthy promoted runtime"), err)
+		return state, errors.Join(errMeridianExplicitRecoveryRequired, errors.New("agent: Glivela pending revision is not a healthy promoted runtime"), err)
 	}
 	if err := e.cleanupCompletedMeridianReplacement(ctx, docker, candidate); err != nil {
 		return state, errors.Join(errMeridianExplicitRecoveryRequired, err)
@@ -178,13 +178,13 @@ func (e ApplicationExecutor) recoverMeridianPendingState(ctx context.Context, st
 // in the encrypted journal until the new container is healthy.
 func (e ApplicationExecutor) replaceMeridianPendingState(ctx context.Context, state meridianRuntimeState, task meridianruntime.Task, gid uint32) (meridianRuntimeState, error) {
 	if !task.ReplacePendingState || state.Pending == nil {
-		return state, errors.New("agent: Meridian pending-state replacement was not authorized")
+		return state, errors.New("agent: Glivela pending-state replacement was not authorized")
 	}
 	if state.Applied != nil && task.Desired.Revision <= state.Applied.Revision {
-		return state, errors.New("agent: Meridian recovery revision is not newer than the applied receipt")
+		return state, errors.New("agent: Glivela recovery revision is not newer than the applied receipt")
 	}
 	if task.Desired.Revision < state.Pending.Revision {
-		return state, errors.New("agent: Meridian recovery would replace a newer pending revision")
+		return state, errors.New("agent: Glivela recovery would replace a newer pending revision")
 	}
 	candidate := state
 	desired := task.Desired
@@ -200,13 +200,17 @@ func (e ApplicationExecutor) replaceMeridianPendingState(ctx context.Context, st
 	return candidate, nil
 }
 
-func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meridianruntime.Task) (result meridianruntime.Result, resultErr error) {
+func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meridianruntime.Task) (meridianruntime.Result, error) {
+	return e.applyMeridianRuntime(ctx, task, ensureLandingPackage)
+}
+
+func (e ApplicationExecutor) applyMeridianRuntime(ctx context.Context, task meridianruntime.Task, ensureFirewall func(context.Context) error) (result meridianruntime.Result, resultErr error) {
 	if e.Store == nil || task.Validate() != nil {
-		return result, errors.New("agent: invalid Meridian runtime task")
+		return result, errors.New("agent: invalid Glivela runtime task")
 	}
 	receipt, receiptErr := e.ApplicationResources(task.ApplicationID)
 	if receiptErr != nil || !receiptAuthorizesImage(receipt, task.ImageReference) {
-		return result, errors.New("agent: Meridian runtime image is not authorized by the installed package receipt")
+		return result, errors.New("agent: Glivela runtime image is not authorized by the installed package receipt")
 	}
 	if len(task.EgressClients) != 0 {
 		defer func() {
@@ -232,7 +236,14 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	} else if err != nil {
 		return result, err
 	}
-	if len(task.EgressClients) != 0 && task.NativeEgress != meridian.EgressAuto {
+	// Reject unsupported firewall userspace before pending recovery or handover
+	// can stop an otherwise healthy runtime. Existing gates also need readback.
+	if len(task.Peers) != 0 || len(state.knownLandingGates()) != 0 {
+		if err := ensureFirewall(ctx); err != nil {
+			return result, err
+		}
+	}
+	if len(task.EgressClients) != 0 && task.NativeEgress != glivela.EgressAuto {
 		if err := e.checkNativeEgressNetwork(ctx, task, state); err != nil {
 			return result, err
 		}
@@ -248,11 +259,11 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 			return result, err
 		}
 		if state.AppliedGID != 0 && state.AppliedGID != gid || state.PendingGID != 0 && state.PendingGID != gid {
-			return result, errors.New("agent: Meridian runtime group changed")
+			return result, errors.New("agent: Glivela runtime group changed")
 		}
 	}
 	if state.ApplicationID != task.ApplicationID {
-		return result, errors.New("agent: Meridian runtime belongs to another application")
+		return result, errors.New("agent: Glivela runtime belongs to another application")
 	}
 	if state.Pending != nil || state.HandoverPending {
 		if err := e.Store.stopLandingMonitor(ctx); err != nil {
@@ -279,7 +290,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	}
 	if state.Applied != nil && sameMeridianArtifact(*state.Applied, task.Desired) && state.ImageReference == task.ImageReference {
 		if !sameMeridianPeers(state.AppliedPeers, task.Peers) || !sameMeridianSource(state.AppliedSource, task.Source) {
-			return result, errors.New("agent: Meridian applied peer identity changed without a revision")
+			return result, errors.New("agent: Glivela applied peer identity changed without a revision")
 		}
 		if state.HandoverPending {
 			if err := e.finishMeridianLandingHandover(ctx, &state); err != nil {
@@ -323,7 +334,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 			}
 			for _, ready := range health {
 				if !ready {
-					return result, errors.New("agent: Meridian peer became unavailable before legacy retirement")
+					return result, errors.New("agent: Glivela peer became unavailable before legacy retirement")
 				}
 			}
 		}
@@ -338,7 +349,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	}
 	if state.Pending != nil && (!sameMeridianArtifact(*state.Pending, task.Desired) || !sameMeridianPeers(state.PendingPeers, task.Peers) || !sameMeridianSource(state.PendingSource, task.Source)) {
 		if !task.ReplacePendingState {
-			return result, errors.New("agent: another Meridian revision requires explicit recovery")
+			return result, errors.New("agent: another Glivela revision requires explicit recovery")
 		}
 		state, err = e.replaceMeridianPendingState(ctx, state, task, gid)
 		if err != nil {
@@ -346,10 +357,10 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 		}
 	}
 	if task.RetireLegacy {
-		return result, errors.New("agent: legacy retirement requires the already verified Meridian revision")
+		return result, errors.New("agent: legacy retirement requires the already verified Glivela revision")
 	}
 	if state.Applied != nil && task.Desired.Revision <= state.Applied.Revision {
-		return result, errors.New("agent: Meridian runtime revision is stale")
+		return result, errors.New("agent: Glivela runtime revision is stale")
 	}
 	socket := e.DockerSocket
 	if socket == "" {
@@ -357,19 +368,19 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	}
 	docker, err := client.New(client.WithHost(socket))
 	if err != nil {
-		return result, fmt.Errorf("agent: connect Docker for Meridian: %w", err)
+		return result, fmt.Errorf("agent: connect Docker for Glivela: %w", err)
 	}
 	defer docker.Close()
 	pull, err := docker.ImagePull(ctx, task.ImageReference, client.ImagePullOptions{})
 	if err != nil {
-		return result, errors.New("agent: pull audited Meridian Xray image")
+		return result, errors.New("agent: pull audited Glivela Xray image")
 	}
 	if err := pull.Wait(ctx); err != nil {
 		_ = pull.Close()
-		return result, errors.New("agent: pull audited Meridian Xray image")
+		return result, errors.New("agent: pull audited Glivela Xray image")
 	}
 	if err := pull.Close(); err != nil {
-		return result, errors.New("agent: close Meridian image pull")
+		return result, errors.New("agent: close Glivela image pull")
 	}
 	hy2Enabled, err := meridianArtifactHY2Enabled(task.Desired)
 	if err != nil {
@@ -384,17 +395,12 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 	if err := validateXrayWorkerConfigAs(ctx, docker, task.ImageReference, staged, meridianAppliedRuntimeUID(state)); err != nil {
 		return result, err
 	}
-	if len(task.Peers) != 0 {
-		if err := ensureLandingPackage(ctx); err != nil {
-			return result, err
-		}
-	}
 	if err := validateMeridianHostPorts(ctx, docker, task.Desired, state); err != nil {
 		return result, err
 	}
 	previousActive, _ := os.ReadFile(active)
 	if state.Applied != nil && !artifactMatchesBytes(*state.Applied, previousActive) && !task.ReplacePendingState {
-		return result, errors.New("agent: active Meridian configuration does not match its applied receipt")
+		return result, errors.New("agent: active Glivela configuration does not match its applied receipt")
 	}
 	deployment := DeploymentTask{ID: "meridian-runtime-r" + fmt.Sprint(task.Desired.Revision), AppKey: meridianKey, ApplicationID: task.ApplicationID}
 	options := meridianHostContainerOptions(deployment, task.ImageReference, active, hy2Enabled, gid)
@@ -403,7 +409,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 			return err
 		}
 		if err := commitXrayWorkerConfig(staged, active); err != nil {
-			return fmt.Errorf("agent: commit Meridian configuration: %w", err)
+			return fmt.Errorf("agent: commit Glivela configuration: %w", err)
 		}
 		if os.Geteuid() == 0 {
 			if err := os.Chown(active, 0, -1); err != nil {
@@ -421,7 +427,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 		return task.Desired.ConfigSHA256, nil
 	}, func(_ string, observed string) error {
 		if subtle.ConstantTimeCompare([]byte(observed), []byte(task.Desired.ConfigSHA256)) != 1 {
-			return errors.New("agent: promoted Meridian configuration digest changed")
+			return errors.New("agent: promoted Glivela configuration digest changed")
 		}
 		return nil
 	})
@@ -429,7 +435,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 		return result, err
 	}
 	if subtle.ConstantTimeCompare([]byte(sha), []byte(task.Desired.ConfigSHA256)) != 1 {
-		return result, uncertainTaskOutcome(errors.New("agent: Meridian runtime promotion returned the wrong digest"))
+		return result, uncertainTaskOutcome(errors.New("agent: Glivela runtime promotion returned the wrong digest"))
 	}
 	applied := task.Desired
 	state.Applied, state.Pending = &applied, nil
@@ -465,7 +471,7 @@ func (e ApplicationExecutor) ensureCleanMeridianContainerIdentity(ctx context.Co
 	}
 	docker, err := client.New(client.WithHost(socket))
 	if err != nil {
-		return fmt.Errorf("agent: connect Docker for Meridian identity cleanup: %w", err)
+		return fmt.Errorf("agent: connect Docker for Glivela identity cleanup: %w", err)
 	}
 	defer docker.Close()
 	if err := e.cleanupCompletedMeridianReplacement(ctx, docker, state); err != nil {
@@ -473,7 +479,7 @@ func (e ApplicationExecutor) ensureCleanMeridianContainerIdentity(ctx context.Co
 	}
 	current, exists, err := inspectXrayWorkerContainer(ctx, docker, meridianXrayContainer)
 	if err != nil || !exists || current.Container.Config == nil || current.Container.Config.Labels[applicationIdentityLabel] != meridianKey || current.Container.NetworkSettings == nil {
-		return errors.Join(errors.New("agent: Meridian runtime identity is unavailable"), err)
+		return errors.Join(errors.New("agent: Glivela runtime identity is unavailable"), err)
 	}
 	if state.AppliedGID == 0 {
 		return errors.New("agent: host migration must finish before legacy retirement")
@@ -488,20 +494,20 @@ func (e ApplicationExecutor) ensureCleanMeridianContainerIdentity(ctx context.Co
 // unfinished promotion rather than completed cleanup.
 func (e ApplicationExecutor) cleanupCompletedMeridianReplacement(ctx context.Context, docker threeXUIContainerEngine, state meridianRuntimeState) error {
 	if state.Applied == nil {
-		return errors.New("agent: Meridian cleanup has no applied revision")
+		return errors.New("agent: Glivela cleanup has no applied revision")
 	}
 	current, exists, err := inspectXrayWorkerContainer(ctx, docker, meridianXrayContainer)
 	if err != nil || !exists || current.Container.Config == nil || current.Container.State == nil || !current.Container.State.Running || current.Container.Config.Labels[applicationIdentityLabel] != meridianKey || current.Container.Config.Labels[applicationInstallationLabel] != state.ApplicationID || current.Container.Config.Image != state.ImageReference {
-		return errors.Join(errors.New("agent: Meridian cleanup cannot prove the current runtime"), err)
+		return errors.Join(errors.New("agent: Glivela cleanup cannot prove the current runtime"), err)
 	}
 	active, err := os.ReadFile(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory, "config.json"))
 	if err != nil || !artifactMatchesBytes(*state.Applied, active) {
-		return errors.Join(errors.New("agent: Meridian cleanup cannot prove the applied configuration"), err)
+		return errors.Join(errors.New("agent: Glivela cleanup cannot prove the applied configuration"), err)
 	}
 	if _, candidateExists, err := inspectOwnedProxyRuntimeContainer(ctx, docker, meridianXrayCandidateContainer); err != nil {
 		return err
 	} else if candidateExists {
-		return errors.New("agent: Meridian candidate still requires explicit recovery")
+		return errors.New("agent: Glivela candidate still requires explicit recovery")
 	}
 	for _, name := range []string{meridianXrayBackupContainer, meridianXrayCleanupContainer} {
 		residue, residueExists, err := inspectOwnedProxyRuntimeContainer(ctx, docker, name)
@@ -512,10 +518,10 @@ func (e ApplicationExecutor) cleanupCompletedMeridianReplacement(ctx context.Con
 			continue
 		}
 		if residue.Container.Config == nil || residue.Container.Config.Labels[applicationInstallationLabel] != state.ApplicationID || residue.Container.State == nil || residue.Container.State.Running {
-			return errors.New("agent: Meridian replacement residue requires explicit review")
+			return errors.New("agent: Glivela replacement residue requires explicit review")
 		}
 		if _, err := docker.ContainerRemove(ctx, residue.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
-			return fmt.Errorf("agent: remove completed Meridian replacement residue: %w", err)
+			return fmt.Errorf("agent: remove completed Glivela replacement residue: %w", err)
 		}
 	}
 	return nil
@@ -523,7 +529,7 @@ func (e ApplicationExecutor) cleanupCompletedMeridianReplacement(ctx context.Con
 
 func (e ApplicationExecutor) retireLegacyMeridianInstallation(ctx context.Context, applicationID string, authorized bool) error {
 	if e.Store == nil {
-		return errors.New("agent: Meridian runtime store is unavailable")
+		return errors.New("agent: Glivela runtime store is unavailable")
 	}
 	legacy, err := e.Store.AppliedInstallation(ctx, threeXUIKey)
 	if errors.Is(err, errApplicationNotInstalled) {
@@ -554,7 +560,7 @@ func (e ApplicationExecutor) retireLegacyMeridianInstallation(ctx context.Contex
 	}
 	docker, err := client.New(client.WithHost(socket))
 	if err != nil {
-		return fmt.Errorf("agent: connect Docker for legacy Meridian retirement: %w", err)
+		return fmt.Errorf("agent: connect Docker for legacy Glivela retirement: %w", err)
 	}
 	defer docker.Close()
 	if err := validateThreeXUIOwnership(ctx, docker, applicationID); err != nil {
@@ -584,7 +590,7 @@ func (e ApplicationExecutor) retireLegacyMeridianInstallation(ctx context.Contex
 
 func (e ApplicationExecutor) RetireLegacyMeridianInstallation(ctx context.Context, task meridianruntime.LegacyRetireTask) (meridianruntime.LegacyRetireResult, error) {
 	if task.Validate() != nil {
-		return meridianruntime.LegacyRetireResult{}, errors.New("agent: invalid Meridian legacy retirement task")
+		return meridianruntime.LegacyRetireResult{}, errors.New("agent: invalid Glivela legacy retirement task")
 	}
 	if err := e.retireLegacyMeridianInstallation(ctx, task.ApplicationID, true); err != nil {
 		return meridianruntime.LegacyRetireResult{}, err
@@ -633,7 +639,7 @@ func (e ApplicationExecutor) observeAppliedMeridianRuntime(ctx context.Context, 
 
 func (e ApplicationExecutor) ObserveMeridianRuntime(ctx context.Context) (meridianruntime.Result, error) {
 	if e.Store == nil {
-		return meridianruntime.Result{}, errors.New("agent: Meridian runtime store is unavailable")
+		return meridianruntime.Result{}, errors.New("agent: Glivela runtime store is unavailable")
 	}
 	state, err := e.Store.loadMeridianRuntimeState(ctx)
 	if err != nil {
@@ -648,24 +654,24 @@ func (e ApplicationExecutor) ObserveMeridianRuntime(ctx context.Context) (meridi
 
 func (e ApplicationExecutor) observeAppliedMeridianRuntimeWithDocker(ctx context.Context, docker *client.Client, state meridianRuntimeState) (meridianruntime.Result, error) {
 	if state.Applied == nil {
-		return meridianruntime.Result{}, errors.New("agent: Meridian runtime has no applied revision")
+		return meridianruntime.Result{}, errors.New("agent: Glivela runtime has no applied revision")
 	}
 	inspected, runtimeName, exists, err := inspectCurrentMeridianRuntime(ctx, docker)
 	if err != nil || !exists || runtimeName != meridianXrayContainer || inspected.Container.Config == nil || inspected.Container.State == nil || !inspected.Container.State.Running || inspected.Container.Config.Labels[xrayWorkerRuntimeLabel] != "xray" || inspected.Container.Config.Labels[applicationIdentityLabel] != meridianKey || inspected.Container.Config.Labels[applicationInstallationLabel] != state.ApplicationID || inspected.Container.Config.Image != state.ImageReference {
-		return meridianruntime.Result{}, errors.Join(errors.New("agent: Meridian Xray runtime is unavailable"), err)
+		return meridianruntime.Result{}, errors.Join(errors.New("agent: Glivela Xray runtime is unavailable"), err)
 	}
 	if err := e.verifyMeridianRuntimeAttachment(ctx, docker, inspected, state, state.AppliedPeers); err != nil {
 		return meridianruntime.Result{}, err
 	}
 	active, err := os.ReadFile(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory, "config.json"))
 	if err != nil || !artifactMatchesBytes(*state.Applied, active) {
-		return meridianruntime.Result{}, errors.New("agent: active Meridian configuration does not match its applied revision")
+		return meridianruntime.Result{}, errors.New("agent: active Glivela configuration does not match its applied revision")
 	}
 	stats, err := runXrayWorkerCommand(ctx, docker, inspected.Container.ID, []string{"xray", "api", "statsquery", "--server=127.0.0.1:10085", "-pattern", "user>>>", "-reset=false"})
 	if err != nil || !json.Valid(stats) {
-		return meridianruntime.Result{}, errors.Join(errors.New("agent: read Meridian Xray statistics"), err)
+		return meridianruntime.Result{}, errors.Join(errors.New("agent: read Glivela Xray statistics"), err)
 	}
-	result := meridianruntime.Result{Receipt: meridian.AppliedReceipt{Revision: state.Applied.Revision, ConfigSHA256: state.Applied.ConfigSHA256, RuntimeReady: true}, Stats: json.RawMessage(stats), Peers: e.Store.meridianPeerObservations(state), Source: cloneMeridianSource(state.AppliedSource)}
+	result := meridianruntime.Result{Receipt: glivela.AppliedReceipt{Revision: state.Applied.Revision, ConfigSHA256: state.Applied.ConfigSHA256, RuntimeReady: true}, Stats: json.RawMessage(stats), Peers: e.Store.meridianPeerObservations(state), Source: cloneMeridianSource(state.AppliedSource)}
 	if err := result.Validate(*state.Applied); err != nil {
 		return meridianruntime.Result{}, err
 	}
@@ -674,7 +680,7 @@ func (e ApplicationExecutor) observeAppliedMeridianRuntimeWithDocker(ctx context
 
 func (s *Store) stageMeridianConfig(encoded []byte, uid int) (string, string, error) {
 	if len(encoded) == 0 || len(encoded) > xrayWorkerMaxBody || !json.Valid(encoded) {
-		return "", "", errors.New("agent: invalid Meridian Xray configuration")
+		return "", "", errors.New("agent: invalid Glivela Xray configuration")
 	}
 	directory := filepath.Join(s.dataDir, meridianRuntimeDirectory)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
@@ -715,7 +721,7 @@ func (s *Store) stageMeridianConfig(encoded []byte, uid int) (string, string, er
 	return name, filepath.Join(directory, "config.json"), nil
 }
 
-func sameMeridianArtifact(left, right meridian.DesiredArtifact) bool {
+func sameMeridianArtifact(left, right glivela.DesiredArtifact) bool {
 	return left.Revision == right.Revision && subtle.ConstantTimeCompare([]byte(left.ConfigSHA256), []byte(right.ConfigSHA256)) == 1
 }
 
@@ -733,7 +739,7 @@ func canAdvanceMeridianRevision(state meridianRuntimeState, task meridianruntime
 // verify the running container against both journal revisions before replying.
 func (e ApplicationExecutor) advanceMeridianRevision(ctx context.Context, state meridianRuntimeState, task meridianruntime.Task, observe func(context.Context, meridianRuntimeState) (meridianruntime.Result, error)) (meridianruntime.Result, error) {
 	if !canAdvanceMeridianRevision(state, task) {
-		return meridianruntime.Result{}, errors.New("agent: Meridian revision cannot advance without runtime replacement")
+		return meridianruntime.Result{}, errors.New("agent: Glivela revision cannot advance without runtime replacement")
 	}
 	if _, err := observe(ctx, state); err != nil {
 		return meridianruntime.Result{}, err
@@ -760,7 +766,7 @@ func (e ApplicationExecutor) advanceMeridianRevision(ctx context.Context, state 
 	return result, err
 }
 
-func artifactMatchesBytes(artifact meridian.DesiredArtifact, encoded []byte) bool {
+func artifactMatchesBytes(artifact glivela.DesiredArtifact, encoded []byte) bool {
 	if artifact.Validate() != nil || len(encoded) == 0 || len(encoded) > xrayWorkerMaxBody {
 		return false
 	}
@@ -768,9 +774,9 @@ func artifactMatchesBytes(artifact meridian.DesiredArtifact, encoded []byte) boo
 	return subtle.ConstantTimeCompare([]byte(artifact.ConfigSHA256), []byte(hex.EncodeToString(digest[:]))) == 1
 }
 
-func meridianArtifactHY2Enabled(artifact meridian.DesiredArtifact) (bool, error) {
+func meridianArtifactHY2Enabled(artifact glivela.DesiredArtifact) (bool, error) {
 	if artifact.Validate() != nil {
-		return false, errors.New("agent: invalid Meridian runtime artifact")
+		return false, errors.New("agent: invalid Glivela runtime artifact")
 	}
 	var config struct {
 		Inbounds []struct {
@@ -779,12 +785,12 @@ func meridianArtifactHY2Enabled(artifact meridian.DesiredArtifact) (bool, error)
 		} `json:"inbounds"`
 	}
 	if json.Unmarshal(artifact.Config, &config) != nil {
-		return false, errors.New("agent: invalid Meridian Xray configuration")
+		return false, errors.New("agent: invalid Glivela Xray configuration")
 	}
 	for _, inbound := range config.Inbounds {
 		if inbound.Protocol == "hysteria" {
 			if inbound.Port != threeXUIRealityPort {
-				return false, errors.New("agent: Meridian Hysteria runtime does not use UDP 443")
+				return false, errors.New("agent: Glivela Hysteria runtime does not use UDP 443")
 			}
 			return true, nil
 		}

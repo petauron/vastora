@@ -25,7 +25,7 @@ func managedConfigFields(appKey string) []string {
 		return []string{"timezone", "management_key", "api_key"}
 	case "vastora-official/keeper":
 		return []string{"cpa_base_url", "cpa_management_key"}
-	case pulseAgentAppKey:
+	case senulunAgentAppKey:
 		return []string{"service_url", "node_name", "node_group", "enrollment_token"}
 	default:
 		return nil

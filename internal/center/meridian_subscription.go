@@ -16,19 +16,19 @@ import (
 	"github.com/petauron/vastora/internal/landing"
 )
 
-var errMeridianSubscriptionNotFound = errors.New("center: Meridian subscription is unavailable")
+var errMeridianSubscriptionNotFound = errors.New("center: Glivela subscription is unavailable")
 
 type meridianSubscription struct {
-	Account meridian.Account
-	Entries []meridian.NativeEntry
-	Routes  []meridian.PublishedRoute
-	Usage   meridian.QuotaProjection
+	Account glivela.Account
+	Entries []glivela.NativeEntry
+	Routes  []glivela.PublishedRoute
+	Usage   glivela.QuotaProjection
 }
 
 type meridianCredentialRecord struct {
-	Material         meridian.CredentialMaterial
-	RealityEndpoint  meridian.RealityEndpoint
-	HysteriaEndpoint *meridian.HysteriaEndpoint
+	Material         glivela.CredentialMaterial
+	RealityEndpoint  glivela.RealityEndpoint
+	HysteriaEndpoint *glivela.HysteriaEndpoint
 	VLESSEnabled     bool
 	HY2Enabled       bool
 	EntryName        string
@@ -89,7 +89,7 @@ func (s *Store) MeridianSubscription(ctx context.Context, token string) (meridia
 		return meridianSubscription{}, errMeridianSubscriptionNotFound
 	}
 	if err != nil {
-		return meridianSubscription{}, fmt.Errorf("center: read Meridian subscription account: %w", err)
+		return meridianSubscription{}, fmt.Errorf("center: read Glivela subscription account: %w", err)
 	}
 	result.Account.Plan.Enabled = enabled == 1
 	cutoverSnapshot := len(importSHA) == 64 && (cutoverState == "publish" || cutoverState == "project" || cutoverState == "verify" || cutoverState == "retire")
@@ -105,7 +105,7 @@ func (s *Store) MeridianSubscription(ctx context.Context, token string) (meridia
 	if err != nil {
 		return meridianSubscription{}, err
 	}
-	result.Usage, err = meridian.ProjectQuota(result.Account.Plan, usage)
+	result.Usage, err = glivela.ProjectQuota(result.Account.Plan, usage)
 	if err != nil || !result.Usage.Enabled {
 		return meridianSubscription{}, errMeridianSubscriptionNotFound
 	}
@@ -130,7 +130,7 @@ func (s *Store) MeridianSubscription(ctx context.Context, token string) (meridia
 		if snapshotErr != nil || snapshot.AccountRevision != result.Account.AppliedRevision {
 			if accountApplied {
 				if snapshotErr == nil {
-					return meridianSubscription{}, errors.New("center: applied Meridian subscription snapshot is stale")
+					return meridianSubscription{}, errors.New("center: applied Glivela subscription snapshot is stale")
 				}
 				return meridianSubscription{}, projectionErr
 			}
@@ -163,22 +163,22 @@ func (s *Store) meridianSubscriptionProjectionInTx(ctx context.Context, tx *sql.
 	for _, record := range records {
 		credential := record.Material.Credential
 		byID[credential.ID] = record
-		if credential.Kind != meridian.NativeCredential || !credential.Enabled {
+		if credential.Kind != glivela.NativeCredential || !credential.Enabled {
 			continue
 		}
 		if record.VLESSEnabled {
-			link, linkErr := meridian.LinkForCredential(record.RealityEndpoint, record.Material, record.EntryName)
+			link, linkErr := glivela.LinkForCredential(record.RealityEndpoint, record.Material, record.EntryName)
 			if linkErr != nil {
-				return meridianAppliedSubscriptionSnapshot{}, errors.New("center: Meridian native VLESS subscription projection is invalid")
+				return meridianAppliedSubscriptionSnapshot{}, errors.New("center: Glivela native VLESS subscription projection is invalid")
 			}
-			result.Entries = append(result.Entries, meridian.NativeEntry{Material: record.Material, Protocol: meridian.VLESSReality, Link: link})
+			result.Entries = append(result.Entries, glivela.NativeEntry{Material: record.Material, Protocol: glivela.VLESSReality, Link: link})
 		}
 		if record.HY2Enabled && record.HysteriaEndpoint != nil {
-			link, linkErr := meridian.Hysteria2LinkForCredential(*record.HysteriaEndpoint, record.Material, record.EntryName+" · HY2")
+			link, linkErr := glivela.Hysteria2LinkForCredential(*record.HysteriaEndpoint, record.Material, record.EntryName+" · HY2")
 			if linkErr != nil {
-				return meridianAppliedSubscriptionSnapshot{}, errors.New("center: Meridian native Hysteria subscription projection is invalid")
+				return meridianAppliedSubscriptionSnapshot{}, errors.New("center: Glivela native Hysteria subscription projection is invalid")
 			}
-			result.Entries = append(result.Entries, meridian.NativeEntry{Material: record.Material, Protocol: meridian.Hysteria2, Link: link})
+			result.Entries = append(result.Entries, glivela.NativeEntry{Material: record.Material, Protocol: glivela.Hysteria2, Link: link})
 		}
 	}
 	if len(result.Entries) == 0 {
@@ -220,7 +220,7 @@ func (s *Store) meridianSubscriptionCredentials(ctx context.Context, tx *sql.Tx,
 		)
 		ORDER BY endpoint.application_id,credential.kind,credential.id`, snapshot, accountID, snapshot)
 	if err != nil {
-		return nil, fmt.Errorf("center: read Meridian subscription credentials: %w", err)
+		return nil, fmt.Errorf("center: read Glivela subscription credentials: %w", err)
 	}
 	type storedCredential struct {
 		record           meridianCredentialRecord
@@ -272,53 +272,53 @@ func (s *Store) meridianSubscriptionCredentials(ctx context.Context, tx *sql.Tx,
 	for _, value := range stored {
 		record := value.record
 		if json.Unmarshal(value.serverNamesJSON, &record.RealityEndpoint.ServerNames) != nil || json.Unmarshal(value.shortIDsJSON, &record.RealityEndpoint.ShortIDs) != nil {
-			return nil, errors.New("center: stored Meridian REALITY material is invalid")
+			return nil, errors.New("center: stored Glivela REALITY material is invalid")
 		}
 		protocolID, err := s.meridianSecretInTx(ctx, tx, value.protocolSecretID, meridianCredentialSecretContext(record.Material.Credential.ID))
 		if err != nil {
-			return nil, errors.New("center: stored Meridian credential is unavailable")
+			return nil, errors.New("center: stored Glivela credential is unavailable")
 		}
 		record.Material.ProtocolID = string(protocolID)
 		if value.hy2AuthSecretID.Valid {
 			hy2Auth, secretErr := s.meridianSecretInTx(ctx, tx, value.hy2AuthSecretID.String, meridianCredentialHY2SecretContext(record.Material.Credential.ID))
 			if secretErr != nil {
-				return nil, errors.New("center: stored Meridian Hysteria credential is unavailable")
+				return nil, errors.New("center: stored Glivela Hysteria credential is unavailable")
 			}
 			record.Material.HysteriaAuth = string(hy2Auth)
 		}
 		if value.hy2InboundTag != "" {
 			expiresAt, expiryErr := time.Parse(time.RFC3339Nano, value.hy2NotAfter)
 			if record.HY2Enabled && (expiryErr != nil || !expiresAt.After(s.now().Add(time.Hour))) {
-				return nil, errors.New("center: stored Meridian Hysteria certificate is unavailable or expired")
+				return nil, errors.New("center: stored Glivela Hysteria certificate is unavailable or expired")
 			}
-			record.HysteriaEndpoint = &meridian.HysteriaEndpoint{ID: record.RealityEndpoint.ID + "-hy2", EntryID: record.Material.Credential.EntryID, AdvertiseHost: record.RealityEndpoint.AdvertiseHost, AdvertisePort: 443, ServerName: value.hy2ServerName}
+			record.HysteriaEndpoint = &glivela.HysteriaEndpoint{ID: record.RealityEndpoint.ID + "-hy2", EntryID: record.Material.Credential.EntryID, AdvertiseHost: record.RealityEndpoint.AdvertiseHost, AdvertisePort: 443, ServerName: value.hy2ServerName}
 		}
-		if record.Material.Validate() != nil || record.HY2Enabled && (record.HysteriaEndpoint == nil || record.Material.Credential.Kind == meridian.NativeCredential && record.Material.HysteriaAuth == "") {
-			return nil, errors.New("center: stored Meridian credential is invalid")
+		if record.Material.Validate() != nil || record.HY2Enabled && (record.HysteriaEndpoint == nil || record.Material.Credential.Kind == glivela.NativeCredential && record.Material.HysteriaAuth == "") {
+			return nil, errors.New("center: stored Glivela credential is invalid")
 		}
 		records = append(records, record)
 	}
 	return records, nil
 }
 
-func (s *Store) meridianAccountUsage(ctx context.Context, queryer meridianSubscriptionQueryer, accountID string) ([]meridian.UsageMember, error) {
+func (s *Store) meridianAccountUsage(ctx context.Context, queryer meridianSubscriptionQueryer, accountID string) ([]glivela.UsageMember, error) {
 	rows, err := queryer.QueryContext(ctx, `SELECT credential.id,watermark.baseline_bytes,watermark.observed_bytes,credential.enabled
 		FROM meridian_credentials credential LEFT JOIN meridian_usage_watermarks watermark ON watermark.credential_id=credential.id
 		WHERE credential.account_id=? ORDER BY credential.id`, accountID)
 	if err != nil {
-		return nil, fmt.Errorf("center: read Meridian usage watermarks: %w", err)
+		return nil, fmt.Errorf("center: read Glivela usage watermarks: %w", err)
 	}
 	defer rows.Close()
-	usage := []meridian.UsageMember{}
+	usage := []glivela.UsageMember{}
 	for rows.Next() {
-		var member meridian.UsageMember
+		var member glivela.UsageMember
 		var baseline, observed sql.NullInt64
 		var active int
 		if err := rows.Scan(&member.CredentialID, &baseline, &observed, &active); err != nil {
 			return nil, err
 		}
 		if !baseline.Valid || !observed.Valid {
-			return nil, errors.New("center: Meridian usage watermark is missing")
+			return nil, errors.New("center: Glivela usage watermark is missing")
 		}
 		member.Baseline, member.Observed, member.Active = baseline.Int64, observed.Int64, active == 1
 		usage = append(usage, member)
@@ -332,7 +332,7 @@ func (s *Store) meridianAccountUsage(ctx context.Context, queryer meridianSubscr
 	return usage, nil
 }
 
-func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, accountID string, credentials map[string]meridianCredentialRecord, cutoverSnapshot bool) ([]meridian.PublishedRoute, error) {
+func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, accountID string, credentials map[string]meridianCredentialRecord, cutoverSnapshot bool) ([]glivela.PublishedRoute, error) {
 	selection, err := readLandingSelection(ctx, tx)
 	if err != nil {
 		// Region metadata decorates routed subscription names; it is not part of
@@ -367,12 +367,12 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 		)
 		ORDER BY grant_row.endpoint_id,grant_row.egress_node_id,grant_row.id`, snapshot, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano), accountID, snapshot, s.now().UnixMilli())
 	if err != nil {
-		return nil, fmt.Errorf("center: read Meridian route grants: %w", err)
+		return nil, fmt.Errorf("center: read Glivela route grants: %w", err)
 	}
 	defer rows.Close()
-	routes := []meridian.PublishedRoute{}
+	routes := []glivela.PublishedRoute{}
 	for rows.Next() {
-		var grant meridian.RouteGrant
+		var grant glivela.RouteGrant
 		var endpointID, baseID, routeID, status, landingStatus string
 		var hideNative, enabled, runtimeHealthy int
 		var endpointAppliedRevision, landingAppliedRevision, landingDesiredRevision uint64
@@ -386,7 +386,7 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 			if legacySnapshot {
 				continue
 			}
-			if _, _, err := s.readCompositeRoutePeers(ctx, tx, endpointID, grant.EgressID, grant.IPv4EgressID, true); err != nil {
+			if _, _, err := s.readCompositeRoutePeers(ctx, tx, endpointID, grant.EgressID, grant.IPv4EgressID, true, true); err != nil {
 				continue
 			}
 		}
@@ -406,7 +406,7 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 		base, baseOK := credentials[baseID]
 		route, routeOK := credentials[routeID]
 		if !baseOK || !routeOK || base.RealityEndpoint.ID != endpointID || route.RealityEndpoint.ID != endpointID {
-			return nil, errors.New("center: stored Meridian route credentials are incomplete")
+			return nil, errors.New("center: stored Glivela route credentials are incomplete")
 		}
 		grant.AccountID, grant.EntryID, grant.InboundTag = accountID, base.Material.Credential.EntryID, base.RealityEndpoint.InboundTag
 		grant.Base, grant.Route = base.Material.Credential, route.Material.Credential
@@ -418,13 +418,13 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 			grant.AppliedRev = grant.DesiredRev
 		}
 		if base.VLESSEnabled {
-			baseLink, linkErr := meridian.LinkForCredential(base.RealityEndpoint, base.Material, base.EntryName)
+			baseLink, linkErr := glivela.LinkForCredential(base.RealityEndpoint, base.Material, base.EntryName)
 			if linkErr != nil {
-				return nil, errors.New("center: stored Meridian native VLESS route is invalid")
+				return nil, errors.New("center: stored Glivela native VLESS route is invalid")
 			}
-			routeLink, linkErr := meridian.LinkForCredential(route.RealityEndpoint, route.Material, base.EntryName)
+			routeLink, linkErr := glivela.LinkForCredential(route.RealityEndpoint, route.Material, base.EntryName)
 			if linkErr != nil {
-				return nil, errors.New("center: stored Meridian routed VLESS credential is invalid")
+				return nil, errors.New("center: stored Glivela routed VLESS credential is invalid")
 			}
 			egressPrefix := ""
 			if code := selection.LandingRegionCodes[grant.EgressID]; code != "" {
@@ -438,7 +438,7 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 			if code := selection.LandingRegionCodes[grant.IPv4EgressID]; code != "" {
 				ipv4Prefix = regionPrefix(code)
 			}
-			routes = append(routes, meridian.PublishedRoute{Grant: grant, Protocol: meridian.VLESSReality, EntryName: base.EntryName, EgressRegionPrefix: egressPrefix, IPv4EgressRegionPrefix: ipv4Prefix, EgressNameSuffix: selection.LandingNameSuffixes[grant.EgressID], BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: base.Material.Credential.Identity, RouteProtocolIdentity: route.Material.Credential.Identity})
+			routes = append(routes, glivela.PublishedRoute{Grant: grant, Protocol: glivela.VLESSReality, EntryName: base.EntryName, EgressRegionPrefix: egressPrefix, IPv4EgressRegionPrefix: ipv4Prefix, EgressNameSuffix: selection.LandingNameSuffixes[grant.EgressID], BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: base.Material.Credential.Identity, RouteProtocolIdentity: route.Material.Credential.Identity})
 		}
 	}
 	if err := rows.Err(); err != nil {

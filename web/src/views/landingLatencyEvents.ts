@@ -1,6 +1,8 @@
 import type { LandingLatencyEvent, LandingLatencySnapshot, LandingLatencyView } from "../landing-types";
 
 const key = (sample: Pick<LandingLatencyView, "nodeId" | "landingNodeId">) => JSON.stringify([sample.nodeId, sample.landingNodeId]);
+// Match Center's display-only window; business-health freshness is separate.
+const landingLatencyFreshnessMs = 3 * 60_000;
 
 export function applyLandingLatencyEvent(current: LandingLatencySnapshot | null, event: LandingLatencyEvent): LandingLatencySnapshot | null {
   if (!Number.isSafeInteger(event.revision) || event.revision < 0 || typeof event.reset !== "boolean" || !Array.isArray(event.upserts) || !Array.isArray(event.removed)) return current;
@@ -21,7 +23,7 @@ export function applyLandingLatencyEvent(current: LandingLatencySnapshot | null,
 export function freshLandingLatencies(samples: LandingLatencyView[], now = Date.now()): LandingLatencyView[] {
   const fresh = samples.filter((sample) => {
     const checkedAt = Date.parse(sample.checkedAt);
-    return Number.isFinite(checkedAt) && now - checkedAt <= 45_000 && checkedAt - now <= 5_000;
+    return Number.isFinite(checkedAt) && now - checkedAt <= landingLatencyFreshnessMs && checkedAt - now <= 5_000;
   });
   return fresh.length === samples.length ? samples : fresh;
 }

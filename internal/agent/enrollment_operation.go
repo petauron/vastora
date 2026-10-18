@@ -174,6 +174,13 @@ func (s *Store) CompleteEnrollmentOperation(ctx context.Context, operation Insta
 	}
 	defer tx.Rollback()
 	if operation.ReplaceExisting {
+		var previousLandingOnly bool
+		if err := tx.QueryRowContext(ctx, `SELECT landing_only FROM control_plane_connection WHERE id=1`).Scan(&previousLandingOnly); err != nil {
+			return err
+		}
+		if previousLandingOnly != response.Capabilities.LandingOnly {
+			return errors.New("agent: Center migration cannot change node purpose")
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint, ca_certificate_pem)
 			VALUES(1, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, name = excluded.name, center_url = excluded.center_url,
@@ -199,6 +206,9 @@ func (s *Store) CompleteEnrollmentOperation(ctx context.Context, operation Insta
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return errors.New("agent: enrollment operation changed before local commit")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE control_plane_connection SET landing_only=? WHERE id=1`, response.Capabilities.LandingOnly); err != nil {
+		return fmt.Errorf("agent: persist node purpose: %w", err)
 	}
 	return tx.Commit()
 }

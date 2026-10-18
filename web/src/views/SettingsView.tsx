@@ -60,7 +60,7 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
     <section className="mac-settings" aria-label={copy(language, "控制面板", "Control Panel")}>
       <nav className="mac-settings-sidebar" aria-label={copy(language, "设置分类", "Settings categories")}>
         <h2>{copy(language, "控制面板", "Control Panel")}</h2>
-        {settingsSections.map((item) => <button className="mac-settings-link" key={item.id} aria-current={section === item.id ? "page" : undefined} aria-controls={`settings-${item.id}`} onClick={() => selectSection(item.id)}><AppIcon appKey={item.icon} className="size-7" /><span>{copy(language, item.zh, item.en)}</span></button>)}
+        {settingsSections.map((item) => <button className="mac-settings-link" key={item.id} aria-current={section === item.id ? "page" : undefined} aria-controls={`settings-${item.id}`} onClick={() => selectSection(item.id)}><AppIcon appKey={item.icon} className="size-7" variant="glyph" /><span>{copy(language, item.zh, item.en)}</span></button>)}
       </nav>
       <div className="mac-settings-content">
       <section className="mac-settings-panel" id="settings-general" hidden={section !== "general"} aria-labelledby="settings-general-title">

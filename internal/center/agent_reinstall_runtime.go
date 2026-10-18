@@ -156,7 +156,7 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 		return result, err
 	}
 	if state != "succeeded" {
-		return result, errors.New("center: prepare the saved Meridian package before restoring runtime")
+		return result, errors.New("center: prepare the saved Glivela package before restoring runtime")
 	}
 	landing, err := s.readReinstallLandingSource(ctx, tx, agentID, preparationID)
 	if err != nil {
@@ -168,10 +168,10 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 	var endpointID string
 	var revision int64
 	if err = tx.QueryRowContext(ctx, `SELECT id,desired_revision FROM meridian_endpoints WHERE application_id=? AND status<>'retired'`, input.ApplicationID).Scan(&endpointID, &revision); err != nil {
-		return result, errors.New("center: saved Meridian endpoint is unavailable")
+		return result, errors.New("center: saved Glivela endpoint is unavailable")
 	}
 	if revision < 1 || revision == math.MaxInt64 {
-		return result, errors.New("center: invalid saved Meridian revision")
+		return result, errors.New("center: invalid saved Glivela revision")
 	}
 	// Keep the reviewed source pin and reserve the runtime after landing receipts.
 	// Reserving a fresh revision invalidates old runtime/publication readiness.
@@ -206,7 +206,7 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 	if err = s.recordReinstallPreparationProgress(ctx, tx, preparationID); err != nil {
 		return result, err
 	}
-	if err = s.recordTaskEvent(ctx, tx, id, agentID, "application.command", revision+1, "queued", "Restore reviewed Meridian runtime; entry and client verification remain pending"); err != nil {
+	if err = s.recordTaskEvent(ctx, tx, id, agentID, "application.command", revision+1, "queued", "Restore reviewed Glivela runtime; entry and client verification remain pending"); err != nil {
 		return result, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -264,7 +264,7 @@ func (s *Store) completeReinstallRuntime(ctx context.Context, tx *sql.Tx, commit
 		// LegacyRetired also describes a fresh machine with no legacy installation.
 		// Removal authority is constrained by the task, not this observed state.
 		if json.Unmarshal(raw, &envelope) != nil || envelope.MeridianRuntime == nil || len(envelope.GeneratedSecrets) != 0 || envelope.MeridianRuntime.Validate(task.MeridianRuntime.Desired) != nil {
-			return errors.New("center: invalid restored Meridian runtime receipt")
+			return errors.New("center: invalid restored Glivela runtime receipt")
 		}
 		health, err := envelope.MeridianRuntime.PeerHealth(*task.MeridianRuntime, s.now().UTC())
 		if err != nil {
@@ -280,7 +280,7 @@ func (s *Store) completeReinstallRuntime(ctx context.Context, tx *sql.Tx, commit
 		if err != nil {
 			return err
 		}
-		if _, err = meridian.ParseXrayUserCounters(materials, envelope.MeridianRuntime.Stats); err != nil {
+		if _, err = glivela.ParseXrayUserCounters(materials, envelope.MeridianRuntime.Stats); err != nil {
 			return err
 		}
 		transportReady := true

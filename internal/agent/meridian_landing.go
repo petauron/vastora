@@ -40,7 +40,7 @@ type meridianTrafficGate interface {
 func newMeridianTrafficGate(identity meridianGateIdentity) (*landing.TrafficGate, error) {
 	if identity.GID != 0 {
 		if identity.Bridge != "" {
-			return nil, errors.New("agent: ambiguous Meridian gate scope")
+			return nil, errors.New("agent: ambiguous Glivela gate scope")
 		}
 		return landing.NewHostGate(identity.Peer, identity.GID, identity.Revision)
 	}
@@ -53,7 +53,7 @@ func meridianTrafficGateFactory(identity meridianGateIdentity) (meridianTrafficG
 
 func (state meridianRuntimeState) validateLanding() error {
 	for _, plan := range []struct {
-		artifact     *meridian.DesiredArtifact
+		artifact     *glivela.DesiredArtifact
 		peers        []meridianruntime.Peer
 		source       *landing.PeerIdentity
 		gateRevision uint64
@@ -61,13 +61,13 @@ func (state meridianRuntimeState) validateLanding() error {
 	}{{state.Applied, state.AppliedPeers, state.AppliedSource, state.appliedGateRevision(), state.AppliedGID}, {state.Pending, state.PendingPeers, state.PendingSource, 0, state.PendingGID}} {
 		if plan.artifact == nil {
 			if len(plan.peers) != 0 || plan.source != nil || plan.gid != 0 {
-				return errors.New("agent: Meridian peers have no owning artifact")
+				return errors.New("agent: Glivela peers have no owning artifact")
 			}
 			continue
 		}
 		task := meridianruntime.Task{ApplicationID: state.ApplicationID, ImageReference: state.ImageReference, Desired: *plan.artifact, Peers: plan.peers, Source: plan.source}
 		if task.Validate() != nil {
-			return errors.New("agent: Meridian peer plan does not match its artifact")
+			return errors.New("agent: Glivela peer plan does not match its artifact")
 		}
 		gateRevision := plan.artifact.Revision
 		if plan.gateRevision != 0 {
@@ -191,16 +191,16 @@ func removeSupersededMeridianGates(ctx context.Context, previous, current []meri
 func meridianRuntimeBridge(ctx context.Context, docker *client.Client) (string, string, error) {
 	result, err := docker.NetworkInspect(ctx, dockerruntime.NetworkName, client.NetworkInspectOptions{})
 	if err != nil {
-		return "", "", errors.New("agent: Meridian bridge is unavailable")
+		return "", "", errors.New("agent: Glivela bridge is unavailable")
 	}
 	network := result.Network
 	if network.ID == "" || network.Driver != "bridge" || network.Name != dockerruntime.NetworkName || network.Labels[dockerruntime.ManagedLabel] != "true" || network.Labels[dockerruntime.ComponentLabel] != "runtime-network" {
-		return "", "", errors.New("agent: Meridian bridge ownership changed")
+		return "", "", errors.New("agent: Glivela bridge ownership changed")
 	}
 	bridge := network.Options["com.docker.network.bridge.name"]
 	if bridge == "" {
 		if len(network.ID) < 12 {
-			return "", "", errors.New("agent: Meridian bridge identity is invalid")
+			return "", "", errors.New("agent: Glivela bridge identity is invalid")
 		}
 		bridge = "br-" + network.ID[:12]
 	}
@@ -215,7 +215,7 @@ func (s *Store) captureMeridianLegacyLanding(ctx context.Context, applicationID 
 		return nil, nil, err
 	}
 	if state.Route != nil && (state.ApplicationID != applicationID || state.Phase != "applied" || state.Applied == nil || state.Applied.Revision != state.Desired.Revision || state.Retiring != nil) {
-		return nil, nil, errors.New("agent: legacy landing requires explicit reconciliation before Meridian handover")
+		return nil, nil, errors.New("agent: legacy landing requires explicit reconciliation before Glivela handover")
 	}
 	if state.Desired.Active() && state.Desired.ApplicationID() != applicationID {
 		return nil, nil, errors.New("agent: legacy landing belongs to another application")
@@ -253,7 +253,7 @@ func (s *Store) verifyMeridianLegacyRouteHandover(ctx context.Context, task meri
 		return err
 	}
 	if _, write, err := legacy.Route.NextWrite(raw, true); err != nil || write {
-		return errors.New("agent: legacy landing route changed before Meridian handover")
+		return errors.New("agent: legacy landing route changed before Glivela handover")
 	}
 	return s.verifyLocalLandingPlan(ctx, routes, legacy.Desired)
 }
@@ -265,7 +265,7 @@ func (s *Store) verifyMeridianLegacyLanding(ctx context.Context, expected []byte
 		return nil
 	}
 	if err != nil || !bytes.Equal(actual, expected) {
-		return errors.New("agent: legacy landing journal changed during Meridian handover")
+		return errors.New("agent: legacy landing journal changed during Glivela handover")
 	}
 	return nil
 }
@@ -278,7 +278,7 @@ func (s *Store) requireLegacyLandingAuthority(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return errors.New("agent: Meridian owns the proxy runtime; legacy landing mutations are retired")
+	return errors.New("agent: Glivela owns the proxy runtime; legacy landing mutations are retired")
 }
 
 // Called by the replacement's beforeStop hook under landingMutationMu. All
@@ -290,7 +290,7 @@ func (e ApplicationExecutor) beginMeridianLandingHandover(ctx context.Context, d
 		actual, err := checker.SelfIdentity(ctx, task.Source.Address)
 		checker.Close()
 		if err != nil || actual != *task.Source {
-			return errors.New("agent: Meridian entry private identity changed before handover")
+			return errors.New("agent: Glivela entry private identity changed before handover")
 		}
 	}
 	// Only retained bridge leases need the old Docker network during migration.
@@ -299,7 +299,7 @@ func (e ApplicationExecutor) beginMeridianLandingHandover(ctx context.Context, d
 	if state.Applied != nil && state.AppliedGID == 0 && len(state.AppliedPeers) != 0 {
 		actual, _, err := meridianRuntimeBridge(ctx, docker)
 		if err != nil || bridge != actual {
-			return errors.New("agent: Meridian applied bridge changed before handover")
+			return errors.New("agent: Glivela applied bridge changed before handover")
 		}
 	}
 	retiring := state.knownLandingGates()
@@ -310,7 +310,7 @@ func (e ApplicationExecutor) beginMeridianLandingHandover(ctx context.Context, d
 		}
 		if exists {
 			if current.Container.Config == nil || current.Container.Config.Labels[xrayWorkerRuntimeLabel] != "xray" || current.Container.Config.Labels[applicationIdentityLabel] != threeXUIKey || current.Container.Config.Labels[applicationInstallationLabel] != task.ApplicationID {
-				return errors.New("agent: legacy proxy must be an owned managed Xray worker before Meridian handover")
+				return errors.New("agent: legacy proxy must be an owned managed Xray worker before Glivela handover")
 			}
 			state.LegacyRuntimeSHA256, err = e.Store.meridianLegacyWorkerDigest(ctx, task.ApplicationID)
 			if err != nil {
@@ -333,17 +333,17 @@ func (e ApplicationExecutor) beginMeridianLandingHandover(ctx context.Context, d
 			bridge = actual
 			legacy, err := e.Store.landingRuntime(ctx)
 			if err != nil || legacy == nil || legacy.Bridge != bridge {
-				return errors.New("agent: legacy landing bridge changed before Meridian handover")
+				return errors.New("agent: legacy landing bridge changed before Glivela handover")
 			}
 			if legacy.Desired.Clients != nil && len(task.Peers) != 0 && (task.Source == nil || legacy.Desired.Clients.Source != *task.Source) {
-				return errors.New("agent: Meridian source identity differs from the authorized legacy entry")
+				return errors.New("agent: Glivela source identity differs from the authorized legacy entry")
 			}
 			if err := e.Store.verifyMeridianLegacyRouteHandover(ctx, task, legacy); err != nil {
 				return err
 			}
 			current, _, exists, err := inspectCurrentMeridianRuntime(ctx, docker)
 			if err != nil || !exists || current.Container.ID != legacy.ContainerID || current.Container.HostConfig == nil || current.Container.HostConfig.RestartPolicy.Name != "no" {
-				return errors.New("agent: legacy landing container changed before Meridian handover")
+				return errors.New("agent: legacy landing container changed before Glivela handover")
 			}
 		}
 	}
@@ -395,7 +395,7 @@ func (s *Store) meridianLegacyWorkerDigest(ctx context.Context, applicationID st
 
 func (e ApplicationExecutor) finishMeridianLandingHandover(ctx context.Context, state *meridianRuntimeState) error {
 	if state.Applied == nil || state.Pending != nil {
-		return errors.New("agent: Meridian landing handover has no applied authority")
+		return errors.New("agent: Glivela landing handover has no applied authority")
 	}
 	if _, err := e.observeAppliedMeridianRuntime(ctx, *state); err != nil {
 		return err
@@ -418,7 +418,7 @@ func (e ApplicationExecutor) finishMeridianLandingHandover(ctx context.Context, 
 
 func removeClosedMeridianGateConflicts(ctx context.Context, state meridianRuntimeState) error {
 	if state.Applied == nil || state.Pending != nil {
-		return errors.New("agent: Meridian gate cleanup requires an applied runtime")
+		return errors.New("agent: Glivela gate cleanup requires an applied runtime")
 	}
 	for _, peer := range state.AppliedPeers {
 		gate, err := newMeridianTrafficGate(meridianPlanGates([]meridianruntime.Peer{peer}, state.Bridge, state.AppliedGID, state.appliedGateRevision())[0])
@@ -434,24 +434,24 @@ func removeClosedMeridianGateConflicts(ctx context.Context, state meridianRuntim
 
 // A peer-bearing runtime cannot auto-start after reboot before nft gates exist.
 // Only an exact, journaled Meridian container may be started behind closed gates.
-func (e ApplicationExecutor) prepareMeridianRuntimeStart(ctx context.Context, docker *client.Client, state meridianRuntimeState, artifact meridian.DesiredArtifact, peers []meridianruntime.Peer) error {
+func (e ApplicationExecutor) prepareMeridianRuntimeStart(ctx context.Context, docker *client.Client, state meridianRuntimeState, artifact glivela.DesiredArtifact, peers []meridianruntime.Peer) error {
 	if err := closeMeridianGates(ctx, state.knownLandingGates(), meridianTrafficGateFactory); err != nil {
 		return err
 	}
 	current, exists, err := inspectXrayWorkerContainer(ctx, docker, meridianXrayContainer)
 	if err != nil || !exists || current.Container.Config == nil || current.Container.HostConfig == nil || current.Container.State == nil || current.Container.Config.Labels[applicationIdentityLabel] != meridianKey || current.Container.Config.Labels[applicationInstallationLabel] != state.ApplicationID || current.Container.Config.Image != state.ImageReference {
-		return errors.New("agent: Meridian boot runtime identity is unavailable")
+		return errors.New("agent: Glivela boot runtime identity is unavailable")
 	}
 	active, err := os.ReadFile(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory, "config.json"))
 	if err != nil || !artifactMatchesBytes(artifact, active) {
-		return errors.New("agent: Meridian boot configuration does not match its journal")
+		return errors.New("agent: Glivela boot configuration does not match its journal")
 	}
 	if err := e.verifyMeridianRuntimeAttachment(ctx, docker, current, state, peers); err != nil {
 		return err
 	}
 	if !current.Container.State.Running {
 		if current.Container.HostConfig.RestartPolicy.Name != "no" {
-			return errors.New("agent: stopped Meridian runtime requires explicit recovery")
+			return errors.New("agent: stopped Glivela runtime requires explicit recovery")
 		}
 		if _, err := docker.ContainerStart(ctx, current.Container.ID, client.ContainerStartOptions{}); err != nil {
 			return err
@@ -465,23 +465,23 @@ func (e ApplicationExecutor) prepareMeridianRuntimeStart(ctx context.Context, do
 // which could have been reused after Docker network recreation.
 func (e ApplicationExecutor) verifyMeridianRuntimeAttachment(ctx context.Context, docker *client.Client, inspected client.ContainerInspectResult, state meridianRuntimeState, peers []meridianruntime.Peer) error {
 	if inspected.Container.Config == nil || !slices.Equal([]string(inspected.Container.Config.Cmd), []string{"run", "-c", xrayWorkerConfigPath}) {
-		return errors.New("agent: Meridian configuration command changed")
+		return errors.New("agent: Glivela configuration command changed")
 	}
 	matches := 0
 	for _, mounted := range inspected.Container.Mounts {
 		if strings.HasPrefix(mounted.Destination, filepath.Dir(xrayWorkerConfigPath)+"/") {
-			return errors.New("agent: Meridian configuration mount is shadowed")
+			return errors.New("agent: Glivela configuration mount is shadowed")
 		}
 		if mounted.Destination != filepath.Dir(xrayWorkerConfigPath) {
 			continue
 		}
 		if string(mounted.Type) != "bind" || mounted.Source != filepath.Join(e.Store.dataDir, meridianRuntimeDirectory) || mounted.RW {
-			return errors.New("agent: Meridian configuration mount does not match its journal")
+			return errors.New("agent: Glivela configuration mount does not match its journal")
 		}
 		matches++
 	}
 	if matches != 1 {
-		return errors.New("agent: Meridian configuration mount is unavailable or ambiguous")
+		return errors.New("agent: Glivela configuration mount is unavailable or ambiguous")
 	}
 	gid, artifact := state.AppliedGID, state.Applied
 	if state.Pending != nil {
@@ -495,18 +495,18 @@ func (e ApplicationExecutor) verifyMeridianRuntimeAttachment(ctx context.Context
 	}
 	bridge, networkID, err := meridianRuntimeBridge(ctx, docker)
 	if err != nil || bridge != state.Bridge || inspected.Container.HostConfig == nil || string(inspected.Container.HostConfig.NetworkMode) != dockerruntime.NetworkName || inspected.Container.HostConfig.RestartPolicy.Name != "no" || inspected.Container.NetworkSettings == nil {
-		return errors.New("agent: Meridian landing fence does not match its journal")
+		return errors.New("agent: Glivela landing fence does not match its journal")
 	}
 	attachment := inspected.Container.NetworkSettings.Networks[dockerruntime.NetworkName]
 	if attachment == nil || attachment.NetworkID != networkID {
-		return errors.New("agent: Meridian landing network identity changed")
+		return errors.New("agent: Glivela landing network identity changed")
 	}
 	return nil
 }
 
 func (e ApplicationExecutor) startMeridianLandingMonitor(ctx context.Context, state meridianRuntimeState) error {
 	if state.Applied == nil || state.Pending != nil || state.HandoverPending || state.validate() != nil {
-		return errors.New("agent: Meridian monitor requires a completed applied handover")
+		return errors.New("agent: Glivela monitor requires a completed applied handover")
 	}
 	if err := e.Store.stopLandingMonitor(ctx); err != nil {
 		return err
@@ -539,11 +539,11 @@ func (e ApplicationExecutor) startMeridianLandingMonitor(ctx context.Context, st
 				monitor := landing.Monitor{Gate: gate, Links: checker, TCPOnly: true,
 					CheckBusiness: func(checkContext context.Context, identity landing.PeerIdentity, revision uint64) (landing.BusinessResult, error) {
 						if state.AppliedSource == nil {
-							return landing.BusinessResult{}, errors.New("agent: Meridian entry identity is missing")
+							return landing.BusinessResult{}, errors.New("agent: Glivela entry identity is missing")
 						}
 						actual, err := checker.SelfIdentity(checkContext, state.AppliedSource.Address)
 						if err != nil || actual != *state.AppliedSource {
-							return landing.BusinessResult{}, errors.New("agent: Meridian entry private identity changed")
+							return landing.BusinessResult{}, errors.New("agent: Glivela entry private identity changed")
 						}
 						if _, err := e.observeAppliedMeridianRuntime(checkContext, state); err != nil {
 							return landing.BusinessResult{}, err
@@ -554,7 +554,7 @@ func (e ApplicationExecutor) startMeridianLandingMonitor(ctx context.Context, st
 						}
 						actual, err = checker.SelfIdentity(checkContext, state.AppliedSource.Address)
 						if err != nil || actual != *state.AppliedSource {
-							return landing.BusinessResult{}, errors.New("agent: Meridian entry private identity changed during probe")
+							return landing.BusinessResult{}, errors.New("agent: Glivela entry private identity changed during probe")
 						}
 						return result, nil
 					},
@@ -644,7 +644,7 @@ func waitForMeridianRetirementPeers(ctx context.Context, task meridianruntime.Ta
 		}
 		select {
 		case <-ctx.Done():
-			return errors.New("agent: Meridian landing peers are not ready for legacy retirement; retained recovery evidence")
+			return errors.New("agent: Glivela landing peers are not ready for legacy retirement; retained recovery evidence")
 		case <-ticker.C:
 		}
 	}
@@ -659,7 +659,7 @@ func (s *Store) verifyMeridianLegacyRetirement(ctx context.Context, applicationI
 		return err
 	}
 	if state.ApplicationID != applicationID || state.Applied == nil || state.Pending != nil || state.HandoverPending || len(state.RetiringGates) != 0 {
-		return errors.New("agent: Meridian landing ownership is not ready for retirement")
+		return errors.New("agent: Glivela landing ownership is not ready for retirement")
 	}
 	if err := s.verifyMeridianLegacyLanding(ctx, state.LegacyLandingSealed); err != nil {
 		return err
@@ -678,7 +678,7 @@ func (s *Store) retireMeridianLegacyLanding(ctx context.Context, applicationID s
 		return err
 	}
 	if state.ApplicationID != applicationID || state.Applied == nil || state.Pending != nil || state.HandoverPending || len(state.RetiringGates) != 0 {
-		return errors.New("agent: Meridian landing ownership is not ready for retirement")
+		return errors.New("agent: Glivela landing ownership is not ready for retirement")
 	}
 	if err := s.verifyMeridianLegacyLanding(ctx, state.LegacyLandingSealed); err != nil {
 		return err
@@ -698,7 +698,7 @@ func (s *Store) retireMeridianLegacyLanding(ctx context.Context, applicationID s
 	previousRaw, err := secret.Open(s.key, previousMeridian, []byte(meridianRuntimeStateAAD))
 	expectedRaw, encodeErr := json.Marshal(state)
 	if err != nil || encodeErr != nil || !bytes.Equal(previousRaw, expectedRaw) {
-		return errors.New("agent: Meridian authority changed before landing retirement")
+		return errors.New("agent: Glivela authority changed before landing retirement")
 	}
 	deleted, err := tx.ExecContext(ctx, `DELETE FROM landing_runtime_state WHERE id=1 AND sealed_state=?`, state.LegacyLandingSealed)
 	if err != nil {
@@ -718,10 +718,10 @@ func (s *Store) retireMeridianLegacyLanding(ctx context.Context, applicationID s
 	}
 	updated, err := tx.ExecContext(ctx, `UPDATE meridian_runtime_state SET sealed_state=? WHERE id=1 AND sealed_state=?`, sealed, previousMeridian)
 	if err != nil {
-		return fmt.Errorf("agent: complete Meridian landing retirement: %w", err)
+		return fmt.Errorf("agent: complete Glivela landing retirement: %w", err)
 	}
 	if count, err := updated.RowsAffected(); err != nil || count != 1 {
-		return errors.New("agent: Meridian authority changed during landing retirement")
+		return errors.New("agent: Glivela authority changed during landing retirement")
 	}
 	return tx.Commit()
 }

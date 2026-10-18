@@ -71,7 +71,7 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,expiry_time,reset_days,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at) VALUES(?,?,1000,0,0,1,?,?,1,1,'active',?,?)`, accountID, "Account Alpha", tokenSecretID, hex.EncodeToString(digest), now, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at) VALUES(?,?,?,'native','entry-user',?,?,1,?,?)`, credentialID, accountID, endpointID, meridian.Identity(protocolID), credentialSecretID, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at) VALUES(?,?,?,'native','entry-user',?,?,1,?,?)`, credentialID, accountID, endpointID, glivela.Identity(protocolID), credentialSecretID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,baseline_bytes,observed_bytes,observed_at) VALUES(?,0,100,?)`, credentialID, now); err != nil {
@@ -84,7 +84,7 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := verifyCenterEncryptedState(ctx, store.db, store.key); err != nil {
-		t.Fatalf("Meridian encrypted state was not owned by the database key verifier: %v", err)
+		t.Fatalf("Glivela encrypted state was not owned by the database key verifier: %v", err)
 	}
 	// Subscription rendering uses only the public endpoint projection. Runtime
 	// private keys stay outside the HTTP request path even if their encrypted
@@ -112,7 +112,7 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bytes.Contains(sealedSnapshot, []byte(token)) || bytes.Contains(sealedSnapshot, []byte(protocolID)) || bytes.Contains(sealedSnapshot, []byte("vless://")) {
-		t.Fatal("applied Meridian subscription snapshot was stored in plaintext")
+		t.Fatal("applied Glivela subscription snapshot was stored in plaintext")
 	}
 
 	mihomoRequest := httptest.NewRequest(http.MethodGet, "/sub/"+token+"?target=clash", nil)
@@ -137,7 +137,7 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.observeMeridianUsageInTx(ctx, usageTx, endpointID, []meridian.CounterSnapshot{{CredentialID: credentialID, UpBytes: 15}}, now); err != nil {
+	if err := store.observeMeridianUsageInTx(ctx, usageTx, endpointID, []glivela.CounterSnapshot{{CredentialID: credentialID, UpBytes: 15}}, now); err != nil {
 		usageTx.Rollback()
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.observeMeridianUsageInTx(ctx, usageTx, endpointID, []meridian.CounterSnapshot{{CredentialID: credentialID, UpBytes: 3}}, now); err != nil {
+	if err := store.observeMeridianUsageInTx(ctx, usageTx, endpointID, []glivela.CounterSnapshot{{CredentialID: credentialID, UpBytes: 3}}, now); err != nil {
 		usageTx.Rollback()
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestUnavailableMeridianLandingBlocksOnlyItsFixedRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
-		VALUES(?,?,?, ?,1,1,'active',?,?)`, accountID, "Route filter account", tokenSecretID, meridian.SubscriptionTokenFingerprint("route-filter-token"), now, now); err != nil {
+		VALUES(?,?,?, ?,1,1,'active',?,?)`, accountID, "Route filter account", tokenSecretID, glivela.SubscriptionTokenFingerprint("route-filter-token"), now, now); err != nil {
 		t.Fatal(err)
 	}
 	baseSecretID, err := store.putSecret(ctx, tx, []byte(baseSecret), meridianCredentialSecretContext(baseID))
@@ -311,11 +311,11 @@ func TestUnavailableMeridianLandingBlocksOnlyItsFixedRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at)
-		VALUES(?,?,?,'native','route-filter-native',?,?,1,?,?)`, baseID, accountID, endpointID, meridian.Identity(baseSecret), baseSecretID, now, now); err != nil {
+		VALUES(?,?,?,'native','route-filter-native',?,?,1,?,?)`, baseID, accountID, endpointID, glivela.Identity(baseSecret), baseSecretID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,egress_node_id,enabled,created_at,updated_at)
-		VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, meridian.RouteUser(grantID), meridian.Identity(routeSecret), routeSecretID, egress.ID, now, now); err != nil {
+		VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, glivela.RouteUser(grantID), glivela.Identity(routeSecret), routeSecretID, egress.ID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	serverJSON, _ := meridianAppliedLandingFixtureJSON(t, egress.ID, "100.64.0.72", "100.64.0.71")
@@ -331,9 +331,9 @@ func TestUnavailableMeridianLandingBlocksOnlyItsFixedRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	base := meridian.Credential{ID: baseID, AccountID: accountID, Kind: meridian.NativeCredential, User: "route-filter-native", Identity: meridian.Identity(baseSecret), EntryID: applicationID, Enabled: true}
-	routed := meridian.Credential{ID: routeID, AccountID: accountID, Kind: meridian.RouteCredential, User: meridian.RouteUser(grantID), Identity: meridian.Identity(routeSecret), EntryID: applicationID, EgressID: egress.ID, Enabled: true}
-	runtimeRoutes, err := store.meridianRuntimeGrants(ctx, tx, endpointID, "route-filter-inbound", map[string]meridian.CredentialMaterial{
+	base := glivela.Credential{ID: baseID, AccountID: accountID, Kind: glivela.NativeCredential, User: "route-filter-native", Identity: glivela.Identity(baseSecret), EntryID: applicationID, Enabled: true}
+	routed := glivela.Credential{ID: routeID, AccountID: accountID, Kind: glivela.RouteCredential, User: glivela.RouteUser(grantID), Identity: glivela.Identity(routeSecret), EntryID: applicationID, EgressID: egress.ID, Enabled: true}
+	runtimeRoutes, err := store.meridianRuntimeGrants(ctx, tx, endpointID, "route-filter-inbound", map[string]glivela.CredentialMaterial{
 		baseID:  {Credential: base, ProtocolID: baseSecret},
 		routeID: {Credential: routed, ProtocolID: routeSecret},
 	})
@@ -345,10 +345,10 @@ func TestUnavailableMeridianLandingBlocksOnlyItsFixedRoute(t *testing.T) {
 	}
 	baseLink := "vless://" + baseSecret + "@entry.example.test:443?security=reality&type=tcp&sni=www.example.com&pbk=public&sid=abcd&fp=chrome&flow=xtls-rprx-vision#Entry"
 	routeLink := "vless://" + routeSecret + "@entry.example.test:443?security=reality&type=tcp&sni=www.example.com&pbk=public&sid=abcd&fp=chrome&flow=xtls-rprx-vision#Entry"
-	grant := meridian.RouteGrant{ID: grantID, AccountID: accountID, EntryID: applicationID, EgressID: egress.ID, InboundTag: "route-filter-inbound", Base: base, Route: routed, Mode: meridian.FixedMode, Enabled: true, HideNative: true, DesiredRev: 1, AppliedRev: 1, RuntimeGood: true}
+	grant := glivela.RouteGrant{ID: grantID, AccountID: accountID, EntryID: applicationID, EgressID: egress.ID, InboundTag: "route-filter-inbound", Base: base, Route: routed, Mode: glivela.FixedMode, Enabled: true, HideNative: true, DesiredRev: 1, AppliedRev: 1, RuntimeGood: true}
 	snapshot := meridianAppliedSubscriptionSnapshot{AccountID: accountID, AccountRevision: 1,
-		Entries: []meridian.NativeEntry{{Material: meridian.CredentialMaterial{Credential: base, ProtocolID: baseSecret}, Protocol: meridian.VLESSReality, Link: baseLink}},
-		Routes:  []meridian.PublishedRoute{{Grant: grant, Protocol: meridian.VLESSReality, EntryName: "Entry", BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: base.Identity, RouteProtocolIdentity: routed.Identity}},
+		Entries: []glivela.NativeEntry{{Material: glivela.CredentialMaterial{Credential: base, ProtocolID: baseSecret}, Protocol: glivela.VLESSReality, Link: baseLink}},
+		Routes:  []glivela.PublishedRoute{{Grant: grant, Protocol: glivela.VLESSReality, EntryName: "Entry", BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: base.Identity, RouteProtocolIdentity: routed.Identity}},
 	}
 	filtered, err := store.filterMeridianSubscriptionSnapshotRoutesInTx(ctx, tx, snapshot)
 	if err != nil {
@@ -393,7 +393,7 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,expiry_time,reset_days,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
-		VALUES(?, 'Shared account', 100, 0, 0, 1, ?, ?, 1, 1, 'active', ?, ?)`, accountID, tokenSecretID, meridian.SubscriptionTokenFingerprint("shared-token"), now, now); err != nil {
+		VALUES(?, 'Shared account', 100, 0, 0, 1, ?, ?, 1, 1, 'active', ?, ?)`, accountID, tokenSecretID, glivela.SubscriptionTokenFingerprint("shared-token"), now, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -426,11 +426,11 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at)
-			VALUES(?,?,?,'native',?,?,?,1,?,?)`, baseID, accountID, endpointID, "user-"+baseID, meridian.Identity(baseProtocolID), baseSecretID, now, now); err != nil {
+			VALUES(?,?,?,'native',?,?,?,1,?,?)`, baseID, accountID, endpointID, "user-"+baseID, glivela.Identity(baseProtocolID), baseSecretID, now, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,egress_node_id,enabled,created_at,updated_at)
-			VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, "user-"+routeID, meridian.Identity(routeProtocolID), routeSecretID, egress.ID, now, now); err != nil {
+			VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, "user-"+routeID, glivela.Identity(routeProtocolID), routeSecretID, egress.ID, now, now); err != nil {
 			t.Fatal(err)
 		}
 		for _, credentialID := range []string{baseID, routeID} {
@@ -482,7 +482,7 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
-		VALUES(?, 'Independent account', 100, 1, ?, ?, 1, 1, 'active', ?, ?)`, otherAccountID, otherTokenSecretID, meridian.SubscriptionTokenFingerprint(otherToken), now, now); err != nil {
+		VALUES(?, 'Independent account', 100, 1, ?, ?, 1, 1, 'active', ?, ?)`, otherAccountID, otherTokenSecretID, glivela.SubscriptionTokenFingerprint(otherToken), now, now); err != nil {
 		t.Fatal(err)
 	}
 	otherCredentialSecretID, err := store.putSecret(ctx, tx, []byte(otherProtocolID), meridianCredentialSecretContext(otherCredentialID))
@@ -490,7 +490,7 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at)
-		VALUES(?,?,'endpoint-a','native','independent-user',?,?,1,?,?)`, otherCredentialID, otherAccountID, meridian.Identity(otherProtocolID), otherCredentialSecretID, now, now); err != nil {
+		VALUES(?,?,'endpoint-a','native','independent-user',?,?,1,?,?)`, otherCredentialID, otherAccountID, glivela.Identity(otherProtocolID), otherCredentialSecretID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,observed_bytes,observed_at) VALUES(?,5,?)`, otherCredentialID, now); err != nil {
@@ -653,7 +653,7 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 	ctx := context.Background()
 	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
 	siteID := testSiteID(t, store)
-	queuedSHA := meridian.Identity("superseded-queued-config")
+	queuedSHA := glivela.Identity("superseded-queued-config")
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
 		VALUES('superseded-application','Superseded entry',?,?,?,'','running','docker','',?,?)`, node.ID, siteID, meridianAppKey, now, now); err != nil {
 		t.Fatal(err)
@@ -711,7 +711,7 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 		t.Fatalf("superseded queued command changed newest desired state: revision=%d endpoint=%s command=%s event=%s", desiredRevision, endpointStatus, commandState, event)
 	}
 
-	completionSHA := meridian.Identity("superseded-completion-config")
+	completionSHA := glivela.Identity("superseded-completion-config")
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=3 WHERE id='superseded-endpoint'`); err != nil {
 		t.Fatal(err)
 	}
@@ -722,7 +722,7 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_deployments SET desired_revision=2,desired_sha256=?,command_id='superseded-completion-command',status='applying',last_error='',updated_at=? WHERE endpoint_id='superseded-endpoint'`, completionSHA, now); err != nil {
 		t.Fatal(err)
 	}
-	result := ApplicationTaskResult{MeridianRuntime: &meridianruntime.Result{Receipt: meridian.AppliedReceipt{Revision: 2, ConfigSHA256: completionSHA, RuntimeReady: true}, Stats: json.RawMessage(`{}`)}}
+	result := ApplicationTaskResult{MeridianRuntime: &meridianruntime.Result{Receipt: glivela.AppliedReceipt{Revision: 2, ConfigSHA256: completionSHA, RuntimeReady: true}, Stats: json.RawMessage(`{}`)}}
 	result.Resources = mockIntegratedResources(t, store, "superseded-completion-command")
 	raw, err := json.Marshal(result)
 	if err != nil {

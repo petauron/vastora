@@ -18,7 +18,7 @@ import (
 
 // Check before stopping the previous container. An occupied socket is allowed
 // only when it belongs to that verified runtime and will be released by stop.
-func validateMeridianHostPorts(ctx context.Context, docker *client.Client, artifact meridian.DesiredArtifact, state meridianRuntimeState) error {
+func validateMeridianHostPorts(ctx context.Context, docker *client.Client, artifact glivela.DesiredArtifact, state meridianRuntimeState) error {
 	previous, _, exists, err := inspectCurrentMeridianRuntime(ctx, docker)
 	if err != nil {
 		return err
@@ -79,7 +79,7 @@ func validateMeridianHostPorts(ctx context.Context, docker *client.Client, artif
 			}
 		}
 		if !owned {
-			return fmt.Errorf("agent: Meridian %s listener %s is unavailable", network, address)
+			return fmt.Errorf("agent: Glivela %s listener %s is unavailable", network, address)
 		}
 	}
 	return nil

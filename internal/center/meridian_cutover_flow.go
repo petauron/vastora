@@ -23,7 +23,7 @@ import (
 const meridianCutoverImportContext = "meridian-cutover-import:v1"
 
 type meridianImportedCredential struct {
-	model      meridian.Credential
+	model      glivela.Credential
 	endpointID string
 	protocolID string
 	hy2Auth    string
@@ -32,21 +32,21 @@ type meridianImportedCredential struct {
 }
 
 type meridianImportedAccount struct {
-	model       meridian.Account
+	model       glivela.Account
 	token       string
 	credentials []meridianImportedCredential
-	grants      []meridian.RouteGrant
+	grants      []glivela.RouteGrant
 }
 
 type meridianImportedEndpoint struct {
-	model         meridian.RealityEndpoint
+	model         glivela.RealityEndpoint
 	totalBytes    int64
 	usedBytes     int64
 	resetDay      int
 	nextResetAt   string
 	lastResetAt   string
 	targetIP      string
-	hy2           *meridian.HysteriaEndpoint
+	hy2           *glivela.HysteriaEndpoint
 	vlessEnabled  bool
 	hy2Enabled    bool
 	hy2NotAfter   string
@@ -57,11 +57,11 @@ type meridianImportedEndpoint struct {
 	sourcePeer    *landing.PeerIdentity
 }
 
-func (value meridianImportedCredential) material() meridian.CredentialMaterial {
-	material := meridian.CredentialMaterial{Credential: value.model, ProtocolID: value.protocolID}
+func (value meridianImportedCredential) material() glivela.CredentialMaterial {
+	material := glivela.CredentialMaterial{Credential: value.model, ProtocolID: value.protocolID}
 	if value.hy2Auth != "" {
 		material.HysteriaAuth = value.hy2Auth
-		material.HysteriaIdentity = meridian.Identity(value.hy2Auth)
+		material.HysteriaIdentity = glivela.Identity(value.hy2Auth)
 	}
 	return material
 }
@@ -77,7 +77,7 @@ func (s *Store) StartMeridianCutover(ctx context.Context) (MeridianCutoverView, 
 		return MeridianCutoverView{}, err
 	}
 	if authority == "meridian" && state != "publish" && state != "project" && state != "verify" && state != "retire" {
-		return MeridianCutoverView{}, errors.New("center: Meridian is already the subscription authority")
+		return MeridianCutoverView{}, errors.New("center: Glivela is already the subscription authority")
 	}
 	if controllerApplicationID == "" {
 		return MeridianCutoverView{}, errors.New("center: the legacy subscription controller is unavailable")
@@ -94,7 +94,7 @@ func (s *Store) StartMeridianCutover(ctx context.Context) (MeridianCutoverView, 
 			return MeridianCutoverView{}, err
 		}
 		if imported != 0 {
-			return MeridianCutoverView{}, errors.New("center: Meridian import already exists; resume its current phase instead of starting another cutover")
+			return MeridianCutoverView{}, errors.New("center: Glivela import already exists; resume its current phase instead of starting another cutover")
 		}
 		if err := ensureMeridianCutoverIdle(ctx, tx, controllerApplicationID); err != nil {
 			return MeridianCutoverView{}, err
@@ -148,7 +148,7 @@ func (s *Store) StartMeridianCutover(ctx context.Context) (MeridianCutoverView, 
 			return MeridianCutoverView{}, err
 		}
 	default:
-		return MeridianCutoverView{}, fmt.Errorf("center: Meridian cutover cannot start from %s", state)
+		return MeridianCutoverView{}, fmt.Errorf("center: Glivela cutover cannot start from %s", state)
 	}
 	if err := tx.Commit(); err != nil {
 		return MeridianCutoverView{}, err
@@ -188,10 +188,10 @@ func ensureMeridianCutoverIdle(ctx context.Context, tx *sql.Tx, controllerApplic
 		return err
 	}
 	if unresolvedExecutions != 0 {
-		return errors.New("center: explicitly recover unresolved node executions before starting the Meridian cutover")
+		return errors.New("center: explicitly recover unresolved node executions before starting the Glivela cutover")
 	}
 	if activeCommands != 0 || activeDeployments != 0 || activeMigrations != 0 || pendingLanding != 0 {
-		return errors.New("center: finish or explicitly recover active operations before starting the Meridian cutover")
+		return errors.New("center: finish or explicitly recover active operations before starting the Glivela cutover")
 	}
 	return nil
 }
@@ -199,7 +199,7 @@ func ensureMeridianCutoverIdle(ctx context.Context, tx *sql.Tx, controllerApplic
 func (s *Store) queueMeridianLegacyExport(ctx context.Context, tx *sql.Tx, applicationID, agentID string, now time.Time) error {
 	command := meridianruntime.LegacyExportCommand{ApplicationID: applicationID}
 	if command.Validate() != nil {
-		return errors.New("center: invalid Meridian legacy export target")
+		return errors.New("center: invalid Glivela legacy export target")
 	}
 	encoded, _ := json.Marshal(command)
 	id, err := randomToken(18)
@@ -208,16 +208,16 @@ func (s *Store) queueMeridianLegacyExport(ctx context.Context, tx *sql.Tx, appli
 	}
 	stamp := now.Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, applicationID, agentID, agentID, meridianruntime.LegacyExportKind, encoded, stamp, stamp); err != nil {
-		return fmt.Errorf("center: queue Meridian legacy export: %w", err)
+		return fmt.Errorf("center: queue Glivela legacy export: %w", err)
 	}
-	return s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "queued", "Meridian one-time legacy export queued")
+	return s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "queued", "Glivela one-time legacy export queued")
 }
 
 func (s *Store) completeMeridianLegacyExport(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var command meridianruntime.LegacyExportCommand
 	var envelope ApplicationTaskResult
 	if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
-		return errors.New("center: stored Meridian legacy export is invalid")
+		return errors.New("center: stored Glivela legacy export is invalid")
 	}
 	if succeeded && (len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.MeridianLegacyExport == nil || envelope.MeridianLegacyExport.Validate(command) != nil) {
 		succeeded, taskError = false, "center: Agent returned an invalid Meridian legacy export"
@@ -244,11 +244,11 @@ func (s *Store) completeMeridianLegacyExport(ctx context.Context, commit project
 			return err
 		}
 	}
-	state, event, message := "succeeded", "succeeded", "Meridian legacy authority imported"
+	state, event, message := "succeeded", "succeeded", "Glivela legacy authority imported"
 	if !succeeded {
 		state, event = "failed", "failed"
 		if strings.TrimSpace(taskError) == "" {
-			taskError = "Meridian legacy export failed"
+			taskError = "Glivela legacy export failed"
 		}
 		message = taskError
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_cutover SET state='failed',last_error=?,updated_at=? WHERE id=1`, taskError, stamp); err != nil {
@@ -264,7 +264,7 @@ func (s *Store) completeMeridianLegacyExport(ctx context.Context, commit project
 		return err
 	}
 	if changed, _ := commandUpdate.RowsAffected(); changed != 1 {
-		return errors.New("center: Meridian legacy export command changed before its receipt was committed")
+		return errors.New("center: Glivela legacy export command changed before its receipt was committed")
 	}
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
 		return err
@@ -282,20 +282,20 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 	}
 	var existing int
 	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM meridian_endpoints)+(SELECT COUNT(*) FROM meridian_accounts)+(SELECT COUNT(*) FROM meridian_credentials)`).Scan(&existing); err != nil || existing != 0 {
-		return errors.New("center: Meridian import target is not empty")
+		return errors.New("center: Glivela import target is not empty")
 	}
 	endpointByInbound := map[int]meridianImportedEndpoint{}
 	endpointByEntry := map[string]meridianImportedEndpoint{}
 	for _, legacy := range exported.Endpoints {
-		if legacy.Port != meridian.DefaultRealityPort || !legacy.VLESSEnabled {
-			return errors.New("every imported endpoint must keep VLESS enabled on TCP 443 before Meridian cutover")
+		if legacy.Port != glivela.DefaultRealityPort || !legacy.VLESSEnabled {
+			return errors.New("every imported endpoint must keep VLESS enabled on TCP 443 before Glivela cutover")
 		}
 		resolved, err := s.resolveLegacyMeridianEndpoint(ctx, tx, exported.ControllerApplicationID, legacy)
 		if err != nil {
 			return err
 		}
 		if _, duplicate := endpointByEntry[resolved.applicationID]; duplicate {
-			return errors.New("multiple legacy endpoints resolve to one Meridian application")
+			return errors.New("multiple legacy endpoints resolve to one Glivela application")
 		}
 		endpointByInbound[legacy.InboundID], endpointByEntry[resolved.applicationID] = resolved, resolved
 	}
@@ -305,13 +305,13 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 	baseByAccountAndEndpoint := map[string]meridianImportedCredential{}
 	for _, legacy := range exported.Clients {
 		if legacy.LimitIP > 0 {
-			return errors.New("legacy simultaneous IP limits must be removed before Meridian cutover because Meridian cannot preserve that policy")
+			return errors.New("legacy simultaneous IP limits must be removed before Glivela cutover because Glivela cannot preserve that policy")
 		}
 		accountID, err := randomToken(18)
 		if err != nil {
 			return err
 		}
-		account := meridianImportedAccount{model: meridian.Account{ID: accountID, DisplayName: legacy.Email, Plan: meridian.AccountPlan{TotalBytes: legacy.TotalBytes, ExpiryTime: legacy.ExpiryTime, ResetDays: legacy.ResetDays, Enabled: legacy.Enabled}, DesiredRevision: 1}, token: legacy.SubscriptionToken}
+		account := meridianImportedAccount{model: glivela.Account{ID: accountID, DisplayName: legacy.Email, Plan: glivela.AccountPlan{TotalBytes: legacy.TotalBytes, ExpiryTime: legacy.ExpiryTime, ResetDays: legacy.ResetDays, Enabled: legacy.Enabled}, DesiredRevision: 1}, token: legacy.SubscriptionToken}
 		for index, inboundID := range legacy.InboundIDs {
 			endpoint, exists := endpointByInbound[inboundID]
 			if !exists {
@@ -321,7 +321,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 			if err != nil {
 				return err
 			}
-			credential := meridianImportedCredential{model: meridian.Credential{ID: credentialID, AccountID: accountID, Kind: meridian.NativeCredential, User: "meridian-native-" + credentialID, Identity: meridian.Identity(legacy.UUID), EntryID: endpoint.applicationID, Enabled: legacy.Enabled}, endpointID: endpoint.model.ID, protocolID: legacy.UUID, hy2Auth: legacy.HY2AuthByInbound[inboundID]}
+			credential := meridianImportedCredential{model: glivela.Credential{ID: credentialID, AccountID: accountID, Kind: glivela.NativeCredential, User: "meridian-native-" + credentialID, Identity: glivela.Identity(legacy.UUID), EntryID: endpoint.applicationID, Enabled: legacy.Enabled}, endpointID: endpoint.model.ID, protocolID: legacy.UUID, hy2Auth: legacy.HY2AuthByInbound[inboundID]}
 			if index == 0 {
 				credential.baseline, credential.observed = legacy.UsageBaseline, legacy.UsageObserved
 			}
@@ -354,28 +354,28 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 		if err != nil {
 			return err
 		}
-		route := meridianImportedCredential{model: meridian.Credential{ID: routeCredentialID, AccountID: account.model.ID, Kind: meridian.RouteCredential, User: meridian.RouteUser(legacy.ID), Identity: meridian.Identity(legacy.FixedUUID), EntryID: endpoint.applicationID, EgressID: egressID, Enabled: legacy.Enabled && account.model.Plan.Enabled}, endpointID: endpoint.model.ID, protocolID: legacy.FixedUUID, baseline: legacy.UsageBaseline, observed: legacy.UsageObserved}
+		route := meridianImportedCredential{model: glivela.Credential{ID: routeCredentialID, AccountID: account.model.ID, Kind: glivela.RouteCredential, User: glivela.RouteUser(legacy.ID), Identity: glivela.Identity(legacy.FixedUUID), EntryID: endpoint.applicationID, EgressID: egressID, Enabled: legacy.Enabled && account.model.Plan.Enabled}, endpointID: endpoint.model.ID, protocolID: legacy.FixedUUID, baseline: legacy.UsageBaseline, observed: legacy.UsageObserved}
 		account.credentials = append(account.credentials, route)
-		account.grants = append(account.grants, meridian.RouteGrant{ID: legacy.ID, AccountID: account.model.ID, EntryID: endpoint.applicationID, EgressID: egressID, InboundTag: endpoint.model.InboundTag, Base: base.model, Route: route.model, Mode: meridian.FixedMode, Enabled: legacy.Enabled, HideNative: legacy.HideNative, DesiredRev: 1})
+		account.grants = append(account.grants, glivela.RouteGrant{ID: legacy.ID, AccountID: account.model.ID, EntryID: endpoint.applicationID, EgressID: egressID, InboundTag: endpoint.model.InboundTag, Base: base.model, Route: route.model, Mode: glivela.FixedMode, Enabled: legacy.Enabled, HideNative: legacy.HideNative, DesiredRev: 1})
 	}
 
-	planAccounts := make([]meridian.ImportAccount, 0, len(accounts))
-	materials := map[string]meridian.CredentialMaterial{}
+	planAccounts := make([]glivela.ImportAccount, 0, len(accounts))
+	materials := map[string]glivela.CredentialMaterial{}
 	for _, account := range accounts {
-		item := meridian.ImportAccount{Account: account.model, SubscriptionTokenFingerprint: meridian.SubscriptionTokenFingerprint(account.token), HysteriaIdentities: map[string]string{}, Grants: slices.Clone(account.grants)}
+		item := glivela.ImportAccount{Account: account.model, SubscriptionTokenFingerprint: glivela.SubscriptionTokenFingerprint(account.token), HysteriaIdentities: map[string]string{}, Grants: slices.Clone(account.grants)}
 		for _, credential := range account.credentials {
 			item.Credentials = append(item.Credentials, credential.model)
-			if credential.model.Kind == meridian.NativeCredential && credential.hy2Auth != "" {
-				item.HysteriaIdentities[credential.model.ID] = meridian.Identity(credential.hy2Auth)
+			if credential.model.Kind == glivela.NativeCredential && credential.hy2Auth != "" {
+				item.HysteriaIdentities[credential.model.ID] = glivela.Identity(credential.hy2Auth)
 			}
-			item.Usage = append(item.Usage, meridian.UsageMember{CredentialID: credential.model.ID, Baseline: credential.baseline, Observed: credential.observed, Active: credential.model.Enabled})
+			item.Usage = append(item.Usage, glivela.UsageMember{CredentialID: credential.model.ID, Baseline: credential.baseline, Observed: credential.observed, Active: credential.model.Enabled})
 			materials[credential.model.ID] = credential.material()
 		}
 		planAccounts = append(planAccounts, item)
 	}
-	plan, err := meridian.PlanImport(planAccounts)
+	plan, err := glivela.PlanImport(planAccounts)
 	if err != nil {
-		return errors.New("legacy authority does not form a valid Meridian import plan")
+		return errors.New("legacy authority does not form a valid Glivela import plan")
 	}
 	if err := verifyMeridianImportSubscriptions(plan, materials, endpointByEntry); err != nil {
 		return err
@@ -431,7 +431,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 		if account.model.Plan.ResetDays > 0 {
 			nextReset = now.AddDate(0, 0, account.model.Plan.ResetDays).Format(time.RFC3339Nano)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,expiry_time,reset_days,next_reset_at,last_reset_at,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?, ?,?,?,1,0,?,'',?,?)`, account.model.ID, account.model.DisplayName, account.model.Plan.TotalBytes, account.model.Plan.ExpiryTime, account.model.Plan.ResetDays, nextReset, "", enabled, tokenSecretID, meridian.SubscriptionTokenFingerprint(account.token), status, stamp, stamp); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,expiry_time,reset_days,next_reset_at,last_reset_at,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?, ?,?,?,1,0,?,'',?,?)`, account.model.ID, account.model.DisplayName, account.model.Plan.TotalBytes, account.model.Plan.ExpiryTime, account.model.Plan.ResetDays, nextReset, "", enabled, tokenSecretID, glivela.SubscriptionTokenFingerprint(account.token), status, stamp, stamp); err != nil {
 			return err
 		}
 		for _, credential := range account.credentials {
@@ -442,12 +442,12 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 			var egress any
 			var hy2SecretID any
 			hy2Identity := ""
-			if credential.model.Kind == meridian.NativeCredential && credential.hy2Auth != "" {
+			if credential.model.Kind == glivela.NativeCredential && credential.hy2Auth != "" {
 				secretID, secretErr := s.putSecret(ctx, tx, []byte(credential.hy2Auth), meridianCredentialHY2SecretContext(credential.model.ID))
 				if secretErr != nil {
 					return secretErr
 				}
-				hy2SecretID, hy2Identity = secretID, meridian.Identity(credential.hy2Auth)
+				hy2SecretID, hy2Identity = secretID, glivela.Identity(credential.hy2Auth)
 			}
 			if credential.model.EgressID != "" {
 				egress = credential.model.EgressID
@@ -496,7 +496,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 		return err
 	}
 	if changed, _ := cutoverUpdate.RowsAffected(); changed != 1 {
-		return errors.New("center: subscription authority changed during Meridian import")
+		return errors.New("center: subscription authority changed during Glivela import")
 	}
 	return nil
 }
@@ -511,12 +511,12 @@ func resolveLegacyMeridianGrant(ctx context.Context, tx *sql.Tx, endpoint *merid
 		record.ParentID != legacy.ParentIdentityHash || record.Grant.InboundTag != legacy.InboundTag || record.Grant.BaseUser != legacy.BaseUser ||
 		record.Grant.FixedUser != legacy.FixedUser || record.Grant.FixedIdentity != landing.Identity(legacy.FixedUUID) ||
 		record.Grant.Peer.ID != legacy.EgressNodeID || record.Revision != legacy.Revision || record.Grant.Enabled != legacy.Enabled ||
-		record.Grant.HideBase != legacy.HideNative || !meridian.ValidIdentifier(record.LandingNodeID) ||
+		record.Grant.HideBase != legacy.HideNative || !glivela.ValidIdentifier(record.LandingNodeID) ||
 		!sameLegacyInboundTag(endpoint.model.InboundTag, legacy.InboundTag) {
 		return "", errors.New("center: legacy route no longer matches its authorized Center grant")
 	}
 	if record.Status == "revoked" || record.Status == "revoking" {
-		return "", errors.New("center: a revoked legacy route cannot grant Meridian authority")
+		return "", errors.New("center: a revoked legacy route cannot grant Glivela authority")
 	}
 	if legacy.Enabled {
 		if (meridianruntime.Peer{EgressID: endpoint.nodeID, Identity: record.Source}).Validate() != nil {
@@ -595,9 +595,9 @@ func (s *Store) resolveLegacyMeridianEndpoint(ctx context.Context, tx *sql.Tx, c
 	if displayName == "" {
 		displayName = strings.TrimSpace(legacy.DisplayName)
 	}
-	model := meridian.RealityEndpoint{ID: endpointID, EntryID: applicationID, InboundTag: legacy.Tag, ListenAddress: serviceAddress, ListenPort: meridian.RealityBackendPort, AdvertiseHost: advertiseHost, AdvertisePort: legacy.Port, Target: legacy.Target, ServerNames: slices.Clone(legacy.ServerNames), PrivateKey: legacy.PrivateKey, PublicKey: legacy.PublicKey, ShortIDs: slices.Clone(legacy.ShortIDs), Fingerprint: legacy.Fingerprint}
+	model := glivela.RealityEndpoint{ID: endpointID, EntryID: applicationID, InboundTag: legacy.Tag, ListenAddress: serviceAddress, ListenPort: glivela.RealityBackendPort, AdvertiseHost: advertiseHost, AdvertisePort: legacy.Port, Target: legacy.Target, ServerNames: slices.Clone(legacy.ServerNames), PrivateKey: legacy.PrivateKey, PublicKey: legacy.PublicKey, ShortIDs: slices.Clone(legacy.ShortIDs), Fingerprint: legacy.Fingerprint}
 	if model.Validate() != nil || displayName == "" {
-		return meridianImportedEndpoint{}, errors.New("center: legacy REALITY endpoint cannot be represented by Meridian")
+		return meridianImportedEndpoint{}, errors.New("center: legacy REALITY endpoint cannot be represented by Glivela")
 	}
 	targetHost, _, err := net.SplitHostPort(model.Target)
 	if err != nil || len(model.ServerNames) != 1 {
@@ -621,12 +621,12 @@ func (s *Store) resolveLegacyMeridianEndpoint(ctx context.Context, tx *sql.Tx, c
 	}
 	resolved := meridianImportedEndpoint{model: model, totalBytes: plan.TotalBytes, usedBytes: legacy.UsedBytes, resetDay: plan.ResetDay, nextResetAt: plan.NextResetAt, lastResetAt: plan.LastResetAt, targetIP: strings.TrimSpace(targetIP), vlessEnabled: legacy.VLESSEnabled, hy2Enabled: legacy.HY2Enabled, entryName: displayName, serviceID: candidates[0].id, applicationID: applicationID, nodeID: nodeID}
 	if legacy.HY2Configured {
-		hy2 := meridian.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: applicationID, InboundTag: legacy.HY2Tag, ListenPort: 443, AdvertiseHost: advertiseHost, AdvertisePort: 443, ServerName: legacy.HY2ServerName, CertificatePEM: legacy.HY2Certificate, PrivateKeyPEM: legacy.HY2PrivateKey}
+		hy2 := glivela.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: applicationID, InboundTag: legacy.HY2Tag, ListenPort: 443, AdvertiseHost: advertiseHost, AdvertisePort: 443, ServerName: legacy.HY2ServerName, CertificatePEM: legacy.HY2Certificate, PrivateKeyPEM: legacy.HY2PrivateKey}
 		if hy2.Validate() != nil {
-			return meridianImportedEndpoint{}, errors.New("center: legacy Hysteria endpoint cannot be represented by Meridian")
+			return meridianImportedEndpoint{}, errors.New("center: legacy Hysteria endpoint cannot be represented by Glivela")
 		}
 		resolved.hy2 = &hy2
-		notAfter, expiryErr := meridian.HysteriaCertificateNotAfter(hy2)
+		notAfter, expiryErr := glivela.HysteriaCertificateNotAfter(hy2)
 		if expiryErr != nil || !notAfter.After(s.now().Add(time.Hour)) {
 			return meridianImportedEndpoint{}, errors.New("center: legacy Hysteria certificate expiry is invalid")
 		}
@@ -653,10 +653,10 @@ func sameLegacyInboundTag(left, right string) bool {
 	return normalize(left) != "" && normalize(left) == normalize(right)
 }
 
-func verifyMeridianImportSubscriptions(plan meridian.ImportPlan, materials map[string]meridian.CredentialMaterial, endpoints map[string]meridianImportedEndpoint) error {
+func verifyMeridianImportSubscriptions(plan glivela.ImportPlan, materials map[string]glivela.CredentialMaterial, endpoints map[string]meridianImportedEndpoint) error {
 	for _, item := range plan.Accounts {
-		entries := []meridian.NativeEntry{}
-		credentialByID := map[string]meridian.Credential{}
+		entries := []glivela.NativeEntry{}
+		credentialByID := map[string]glivela.Credential{}
 		links := map[string]string{}
 		for _, credential := range item.Credentials {
 			endpoint, exists := endpoints[credential.EntryID]
@@ -665,32 +665,32 @@ func verifyMeridianImportSubscriptions(plan meridian.ImportPlan, materials map[s
 				return errors.New("center: imported subscription material is incomplete")
 			}
 			if endpoint.vlessEnabled {
-				link, err := meridian.LinkForCredential(endpoint.model, material, endpoint.entryName)
+				link, err := glivela.LinkForCredential(endpoint.model, material, endpoint.entryName)
 				if err != nil {
 					return errors.New("center: imported VLESS subscription link is invalid")
 				}
-				links[credential.ID+"\x00"+string(meridian.VLESSReality)] = link
-				if credential.Kind == meridian.NativeCredential {
-					entries = append(entries, meridian.NativeEntry{Material: material, Protocol: meridian.VLESSReality, Link: link})
+				links[credential.ID+"\x00"+string(glivela.VLESSReality)] = link
+				if credential.Kind == glivela.NativeCredential {
+					entries = append(entries, glivela.NativeEntry{Material: material, Protocol: glivela.VLESSReality, Link: link})
 				}
 			}
-			if credential.Kind == meridian.NativeCredential && endpoint.hy2Enabled && endpoint.hy2 != nil {
-				link, err := meridian.Hysteria2LinkForCredential(*endpoint.hy2, material, endpoint.entryName+" · HY2")
+			if credential.Kind == glivela.NativeCredential && endpoint.hy2Enabled && endpoint.hy2 != nil {
+				link, err := glivela.Hysteria2LinkForCredential(*endpoint.hy2, material, endpoint.entryName+" · HY2")
 				if err != nil {
 					return errors.New("center: imported Hysteria subscription link is invalid")
 				}
-				links[credential.ID+"\x00"+string(meridian.Hysteria2)] = link
-				if credential.Kind == meridian.NativeCredential {
-					entries = append(entries, meridian.NativeEntry{Material: material, Protocol: meridian.Hysteria2, Link: link})
+				links[credential.ID+"\x00"+string(glivela.Hysteria2)] = link
+				if credential.Kind == glivela.NativeCredential {
+					entries = append(entries, glivela.NativeEntry{Material: material, Protocol: glivela.Hysteria2, Link: link})
 				}
 			}
 			credentialByID[credential.ID] = credential
 		}
-		routes := []meridian.PublishedRoute{}
+		routes := []glivela.PublishedRoute{}
 		for _, grant := range item.Grants {
 			grant.Base, grant.Route = credentialByID[grant.Base.ID], credentialByID[grant.Route.ID]
 			grant.AppliedRev, grant.RuntimeGood = grant.DesiredRev, true
-			for _, protocol := range []meridian.ProtocolKind{meridian.VLESSReality} {
+			for _, protocol := range []glivela.ProtocolKind{glivela.VLESSReality} {
 				baseLink, baseOK := links[grant.Base.ID+"\x00"+string(protocol)]
 				routeLink, routeOK := links[grant.Route.ID+"\x00"+string(protocol)]
 				if !baseOK && !routeOK {
@@ -702,13 +702,13 @@ func verifyMeridianImportSubscriptions(plan meridian.ImportPlan, materials map[s
 				baseMaterial, routeMaterial := materials[grant.Base.ID], materials[grant.Route.ID]
 				baseIdentity, routeIdentity := baseMaterial.Credential.Identity, routeMaterial.Credential.Identity
 				endpoint := endpoints[grant.EntryID]
-				routes = append(routes, meridian.PublishedRoute{Grant: grant, Protocol: protocol, EntryName: endpoint.entryName, BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: baseIdentity, RouteProtocolIdentity: routeIdentity})
+				routes = append(routes, glivela.PublishedRoute{Grant: grant, Protocol: protocol, EntryName: endpoint.entryName, BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: baseIdentity, RouteProtocolIdentity: routeIdentity})
 			}
 		}
-		if _, err := meridian.RenderLinks(entries, item.Account.ID, meridian.FixedMode, routes, true); err != nil {
+		if _, err := glivela.RenderLinks(entries, item.Account.ID, glivela.FixedMode, routes, true); err != nil {
 			return errors.New("center: imported base64 subscription is invalid")
 		}
-		if _, err := meridian.RenderMihomo(entries, item.Account.ID, meridian.FixedMode, routes); err != nil {
+		if _, err := glivela.RenderMihomo(entries, item.Account.ID, glivela.FixedMode, routes); err != nil {
 			return errors.New("center: imported Mihomo subscription is invalid")
 		}
 	}
@@ -757,10 +757,10 @@ func (s *Store) preserveLegacyMeridianSubscriptionPublication(ctx context.Contex
 func (s *Store) queueMeridianCutoverDeployments(ctx context.Context, tx *sql.Tx, controllerApplicationID string, now time.Time) error {
 	manifest, err := currentOfficialApplicationManifest(ctx, tx, "meridian", now)
 	if err != nil {
-		return fmt.Errorf("center: authorize Meridian cutover package: %w", err)
+		return fmt.Errorf("center: authorize Glivela cutover package: %w", err)
 	}
 	if len(manifest.Images) != 1 || strings.TrimSpace(manifest.Images[0].Reference) == "" {
-		return errors.New("center: Meridian catalog package has no audited Xray image")
+		return errors.New("center: Glivela catalog package has no audited Xray image")
 	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
@@ -792,7 +792,7 @@ func (s *Store) queueMeridianCutoverDeployments(ctx context.Context, tx *sql.Tx,
 	if _, exists := applications[controllerApplicationID]; !exists {
 		var controllerNodeID string
 		if err := tx.QueryRowContext(ctx, `SELECT node_id FROM applications WHERE id=? AND app_key=? AND status='running'`, controllerApplicationID, threeXUIAppKey).Scan(&controllerNodeID); err != nil {
-			return errors.New("center: legacy subscription host is unavailable for Meridian package deployment")
+			return errors.New("center: legacy subscription host is unavailable for Glivela package deployment")
 		}
 		applications[controllerApplicationID] = deploymentTarget{nodeID: controllerNodeID}
 	}
@@ -806,11 +806,11 @@ func (s *Store) queueMeridianCutoverDeployments(ctx context.Context, tx *sql.Tx,
 		target := applications[applicationID]
 		var conflicts int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM applications WHERE node_id=? AND app_key=? AND id<>?`, target.nodeID, meridianAppKey, applicationID).Scan(&conflicts); err != nil || conflicts != 0 {
-			return errors.New("center: target node already has a different Meridian application")
+			return errors.New("center: target node already has a different Glivela application")
 		}
 		var serviceAddress string
 		if err := tx.QueryRowContext(ctx, `SELECT service_address FROM agent_network_profiles WHERE agent_id=?`, target.nodeID).Scan(&serviceAddress); err != nil || net.ParseIP(serviceAddress) == nil {
-			return errors.New("center: Meridian target node has no confirmed private service address")
+			return errors.New("center: Glivela target node has no confirmed private service address")
 		}
 		deploymentID, err := randomToken(18)
 		if err != nil {
@@ -821,10 +821,10 @@ func (s *Store) queueMeridianCutoverDeployments(ctx context.Context, tx *sql.Tx,
 			return err
 		}
 		if affected, err := updated.RowsAffected(); err != nil || affected != 1 {
-			return errors.New("center: legacy application changed before Meridian deployment was queued")
+			return errors.New("center: legacy application changed before Glivela deployment was queued")
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,service_address,operation,delete_data,state,error,created_at,updated_at,application_id,runtime_generation,pre_dispatch_application_status) VALUES(?,?,?,?,?,?,?,'install',0,'pending','',?,?,?,?,'failed')`, deploymentID, target.nodeID, meridianAppKey, manifest.Version, manifestJSON, []byte("{}"), serviceAddress, stamp, stamp, applicationID, platform.ApplicationRuntimeGeneration); err != nil {
-			return fmt.Errorf("center: queue Meridian cutover deployment: %w", err)
+			return fmt.Errorf("center: queue Glivela cutover deployment: %w", err)
 		}
 		if err := s.recordTaskEvent(ctx, tx, deploymentID, target.nodeID, "application.apply", applicationTaskRevision, "queued", "install "+meridianAppKey+" from verified cutover"); err != nil {
 			return err
@@ -870,7 +870,7 @@ func (s *Store) retryFailedMeridianCutoverDeployments(ctx context.Context, tx *s
 		var manifest catalog.AppManifest
 		if json.Unmarshal(value.manifest, &manifest) != nil || catalog.ValidateApp(manifest) != nil || manifest.ID != "meridian" || manifest.Version != value.version || net.ParseIP(value.serviceAddress) == nil {
 			rows.Close()
-			return errors.New("center: failed Meridian deployment cannot be safely retried")
+			return errors.New("center: failed Glivela deployment cannot be safely retried")
 		}
 		retries = append(retries, value)
 	}
@@ -892,12 +892,12 @@ func (s *Store) retryFailedMeridianCutoverDeployments(ctx context.Context, tx *s
 			return err
 		}
 		if affected, err := updated.RowsAffected(); err != nil || affected != 1 {
-			return errors.New("center: failed Meridian application changed before retry")
+			return errors.New("center: failed Glivela application changed before retry")
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,service_address,operation,delete_data,state,error,created_at,updated_at,application_id,runtime_generation,pre_dispatch_application_status) VALUES(?,?,?,?,?,?,?,'install',0,'pending','',?,?,?,?,'failed')`, deploymentID, value.agentID, meridianAppKey, value.version, value.manifest, []byte("{}"), value.serviceAddress, stamp, stamp, value.applicationID, platform.ApplicationRuntimeGeneration); err != nil {
 			return err
 		}
-		if err := s.recordTaskEvent(ctx, tx, deploymentID, value.agentID, "application.apply", applicationTaskRevision, "queued", "retry verified Meridian cutover package"); err != nil {
+		if err := s.recordTaskEvent(ctx, tx, deploymentID, value.agentID, "application.apply", applicationTaskRevision, "queued", "retry verified Glivela cutover package"); err != nil {
 			return err
 		}
 	}
@@ -934,7 +934,7 @@ func (s *Store) reconcileMeridianCutoverInTx(ctx context.Context, tx *sql.Tx, st
 		return err
 	}
 	if accounts != expectedAccounts || credentials != expectedCredentials || endpoints != expectedEndpoints || routes != expectedRoutes || expectedEndpoints == 0 {
-		return errors.New("center: Meridian cutover inventory changed after import")
+		return errors.New("center: Glivela cutover inventory changed after import")
 	}
 	if state == "publish" {
 		if authority != "meridian" {
@@ -963,7 +963,7 @@ func (s *Store) reconcileMeridianCutoverInTx(ctx context.Context, tx *sql.Tx, st
 			return err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian publication phase changed before deployment")
+			return errors.New("center: Glivela publication phase changed before deployment")
 		}
 		return nil
 	}
@@ -992,7 +992,7 @@ func (s *Store) reconcileMeridianCutoverInTx(ctx context.Context, tx *sql.Tx, st
 			return err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian deployment phase changed before verification")
+			return errors.New("center: Glivela deployment phase changed before verification")
 		}
 		state = "verify"
 	}
@@ -1021,7 +1021,7 @@ func (s *Store) reconcileMeridianCutoverInTx(ctx context.Context, tx *sql.Tx, st
 			return err
 		}
 		if changed, _ := result.RowsAffected(); changed != 1 {
-			return errors.New("center: Meridian verification phase changed before retirement")
+			return errors.New("center: Glivela verification phase changed before retirement")
 		}
 		return nil
 	}
@@ -1055,7 +1055,7 @@ func (s *Store) reconcileMeridianCutoverInTx(ctx context.Context, tx *sql.Tx, st
 				return err
 			}
 			if changed, _ := updated.RowsAffected(); changed != 1 {
-				return errors.New("center: Meridian retirement phase changed before completion")
+				return errors.New("center: Glivela retirement phase changed before completion")
 			}
 		}
 	}
@@ -1071,16 +1071,16 @@ func (s *Store) restoreMeridianSubscriptionOrigin(ctx context.Context, tx *sql.T
 	if err := tx.QueryRowContext(ctx, `SELECT id,endpoint,protocol,app_protocol,container_port,host_port FROM services
 		WHERE application_id=? AND name=? AND source='system' AND status='ready'`, controllerApplicationID, meridianSubscriptionServiceName).
 		Scan(&serviceID, &endpoint, &protocol, &appProtocol, &containerPort, &hostPort); err != nil {
-		return errors.New("center: preserved Meridian subscription origin is unavailable")
+		return errors.New("center: preserved Glivela subscription origin is unavailable")
 	}
 	if protocol != "http" || appProtocol != meridianSubscriptionProtocol || containerPort != 8080 || hostPort != 8080 {
-		return errors.New("center: preserved Meridian subscription origin changed unexpectedly")
+		return errors.New("center: preserved Glivela subscription origin changed unexpectedly")
 	}
 	if endpoint == net.JoinHostPort(dockerruntime.CenterAlias, "8080") {
 		return nil
 	}
 	if endpoint != net.JoinHostPort(dockerruntime.CenterAlias, strconv.Itoa(landing.SubscriptionPort)) {
-		return errors.New("center: Meridian subscription origin drift is not recognized")
+		return errors.New("center: Glivela subscription origin drift is not recognized")
 	}
 	var active int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications publication
@@ -1105,7 +1105,7 @@ func (s *Store) switchMeridianSubscriptionPublication(ctx context.Context, tx *s
 		WHERE service.application_id=? AND application.app_key IN (?,?) AND application.status='running'
 		AND service.name=? AND service.source='system' AND service.status IN ('ready','publishing')`, controllerApplicationID, threeXUIAppKey, meridianAppKey, meridianSubscriptionServiceName).Scan(&serviceID, &siteID, &nodeID)
 	if err != nil {
-		return errors.New("center: preserved subscription service is unavailable for Meridian authority")
+		return errors.New("center: preserved subscription service is unavailable for Glivela authority")
 	}
 	centerEndpoint := net.JoinHostPort(dockerruntime.CenterAlias, "8080")
 	stamp := now.UTC().Format(time.RFC3339Nano)
@@ -1115,7 +1115,7 @@ func (s *Store) switchMeridianSubscriptionPublication(ctx context.Context, tx *s
 		return err
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return errors.New("center: subscription service changed before Meridian authority switch")
+		return errors.New("center: subscription service changed before Glivela authority switch")
 	}
 
 	type publication struct {
@@ -1169,7 +1169,7 @@ func (s *Store) switchMeridianSubscriptionPublication(ctx context.Context, tx *s
 			return err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return errors.New("center: subscription publication changed before Meridian authority switch")
+			return errors.New("center: subscription publication changed before Glivela authority switch")
 		}
 	}
 	for gatewayID := range gateways {
@@ -1198,7 +1198,7 @@ func meridianSubscriptionPublicationReady(ctx context.Context, tx *sql.Tx) (bool
 		return false, err
 	}
 	if endpoint != net.JoinHostPort(dockerruntime.CenterAlias, "8080") {
-		return false, errors.New("center: Meridian subscription authority has an unexpected public origin")
+		return false, errors.New("center: Glivela subscription authority has an unexpected public origin")
 	}
 	var total, ready int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN status='ready' AND desired_revision=applied_revision THEN 1 ELSE 0 END),0)
@@ -1272,7 +1272,7 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 	for _, endpointID := range endpointIDs {
 		projection, err := s.buildMeridianRuntimeTask(ctx, tx, endpointID, "")
 		if err != nil || !projection.task.RetireLegacy {
-			return errors.New("center: Meridian retirement authorization is unavailable")
+			return errors.New("center: Glivela retirement authorization is unavailable")
 		}
 		commandID, err := randomToken(18)
 		if err != nil {
@@ -1298,9 +1298,9 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 			return err
 		}
 		if changed, _ := endpointUpdate.RowsAffected(); changed != 1 {
-			return errors.New("center: verified Meridian endpoint changed before legacy retirement was queued")
+			return errors.New("center: verified Glivela endpoint changed before legacy retirement was queued")
 		}
-		if err := s.recordTaskEvent(ctx, tx, commandID, projection.agentID, "application.command", int64(projection.task.Desired.Revision), "queued", "Meridian legacy runtime retirement queued"); err != nil {
+		if err := s.recordTaskEvent(ctx, tx, commandID, projection.agentID, "application.command", int64(projection.task.Desired.Revision), "queued", "Glivela legacy runtime retirement queued"); err != nil {
 			return err
 		}
 	}
@@ -1308,10 +1308,10 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 	if err := tx.QueryRowContext(ctx, `SELECT application.id,application.node_id,application.site_id,application.name,application.app_key,application.status
 		FROM meridian_cutover cutover JOIN applications application ON application.id=cutover.legacy_controller_application_id
 		WHERE cutover.id=1`).Scan(&controllerApplicationID, &controllerAgentID, &controllerSiteID, &controllerName, &controllerAppKey, &controllerStatus); err != nil {
-		return errors.New("center: Meridian legacy subscription host is unavailable for retirement")
+		return errors.New("center: Glivela legacy subscription host is unavailable for retirement")
 	}
 	if controllerAppKey != meridianAppKey || controllerStatus != "running" {
-		return errors.New("center: Meridian legacy subscription host package has not converged")
+		return errors.New("center: Glivela legacy subscription host package has not converged")
 	}
 	var controllerHasEndpoint int
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_endpoints WHERE application_id=?)`, controllerApplicationID).Scan(&controllerHasEndpoint); err != nil {
@@ -1343,7 +1343,7 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 				VALUES(?,?,?,?,?,?,?,?, 'pending',?,?)`, commandID, controllerApplicationID, controllerSiteID, controllerName, controllerAgentID, controllerAgentID, meridianruntime.LegacyRetireKind, encoded, stamp, stamp); err != nil {
 				return err
 			}
-			if err := s.recordTaskEvent(ctx, tx, commandID, controllerAgentID, "application.command", 1, "queued", "Meridian legacy subscription host retirement queued"); err != nil {
+			if err := s.recordTaskEvent(ctx, tx, commandID, controllerAgentID, "application.command", 1, "queued", "Glivela legacy subscription host retirement queued"); err != nil {
 				return err
 			}
 		}
@@ -1354,7 +1354,7 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 func meridianControllerLegacyRetired(ctx context.Context, tx *sql.Tx) (bool, error) {
 	var controllerApplicationID string
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(legacy_controller_application_id,'') FROM meridian_cutover WHERE id=1`).Scan(&controllerApplicationID); err != nil || controllerApplicationID == "" {
-		return false, errors.New("center: Meridian legacy subscription host identity is unavailable")
+		return false, errors.New("center: Glivela legacy subscription host identity is unavailable")
 	}
 	var endpointCount, retiredEndpointCount int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN legacy_retired=1 THEN 1 ELSE 0 END),0)
@@ -1377,15 +1377,15 @@ func (s *Store) completeMeridianLegacyRetirement(ctx context.Context, commit pro
 		MeridianLegacyRetire *meridianruntime.LegacyRetireResult `json:"meridianLegacyRetire"`
 	}
 	if json.Unmarshal(inputJSON, &task) != nil || task.Validate() != nil {
-		return errors.New("center: stored Meridian legacy retirement task is invalid")
+		return errors.New("center: stored Glivela legacy retirement task is invalid")
 	}
 	if succeeded && (json.Unmarshal(rawResult, &envelope) != nil || envelope.MeridianLegacyRetire == nil || envelope.MeridianLegacyRetire.Validate() != nil) {
 		succeeded, taskError = false, "center: Agent did not confirm legacy subscription host retirement"
 	}
 	if !succeeded && strings.TrimSpace(taskError) == "" {
-		taskError = "Meridian legacy subscription host retirement failed"
+		taskError = "Glivela legacy subscription host retirement failed"
 	}
-	state, event, message := "succeeded", "succeeded", "Meridian legacy subscription host retired"
+	state, event, message := "succeeded", "succeeded", "Glivela legacy subscription host retired"
 	publicResult := []byte(`{}`)
 	if !succeeded {
 		state, event, message = "failed", "failed", taskError
@@ -1398,7 +1398,7 @@ func (s *Store) completeMeridianLegacyRetirement(ctx context.Context, commit pro
 		return err
 	}
 	if changed, err := updated.RowsAffected(); err != nil || changed != 1 {
-		return errors.New("center: Meridian legacy retirement command is not active")
+		return errors.New("center: Glivela legacy retirement command is not active")
 	}
 	if !succeeded {
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_cutover SET last_error=?,updated_at=? WHERE id=1 AND state='retire'`, taskError, stamp); err != nil {

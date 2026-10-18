@@ -62,13 +62,13 @@ func TestMeridianTrafficAggregatesDirectionsWithoutRecountingOrQuotaMutation(t *
 			t.Fatal("historical raw counters became usage")
 		}
 	}
-	snapshots := []meridian.CounterSnapshot{}
+	snapshots := []glivela.CounterSnapshot{}
 	for _, state := range []string{"ready", "pending", "revoking", "revoked", "failed"} {
 		for _, kind := range []string{"native", "route"} {
-			snapshots = append(snapshots, meridian.CounterSnapshot{CredentialID: "v88-health-account-" + state + "-" + kind, UpBytes: 200, DownBytes: 250})
+			snapshots = append(snapshots, glivela.CounterSnapshot{CredentialID: "v88-health-account-" + state + "-" + kind, UpBytes: 200, DownBytes: 250})
 		}
 	}
-	observe := func(values []meridian.CounterSnapshot, rollback bool) {
+	observe := func(values []glivela.CounterSnapshot, rollback bool) {
 		t.Helper()
 		tx, err := store.db.BeginTx(ctx, nil)
 		if err != nil {

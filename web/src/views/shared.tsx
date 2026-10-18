@@ -77,13 +77,13 @@ export function userError(language: Language, error: unknown) {
   if (normalized === "center: disconnect the agent before generating a reconnect command") {
     return copy(language, "节点仍在线，请先确认原机器已停止接入。", detail);
   }
-  if (normalized === "center: restore the native meridian runtime and wait for a fresh authenticated private identity report before recovering landing access") {
+  if (normalized === "center: restore the native glivela runtime and wait for a fresh authenticated private identity report before recovering landing access") {
     return copy(language, "请先恢复本机 Glivela，并等待节点上报最新私网身份，再恢复落地线路。", detail);
   }
-  if (normalized === "center: this meridian entry has no replacement private identity to recover") {
+  if (normalized === "center: this glivela entry has no replacement private identity to recover") {
     return copy(language, "当前私网身份与原授权一致，无需进行重装恢复。", detail);
   }
-  if (normalized === "center: meridian replacement identity or configuration changed; inspect it again before confirming") {
+  if (normalized === "center: glivela replacement identity or configuration changed; inspect it again before confirming") {
     return copy(language, "节点身份或配置已变化，请重新检查并确认。", detail);
   }
   if (normalized === "center: settle active or uncertain executions on the entry and affected landings before identity recovery") {

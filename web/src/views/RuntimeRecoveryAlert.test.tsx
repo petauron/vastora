@@ -8,6 +8,7 @@ import { ThemeProvider } from "../components/theme";
 import type { AgentView } from "../types";
 import { NodesView } from "./NodesView";
 import { RuntimeRecoveryAlert } from "./RuntimeRecoveryAlert";
+import { canInspectXrayConfiguration } from "./xrayRecoveryEligibility";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,6 +37,7 @@ it("shows affected applications and repair guidance even while the node is conne
   const agent = agentFixture();
   const data = emptyAppData({ version: "test", agentInstallerAvailable: false, agentConnectionMode: "lan", agentConnectUrl: "https://center.example" });
   data.agents = [agent];
+  data.applications = [{ id: "legacy", name: "Xray", nodeId: agent.id, siteId: "site-a", appKey: "vastora-official/3x-ui", role: "worker", status: "running", image: "", runtime: "docker", updateAvailable: false, createdAt: "", updatedAt: "" }];
   data.sites = [{ id: "site-a", organizationId: "org-a", name: "Test site", code: "test", description: "", timezone: "UTC", domainSuffix: "site.example", status: "active", gatewayNodes: [], gatewayStatus: "ready", createdAt: "2026-09-12T00:00:00Z", updatedAt: "2026-09-12T00:00:00Z" }];
   const navigate = vi.fn();
   const container = document.createElement("div");
@@ -59,6 +61,34 @@ it("shows affected applications and repair guidance even while the node is conne
   act(() => root?.render(<ThemeProvider><NodesView data={data} language="zh-CN" mutate={async () => {}} onNavigate={navigate} /></ThemeProvider>));
   expect(container.textContent).not.toContain("应用恢复受阻");
   expect(container.textContent).not.toContain("离线恢复所需镜像不可用");
+});
+
+it.each(["project", "verify", "retire"] as const)("offers legacy configuration recovery for blocked Meridian during %s", (state) => {
+  const data = emptyAppData({ version: "test", agentInstallerAvailable: false, agentConnectionMode: "lan", agentConnectUrl: "https://center.example" });
+  const agent = { ...agentFixture(), runtimeRecoveryApplications: [{ appKey: "vastora-official/meridian", applicationId: "meridian", reason: "state_incomplete" as const }] };
+  data.applications = [{ id: "meridian", name: "Glivela", nodeId: agent.id, siteId: "site-a", appKey: "vastora-official/meridian", role: "worker", status: "failed", image: "", runtime: "docker", updateAvailable: false, createdAt: "", updatedAt: "" }];
+  data.meridian.cutover.state = state;
+  data.meridian.cutover.subscriptionAuthority = "meridian";
+  data.meridian.endpoints = [{ applicationId: "meridian", nodeId: agent.id, legacyRetired: false } as typeof data.meridian.endpoints[number]];
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  const render = () => act(() => root?.render(<RuntimeRecoveryAlert agent={agent} canRecoverXray={canInspectXrayConfiguration(data, agent.id)} language="en" onApplications={vi.fn()} />));
+  render();
+  expect(container.textContent).toContain("Explicit config recovery");
+  data.meridian.endpoints[0].legacyRetired = true;
+  render();
+  expect(container.textContent).not.toContain("Explicit config recovery");
+  data.meridian.endpoints[0].legacyRetired = false;
+  data.meridian.cutover.subscriptionAuthority = "legacy";
+  expect(canInspectXrayConfiguration(data, agent.id)).toBe(false);
+  data.meridian.cutover.subscriptionAuthority = "meridian";
+  data.meridian.cutover.state = "not_required";
+  expect(canInspectXrayConfiguration(data, agent.id)).toBe(false);
+  data.meridian.cutover.state = state;
+  expect(canInspectXrayConfiguration(data, "other-node")).toBe(false);
+  data.applications[0].status = "stopped";
+  expect(canInspectXrayConfiguration(data, agent.id)).toBe(false);
 });
 
 it("keeps landing recovery separate from application repairs and explains the operator boundary", () => {

@@ -7329,6 +7329,9 @@
                             "type": "object",
                             "additionalProperties": false,
                             "properties": {
+                              "landingOnly": {
+                                "type": "boolean"
+                              },
                               "executorVersions": {
                                 "type": "object",
                                 "additionalProperties": {
@@ -8213,6 +8216,9 @@
                 "properties": {
                   "siteId": {
                     "type": "string"
+                  },
+                  "landingOnly": {
+                    "type": "boolean"
                   },
                   "name": {
                     "type": "string"
@@ -12434,6 +12440,9 @@
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
+                      "landingOnly": {
+                        "type": "boolean"
+                      },
                       "executorVersions": {
                         "type": "object",
                         "additionalProperties": {
@@ -12839,6 +12848,29 @@
                                 }
                               }
                             }
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "landingServerHealth": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "revision": {
+                            "type": "integer"
+                          },
+                          "healthy": {
+                            "type": "boolean"
+                          },
+                          "checkedAt": {
+                            "type": "string",
+                            "format": "date-time"
                           }
                         }
                       },

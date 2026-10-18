@@ -164,6 +164,8 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{a, a}, Revision: 1}); err == nil {
 		t.Fatal("duplicate server accepted")
 	}
+	// Keep current Meridian telemetry distinct from the legacy route fixtures.
+	exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at) VALUES('multi-latency-meridian','Meridian',?,?,'vastora-official/meridian','running','docker','worker',?,?)`, source, site, now, now)
 	targets, err := store.landingLatencyTargets(ctx, source)
 	if err != nil || len(targets) != 2 {
 		t.Fatalf("missing per-server latency targets: %+v %v", targets, err)

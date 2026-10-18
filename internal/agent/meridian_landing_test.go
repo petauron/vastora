@@ -216,7 +216,7 @@ func TestMeridianPreparationIsScopedAndDoesNotStopLegacyMonitor(t *testing.T) {
 		store.landingCancel, store.landingDone = nil, nil
 		return
 	}
-	t.Fatal("official Meridian manifest missing")
+	t.Fatal("official Glivela manifest missing")
 }
 
 func TestMeridianLegacyCaptureRejectsIncompleteAndForeignJournal(t *testing.T) {
@@ -267,10 +267,10 @@ func TestMeridianPendingAuthorityNeverResumesLegacyWriterOrMonitor(t *testing.T)
 		t.Fatalf("legacy monitor resumed across one-way boundary: %v", err)
 	}
 	if err := store.applyLandingProxy(context.Background(), legacy.Desired); err == nil {
-		t.Fatal("legacy landing retry took ownership from pending Meridian")
+		t.Fatal("legacy landing retry took ownership from pending Glivela")
 	}
 	if err := store.reconcileXrayWorkerRuntime(context.Background(), nil, nil); err == nil {
-		t.Fatal("legacy reconciler accepted Meridian authority")
+		t.Fatal("legacy reconciler accepted Glivela authority")
 	}
 	response := httptest.NewRecorder()
 	store.xrayWorkerHandler(nil, nil).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/panel/api/server/status", nil))
@@ -281,7 +281,7 @@ func TestMeridianPendingAuthorityNeverResumesLegacyWriterOrMonitor(t *testing.T)
 		t.Fatal(err)
 	}
 	if err := store.ResumeLandingRuntime(context.Background()); err == nil {
-		t.Fatal("corrupt Meridian authority fell back to old monitor")
+		t.Fatal("corrupt Glivela authority fell back to old monitor")
 	}
 }
 
@@ -390,7 +390,7 @@ func TestMeridianRetirementWaitRequiresFreshPeerEvidenceAndPreservesJournalOnTim
 	legacy := seedMeridianLegacyLanding(t, store, "applied")
 	state := meridianLandingFixture()
 	task := meridianruntime.Task{ApplicationID: state.ApplicationID, ImageReference: state.ImageReference, Desired: *state.Applied, Peers: state.AppliedPeers, Source: state.AppliedSource}
-	result := meridianruntime.Result{Receipt: meridian.AppliedReceipt{Revision: state.Applied.Revision, ConfigSHA256: state.Applied.ConfigSHA256, RuntimeReady: true}, Stats: json.RawMessage(`{"stat":[]}`), Source: cloneMeridianSource(state.AppliedSource)}
+	result := meridianruntime.Result{Receipt: glivela.AppliedReceipt{Revision: state.Applied.Revision, ConfigSHA256: state.Applied.ConfigSHA256, RuntimeReady: true}, Stats: json.RawMessage(`{"stat":[]}`), Source: cloneMeridianSource(state.AppliedSource)}
 	result.Peers = []meridianruntime.PeerObservation{blockedMeridianPeer(task.Peers[0], task.Desired.Revision, "pending")}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

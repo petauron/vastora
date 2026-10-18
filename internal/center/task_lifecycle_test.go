@@ -737,17 +737,17 @@ func TestTaskIDsAreScopedByAgentAndRevision(t *testing.T) {
 	}
 }
 
-func TestPulseCredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
+func TestSenulunCredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.40", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.40", LANAddress: "10.0.0.40", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: pulseAppKey, Config: json.RawMessage(`{"public_url":"https://pulse.example.test"}`)})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: senulunAppKey, Config: json.RawMessage(`{"public_url":"https://senulun.example.test"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created.OneTimeCredentials == nil || len(created.OneTimeCredentials.SetupToken) < 32 {
-		t.Fatal("Pulse did not return a strong one-time setup token")
+		t.Fatal("Senulun did not return a strong one-time setup token")
 	}
 	task := claimTask(t, store, node)
 	var secrets map[string]string

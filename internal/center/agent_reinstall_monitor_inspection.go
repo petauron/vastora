@@ -11,7 +11,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 type AgentReinstallMonitorInput struct {
@@ -29,10 +29,10 @@ type AgentReinstallMonitorInspection struct {
 }
 
 type reinstallMonitorCommand struct {
-	OperationID      string               `json:"operationId"`
-	ApplicationID    string               `json:"applicationId"`
-	EvidenceRevision string               `json:"evidenceRevision"`
-	Task             pulse.InspectionTask `json:"task"`
+	OperationID      string                 `json:"operationId"`
+	ApplicationID    string                 `json:"applicationId"`
+	EvidenceRevision string                 `json:"evidenceRevision"`
+	Task             senulun.InspectionTask `json:"task"`
 }
 
 func monitorEvidenceRevision(review AgentReinstallMonitoring, evidence string) string {
@@ -148,7 +148,7 @@ func (s *Store) QueueAgentReinstallMonitorInspection(ctx context.Context, agentI
 	if err != nil {
 		return result, err
 	}
-	command := reinstallMonitorCommand{OperationID: op.ID, ApplicationID: input.ApplicationID, EvidenceRevision: monitorEvidenceRevision(review, evidence), Task: pulse.InspectionTask{ApplicationID: review.ServiceApplicationID}}
+	command := reinstallMonitorCommand{OperationID: op.ID, ApplicationID: input.ApplicationID, EvidenceRevision: monitorEvidenceRevision(review, evidence), Task: senulun.InspectionTask{ApplicationID: review.ServiceApplicationID}}
 	command.Task.DeploymentID, err = s.reinstallInspectionService(ctx, tx, review.ServiceAgentID, review.ServiceApplicationID)
 	if err != nil {
 		return result, err
@@ -168,7 +168,7 @@ func (s *Store) QueueAgentReinstallMonitorInspection(ctx context.Context, agentI
 	id = "application-command-" + id
 	encoded, _ := json.Marshal(command)
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, review.ServiceApplicationID, review.ServiceAgentID, agentID, pulse.InspectionKind, encoded, now, now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, review.ServiceApplicationID, review.ServiceAgentID, agentID, senulun.InspectionKind, encoded, now, now); err != nil {
 		return result, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_reinstall_monitor_inspections(command_id,operation_id,application_id,plan_revision,replacement_key,input_json) VALUES(?,?,?,?,?,?)`, id, op.ID, input.ApplicationID, input.PlanRevision, key, encoded); err != nil {
@@ -194,9 +194,9 @@ func (s *Store) reinstallInspectionService(ctx context.Context, tx *sql.Tx, agen
 	 WHERE a.id=? AND a.node_id=? AND a.app_key=? AND a.status='running' AND n.status='active' AND n.credential_revoked_at=''
 	 AND json_extract(n.capabilities_json,'$.pulseInspection')=1 AND json_extract(n.capabilities_json,'$.docker')=1
 	 AND d.state='succeeded' AND d.operation IN ('install','upgrade','configure') AND d.reconciliation_required=0
-	 AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=n.id AND r.state NOT IN ('superseded','completed'))`, applicationID, agentID, pulseAppKey).Scan(&id)
+	 AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=n.id AND r.state NOT IN ('superseded','completed'))`, applicationID, agentID, senulunAppKey).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("center: a running managed Pulse service with an inspection-capable Agent is required")
+		return "", errors.New("center: a running managed Senulun service with an inspection-capable Agent is required")
 	}
 	return id, err
 }
@@ -261,7 +261,7 @@ func (s *Store) completeReinstallInspection(ctx context.Context, commit projecti
 	state := "failed"
 	if succeeded {
 		var result struct {
-			Inspection *pulse.InspectionResult `json:"pulseInspection"`
+			Inspection *senulun.InspectionResult `json:"pulseInspection"`
 		}
 		if json.Unmarshal(raw, &result) != nil || result.Inspection == nil || result.Inspection.Validate(command.Task) != nil {
 			return errors.New("center: invalid original monitoring inspection result")

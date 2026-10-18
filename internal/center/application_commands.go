@@ -720,7 +720,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 	case meridianruntime.ApplyKind:
 		var input meridianruntime.Command
 		if json.Unmarshal(inputJSON, &input) != nil || input.Validate() != nil {
-			return value, errors.New("center: stored Meridian runtime command is invalid")
+			return value, errors.New("center: stored Glivela runtime command is invalid")
 		}
 		value.Action = "apply"
 	case "pulse.enrollment.create":

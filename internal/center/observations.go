@@ -134,13 +134,13 @@ func (s *Store) reconcileMeridianEndpoints(ctx context.Context, tx *sql.Tx, agen
 		value.Listen = strings.TrimSpace(value.Listen)
 		value.InboundTag = strings.TrimSpace(value.InboundTag)
 		if value.AppKey != meridianAppKey || !observedEndpointNamePattern.MatchString(value.Name) || value.Protocol != "tcp" || value.AppProtocol != meridianEntryProtocol || value.Port < 1 || value.Port > 65535 || value.RemoteNodeID != 0 || value.InboundTotalBytes < 0 || !validThreeXUIInboundTag(value.InboundTag) {
-			return errors.New("center: Agent reported an invalid Meridian endpoint")
+			return errors.New("center: Agent reported an invalid Glivela endpoint")
 		}
 		if value.Listen != "" && net.ParseIP(value.Listen) == nil {
-			return errors.New("center: Agent reported an invalid Meridian listen address")
+			return errors.New("center: Agent reported an invalid Glivela listen address")
 		}
 		if seenNames[value.Name] || seenTags[value.InboundTag] {
-			return errors.New("center: Agent reported a duplicate Meridian endpoint")
+			return errors.New("center: Agent reported a duplicate Glivela endpoint")
 		}
 		seenNames[value.Name], seenTags[value.InboundTag] = true, true
 	}
@@ -153,7 +153,7 @@ func (s *Store) reconcileMeridianEndpoints(ctx context.Context, tx *sql.Tx, agen
 		return err
 	}
 	if role != "" {
-		return errors.New("center: Meridian application must not have a topology role")
+		return errors.New("center: Glivela application must not have a topology role")
 	}
 	return s.reconcileObservedMeridianApplication(ctx, tx, applicationID, observations, now, cleanups)
 }
@@ -168,7 +168,7 @@ func (s *Store) reconcileObservedMeridianApplication(ctx context.Context, tx *sq
 		return err
 	}
 	if net.ParseIP(serviceAddress) == nil {
-		return errors.New("center: Meridian application node has an invalid service address")
+		return errors.New("center: Glivela application node has an invalid service address")
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM services WHERE application_id=? AND source='observed'`, applicationID)
 	if err != nil {
@@ -199,13 +199,13 @@ func (s *Store) reconcileObservedMeridianApplication(ctx context.Context, tx *sq
 			WHERE endpoint.application_id=? AND service.application_id=? AND service.source='observed'
 			AND endpoint.status<>'retired' AND (endpoint.inbound_tag=? OR endpoint.hy2_inbound_tag=?)`, applicationID, applicationID, value.InboundTag, value.InboundTag).Scan(&serviceID, &previousProtocol, &previousEndpoint, &previousStatus, &listenAddress, &listenPort, &inboundTag, &hy2Tag, &vlessEnabled, &hy2Enabled, &desiredRevision, &appliedRevision)
 		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("center: observed Meridian endpoint does not match desired state")
+			return errors.New("center: observed Glivela endpoint does not match desired state")
 		}
 		if err != nil {
 			return err
 		}
 		if !existing[serviceID] {
-			return errors.New("center: observed Meridian endpoint is duplicated")
+			return errors.New("center: observed Glivela endpoint is duplicated")
 		}
 		delete(existing, serviceID)
 		// A queued artifact owns the next topology. Old heartbeats cannot
@@ -243,7 +243,7 @@ func (s *Store) reconcileObservedMeridianApplication(ctx context.Context, tx *sq
 			return err
 		}
 		if changed, _ := result.RowsAffected(); changed != 1 {
-			return errors.New("center: observed Meridian endpoint does not match desired state")
+			return errors.New("center: observed Glivela endpoint does not match desired state")
 		}
 		delete(existing, serviceID)
 		if !value.Enabled {

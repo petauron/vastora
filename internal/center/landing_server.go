@@ -24,7 +24,9 @@ const landingServerSchema = `CREATE TABLE landing_server_states (
  peer_json BLOB NOT NULL DEFAULT '{}',
  status TEXT NOT NULL CHECK(status IN ('pending','applying','ready','failed','stopped')),
  attempt INTEGER NOT NULL DEFAULT 0,
- lease_expires_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+ lease_expires_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL,
+ health_json BLOB NOT NULL DEFAULT '{}' CHECK(json_valid(health_json)),
+ health_received_at TEXT NOT NULL DEFAULT ''
 )`
 
 // Called inside the topology transaction after resolving managed private
@@ -133,7 +135,7 @@ func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID s
 			var applied landing.ServerState
 			if state.Plan == nil || json.Unmarshal(appliedJSON, &applied) != nil || applied.Validate() != nil ||
 				applied.NodeID != nodeID || applied.Plan == nil || state.Plan.Address != applied.Plan.Address {
-				return nil, errors.New("center: pending landing intent would stop or replace a referenced Meridian service; explicit recovery is required")
+				return nil, errors.New("center: pending landing intent would stop or replace a referenced Glivela service; explicit recovery is required")
 			}
 		}
 		if err := s.refreshClientLandingSources(ctx, tx, nodeID); err != nil {

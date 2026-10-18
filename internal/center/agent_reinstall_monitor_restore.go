@@ -14,8 +14,8 @@ import (
 
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/platform"
-	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/secret"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 type AgentReinstallMonitorRestore struct {
@@ -43,8 +43,8 @@ func (s *Store) readReinstallMonitorRestore(ctx context.Context, tx *sql.Tx, rot
 // Recover the exact rotated secret from authenticated encrypted execution
 // evidence. A metadata receipt, edited node ID or plaintext command result is
 // never sufficient to install a credential on the replacement machine.
-func (s *Store) reinstallRotatedCredentials(ctx context.Context, tx *sql.Tx, serviceAgentID, commandID string, expected pulse.RotationTask) (pulse.RestoreCredentials, error) {
-	var credentials pulse.RestoreCredentials
+func (s *Store) reinstallRotatedCredentials(ctx context.Context, tx *sql.Tx, serviceAgentID, commandID string, expected senulun.RotationTask) (senulun.RestoreCredentials, error) {
+	var credentials senulun.RestoreCredentials
 	var id, digest string
 	var sealedTask, sealedResult []byte
 	err := tx.QueryRowContext(ctx, `SELECT e.id,e.digest,e.sealed_task,e.sealed_result FROM task_executions e JOIN application_commands c ON c.id=e.task_id
@@ -58,10 +58,10 @@ func (s *Store) reinstallRotatedCredentials(ctx context.Context, tx *sql.Tx, ser
 	}
 	sum := sha256.Sum256(raw)
 	var task AgentTask
-	if hex.EncodeToString(sum[:]) != digest || json.Unmarshal(raw, &task) != nil || task.ID != commandID || task.Attempt != 1 || task.Kind != "application.command" || task.PulseRotation == nil {
+	if hex.EncodeToString(sum[:]) != digest || json.Unmarshal(raw, &task) != nil || task.ID != commandID || task.Attempt != 1 || task.Kind != "application.command" || task.SenulunRotation == nil {
 		return credentials, errExecutionAuthorization
 	}
-	a, _ := json.Marshal(task.PulseRotation)
+	a, _ := json.Marshal(task.SenulunRotation)
 	b, _ := json.Marshal(expected)
 	if string(a) != string(b) {
 		return credentials, errExecutionAuthorization
@@ -72,14 +72,14 @@ func (s *Store) reinstallRotatedCredentials(ctx context.Context, tx *sql.Tx, ser
 	}
 	var evidence executionResultEvidence
 	var result struct {
-		Rotation *pulse.RotationResult `json:"pulseRotation"`
+		Rotation *senulun.RotationResult `json:"pulseRotation"`
 	}
 	if json.Unmarshal(raw, &evidence) != nil || !evidence.Succeeded || evidence.Unknown || json.Unmarshal(evidence.Result, &result) != nil || result.Rotation == nil || result.Rotation.Validate(expected) != nil {
 		return credentials, errExecutionAuthorization
 	}
-	credentials = pulse.RestoreCredentials{NodeID: result.Rotation.NodeID, Token: result.Rotation.Token}
+	credentials = senulun.RestoreCredentials{NodeID: result.Rotation.NodeID, Token: result.Rotation.Token}
 	if credentials.Validate() != nil {
-		return pulse.RestoreCredentials{}, errExecutionAuthorization
+		return senulun.RestoreCredentials{}, errExecutionAuthorization
 	}
 	return credentials, nil
 }
@@ -124,7 +124,7 @@ func (s *Store) QueueAgentReinstallMonitorRestore(ctx context.Context, agentID, 
 		return result, errors.New("center: approve the replacement network before restoring monitoring")
 	}
 	index := slices.IndexFunc(plan.Applications, func(app AgentReinstallApplication) bool {
-		return app.ApplicationID == input.ApplicationID && app.AppKey == pulseAgentAppKey && app.Recovery == "reenroll_monitor"
+		return app.ApplicationID == input.ApplicationID && app.AppKey == senulunAgentAppKey && app.Recovery == "reenroll_monitor"
 	})
 	if index < 0 {
 		return result, errExecutionAuthorization
@@ -137,9 +137,9 @@ func (s *Store) QueueAgentReinstallMonitorRestore(ctx context.Context, agentID, 
 	if err != nil {
 		return result, err
 	}
-	var pulseConfig pulse.AgentConfig
-	if json.Unmarshal(manifest, &source.Manifest) != nil || source.Manifest.ID != "pulse-agent" || source.Manifest.Version != version || catalog.ValidateApp(source.Manifest) != nil || registry.Valid || json.Unmarshal(config, &pulseConfig) != nil || pulseConfig.Validate() != nil || pulseConfig.ServiceApplicationID != rotation.Task.Inspection.ApplicationID {
-		return result, errors.New("center: saved Pulse package or service configuration requires review")
+	var senulunConfig senulun.AgentConfig
+	if json.Unmarshal(manifest, &source.Manifest) != nil || source.Manifest.ID != "pulse-agent" || source.Manifest.Version != version || catalog.ValidateApp(source.Manifest) != nil || registry.Valid || json.Unmarshal(config, &senulunConfig) != nil || senulunConfig.Validate() != nil || senulunConfig.ServiceApplicationID != rotation.Task.Inspection.ApplicationID {
+		return result, errors.New("center: saved Senulun package or service configuration requires review")
 	}
 	credentials, err := s.reinstallRotatedCredentials(ctx, tx, serviceAgentID, rotationID, rotation.Task)
 	if err != nil {
@@ -181,7 +181,7 @@ func (s *Store) QueueAgentReinstallMonitorRestore(ctx context.Context, agentID, 
 	if err = s.recordReinstallMonitorRestoreProgress(ctx, tx, id); err != nil {
 		return result, err
 	}
-	if err = s.recordTaskEvent(ctx, tx, id, agentID, "application.apply", applicationTaskRevision, "queued", "Restore the saved Pulse collector with the original monitoring identity; reporting still requires verification"); err != nil {
+	if err = s.recordTaskEvent(ctx, tx, id, agentID, "application.apply", applicationTaskRevision, "queued", "Restore the saved Senulun collector with the original monitoring identity; reporting still requires verification"); err != nil {
 		return result, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -201,7 +201,7 @@ func (s *Store) reinstallMonitorRestoreTask(ctx context.Context, tx *sql.Tx, age
  JOIN agent_reinstall_monitor_rotations r ON r.command_id=c.id JOIN applications a ON a.id=d.application_id JOIN agents n ON n.id=d.agent_id JOIN secrets sealed ON sealed.id=d.secret_id
  WHERE d.id=? AND d.agent_id=? AND a.node_id=d.agent_id AND d.app_key=? AND a.app_key=d.app_key AND d.application_id=r.application_id
  AND d.operation='install' AND d.delete_data=0 AND d.registry_credential_id IS NULL AND d.service_address='' AND d.runtime_generation=? AND d.reconciliation_required=0 AND d.reconciliation_requested=0
- AND (d.state<>'pending' OR d.attempt=0) AND json_extract(n.capabilities_json,'$.pulseRestore')=1`, taskID, agentID, pulseAgentAppKey, platform.ApplicationRuntimeGeneration).Scan(&rotationID, &serviceAgentID, &expected, &approval, &task.AppKey, &version, &manifest, &config, &task.ApplicationID, &task.ApplicationRole, &sealed, &attempt)
+ AND (d.state<>'pending' OR d.attempt=0) AND json_extract(n.capabilities_json,'$.pulseRestore')=1`, taskID, agentID, senulunAgentAppKey, platform.ApplicationRuntimeGeneration).Scan(&rotationID, &serviceAgentID, &expected, &approval, &task.AppKey, &version, &manifest, &config, &task.ApplicationID, &task.ApplicationRole, &sealed, &attempt)
 	if errors.Is(err, sql.ErrNoRows) && !strings.HasPrefix(taskID, "reinstall-monitor-collector-") {
 		return nil, nil
 	}
@@ -220,7 +220,7 @@ func (s *Store) reinstallMonitorRestoreTask(ctx context.Context, tx *sql.Tx, age
 	if err != nil {
 		return nil, errExecutionAuthorization
 	}
-	var stored pulse.RestoreCredentials
+	var stored senulun.RestoreCredentials
 	if json.Unmarshal(raw, &stored) != nil || stored != credentials {
 		return nil, errExecutionAuthorization
 	}
@@ -249,7 +249,7 @@ func (s *Store) reinstallMonitorRestoreTask(ctx context.Context, tx *sql.Tx, age
 	task.Config = config
 	task.Secrets = json.RawMessage(`{}`)
 	task.RequiredRuntimeGeneration = platform.ApplicationRuntimeGeneration
-	task.PulseRestore = &credentials
+	task.SenulunRestore = &credentials
 	encoded, _ := json.Marshal(task)
 	sum := sha256.Sum256(encoded)
 	if building && expected != "" || !building && expected != hex.EncodeToString(sum[:]) {

@@ -9,8 +9,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/secret"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 // Registration evidence identifies records to inspect through Pulse's supported
@@ -44,7 +44,7 @@ func (s *Store) readReinstallMonitoring(ctx context.Context, tx *sql.Tx, plan *A
 		return "", err
 	}
 	for _, app := range plan.Applications {
-		if app.AppKey != pulseAgentAppKey || app.Recovery == "keep_stopped" || app.DeploymentID == "" {
+		if app.AppKey != senulunAgentAppKey || app.Recovery == "keep_stopped" || app.DeploymentID == "" {
 			continue
 		}
 		review, evidence, err := s.reinstallMonitorEvidence(ctx, tx, plan.AgentID, app)
@@ -106,13 +106,13 @@ func (s *Store) reinstallMonitorEvidence(ctx context.Context, tx *sql.Tx, agentI
 	if err := tx.QueryRowContext(ctx, `SELECT config_json FROM deployments WHERE id=? AND application_id=? AND agent_id=?`, app.DeploymentID, app.ApplicationID, agentID).Scan(&raw); err != nil {
 		return review, "", err
 	}
-	var config pulse.AgentConfig
+	var config senulun.AgentConfig
 	if json.Unmarshal(raw, &config) != nil || config.Validate() != nil {
 		review.State = "configuration_invalid"
 		return review, "", nil
 	}
 	review.ServiceApplicationID = config.ServiceApplicationID
-	err := tx.QueryRowContext(ctx, `SELECT node_id FROM applications WHERE id=? AND app_key=?`, config.ServiceApplicationID, pulseAppKey).Scan(&review.ServiceAgentID)
+	err := tx.QueryRowContext(ctx, `SELECT node_id FROM applications WHERE id=? AND app_key=?`, config.ServiceApplicationID, senulunAppKey).Scan(&review.ServiceAgentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		review.State = "service_missing"
 		return review, "", nil
@@ -128,7 +128,7 @@ func (s *Store) reinstallMonitorEvidence(ctx context.Context, tx *sql.Tx, agentI
 	 FROM application_commands c JOIN deployments d ON d.id=json_extract(c.input_json,'$.deploymentId')
 	 LEFT JOIN task_executions e ON e.task_id=c.id AND e.agent_id=c.agent_id AND e.kind='application.command'
 	 WHERE c.kind=? AND c.gateway_node_id=? AND d.agent_id=? AND d.application_id=? AND d.app_key=? AND d.operation='install'
-	 ORDER BY c.id,e.id LIMIT ?`, pulse.EnrollmentKind, agentID, agentID, app.ApplicationID, pulseAgentAppKey, reinstallMonitorEvidenceLimit+1)
+	 ORDER BY c.id,e.id LIMIT ?`, senulun.EnrollmentKind, agentID, agentID, app.ApplicationID, senulunAgentAppKey, reinstallMonitorEvidenceLimit+1)
 	if err != nil {
 		return review, "", err
 	}
@@ -182,9 +182,9 @@ func (s *Store) reinstallMonitorEnrollmentID(executionID, commandID, deploymentI
 	}
 	sum := sha256.Sum256(raw)
 	var task AgentTask
-	var expected pulse.EnrollmentTask
+	var expected senulun.EnrollmentTask
 	if hex.EncodeToString(sum[:]) != digest || json.Unmarshal(input, &expected) != nil || expected.ApplicationID != serviceApplicationID || expected.DeploymentID != deploymentID ||
-		json.Unmarshal(raw, &task) != nil || task.ID != commandID || task.Kind != "application.command" || task.Attempt != attempt || attempt < 1 || task.PulseEnrollment == nil || *task.PulseEnrollment != expected {
+		json.Unmarshal(raw, &task) != nil || task.ID != commandID || task.Kind != "application.command" || task.Attempt != attempt || attempt < 1 || task.SenulunEnrollment == nil || *task.SenulunEnrollment != expected {
 		return ""
 	}
 	raw, err = secret.Open(s.key, sealedResult, []byte("execution-result:"+executionID))
@@ -193,7 +193,7 @@ func (s *Store) reinstallMonitorEnrollmentID(executionID, commandID, deploymentI
 	}
 	var evidence executionResultEvidence
 	var result struct {
-		Enrollment *pulse.EnrollmentResult `json:"pulseEnrollment"`
+		Enrollment *senulun.EnrollmentResult `json:"pulseEnrollment"`
 	}
 	if json.Unmarshal(raw, &evidence) != nil || !evidence.Succeeded || evidence.Unknown || json.Unmarshal(evidence.Result, &result) != nil || result.Enrollment == nil {
 		return ""

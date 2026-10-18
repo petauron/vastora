@@ -17,7 +17,7 @@ import (
 )
 
 type meridianLegacyRouteCandidate struct {
-	grant        meridian.RouteGrant
+	grant        glivela.RouteGrant
 	protocolID   string
 	endpointID   string
 	credentialID string
@@ -37,13 +37,13 @@ func (s *Store) importReadyMeridianLegacyRoutesInTx(ctx context.Context, tx *sql
 		return 0, err
 	}
 	if state != "verify" || authority != "meridian" {
-		return 0, errors.New("center: legacy routes can be imported only during Meridian verification")
+		return 0, errors.New("center: legacy routes can be imported only during Glivela verification")
 	}
 	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM meridian_route_grants").Scan(&existingRoutes); err != nil {
 		return 0, err
 	}
 	if expectedRoutes != existingRoutes {
-		return 0, errors.New("center: Meridian route inventory changed before legacy route import")
+		return 0, errors.New("center: Glivela route inventory changed before legacy route import")
 	}
 
 	rows, err := tx.QueryContext(ctx, "SELECT DISTINCT grant_row.id FROM landing_client_grants grant_row "+
@@ -88,7 +88,7 @@ func (s *Store) importReadyMeridianLegacyRoutesInTx(ctx context.Context, tx *sql
 			"WHERE endpoint.application_id=? AND endpoint.service_id=? AND endpoint.status<>'retired'",
 			record.ApplicationID, record.ServiceID).Scan(&endpointID, &endpointTag, &entryNodeID, &existingSourceJSON, &vlessEnabled); err != nil ||
 			vlessEnabled != 1 || !sameLegacyInboundTag(endpointTag, record.Grant.InboundTag) {
-			return 0, errors.New("center: ready legacy route no longer maps to a Meridian VLESS endpoint")
+			return 0, errors.New("center: ready legacy route no longer maps to a Glivela VLESS endpoint")
 		}
 		if (meridianruntime.Peer{EgressID: entryNodeID, Identity: record.Source}).Validate() != nil {
 			return 0, errors.New("center: ready legacy route has no authorized entry source")
@@ -96,7 +96,7 @@ func (s *Store) importReadyMeridianLegacyRoutesInTx(ctx context.Context, tx *sql
 		var existingSource landing.PeerIdentity
 		if json.Unmarshal(existingSourceJSON, &existingSource) != nil ||
 			existingSource != (landing.PeerIdentity{}) && existingSource != record.Source {
-			return 0, errors.New("center: Meridian entry source differs from the authorized legacy source")
+			return 0, errors.New("center: Glivela entry source differs from the authorized legacy source")
 		}
 		if previous, exists := sources[endpointID]; exists && previous != record.Source {
 			return 0, errors.New("center: legacy routes disagree about their authorized entry source")
@@ -119,7 +119,7 @@ func (s *Store) importReadyMeridianLegacyRoutesInTx(ctx context.Context, tx *sql
 			return 0, errors.New("center: ready legacy route landing no longer authorizes its entry")
 		}
 
-		var base meridian.Credential
+		var base glivela.Credential
 		var accountName, accountStatus string
 		var accountEnabled, baseEnabled int
 		if err := tx.QueryRowContext(ctx, "SELECT credential.id,credential.account_id,credential.user_name,credential.identity_sha256,credential.enabled,"+
@@ -130,14 +130,14 @@ func (s *Store) importReadyMeridianLegacyRoutesInTx(ctx context.Context, tx *sql
 			&accountName, &accountStatus, &accountEnabled); err != nil {
 			return 0, errors.New("center: ready legacy route native account was not imported")
 		}
-		base.Kind, base.EntryID, base.Enabled = meridian.NativeCredential, record.ApplicationID, baseEnabled == 1
+		base.Kind, base.EntryID, base.Enabled = glivela.NativeCredential, record.ApplicationID, baseEnabled == 1
 		if base.Validate() != nil || !base.Enabled || accountEnabled != 1 || accountStatus != "active" ||
 			accountName != record.Grant.BaseUser || base.Identity != record.Grant.BaseIdentity {
 			return 0, errors.New("center: ready legacy route parent authority changed")
 		}
 
 		protocolID, err := s.meridianSecretInTx(ctx, tx, record.CredentialSecretID, "landing-credential:"+record.ID)
-		if err != nil || uuid.Validate(string(protocolID)) != nil || meridian.Identity(string(protocolID)) != record.Grant.FixedIdentity {
+		if err != nil || uuid.Validate(string(protocolID)) != nil || glivela.Identity(string(protocolID)) != record.Grant.FixedIdentity {
 			return 0, errors.New("center: ready legacy route credential changed")
 		}
 		materialJSON, err := s.meridianSecretInTx(ctx, tx, record.MaterialSecretID.String, "landing-material:"+record.ID)
@@ -156,19 +156,19 @@ func (s *Store) importReadyMeridianLegacyRoutesInTx(ctx context.Context, tx *sql
 		if err != nil {
 			return 0, err
 		}
-		route := meridian.Credential{
-			ID: credentialID, AccountID: base.AccountID, Kind: meridian.RouteCredential,
-			User: meridian.RouteUser(record.ID), Identity: meridian.Identity(string(protocolID)),
+		route := glivela.Credential{
+			ID: credentialID, AccountID: base.AccountID, Kind: glivela.RouteCredential,
+			User: glivela.RouteUser(record.ID), Identity: glivela.Identity(string(protocolID)),
 			EntryID: record.ApplicationID, EgressID: record.LandingNodeID, Enabled: true,
 		}
-		grant := meridian.RouteGrant{
+		grant := glivela.RouteGrant{
 			ID: record.ID, AccountID: base.AccountID, EntryID: record.ApplicationID,
 			EgressID: record.LandingNodeID, InboundTag: endpointTag,
-			Base: base, Route: route, Mode: meridian.FixedMode, Enabled: true,
+			Base: base, Route: route, Mode: glivela.FixedMode, Enabled: true,
 			HideNative: record.Grant.HideBase, DesiredRev: 1,
 		}
-		if grant.Validate() != nil || (meridian.CredentialMaterial{Credential: route, ProtocolID: string(protocolID)}).Validate() != nil {
-			return 0, errors.New("center: ready legacy route cannot be represented by Meridian")
+		if grant.Validate() != nil || (glivela.CredentialMaterial{Credential: route, ProtocolID: string(protocolID)}).Validate() != nil {
+			return 0, errors.New("center: ready legacy route cannot be represented by Glivela")
 		}
 		candidates = append(candidates, meridianLegacyRouteCandidate{
 			grant: grant, protocolID: string(protocolID),
@@ -222,7 +222,7 @@ func (s *Store) importReadyMeridianLegacyRoutesInTx(ctx context.Context, tx *sql
 			return 0, err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
-			return 0, errors.New("center: Meridian endpoint changed before legacy routes were imported")
+			return 0, errors.New("center: Glivela endpoint changed before legacy routes were imported")
 		}
 	}
 	updated, err := tx.ExecContext(ctx, "UPDATE meridian_cutover SET expected_credentials=expected_credentials+?,expected_routes=expected_routes+?,"+
@@ -232,7 +232,7 @@ func (s *Store) importReadyMeridianLegacyRoutesInTx(ctx context.Context, tx *sql
 		return 0, err
 	}
 	if changed, _ := updated.RowsAffected(); changed != 1 {
-		return 0, errors.New("center: Meridian cutover changed before legacy routes were imported")
+		return 0, errors.New("center: Glivela cutover changed before legacy routes were imported")
 	}
 	return len(candidates), nil
 }

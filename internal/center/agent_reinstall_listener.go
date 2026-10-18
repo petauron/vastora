@@ -148,7 +148,7 @@ func (s *Store) QueueAgentReinstallListener(ctx context.Context, agentID, adminI
 		return result, err
 	}
 	now := s.now().UTC()
-	if err = s.saveNodeListenerState(ctx, tx, state, now, "Restore reviewed Meridian entry; public access verification remains pending"); err != nil {
+	if err = s.saveNodeListenerState(ctx, tx, state, now, "Restore reviewed Glivela entry; public access verification remains pending"); err != nil {
 		return result, err
 	}
 	id := nodeListenerTaskID(agentID, revision+1)

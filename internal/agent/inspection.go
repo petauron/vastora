@@ -12,9 +12,10 @@ import (
 // Agent database read-only. Installers use it before migration approval so an
 // inspection can never initialize or migrate local state.
 type ConnectionSummary struct {
-	AgentID   string
-	Name      string
-	CenterURL string
+	LandingOnly bool
+	AgentID     string
+	Name        string
+	CenterURL   string
 }
 
 type InstallOperationSummary struct {
@@ -34,6 +35,15 @@ func InspectConnection(dataDir string) (ConnectionSummary, error) {
 	}
 	defer db.Close()
 	var summary ConnectionSummary
+	var purposeColumn int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('control_plane_connection') WHERE name='landing_only'`).Scan(&purposeColumn); err != nil {
+		return summary, err
+	}
+	if purposeColumn != 0 {
+		if err := db.QueryRow(`SELECT landing_only FROM control_plane_connection WHERE id=1`).Scan(&summary.LandingOnly); err != nil {
+			return summary, err
+		}
+	}
 	err = db.QueryRow(`SELECT agent_id, name, center_url FROM control_plane_connection WHERE id = 1`).Scan(&summary.AgentID, &summary.Name, &summary.CenterURL)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ConnectionSummary{}, errors.New("agent: not enrolled")

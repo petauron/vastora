@@ -482,7 +482,7 @@ func TestObserveMeridianStateAcceptsCurrentHysteriaStreamMethod(t *testing.T) {
 		]
 	}`)
 	digest := sha256.Sum256(config)
-	observed, err := observeMeridianState(meridian.DesiredArtifact{Revision: 1, Config: config, ConfigSHA256: hex.EncodeToString(digest[:])})
+	observed, err := observeMeridianState(glivela.DesiredArtifact{Revision: 1, Config: config, ConfigSHA256: hex.EncodeToString(digest[:])})
 	if err != nil || len(observed) != 1 || observed[0].InboundTag != "meridian-entry" || observed[0].Port != 443 {
 		t.Fatalf("current Hysteria stream method was not observed: %#v err=%v", observed, err)
 	}
@@ -765,10 +765,10 @@ func TestXrayWorkerAppliedReceiptCanOnlyRecoverMatchingActiveConfig(t *testing.T
 }
 
 func TestMeridianArtifactHY2DetectionControlsUDP443Publication(t *testing.T) {
-	artifact := func(config string) meridian.DesiredArtifact {
+	artifact := func(config string) glivela.DesiredArtifact {
 		encoded := []byte(config)
 		digest := sha256.Sum256(encoded)
-		return meridian.DesiredArtifact{Revision: 1, Config: encoded, ConfigSHA256: hex.EncodeToString(digest[:])}
+		return glivela.DesiredArtifact{Revision: 1, Config: encoded, ConfigSHA256: hex.EncodeToString(digest[:])}
 	}
 	hasHY2, err := meridianArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"hysteria","port":443}]}`))
 	if err != nil || !hasHY2 {
@@ -779,7 +779,7 @@ func TestMeridianArtifactHY2DetectionControlsUDP443Publication(t *testing.T) {
 		t.Fatalf("VLESS-only artifact = %v, err=%v", hasHY2, err)
 	}
 	if _, err := meridianArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"hysteria","port":10443}]}`)); err == nil {
-		t.Fatal("Meridian accepted Hysteria away from UDP 443")
+		t.Fatal("Glivela accepted Hysteria away from UDP 443")
 	}
 }
 

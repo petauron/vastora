@@ -1,5 +1,98 @@
 # Changelog
 
+## [0.1.0-alpha.329](https://github.com/petauron/vastora/compare/v0.1.0-alpha.328...v0.1.0-alpha.329) (2026-10-18)
+
+
+### Features
+
+* support Docker-free landing-only nodes ([#950](https://github.com/petauron/vastora/issues/950)) ([1e78b08](https://github.com/petauron/vastora/commit/1e78b08f07fbcf5e7ba12bcc3254078e3309dfdf)), closes [#940](https://github.com/petauron/vastora/issues/940)
+
+## [0.1.0-alpha.328](https://github.com/petauron/vastora/compare/v0.1.0-alpha.327...v0.1.0-alpha.328) (2026-10-18)
+
+
+### Bug Fixes
+
+* **center:** enforce cascades on replacement database connections ([00b66d8](https://github.com/petauron/vastora/commit/00b66d80d37811a64fa2253b7e3cc990c872568f))
+
+## [0.1.0-alpha.327](https://github.com/petauron/vastora/compare/v0.1.0-alpha.326...v0.1.0-alpha.327) (2026-10-18)
+
+
+### Bug Fixes
+
+* **center:** keep composite runtime stable across landing outages ([e4454cb](https://github.com/petauron/vastora/commit/e4454cb725f307ba5435b719d0dd92235e2627d5))
+
+## [0.1.0-alpha.326](https://github.com/petauron/vastora/compare/v0.1.0-alpha.325...v0.1.0-alpha.326) (2026-10-18)
+
+
+### Bug Fixes
+
+* **agent:** avoid Tailscale restarts on inspection errors ([#943](https://github.com/petauron/vastora/issues/943)) ([ad7f7f0](https://github.com/petauron/vastora/commit/ad7f7f0641d80ea80c0e584df5618ea6660463ae))
+* **web:** isolate activity recovery from desktop data failures ([#944](https://github.com/petauron/vastora/issues/944)) ([fc5adc9](https://github.com/petauron/vastora/commit/fc5adc98d01884ff9a42b115cc7fcbc46a1cd208))
+
+## [0.1.0-alpha.325](https://github.com/petauron/vastora/compare/v0.1.0-alpha.324...v0.1.0-alpha.325) (2026-10-17)
+
+
+### Bug Fixes
+
+* align Xray recovery eligibility and refresh stalled latency streams ([513d7bb](https://github.com/petauron/vastora/commit/513d7bb0235e5cfdf8c112c5952b2aef32fee640))
+* queue concurrent Glivela entry verification without false failures ([5dfe06c](https://github.com/petauron/vastora/commit/5dfe06c946659100443fb1e15d99fb9fbd606e95))
+
+## [0.1.0-alpha.324](https://github.com/petauron/vastora/compare/v0.1.0-alpha.323...v0.1.0-alpha.324) (2026-10-17)
+
+
+### Bug Fixes
+
+* restore authenticated Glivela public-entry health checks ([507ea7a](https://github.com/petauron/vastora/commit/507ea7a761281f936509d7ecea20e223f761a63b))
+
+## [0.1.0-alpha.323](https://github.com/petauron/vastora/compare/v0.1.0-alpha.322...v0.1.0-alpha.323) (2026-10-17)
+
+
+### Bug Fixes
+
+* restore Meridian latency probes and align sample freshness ([#933](https://github.com/petauron/vastora/issues/933)) ([269fc79](https://github.com/petauron/vastora/commit/269fc79e26421fe289effc1846a7d4be36110eda))
+
+## [0.1.0-alpha.322](https://github.com/petauron/vastora/compare/v0.1.0-alpha.321...v0.1.0-alpha.322) (2026-10-17)
+
+
+### Bug Fixes
+
+* **agent:** check nftables ownership support before proxy cutover ([#930](https://github.com/petauron/vastora/issues/930)) ([bf2a54f](https://github.com/petauron/vastora/commit/bf2a54f1f313e3f63803f3d0e0e654c8bd889a7c))
+* **agent:** reduce landing latency sampling to once per minute ([#931](https://github.com/petauron/vastora/issues/931)) ([83ad1ca](https://github.com/petauron/vastora/commit/83ad1cadd45b08ffdfdd96efe620551e21504a75))
+
+## [0.1.0-alpha.321](https://github.com/petauron/vastora/compare/v0.1.0-alpha.320...v0.1.0-alpha.321) (2026-10-17)
+
+
+### Bug Fixes
+
+* **glivela:** automate entry DNS and verify authenticated proxy health ([0087a21](https://github.com/petauron/vastora/commit/0087a21b463af06855465d9a73265f57a45b015e))
+* **integrations:** adopt canonical Glivela package and versioned UI targets ([5803cb0](https://github.com/petauron/vastora/commit/5803cb0bdcdea0f548fa447c1f25334ccfa5664b))
+* **integrations:** migrate Senulun and Glivela naming with retained application data ([#929](https://github.com/petauron/vastora/issues/929)) ([f41b887](https://github.com/petauron/vastora/commit/f41b8877e1788cfea271b0b1ea3007524f0234a2))
+* **openapi:** retain egress policy schema after Glivela package rename ([7f85d53](https://github.com/petauron/vastora/commit/7f85d53c1d0d6178f1dfcb596fd1eb86a94e0c87))
+* **senulun:** apply converted probe environments without resetting credentials ([83c5e5b](https://github.com/petauron/vastora/commit/83c5e5b38d8e98ba0beb9f9c76a063e0d959f094))
+* **senulun:** migrate monitoring symbols and preserve upgrade configuration ([2e64636](https://github.com/petauron/vastora/commit/2e64636d0e06cefd442df91bef913911f9e72771))
+* **senulun:** retain persisted capability paths during code migration ([c85888a](https://github.com/petauron/vastora/commit/c85888a7d98717fdd4143dd4c70f022f6563632c))
+
+## [0.1.0-alpha.320](https://github.com/petauron/vastora/compare/v0.1.0-alpha.319...v0.1.0-alpha.320) (2026-10-17)
+
+
+### Bug Fixes
+
+* **web:** simplify app updates and separate adoption recovery ([725009d](https://github.com/petauron/vastora/commit/725009d07168ea83d717022e3510b4c785d7f37a))
+
+## [0.1.0-alpha.319](https://github.com/petauron/vastora/compare/v0.1.0-alpha.318...v0.1.0-alpha.319) (2026-10-16)
+
+
+### Bug Fixes
+
+* ship unified Color Planes icons and smooth app tiles ([#922](https://github.com/petauron/vastora/issues/922)) ([0d7715d](https://github.com/petauron/vastora/commit/0d7715d6c7540495e35e9dcc69bd7f7708dcd230))
+
+## [0.1.0-alpha.318](https://github.com/petauron/vastora/compare/v0.1.0-alpha.317...v0.1.0-alpha.318) (2026-10-16)
+
+
+### Bug Fixes
+
+* align application names with Glivela and Senulun catalog branding ([#920](https://github.com/petauron/vastora/issues/920)) ([d0b7f83](https://github.com/petauron/vastora/commit/d0b7f8384d99f4c02e93fca80023f26198a36a39))
+
 ## [0.1.0-alpha.317](https://github.com/petauron/vastora/compare/v0.1.0-alpha.316...v0.1.0-alpha.317) (2026-10-14)
 
 

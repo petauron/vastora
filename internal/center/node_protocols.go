@@ -207,7 +207,7 @@ func (s *Store) ConfigureNodeProtocols(ctx context.Context, serviceID string, se
 
 func (s *Store) configureMeridianNodeProtocols(ctx context.Context, serviceID string, selection nodeprotocol.Selection) (ApplicationCommandView, error) {
 	if !selection.VLESS {
-		return ApplicationCommandView{}, errors.New("center: Meridian requires VLESS as the public TCP 443 anchor")
+		return ApplicationCommandView{}, errors.New("center: Glivela requires VLESS as the public TCP 443 anchor")
 	}
 	if err := s.ensureServicePublicationChangeAllowed(ctx, s.db, serviceID); err != nil {
 		return ApplicationCommandView{}, err
@@ -226,17 +226,17 @@ func (s *Store) configureMeridianNodeProtocols(ctx context.Context, serviceID st
 		var certificateSecretID, privateKeySecretID sql.NullString
 		if err := s.db.QueryRowContext(ctx, `SELECT id,hy2_server_name,hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after
 			FROM meridian_endpoints WHERE service_id=? AND status<>'retired'`, serviceID).Scan(&endpointID, &certificateHostname, &certificateSecretID, &privateKeySecretID, &notAfter); err != nil {
-			return ApplicationCommandView{}, errors.New("center: Meridian subscription node is unavailable")
+			return ApplicationCommandView{}, errors.New("center: Glivela subscription node is unavailable")
 		}
 		expiresAt, _ := time.Parse(time.RFC3339Nano, notAfter)
 		if certificateHostname == hostname && certificateSecretID.Valid && privateKeySecretID.Valid && expiresAt.After(s.now().Add(privateCertificateRenewBefore)) {
 			certificatePEM, secretErr := s.getSecret(ctx, certificateSecretID.String, meridianHY2CertificateSecretContext(endpointID))
 			if secretErr != nil {
-				return ApplicationCommandView{}, errors.New("center: stored Meridian Hysteria certificate is unavailable")
+				return ApplicationCommandView{}, errors.New("center: stored Glivela Hysteria certificate is unavailable")
 			}
 			privateKeyPEM, secretErr := s.getSecret(ctx, privateKeySecretID.String, meridianHY2PrivateKeySecretContext(endpointID))
 			if secretErr != nil {
-				return ApplicationCommandView{}, errors.New("center: stored Meridian Hysteria key is unavailable")
+				return ApplicationCommandView{}, errors.New("center: stored Glivela Hysteria key is unavailable")
 			}
 			certificate = managedCertificate{CertificatePEM: string(certificatePEM), PrivateKeyPEM: string(privateKeyPEM), NotAfter: expiresAt}
 		} else {
@@ -263,10 +263,10 @@ func (s *Store) configureMeridianNodeProtocols(ctx context.Context, serviceID st
 		WHERE endpoint.service_id=? AND endpoint.status<>'retired' AND application.app_key=? AND application.status='running'`, serviceID, meridianAppKey).Scan(
 		&endpointID, &applicationID, &hy2Tag, &oldCertificateID, &oldPrivateKeyID, &status,
 	); err != nil {
-		return ApplicationCommandView{}, errors.New("center: Meridian subscription node is unavailable")
+		return ApplicationCommandView{}, errors.New("center: Glivela subscription node is unavailable")
 	}
 	if status == "pending" || status == "applying" {
-		return ApplicationCommandView{}, errors.New("center: Meridian node already has an active runtime change")
+		return ApplicationCommandView{}, errors.New("center: Glivela node already has an active runtime change")
 	}
 	if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
 		return ApplicationCommandView{}, err
@@ -319,7 +319,7 @@ func (s *Store) configureMeridianNodeProtocols(ctx context.Context, serviceID st
 			if secretErr != nil {
 				return ApplicationCommandView{}, secretErr
 			}
-			if _, updateErr := tx.ExecContext(ctx, `UPDATE meridian_credentials SET hy2_auth_secret_id=?,hy2_identity_sha256=?,updated_at=? WHERE id=? AND hy2_auth_secret_id IS NULL`, secretID, meridian.Identity(auth), s.now().UTC().Format(time.RFC3339Nano), credentialID); updateErr != nil {
+			if _, updateErr := tx.ExecContext(ctx, `UPDATE meridian_credentials SET hy2_auth_secret_id=?,hy2_identity_sha256=?,updated_at=? WHERE id=? AND hy2_auth_secret_id IS NULL`, secretID, glivela.Identity(auth), s.now().UTC().Format(time.RFC3339Nano), credentialID); updateErr != nil {
 				return ApplicationCommandView{}, updateErr
 			}
 		}
@@ -335,7 +335,7 @@ func (s *Store) configureMeridianNodeProtocols(ctx context.Context, serviceID st
 		return ApplicationCommandView{}, err
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return ApplicationCommandView{}, errors.New("center: Meridian subscription node changed during protocol update")
+		return ApplicationCommandView{}, errors.New("center: Glivela subscription node changed during protocol update")
 	}
 	commandID, err := s.queueMeridianRuntime(ctx, tx, endpointID, false)
 	if err != nil {
@@ -538,7 +538,7 @@ func (s *Store) renewNodeProtocolCertificates(ctx context.Context) error {
 	}
 	for _, value := range pending {
 		if _, err := s.ConfigureNodeProtocols(ctx, value.id, nodeprotocol.Selection{VLESS: value.vless, HY2: true}); err != nil {
-			failures = append(failures, fmt.Errorf("renew Meridian node certificate: %w", err))
+			failures = append(failures, fmt.Errorf("renew Glivela node certificate: %w", err))
 		}
 	}
 	return errors.Join(failures...)

@@ -223,14 +223,14 @@ func TestRealitySecurityCheckSupportsMeridianEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.Status != realitySecurityCheckSafe {
-		t.Fatalf("unexpected Meridian security result: %#v", result)
+		t.Fatalf("unexpected Glivela security result: %#v", result)
 	}
 	publication, err := store.Publication(ctx, "verification-publication")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if publication.SecurityCheck == nil || publication.SecurityCheck.Status != realitySecurityCheckSafe {
-		t.Fatalf("Meridian publication did not expose the security result: %#v", publication.SecurityCheck)
+		t.Fatalf("Glivela publication did not expose the security result: %#v", publication.SecurityCheck)
 	}
 }
 

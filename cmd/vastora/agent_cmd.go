@@ -174,6 +174,9 @@ func runAgent(arguments []string) error {
 		if _, err := store.Connection(context.Background()); err != nil {
 			return errors.New("agent must be enrolled before its purpose can be changed")
 		}
+		if err := store.ValidateNodePurpose(context.Background(), capabilities); err != nil {
+			return err
+		}
 		executable, err := os.Executable()
 		if err != nil {
 			return fmt.Errorf("locate vastora executable: %w", err)
@@ -507,11 +510,7 @@ func runAgent(arguments []string) error {
 		if !loopbackAddress(*listen) {
 			return errors.New("agent health listener must be loopback-only")
 		}
-		roles, err := parseNodeRoles(*rolesValue)
-		if err != nil {
-			return err
-		}
-		capabilities, err := parseNodeCapabilities(*capabilitiesValue)
+		roles, capabilities, err := validatedNodeRuntime(*rolesValue, *capabilitiesValue)
 		if err != nil {
 			return err
 		}
@@ -537,6 +536,9 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		client := agent.Client{Roles: roles, Capabilities: capabilities, TailscaleEnrolled: hostState.TailscaleEnrolled, TailscaleOwnership: hostState.TailscaleOwnership}
+		if err := store.ValidateNodePurpose(context.Background(), capabilities); err != nil {
+			return err
+		}
 		client.PublicEgress = agent.NewPublicEgressObserver()
 		if runtime.GOOS == "linux" {
 			if _, lookupErr := exec.LookPath("tailscale"); lookupErr == nil {
@@ -562,22 +564,24 @@ func runAgent(arguments []string) error {
 			client.Updater = systemHostUpdater{dataDir: *dataDir, executable: executable}
 			client.LandingServer = agent.NativeLandingServer{}
 		}
-		client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}, Store: store}
+		if !capabilities.LandingOnly {
+			client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}, Store: store}
+		}
 		client.Capabilities.IPQuality = capabilities.Docker && runtime.GOOS == "linux"
-		client.Capabilities.NetworkDiagnostics = runtime.GOOS == "linux"
-		client.Capabilities.ReturnRoute = runtime.GOOS == "linux" && os.Geteuid() == 0
+		client.Capabilities.NetworkDiagnostics = !capabilities.LandingOnly && runtime.GOOS == "linux"
+		client.Capabilities.ReturnRoute = !capabilities.LandingOnly && runtime.GOOS == "linux" && os.Geteuid() == 0
 		_, iperfErr := exec.LookPath("iperf3")
-		client.Capabilities.BandwidthDiagnostics = runtime.GOOS == "linux" && iperfErr == nil
-		client.Capabilities.NativeEgress = capabilities.Docker && runtime.GOOS == "linux" && os.Geteuid() == 0
+		client.Capabilities.BandwidthDiagnostics = !capabilities.LandingOnly && runtime.GOOS == "linux" && iperfErr == nil
+		client.Capabilities.NativeEgress = (capabilities.Docker || capabilities.LandingOnly) && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.LandingEgressIP = runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.MeridianLinkBandwidth = capabilities.Docker && runtime.GOOS == "linux"
 		client.Capabilities.MeridianLinkRevision = nodediagnostics.LinkBandwidthRevision
-		client.Capabilities.PulseInspection = capabilities.Docker && runtime.GOOS == "linux"
-		client.Capabilities.PulseRotation = client.Capabilities.PulseInspection
+		client.Capabilities.SenulunInspection = capabilities.Docker && runtime.GOOS == "linux"
+		client.Capabilities.SenulunRotation = client.Capabilities.SenulunInspection
 		client.Capabilities.MeridianAcceptance = client.Capabilities.Docker
-		client.Capabilities.PulseReporting = client.Capabilities.PulseInspection
-		client.Capabilities.PulseRestore = runtime.GOOS == "linux" && os.Geteuid() == 0
-		client.Capabilities.HostProfile = runtime.GOOS == "linux"
+		client.Capabilities.SenulunReporting = client.Capabilities.SenulunInspection
+		client.Capabilities.SenulunRestore = capabilities.Docker && runtime.GOOS == "linux" && os.Geteuid() == 0
+		client.Capabilities.HostProfile = !capabilities.LandingOnly && runtime.GOOS == "linux"
 		if capabilities.Docker {
 			client.NodeListener = agent.DockerLayer4Provisioner{Image: *haproxyImage}
 		}
@@ -604,8 +608,10 @@ func runAgent(arguments []string) error {
 		// Reconnection is observation only. A failed heartbeat must not trigger
 		// offline application restoration or replay a management operation.
 		go func() {
-			if err := store.ResumeXrayWorker(context.Background(), ""); err != nil {
-				controlLogger.Error("Xray worker recovery blocked", "event", "xray.worker.recovery", "error", controlplane.SafeError(err.Error()))
+			if !capabilities.LandingOnly {
+				if err := store.ResumeXrayWorker(context.Background(), ""); err != nil {
+					controlLogger.Error("Xray worker recovery blocked", "event", "xray.worker.recovery", "error", controlplane.SafeError(err.Error()))
+				}
 			}
 			if err := store.ResumeLandingRuntime(context.Background()); err != nil {
 				controlLogger.Error("Landing monitor recovery blocked", "event", "landing.monitor.recovery", "error", controlplane.SafeError(err.Error()))
@@ -717,6 +723,9 @@ func validatedNodeRuntime(rolesValue, capabilitiesValue string) ([]string, agent
 	if capabilities.Docker && !containsValue(roles, "worker") || capabilities.Gateway && !containsValue(roles, "gateway") || capabilities.Tunnel && !containsValue(roles, "worker") {
 		return nil, agent.Capabilities{}, errors.New("selected capabilities do not match the node roles")
 	}
+	if capabilities.LandingOnly && (len(roles) != 1 || roles[0] != "worker") {
+		return nil, agent.Capabilities{}, errors.New("landing-only nodes require only the worker role")
+	}
 	return roles, capabilities, nil
 }
 
@@ -799,6 +808,16 @@ func downloadAgentUpdateAttempt(ctx context.Context, client *http.Client, connec
 	expectedDigest := strings.ToLower(strings.TrimSpace(response.Header.Get("X-Vastora-SHA256")))
 	if expectedVersion == "" || len(expectedDigest) != sha256.Size*2 {
 		return "", "", errors.New("center returned incomplete Agent update metadata")
+	}
+	downloadBytes := response.ContentLength
+	if downloadBytes <= 0 {
+		downloadBytes = 256 << 20
+	}
+	if downloadBytes > 256<<20 {
+		return "", "", errors.New("agent: update binary exceeds size limit")
+	}
+	if err := requireAgentUpdateSpace(directory, downloadBytes+16<<20); err != nil {
+		return "", "", err
 	}
 	temporary, err := os.CreateTemp(directory, ".vastora-update-*")
 	if err != nil {
@@ -999,9 +1018,13 @@ func installSystemdAgent(executable, dataDir, roles, capabilities string) error 
 }
 
 func systemdAgentUnit(executable, dataDir, roles, capabilities string) string {
+	after := "network-online.target docker.service"
+	if capabilities == "landing" {
+		after = "network-online.target tailscaled.service"
+	}
 	return `[Unit]
 Description=Vastora Agent
-After=network-online.target docker.service
+After=` + after + `
 Wants=network-online.target
 
 [Service]
@@ -1010,6 +1033,8 @@ ExecStart=` + systemdQuote(executable) + ` agent serve --data-dir ` + systemdQuo
 Restart=always
 RestartSec=5s
 TimeoutStopSec=30s
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=100
 
 [Install]
 WantedBy=multi-user.target
@@ -1020,6 +1045,9 @@ func systemdQuote(value string) string { return strconv.Quote(value) }
 
 func nodeCapabilitiesString(value agent.Capabilities) string {
 	capabilities := make([]string, 0, 3)
+	if value.LandingOnly {
+		capabilities = append(capabilities, "landing")
+	}
 	if value.Docker {
 		capabilities = append(capabilities, "docker")
 	}
@@ -1064,6 +1092,9 @@ func parseNodeCapabilities(raw string) (agent.Capabilities, error) {
 			continue
 		}
 		switch capability {
+		case "landing":
+			capabilities.LandingOnly = true
+			capabilities.NativeEgress = true
 		case "docker":
 			capabilities.Docker = true
 		case "gateway":
@@ -1077,7 +1108,10 @@ func parseNodeCapabilities(raw string) (agent.Capabilities, error) {
 		}
 		seen[capability] = true
 	}
-	if !capabilities.Docker && !capabilities.Gateway && !capabilities.Tunnel {
+	if capabilities.LandingOnly && (capabilities.Docker || capabilities.Gateway || capabilities.Tunnel) {
+		return agent.Capabilities{}, errors.New("landing-only capability cannot be combined with Docker, gateway or tunnel")
+	}
+	if !capabilities.Docker && !capabilities.Gateway && !capabilities.Tunnel && !capabilities.LandingOnly {
 		return agent.Capabilities{}, errors.New("at least one implemented node capability is required")
 	}
 	return capabilities, nil

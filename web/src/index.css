@@ -3,6 +3,7 @@
 @import "./styles/shadcn.css";
 @import "./styles/macos.css";
 @import "./styles/auth.css";
+@import "./styles/icons.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -406,7 +407,7 @@
 .desktop-dock-item:hover .desktop-dock-label, .desktop-dock-item:focus-visible .desktop-dock-label { opacity: 1; }
 .desktop-dock-item:is([data-running="true"], [aria-current="page"])::after { content: ''; position: absolute; bottom: 1px; width: 4px; height: 4px; border-radius: 50%; background: var(--desktop-ink); opacity: .65; }
 .desktop-dock-divider { width: 1px; height: 44px; margin: 0 6px; flex-shrink: 0; background: color-mix(in srgb, var(--desktop-ink) 18%, transparent); }
-.desktop-launchpad-icon { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 9px; border-radius: 24%; background: linear-gradient(#fafcfe, #cfdae8); box-shadow: inset 0 1px 1px #fff, 0 3px 6px #16213725; border: 1px solid #ffffff80; }
+.desktop-launchpad-icon { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 9px; border-radius: 0; background: #dbe2e9; box-shadow: none; border: 0; }
 .desktop-launchpad-icon i { border-radius: 3px; background: #3698f2; }
 .desktop-launchpad-icon i:nth-child(3n+2) { background: #efad43; }
 .desktop-launchpad-icon i:nth-child(3n) { background: #7fa774; }

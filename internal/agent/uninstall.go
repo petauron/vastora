@@ -38,7 +38,7 @@ func PurgeManagedRuntime(ctx context.Context, packageStateDirectory string, dele
 		return err
 	}
 	steps = append(steps, packageSteps...)
-	for _, path := range []string{komariUnitPath, pulseUnitPath} {
+	for _, path := range []string{komariUnitPath, senulunUnitPath} {
 		if _, err := os.Lstat(path); err == nil {
 			owned := false
 			for _, step := range packageSteps {

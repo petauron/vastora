@@ -209,7 +209,7 @@ func seedMeridianVersion88HealthFixture(t *testing.T, db *sql.DB) {
 			healthy = 0
 		}
 		if _, err := db.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,reset_days,next_reset_at,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
-			VALUES(?,?,1048576,30,'2099-01-01T00:00:00Z',1,?,?,7,7,'active',?,?)`, accountID, accountID, accountID+"-subscription", meridian.SubscriptionTokenFingerprint(accountID), stamp, stamp); err != nil {
+			VALUES(?,?,1048576,30,'2099-01-01T00:00:00Z',1,?,?,7,7,'active',?,?)`, accountID, accountID, accountID+"-subscription", glivela.SubscriptionTokenFingerprint(accountID), stamp, stamp); err != nil {
 			t.Fatal(err)
 		}
 		for _, kind := range []string{"native", "route"} {
@@ -219,7 +219,7 @@ func seedMeridianVersion88HealthFixture(t *testing.T, db *sql.DB) {
 				egress = "agent-v3"
 			}
 			if _, err := db.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,egress_node_id,enabled,created_at,updated_at)
-				VALUES(?,?,'v88-health-endpoint',?,?,?,?,?,1,?,?)`, credentialID, accountID, kind, credentialID, meridian.Identity(credentialID), credentialID, egress, stamp, stamp); err != nil {
+				VALUES(?,?,'v88-health-endpoint',?,?,?,?,?,1,?,?)`, credentialID, accountID, kind, credentialID, glivela.Identity(credentialID), credentialID, egress, stamp, stamp); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := db.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,baseline_bytes,observed_bytes,raw_up_bytes,raw_down_bytes,observed_at) VALUES(?,100,450,200,250,?)`, credentialID, stamp); err != nil {
@@ -230,7 +230,7 @@ func seedMeridianVersion88HealthFixture(t *testing.T, db *sql.DB) {
 			VALUES(?,?,'v88-health-endpoint','agent-v3',?,?,1,?,3,3,?,?,?, ?,?)`, "v88-health-grant-"+state, accountID, accountID+"-native", accountID+"-route", enabled, healthy, state, "previous "+state+" diagnostic", stamp, stamp); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.ExecContext(ctx, `INSERT INTO meridian_subscription_snapshots(account_id,secret_id,content_sha256,account_revision,created_at,updated_at) VALUES(?,?,?,7,?,?)`, accountID, accountID+"-snapshot", meridian.Identity(accountID+"-snapshot"), stamp, stamp); err != nil {
+		if _, err := db.ExecContext(ctx, `INSERT INTO meridian_subscription_snapshots(account_id,secret_id,content_sha256,account_revision,created_at,updated_at) VALUES(?,?,?,7,?,?)`, accountID, accountID+"-snapshot", glivela.Identity(accountID+"-snapshot"), stamp, stamp); err != nil {
 			t.Fatal(err)
 		}
 	}

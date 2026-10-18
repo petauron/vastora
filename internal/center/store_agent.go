@@ -37,6 +37,7 @@ type AgentEnrollment struct {
 }
 
 type AgentEnrollmentSpec struct {
+	LandingOnly      bool
 	SiteID           string
 	Name             string
 	CenterURL        string
@@ -101,11 +102,14 @@ type AgentRemovalView struct {
 }
 
 func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentSpec) (AgentEnrollment, error) {
+	if spec.LandingOnly && (spec.Gateway || spec.Tunnel || !spec.UseHeadscale) {
+		return AgentEnrollment{}, errors.New("center: landing-only nodes require managed private networking and cannot provide gateway or tunnel capabilities")
+	}
 	roles := []string{"worker"}
 	if spec.Gateway {
 		roles = append(roles, "gateway")
 	}
-	capabilities := NodeCapabilities{Docker: true, Gateway: spec.Gateway, Tunnel: spec.Tunnel}
+	capabilities := NodeCapabilities{Docker: !spec.LandingOnly, LandingOnly: spec.LandingOnly, NativeEgress: spec.LandingOnly, Gateway: spec.Gateway, Tunnel: spec.Tunnel}
 	rolesJSON, _ := json.Marshal(roles)
 	capabilitiesJSON, _ := json.Marshal(capabilities)
 	return s.createAgentEnrollment(ctx, spec, rolesJSON, capabilitiesJSON, "", "")
@@ -154,7 +158,7 @@ func (s *Store) createAgentReconnectEnrollment(ctx context.Context, agentID, ope
 		return AgentEnrollment{}, err
 	}
 	spec.CenterURL = network.AgentConnectURL
-	spec.UseHeadscale = network.AgentConnectionMode == "headscale"
+	spec.UseHeadscale = network.AgentConnectionMode == "headscale" || profile.Capabilities.LandingOnly
 	spec.Gateway = profile.Capabilities.Gateway
 	spec.Tunnel = profile.Capabilities.Tunnel
 	return s.createAgentEnrollment(ctx, spec, rolesJSON, capabilitiesJSON, agentID, operationID)
@@ -382,7 +386,11 @@ func decodeAgentEnrollmentRuntime(rolesJSON, capabilitiesJSON []byte, profile *A
 			return errors.New("center: stored Agent enrollment roles are invalid")
 		}
 	}
-	if !profile.Capabilities.Docker || profile.Capabilities.Gateway != containsString(profile.Roles, "gateway") || profile.Capabilities.Metrics || profile.Capabilities.Logs {
+	caps := profile.Capabilities
+	if caps.LandingOnly && (caps.Docker || caps.Gateway || caps.Tunnel || !caps.NativeEgress) {
+		return errors.New("center: invalid landing-only enrollment capabilities")
+	}
+	if (!caps.Docker && !caps.LandingOnly) || caps.Gateway != containsString(profile.Roles, "gateway") || caps.Metrics || caps.Logs {
 		return errors.New("center: stored Agent enrollment capabilities are invalid")
 	}
 	return nil
@@ -644,6 +652,17 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if err := s.authenticateAgent(ctx, id, credential); err != nil {
 		return err
 	}
+	var authorizedJSON []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT capabilities_json FROM agents WHERE id = ?`, id).Scan(&authorizedJSON); err != nil {
+		return err
+	}
+	var authorized NodeCapabilities
+	if err := json.Unmarshal(authorizedJSON, &authorized); err != nil {
+		return err
+	}
+	if authorized.LandingOnly != heartbeat.Capabilities.LandingOnly || (authorized.LandingOnly && (heartbeat.Capabilities.Docker || heartbeat.Capabilities.Gateway || heartbeat.Capabilities.Tunnel || containsString(heartbeat.Roles, "gateway"))) {
+		return errors.New("center: heartbeat cannot change the authorized landing-only purpose")
+	}
 	heartbeat.Roles = uniqueStrings(heartbeat.Roles)
 	for _, role := range heartbeat.Roles {
 		if role != "worker" && role != "gateway" {
@@ -846,6 +865,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		if err := s.queueScheduledThreeXUIBackup(ctx, tx, id, now); err != nil {
 			return err
 		}
+	}
+	if err := recordLandingServerHealth(ctx, tx, id, heartbeat.LandingServerHealth, now); err != nil {
+		return err
 	}
 	if heartbeat.Startup && !reinstalling {
 		if err := expireAgentProcessTaskLeases(ctx, tx, id, now); err != nil {

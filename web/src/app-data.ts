@@ -54,15 +54,33 @@ async function loadCatalogSources(signal?: AbortSignal): Promise<Pick<AppData, "
 
 // Desktop shortcuts, launch targets and the status widget belong to the shell.
 // Load them once per refresh, including direct visits to application windows.
-async function loadDesktopData(signal?: AbortSignal): Promise<AppDataPatch> {
-  const [status, apps, agents, applications, services, publications] = await Promise.all([
-    api.status(signal), api.apps(signal), api.agents(signal), api.applications(signal), api.services(signal), api.publications(signal)
+async function loadDesktopData(signal?: AbortSignal, allowUnavailable = false): Promise<AppDataPatch> {
+  const applicationData = Promise.allSettled([
+    api.apps(signal), api.applications(signal), api.services(signal), api.publications(signal)
   ]);
-  return { status, apps: apps.apps, agents: agents.agents, applications: applications.applications, services: services.services, publications: publications.publications };
+  const [status, agents, results] = await Promise.all([
+    api.status(signal), api.agents(signal), applicationData
+  ]);
+  signal?.throwIfAborted();
+  // Check every result before degrading: an earlier 500 must not hide a 401
+  // from another endpoint. Required page data still fails normally.
+  for (const result of results) {
+    if (result.status === "rejected" && (result.reason instanceof APIError && result.reason.status === 401 || result.reason instanceof Error && result.reason.name === "AbortError")) throw result.reason;
+  }
+  const [apps, applications, services, publications] = results;
+  if (apps.status === "rejected" || applications.status === "rejected" || services.status === "rejected" || publications.status === "rejected") {
+    if (!allowUnavailable) {
+      for (const result of results) if (result.status === "rejected") throw result.reason;
+    }
+    // Omit failed display data rather than replacing it with fake empty lists.
+    // Existing data is retained but unavailable for shortcuts until refreshed.
+    return { status, agents: agents.agents, desktopDataUnavailable: true };
+  }
+  return { status, apps: apps.value.apps, agents: agents.agents, applications: applications.value.applications, services: services.value.services, publications: publications.value.publications, desktopDataUnavailable: false };
 }
 
 export async function loadScreenData(screen: Screen, signal?: AbortSignal): Promise<AppDataPatch> {
-  const desktop = loadDesktopData(signal);
+  const desktop = loadDesktopData(signal, screen === "activity");
   switch (screen) {
     case "home":
     case "assistant":

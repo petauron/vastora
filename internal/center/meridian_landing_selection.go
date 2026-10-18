@@ -64,7 +64,7 @@ func (s *Store) SelectMeridianLanding(ctx context.Context, input LandingSelectio
 			continue
 		}
 		suffix = strings.TrimSpace(suffix)
-		if len([]rune(suffix)) > meridian.MaxDisplayNameLength || strings.ContainsAny(suffix, "|｜") || strings.ContainsFunc(suffix, unicode.IsControl) {
+		if len([]rune(suffix)) > glivela.MaxDisplayNameLength || strings.ContainsAny(suffix, "|｜") || strings.ContainsFunc(suffix, unicode.IsControl) {
 			return errors.New("center: invalid landing name suffix")
 		}
 		if suffix != "" {

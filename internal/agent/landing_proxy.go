@@ -78,11 +78,11 @@ func (s *Store) prepareLandingXrayRuntimeMigration(ctx context.Context, task Dep
 		if state, err := s.landingRuntime(ctx); err != nil {
 			return nil, err
 		} else if state != nil && state.Route != nil && state.ApplicationID != task.ApplicationID {
-			return nil, errors.New("agent: Meridian preparation belongs to another landing application")
+			return nil, errors.New("agent: Glivela preparation belongs to another landing application")
 		}
 		legacy, err := s.AppliedInstallation(ctx, threeXUIKey)
 		if err == nil && legacy.ApplicationID != task.ApplicationID {
-			return nil, errors.New("agent: Meridian preparation belongs to another legacy application")
+			return nil, errors.New("agent: Glivela preparation belongs to another legacy application")
 		}
 		if err != nil && !errors.Is(err, errApplicationNotInstalled) {
 			return nil, err
@@ -402,6 +402,11 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 			}
 		}
 	}
+	if desired.Active() || current != nil && current.Route != nil {
+		if err := ensureLandingPackage(ctx); err != nil {
+			return err
+		}
+	}
 	if err := s.stopLandingMonitor(ctx); err != nil {
 		return err
 	}
@@ -464,11 +469,6 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 		}
 	}
 	if current == nil || current.Route == nil {
-		// Docker alone does not guarantee the nft userspace tool exists. Install
-		// the host prerequisites before persisting or changing any proxy route.
-		if err := ensureLandingPackage(ctx); err != nil {
-			return err
-		}
 		if err := s.verifyLocalLandingPlan(ctx, routes, desired); err != nil {
 			return err
 		}

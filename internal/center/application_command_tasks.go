@@ -13,7 +13,7 @@ import (
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodeprotocol"
-	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 var (
@@ -55,10 +55,10 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var node *ThreeXUINodeCommandTask
 	var controller *ThreeXUIControllerCommandTask
 	var protocols *nodeprotocol.Task
-	var pulseReporting *pulse.ReportingTask
-	var pulseRotation *pulse.RotationTask
-	var pulseInspection *pulse.InspectionTask
-	var pulseEnrollment *pulse.EnrollmentTask
+	var senulunReporting *senulun.ReportingTask
+	var senulunRotation *senulun.RotationTask
+	var senulunInspection *senulun.InspectionTask
+	var senulunEnrollment *senulun.EnrollmentTask
 	var meridianTask *meridianruntime.Task
 	var meridianAcceptance *meridianruntime.AcceptanceTask
 	var meridianLegacyExport *meridianruntime.LegacyExportCommand
@@ -73,17 +73,17 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	case meridianruntime.LegacyExportKind:
 		var command meridianruntime.LegacyExportCommand
 		if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored Meridian legacy export command is invalid"))
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored Glivela legacy export command is invalid"))
 		}
 		var cutoverState, controllerApplicationID string
 		if err := tx.QueryRowContext(ctx, `SELECT state,COALESCE(legacy_controller_application_id,'') FROM meridian_cutover WHERE id=1`).Scan(&cutoverState, &controllerApplicationID); err != nil || cutoverState != "import" || controllerApplicationID != command.ApplicationID {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: Meridian legacy export is outside the import phase"))
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: Glivela legacy export is outside the import phase"))
 		}
 		meridianLegacyExport = &command
 	case meridianruntime.ApplyKind:
 		var command meridianruntime.Command
 		if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
-			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, errors.New("center: stored Meridian runtime command is invalid"))
+			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, errors.New("center: stored Glivela runtime command is invalid"))
 		}
 		if superseded, supersedeErr := s.discardSupersededMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID); superseded || supersedeErr != nil {
 			return nil, supersedeErr
@@ -94,13 +94,13 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 		}
 		projection.task.ReplacePendingState = command.ReplacePendingState
 		if projection.task.Validate() != nil {
-			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, errors.New("center: stored Meridian recovery command is invalid"))
+			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, errors.New("center: stored Glivela recovery command is invalid"))
 		}
 		meridianTask = &projection.task
 	case meridianruntime.LegacyRetireKind:
 		var command meridianruntime.LegacyRetireTask
 		if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored Meridian legacy retirement command is invalid"))
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored Glivela legacy retirement command is invalid"))
 		}
 		var authorized int
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
@@ -109,33 +109,33 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			AND application.id=? AND application.node_id=? AND application.app_key=? AND application.status='running'
 			AND NOT EXISTS(SELECT 1 FROM meridian_endpoints endpoint WHERE endpoint.application_id=application.id)
 		)`, command.ApplicationID, agentID, meridianAppKey).Scan(&authorized); err != nil || authorized != 1 {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: Meridian legacy retirement is outside the authorized controller-only phase"))
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: Glivela legacy retirement is outside the authorized controller-only phase"))
 		}
 		meridianLegacyRetire = &command
-	case pulse.ReportingKind:
+	case senulun.ReportingKind:
 		_, task, err := s.validateReinstallMonitorReporting(ctx, tx, agentID, id)
 		if err != nil {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
 		}
-		pulseReporting = &task
-	case pulse.RotationKind:
+		senulunReporting = &task
+	case senulun.RotationKind:
 		command, err := s.validateReinstallMonitorRotation(ctx, tx, agentID, id)
 		if err != nil {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
 		}
-		pulseRotation = &command.Task
-	case pulse.InspectionKind:
+		senulunRotation = &command.Task
+	case senulun.InspectionKind:
 		command, err := s.validateReinstallInspection(ctx, tx, agentID, id)
 		if err != nil {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
 		}
-		pulseInspection = &command.Task
-	case pulse.EnrollmentKind:
-		var command pulse.EnrollmentTask
+		senulunInspection = &command.Task
+	case senulun.EnrollmentKind:
+		var command senulun.EnrollmentTask
 		if json.Unmarshal(inputJSON, &command) != nil || command.ApplicationID == "" || command.DeploymentID == "" {
-			return nil, errors.New("center: invalid Pulse enrollment task")
+			return nil, errors.New("center: invalid Senulun enrollment task")
 		}
-		pulseEnrollment = &command
+		senulunEnrollment = &command
 	case nodeprotocol.CommandKind:
 		var command nodeprotocol.Task
 		if json.Unmarshal(inputJSON, &command) != nil {
@@ -306,7 +306,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, err
 		}
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, PulseEnrollment: pulseEnrollment, PulseInspection: pulseInspection, PulseReporting: pulseReporting, PulseRotation: pulseRotation, MeridianRuntime: meridianTask, MeridianAcceptance: meridianAcceptance, MeridianLegacyExport: meridianLegacyExport, MeridianLegacyRetire: meridianLegacyRetire, Reconcile: reconciliationRequested == 1}, nil
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, SenulunEnrollment: senulunEnrollment, SenulunInspection: senulunInspection, SenulunReporting: senulunReporting, SenulunRotation: senulunRotation, MeridianRuntime: meridianTask, MeridianAcceptance: meridianAcceptance, MeridianLegacyExport: meridianLegacyExport, MeridianLegacyRetire: meridianLegacyRetire, Reconcile: reconciliationRequested == 1}, nil
 }
 
 func (s *Store) failUnclaimableThreeXUIInboundPlanCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command ThreeXUIClientCommandTask, cause error) error {
@@ -457,7 +457,7 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 		if kind == meridianruntime.ApplyKind {
 			var command meridianruntime.Command
 			if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
-				return errors.New("center: stored Meridian runtime command is invalid")
+				return errors.New("center: stored Glivela runtime command is invalid")
 			}
 			if err := markUncertainMeridianRuntimeFailure(ctx, tx, command.EndpointID, taskID, taskError, now); err != nil {
 				return err
@@ -475,7 +475,7 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 		if succeeded {
 			var result ApplicationTaskResult
 			if json.Unmarshal(rawResult, &result) != nil {
-				return errors.New("center: invalid Meridian runtime result")
+				return errors.New("center: invalid Glivela runtime result")
 			}
 			if err := storeIntegratedPackageReceipt(ctx, tx, taskID, applicationID, appKey, result.Resources, s.now()); err != nil {
 				return err
@@ -492,17 +492,17 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 	if kind == meridianruntime.AcceptanceKind {
 		return s.completeReinstallAcceptance(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
 	}
-	if kind == pulse.ReportingKind {
+	if kind == senulun.ReportingKind {
 		return s.completeReinstallMonitorReporting(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
 	}
-	if kind == pulse.RotationKind {
+	if kind == senulun.RotationKind {
 		return s.completeReinstallMonitorRotation(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
 	}
-	if kind == pulse.InspectionKind {
+	if kind == senulun.InspectionKind {
 		return s.completeReinstallInspection(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
 	}
-	if kind == pulse.EnrollmentKind {
-		return s.completePulseEnrollment(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, rawResult)
+	if kind == senulun.EnrollmentKind {
+		return s.completeSenulunEnrollment(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, rawResult)
 	}
 	if kind == nodeprotocol.CommandKind {
 		return s.completeNodeProtocolCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)

@@ -70,10 +70,10 @@ func (s *Store) ListNodeDiagnostics(ctx context.Context) ([]NodeDiagnosticView, 
 		if value.Kind == nodediagnostics.LinkBandwidthKind || value.Kind == nodediagnostics.LinkServerKind {
 			var link nodediagnostics.LinkBandwidthTask
 			if json.Unmarshal([]byte(targetsJSON), &link) != nil {
-				return nil, errors.New("center: invalid stored Meridian link target")
+				return nil, errors.New("center: invalid stored Glivela link target")
 			}
 			if (nodediagnostics.Task{Link: &link}).ValidateLinkBandwidth(value.Kind) != nil {
-				return nil, errors.New("center: invalid stored Meridian link target")
+				return nil, errors.New("center: invalid stored Glivela link target")
 			}
 			linkTargets[value.ID] = link
 			if value.Kind == nodediagnostics.LinkBandwidthKind {
@@ -292,7 +292,7 @@ func (s *Store) completeNodeDiagnostic(ctx context.Context, commit projectionCom
 		if kind == nodediagnostics.LinkBandwidthKind && envelope.NodeDiagnostics.Link != nil {
 			var target nodediagnostics.LinkBandwidthTask
 			if json.Unmarshal([]byte(targetsJSON), &target) != nil || envelope.NodeDiagnostics.Link.TransportState != "direct" || envelope.NodeDiagnostics.Link.SourceNodeID != agentID || envelope.NodeDiagnostics.Link.LandingNodeID != target.LandingNodeID {
-				return errors.New("center: Meridian link result does not match its task")
+				return errors.New("center: Glivela link result does not match its task")
 			}
 		}
 		diagnosticError = envelope.NodeDiagnostics.Error

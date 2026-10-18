@@ -57,10 +57,10 @@ func (s *Store) meridianSourceRecoveryEvidence(ctx context.Context, queryer netw
 	if err != nil || json.Unmarshal(previousJSON, &previous) != nil || json.Unmarshal(currentJSON, &current) != nil ||
 		(meridianruntime.Peer{EgressID: nodeID, Identity: previous}).Validate() != nil ||
 		(meridianruntime.Peer{EgressID: nodeID, Identity: current}).Validate() != nil {
-		return view, "", nil, errors.New("center: restore the native Meridian runtime and wait for a fresh authenticated private identity report before recovering landing access")
+		return view, "", nil, errors.New("center: restore the native Glivela runtime and wait for a fresh authenticated private identity report before recovering landing access")
 	}
 	if previous == current {
-		return view, "", nil, errors.New("center: this Meridian entry has no replacement private identity to recover")
+		return view, "", nil, errors.New("center: this Glivela entry has no replacement private identity to recover")
 	}
 	view.PreviousFingerprint, view.CurrentFingerprint = meridianPeerFingerprint(previous), meridianPeerFingerprint(current)
 	view.PreviousAddress, view.CurrentAddress = previous.Address, current.Address
@@ -100,7 +100,7 @@ func (s *Store) RecoverMeridianSource(ctx context.Context, endpointID, adminID s
 		return err
 	}
 	if input.PreviousFingerprint != view.PreviousFingerprint || input.CurrentFingerprint != view.CurrentFingerprint || input.EndpointRevision != view.EndpointRevision {
-		return errors.New("center: Meridian replacement identity or configuration changed; inspect it again before confirming")
+		return errors.New("center: Glivela replacement identity or configuration changed; inspect it again before confirming")
 	}
 	landingIDs, err := s.replaceMeridianSourceInTx(ctx, tx, endpointID, nodeID, adminID, view, currentJSON)
 	if err != nil {

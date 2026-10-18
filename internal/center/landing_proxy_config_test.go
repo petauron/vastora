@@ -31,6 +31,8 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 	now := store.now().UTC().Format(time.RFC3339Nano)
 	site := testSiteID(t, store)
 	exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at) VALUES('landing-app','Proxy',?,?,'vastora-official/3x-ui','running','docker','worker',?,?)`, proxy, site, now, now)
+	// The legacy route fixture below is independent of current Meridian telemetry.
+	exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at) VALUES('latency-meridian','Meridian',?,?,'vastora-official/meridian','running','docker','worker',?,?)`, proxy, site, now, now)
 	exec(`INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,status,created_at,updated_at) VALUES('landing-inbound','landing-app',?,'VLESS','tcp',443,443,'unchanged.example:443','observed','vless/tcp/reality','ready',?,?)`, site, now, now)
 	exec(`INSERT INTO three_x_ui_inbound_plans(service_id,inbound_tag,updated_at) VALUES('landing-inbound','business',?)`, now)
 	claim := func(server bool) *AgentTask {

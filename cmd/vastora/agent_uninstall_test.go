@@ -118,7 +118,11 @@ func TestAgentUninstallStopsOnTailscaleCommandFailure(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			environment := newAgentUninstallFixture(t)
 			statePath := filepath.Join(environment.dataDir, agent.HostInstallStateName)
-			if err := os.WriteFile(statePath, []byte("HOST_STATE_VERSION=1\nTAILSCALE_OWNERSHIP=managed\nTAILSCALE_ENROLLED=1\n"), 0o600); err != nil {
+			ownership := "managed"
+			if failure == "logout" {
+				ownership = "external"
+			}
+			if err := os.WriteFile(statePath, []byte("HOST_STATE_VERSION=1\nTAILSCALE_OWNERSHIP="+ownership+"\nTAILSCALE_ENROLLED=1\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			failed, afterFailure := false, 0
@@ -151,12 +155,48 @@ func TestHostDecommissionHelperDoesNotAutostart(t *testing.T) {
 	}
 }
 
+func TestManagedTailscaleRemovalDoesNotRequireControlServer(t *testing.T) {
+	environment := newAgentUninstallFixture(t)
+	statePath := filepath.Join(environment.dataDir, agent.HostInstallStateName)
+	if err := os.WriteFile(statePath, []byte("HOST_STATE_VERSION=1\nTAILSCALE_OWNERSHIP=managed\nTAILSCALE_ENROLLED=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stopped, purged := false, false
+	environment.run = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tailscale" {
+			t.Error("managed removal contacted the unavailable control server")
+			return nil, errors.New("control server unavailable")
+		}
+		if name == "systemctl" && strings.Join(args, " ") == "disable --now tailscaled.service" {
+			stopped = true
+		}
+		if name == "apt-get" {
+			if !stopped {
+				t.Fatal("purged before stopping managed Tailscale")
+			}
+			purged = true
+		}
+		return nil, nil
+	}
+	if err := uninstallAgentHostWithEnvironment(context.Background(), true, true, false, environment); err != nil {
+		t.Fatal(err)
+	}
+	if !stopped || !purged {
+		t.Fatal("managed Tailscale was not removed")
+	}
+	assertUninstallPathsAbsent(t, statePath, environment.unitPath)
+}
+
 func TestAgentUninstallCancellationStopsFollowingMutations(t *testing.T) {
 	for _, phase := range []string{"before-start", "stop-agent", "runtime", "logout", "stop-tailscale", "purge-tailscale"} {
 		t.Run(phase, func(t *testing.T) {
 			environment := newAgentUninstallFixture(t)
 			statePath := filepath.Join(environment.dataDir, agent.HostInstallStateName)
-			if err := os.WriteFile(statePath, []byte("HOST_STATE_VERSION=1\nTAILSCALE_OWNERSHIP=managed\nTAILSCALE_ENROLLED=1\n"), 0o600); err != nil {
+			ownership := "managed"
+			if phase == "logout" {
+				ownership = "external"
+			}
+			if err := os.WriteFile(statePath, []byte("HOST_STATE_VERSION=1\nTAILSCALE_OWNERSHIP="+ownership+"\nTAILSCALE_ENROLLED=1\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(context.Background())

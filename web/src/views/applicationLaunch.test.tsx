@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import type { Publication } from "../types";
-import { pulseDashboardURL, pulsePrivateAccess } from "./appAccess";
+import { senulunDashboardURL, senulunPrivateAccess } from "./appAccess";
 import { applicationLaunchURL, desktopApplications } from "./applicationLaunch";
 import { installedAppGroups } from "./installed-apps-model";
-import { PulseWorkspace } from "./PulseWorkspace";
+import { SenulunWorkspace } from "./SenulunWorkspace";
 import { dashboard, render } from "./views.test-support";
 
 function access(kind: Publication["kind"], hostname: string): Publication {
@@ -21,26 +21,35 @@ function senulun() {
 }
 
 describe("Senulun browser access", () => {
+  it("does not use retained shortcuts or URLs while desktop data is unavailable", () => {
+    const data = senulun();
+    data.desktopDataUnavailable = true;
+    expect(desktopApplications(data, "en")).toEqual([]);
+    expect(applicationLaunchURL(data, "vastora-official/pulse")).toBeUndefined();
+    data.desktopDataUnavailable = false;
+    expect(desktopApplications(data, "en")[0].url).toBe("https://senulun.example.com/");
+  });
+
   it("opens the configured public tunnel while retaining private access for probes", () => {
     const data = senulun();
     expect(applicationLaunchURL(data, "vastora-official/pulse")).toBe("https://senulun.example.com/");
     expect(desktopApplications(data, "en")[0].url).toBe("https://senulun.example.com/");
-    expect(pulsePrivateAccess(data)?.accessUrl).toBe("https://senulun.private.example/");
+    expect(senulunPrivateAccess(data)?.accessUrl).toBe("https://senulun.private.example/");
   });
 
   it("opens the same browser URL from the application workspace", () => {
     const data = senulun();
     const noop = () => undefined;
-    const container = render(<PulseWorkspace data={data} group={installedAppGroups(data)[0]} language="en" showSite={false} mutate={async () => undefined} onManage={noop} onUpgrade={noop} onClients={noop} onReality={noop} />);
+    const container = render(<SenulunWorkspace data={data} group={installedAppGroups(data)[0]} language="en" showSite={false} mutate={async () => undefined} onManage={noop} onUpgrade={noop} onClients={noop} onReality={noop} />);
     expect(container.querySelector('a')?.getAttribute("href")).toBe("https://senulun.example.com/");
   });
 
   it("keeps private-only installations private", () => {
     const data = senulun();
     data.publications = [data.publications[0]];
-    expect(pulseDashboardURL(data)).toBe("https://senulun.private.example/");
+    expect(senulunDashboardURL(data)).toBe("https://senulun.private.example/");
     data.publications[0] = access("lan_gateway", "senulun.lan.example");
-    expect(pulseDashboardURL(data)).toBe("https://senulun.lan.example/");
+    expect(senulunDashboardURL(data)).toBe("https://senulun.lan.example/");
   });
 
   it.each([
@@ -54,15 +63,15 @@ describe("Senulun browser access", () => {
   ])("ignores an unusable public entry: %j", (change) => {
     const data = senulun();
     Object.assign(data.publications[1], change);
-    expect(pulseDashboardURL(data)).toBe("https://senulun.private.example/");
+    expect(senulunDashboardURL(data)).toBe("https://senulun.private.example/");
   });
 
   it("does not open a stopped application or an unhealthy private-only entry", () => {
     const data = senulun();
     data.applications[0].status = "stopped";
-    expect(pulseDashboardURL(data)).toBeUndefined();
+    expect(senulunDashboardURL(data)).toBeUndefined();
     data.applications[0].status = "running";
     data.publications = [{ ...data.publications[0], actionRequired: true }];
-    expect(pulseDashboardURL(data)).toBeUndefined();
+    expect(senulunDashboardURL(data)).toBeUndefined();
   });
 });

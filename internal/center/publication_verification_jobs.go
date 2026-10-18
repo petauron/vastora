@@ -127,7 +127,7 @@ func (s *Store) runPublicationVerificationCycle(id string, job *publicationVerif
 		if !s.publicationVerificationJobCurrent(id, job, revision) {
 			return false
 		}
-		verifyCtx, cancel := context.WithTimeout(s.backgroundCtx, publicationVerificationTimeout)
+		verifyCtx, cancel := context.WithTimeout(s.backgroundCtx, s.publicationVerificationTimeoutFor(id))
 		publication, err := s.verifyPublication(verifyCtx, id, revision)
 		cancel()
 		if errors.Is(err, errVLESSVerificationNotApplicable) {
@@ -158,6 +158,19 @@ func (s *Store) runPublicationVerificationCycle(id string, job *publicationVerif
 	}
 	_ = s.finishPublicationVerification(s.backgroundCtx, id, revision, terminalStatus, lastMessage)
 	return false
+}
+
+func (s *Store) publicationVerificationTimeoutFor(id string) time.Duration {
+	var authenticated bool
+	err := s.db.QueryRowContext(s.backgroundCtx, `SELECT EXISTS(
+		SELECT 1 FROM publications publication JOIN meridian_endpoints endpoint ON endpoint.service_id=publication.service_id
+		WHERE publication.id=? AND publication.kind=? AND endpoint.status<>'retired'
+	)`, id, publicationShared443).Scan(&authenticated)
+	if err == nil && authenticated {
+		// Includes bounded client startup and cleanup, not only a TCP handshake.
+		return 2*time.Minute + publicationVerificationTimeout
+	}
+	return publicationVerificationTimeout
 }
 
 func (s *Store) publicationVerificationJobSnapshot(id string, job *publicationVerificationJob) (int64, uint64, bool) {

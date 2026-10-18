@@ -32,13 +32,13 @@ func (e ApplicationExecutor) VerifyMeridianAcceptance(ctx context.Context, task 
 	return meridianruntime.AcceptanceResult{TaskDigest: digest}, nil
 }
 
-// One isolated namespace and a Docker-assigned host loopback port prevent a
-// host socket race from substituting a different SOCKS service. The container
+// One isolated namespace and, for host callers, a Docker-assigned loopback
+// port prevent a socket race from substituting another SOCKS service. The container
 // receives its secret configuration on stdin, never in labels/env/arguments.
-func meridianAcceptanceOptions(name, networkID string) client.ContainerCreateOptions {
+func meridianAcceptanceOptions(name, networkID string, inContainer bool) client.ContainerCreateOptions {
 	port := network.MustParsePort("1080/tcp")
 	pids := int64(32)
-	return client.ContainerCreateOptions{Name: name,
+	options := client.ContainerCreateOptions{Name: name,
 		Config: &container.Config{Image: xrayWorkerImageReference, User: "1000:1000", Cmd: []string{"run", "-c", "stdin:"},
 			OpenStdin: true, StdinOnce: true, AttachStdin: true,
 			ExposedPorts: network.PortSet{port: {}}, Labels: map[string]string{acceptanceOwnerLabel: name}},
@@ -47,6 +47,11 @@ func meridianAcceptanceOptions(name, networkID string) client.ContainerCreateOpt
 			PortBindings: network.PortMap{port: {{HostIP: netip.MustParseAddr("127.0.0.1")}}},
 			Resources:    container.Resources{Memory: 128 << 20, MemorySwap: 128 << 20, NanoCPUs: 1000000000, PidsLimit: &pids}},
 	}
+	if inContainer {
+		options.Config.ExposedPorts = nil
+		options.HostConfig.PortBindings = nil
+	}
+	return options
 }
 
 // VerifyMeridianClient performs one authenticated business request using the
@@ -57,23 +62,25 @@ func (e ApplicationExecutor) VerifyMeridianClient(parent context.Context, spec m
 	if parseErr != nil || !landing.PublicIP(address) {
 		return errors.New("agent: invalid recovery exit expectation")
 	}
-	return e.runMeridianClient(parent, spec, xrayWorkerImageReference, func(ctx context.Context, endpoint string) error {
+	return e.runMeridianClient(parent, spec, xrayWorkerImageReference, nil, func(ctx context.Context, endpoint string) error {
 		return meridianruntime.ProbeAcceptance(ctx, endpoint, expectedExit)
 	})
 }
 
-func (e ApplicationExecutor) runMeridianClient(parent context.Context, spec meridianruntime.AcceptanceClient, image string, probe func(context.Context, string) error) (err error) {
+func (e ApplicationExecutor) runMeridianClient(parent context.Context, spec meridianruntime.AcceptanceClient, image string, containerProbe func(context.Context, *client.Client, string) error, probe func(context.Context, string) error) (err error) {
 	encoded, err := spec.Config(1080)
 	if err != nil {
 		return err
 	}
-	// Only this private namespace listens on all interfaces. Docker publishes
-	// it exclusively on host loopback and no other container joins the network.
+	// Host callers use a Docker-assigned loopback port. Container callers keep
+	// the SOCKS listener on loopback inside the shared private namespace.
 	var config map[string]any
 	if json.Unmarshal(encoded, &config) != nil {
 		return errors.New("agent: invalid recovery client")
 	}
-	config["inbounds"].([]any)[0].(map[string]any)["listen"] = "0.0.0.0"
+	if containerProbe == nil {
+		config["inbounds"].([]any)[0].(map[string]any)["listen"] = "0.0.0.0"
+	}
 	encoded, err = json.Marshal(config)
 	if err != nil {
 		return errors.New("agent: invalid recovery client")
@@ -117,7 +124,7 @@ func (e ApplicationExecutor) runMeridianClient(parent context.Context, spec meri
 	if err != nil {
 		return errors.New("agent: recovery client network creation failed")
 	}
-	options := meridianAcceptanceOptions(name, createdNetwork.ID)
+	options := meridianAcceptanceOptions(name, createdNetwork.ID, containerProbe != nil)
 	options.Config.Image = image
 	created, err := docker.ContainerCreate(ctx, options)
 	if err != nil {
@@ -138,6 +145,9 @@ func (e ApplicationExecutor) runMeridianClient(parent context.Context, spec meri
 	}
 	if err = attached.CloseWrite(); err != nil {
 		return errors.New("agent: recovery client input failed")
+	}
+	if containerProbe != nil {
+		return containerProbe(ctx, docker, created.ID)
 	}
 	// Only local listener readiness may be retried, never the business probe.
 	ready, stopReady := context.WithTimeout(ctx, 5*time.Second)

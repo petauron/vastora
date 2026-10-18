@@ -48,6 +48,12 @@ func TestRemoveOfflineAgentCleansInstallationsAndPreservesOtherNodes(t *testing.
 	if _, err = s.db.Exec(`UPDATE deployments SET operation='uninstall',state='running',reconciliation_required=1,attempt=1 WHERE id=?`, installation.ID); err != nil {
 		t.Fatal(err)
 	}
+	// Seed a dependent history row and then force a new physical connection.
+	// A startup-only PRAGMA silently loses both the cascade and RESTRICT guards.
+	if _, err := s.db.Exec(`INSERT INTO task_events(id,task_id,agent_id,kind,event,created_at) VALUES('retired-event','retired-task',?,'test','queued','')`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	replaceStoreConnection(t, s)
 	expireRemovalNode(t, s, node.ID)
 	if err = s.StartAgentRemoval(ctx, node.ID, " Edge Node B "); err != nil {
 		t.Fatal(err)
@@ -75,6 +81,12 @@ func TestRemoveOfflineAgentCleansInstallationsAndPreservesOtherNodes(t *testing.
 		if removalCount(t, s, `SELECT COUNT(*) FROM `+table+` WHERE `+column+`=?`, node.ID) != 0 {
 			t.Fatalf("%s records remained", table)
 		}
+	}
+	if removalCount(t, s, `SELECT COUNT(*) FROM task_events WHERE id='retired-event'`) != 0 {
+		t.Fatal("orphan task history remained after node removal")
+	}
+	if err := verifyMigratedSchema(ctx, s.db, centerSchemaVersion); err != nil {
+		t.Fatal(err)
 	}
 	if removalCount(t, s, `SELECT COUNT(*) FROM deployments WHERE id=? AND state='pending'`, otherInstall.ID) != 1 {
 		t.Fatal("other installation changed")
@@ -321,7 +333,7 @@ func TestRemoveOfflineMeridianAgentAfterFailedLegacyCleanup(t *testing.T) {
 	s := openMeridianSharedEndpointSnapshotFixture(t)
 	defer s.Close()
 	ctx := context.Background()
-	controller := enrollAccessTestNode(t, s, "Meridian subscription host", "10.0.0.92")
+	controller := enrollAccessTestNode(t, s, "Glivela subscription host", "10.0.0.92")
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -384,10 +396,10 @@ func TestRemoveOfflineMeridianAgentAfterFailedLegacyCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	if removalCount(t, s, `SELECT COUNT(*) FROM agents WHERE id=?`, workerID) != 0 || removalCount(t, s, `SELECT COUNT(*) FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID) != 0 {
-		t.Fatal("retired Meridian node records remained")
+		t.Fatal("retired Glivela node records remained")
 	}
 	if removalCount(t, s, `SELECT COUNT(*) FROM meridian_credentials WHERE endpoint_id=?`, sharedSnapshotEndpointID) != 0 || removalCount(t, s, `SELECT COUNT(*) FROM meridian_route_grants WHERE endpoint_id=?`, sharedSnapshotEndpointID) != 0 {
-		t.Fatal("retired Meridian subscription identities remained")
+		t.Fatal("retired Glivela subscription identities remained")
 	}
 	if removalCount(t, s, `SELECT COUNT(*) FROM meridian_accounts`) != 2 || removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id='removal-meridian-controller' AND status='running'`) != 1 {
 		t.Fatal("shared accounts or subscription host were changed")

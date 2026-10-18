@@ -21,28 +21,28 @@ import (
 // probes. The runtime has no SETGID capability and cannot leave this group.
 func ensureMeridianRuntimeGroup(ctx context.Context) (uint32, error) {
 	if os.Geteuid() != 0 {
-		return 0, errors.New("agent: Meridian host runtime requires a root Agent")
+		return 0, errors.New("agent: Glivela host runtime requires a root Agent")
 	}
 	group, err := user.LookupGroup("vastora-meridian")
 	if _, missing := err.(user.UnknownGroupError); missing {
 		if err := exec.CommandContext(ctx, "groupadd", "--system", "vastora-meridian").Run(); err != nil {
-			return 0, errors.New("agent: cannot create Meridian runtime group")
+			return 0, errors.New("agent: cannot create Glivela runtime group")
 		}
 		group, err = user.LookupGroup("vastora-meridian")
 	}
 	if err != nil {
-		return 0, errors.New("agent: Meridian runtime group is unavailable")
+		return 0, errors.New("agent: Glivela runtime group is unavailable")
 	}
 	gid, err := strconv.ParseUint(group.Gid, 10, 32)
 	if err != nil || gid == 0 || gid == 65534 || gid == uint64(os.Getegid()) {
-		return 0, errors.New("agent: invalid Meridian runtime group")
+		return 0, errors.New("agent: invalid Glivela runtime group")
 	}
 	return uint32(gid), nil
 }
 
 // Configuration checks happen before touching the applied runtime. Binding to
 // a missing private address must not silently become a wildcard listener.
-func validateMeridianHostListeners(artifact meridian.DesiredArtifact) error {
+func validateMeridianHostListeners(artifact glivela.DesiredArtifact) error {
 	var config struct {
 		Inbounds []struct {
 			Protocol string
@@ -52,11 +52,11 @@ func validateMeridianHostListeners(artifact meridian.DesiredArtifact) error {
 		}
 	}
 	if artifact.Validate() != nil || json.Unmarshal(artifact.Config, &config) != nil || len(config.Inbounds) < 2 {
-		return errors.New("agent: invalid Meridian host listeners")
+		return errors.New("agent: invalid Glivela host listeners")
 	}
 	addresses, err := net.InterfaceAddrs()
 	if err != nil {
-		return errors.New("agent: cannot inspect Meridian private address")
+		return errors.New("agent: cannot inspect Glivela private address")
 	}
 	local := map[string]bool{}
 	for _, address := range addresses {
@@ -67,37 +67,37 @@ func validateMeridianHostListeners(artifact meridian.DesiredArtifact) error {
 	seen := map[string]bool{}
 	for _, inbound := range config.Inbounds {
 		if seen[inbound.Protocol] {
-			return errors.New("agent: duplicate Meridian host listener")
+			return errors.New("agent: duplicate Glivela host listener")
 		}
 		seen[inbound.Protocol] = true
 		switch inbound.Protocol {
 		case "dokodemo-door":
-			if inbound.Tag != "api" || inbound.Listen != "127.0.0.1" || inbound.Port != meridian.XrayAPIListenPort {
-				return errors.New("agent: Meridian API must stay on loopback")
+			if inbound.Tag != "api" || inbound.Listen != "127.0.0.1" || inbound.Port != glivela.XrayAPIListenPort {
+				return errors.New("agent: Glivela API must stay on loopback")
 			}
 		case "vless":
 			address, err := netip.ParseAddr(inbound.Listen)
-			if err != nil || !address.Is4() || !(address.IsPrivate() || netip.MustParsePrefix("100.64.0.0/10").Contains(address)) || !local[inbound.Listen] || inbound.Port != meridian.RealityBackendPort {
-				return errors.New("agent: Meridian private backend address is missing or invalid")
+			if err != nil || !address.Is4() || !(address.IsPrivate() || netip.MustParsePrefix("100.64.0.0/10").Contains(address)) || !local[inbound.Listen] || inbound.Port != glivela.RealityBackendPort {
+				return errors.New("agent: Glivela private backend address is missing or invalid")
 			}
 		case "hysteria":
 			if inbound.Listen != "0.0.0.0" || inbound.Port != 443 {
-				return errors.New("agent: invalid Meridian public UDP listener")
+				return errors.New("agent: invalid Glivela public UDP listener")
 			}
 		default:
-			return errors.New("agent: unsupported Meridian host listener")
+			return errors.New("agent: unsupported Glivela host listener")
 		}
 	}
 	if !seen["dokodemo-door"] {
-		return errors.New("agent: missing Meridian loopback API")
+		return errors.New("agent: missing Glivela loopback API")
 	}
 	return nil
 }
 
-func verifyMeridianHostContainer(inspected client.ContainerInspectResult, gid uint32, artifact *meridian.DesiredArtifact) error {
+func verifyMeridianHostContainer(inspected client.ContainerInspectResult, gid uint32, artifact *glivela.DesiredArtifact) error {
 	c, h := inspected.Container.Config, inspected.Container.HostConfig
 	if c == nil || h == nil || gid == 0 || c.User != "0:"+strconv.FormatUint(uint64(gid), 10) || h.NetworkMode != "host" || h.UsernsMode != "host" || h.RestartPolicy.Name != "no" || !h.ReadonlyRootfs || h.Privileged || len(h.PortBindings) != 0 || len(h.Sysctls) != 0 || len(h.GroupAdd) != 0 || h.PidMode != "" || h.IpcMode.IsHost() || !slices.Equal(h.CapDrop, []string{"ALL"}) || !slices.Contains(h.SecurityOpt, "no-new-privileges:true") {
-		return errors.New("agent: Meridian host runtime security settings changed")
+		return errors.New("agent: Glivela host runtime security settings changed")
 	}
 	hy2 := false
 	if artifact != nil {
@@ -108,12 +108,12 @@ func verifyMeridianHostContainer(inspected client.ContainerInspectResult, gid ui
 		}
 	}
 	if hy2 && !slices.Equal(h.CapAdd, []string{"CAP_NET_BIND_SERVICE"}) || !hy2 && len(h.CapAdd) != 0 {
-		return errors.New("agent: Meridian host capabilities changed")
+		return errors.New("agent: Glivela host capabilities changed")
 	}
 	if inspected.Container.NetworkSettings != nil {
 		for name := range inspected.Container.NetworkSettings.Networks {
 			if name != "host" {
-				return errors.New("agent: Meridian host runtime has a bridge attachment")
+				return errors.New("agent: Glivela host runtime has a bridge attachment")
 			}
 		}
 	}

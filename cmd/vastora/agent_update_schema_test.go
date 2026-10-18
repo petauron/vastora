@@ -44,7 +44,7 @@ func TestHostUpdateRetainsCandidateAfterActivationCanMigrateSchema(t *testing.T)
 	// introduced by schemas 16 through 21. Starting the candidate runs the actual Agent migration,
 	// rather than only rewriting the user_version number.
 	const sourceSchema = 15
-	if agent.CurrentSchemaVersion() != 21 {
+	if agent.CurrentSchemaVersion() != 22 {
 		t.Fatal("update this fixture to preserve the complete historical schema-15 shape")
 	}
 	database, err := sql.Open("sqlite", filepath.Join(dataDir, "agent.db"))
@@ -59,6 +59,7 @@ func TestHostUpdateRetainsCandidateAfterActivationCanMigrateSchema(t *testing.T)
 		DROP TABLE landing_controller_state;
 		DROP TABLE landing_runtime_state;
 		DROP TABLE node_listener_applied_state;
+		ALTER TABLE control_plane_connection DROP COLUMN landing_only;
 		PRAGMA user_version = 15;`); err != nil {
 		t.Fatal(err)
 	}

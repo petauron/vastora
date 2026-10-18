@@ -17,7 +17,7 @@ import (
 )
 
 func TestMeridianAcceptanceContainerIsolation(t *testing.T) {
-	options := meridianAcceptanceOptions("owned", "private-network")
+	options := meridianAcceptanceOptions("owned", "private-network", false)
 	config, host := options.Config, options.HostConfig
 	port := network.MustParsePort("1080/tcp")
 	if config.Image != xrayWorkerImageReference || config.User != "1000:1000" || !config.OpenStdin || !config.StdinOnce || !config.AttachStdin || strings.Join(config.Cmd, " ") != "run -c stdin:" || len(config.Env) != 0 {

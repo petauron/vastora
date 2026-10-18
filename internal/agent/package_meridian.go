@@ -39,18 +39,18 @@ func (b *meridianPackageBackend) Prepare(ctx context.Context, task DeploymentTas
 		return nil
 	}
 	if task.AppKey != meridianKey || b.Executor.Store == nil || len(task.Manifest.Images) != 1 || task.Manifest.Images[0].Name != "xray-core" {
-		return errors.New("agent: invalid Meridian product package")
+		return errors.New("agent: invalid Glivela product package")
 	}
 	b.image = task.Manifest.Images[0].Reference
 	if !validXrayWorkerImageReference(b.image) {
-		return errors.New("agent: invalid Meridian runtime image identity")
+		return errors.New("agent: invalid Glivela runtime image identity")
 	}
 	recovering := reviewedPackageRecovery(task, receipt)
 	reviewedID := ""
 	if recovering {
 		resource := resourceNamed(receipt, "container", "xray")
 		if resource == nil || resource.ID == "" || (resource.Name != meridianXrayContainer && resource.Name != meridianXrayCandidateContainer) {
-			return errors.New("agent: reviewed Meridian recovery requires a runtime receipt")
+			return errors.New("agent: reviewed Glivela recovery requires a runtime receipt")
 		}
 		reviewedID = resource.ID
 	}
@@ -60,17 +60,17 @@ func (b *meridianPackageBackend) Prepare(ctx context.Context, task DeploymentTas
 	state, err := b.Executor.Store.loadMeridianRuntimeState(ctx)
 	if err == nil {
 		if state.ApplicationID != task.ApplicationID || state.Pending != nil || state.HandoverPending && !recovering || state.Applied == nil {
-			return errors.New("agent: Meridian runtime requires explicit recovery before package changes")
+			return errors.New("agent: Glivela runtime requires explicit recovery before package changes")
 		}
 		if recovering {
 			resource := resourceNamed(receipt, "container", "xray")
 			current, exists, inspectErr := inspectOwnedApplicationContainer(ctx, b.Client, resource.Name, task.AppKey, "xray", task.ApplicationID, anyApplicationDeployment)
 			if inspectErr != nil || !exists || current.Container.ID != reviewedID || current.Container.Config == nil || current.Container.Config.Image != b.image {
-				return errors.New("agent: reviewed Meridian runtime identity changed")
+				return errors.New("agent: reviewed Glivela runtime identity changed")
 			}
 			if resource.Name != meridianXrayContainer {
 				if _, _, exists, err := inspectCurrentMeridianRuntime(ctx, b.Client); err != nil || exists {
-					return errors.New("agent: reviewed Meridian replacement conflicts with another runtime")
+					return errors.New("agent: reviewed Glivela replacement conflicts with another runtime")
 				}
 			}
 			if err := b.Executor.verifyMeridianRuntimeAttachment(ctx, b.Client, current, state, state.AppliedPeers); err != nil {
@@ -87,18 +87,18 @@ func (b *meridianPackageBackend) Prepare(ctx context.Context, task DeploymentTas
 	}
 	pull, err := b.Client.ImagePull(ctx, b.image, client.ImagePullOptions{})
 	if err != nil {
-		return errors.New("agent: Meridian image download failed")
+		return errors.New("agent: Glivela image download failed")
 	}
 	if err := pull.Wait(ctx); err != nil {
 		_ = pull.Close()
-		return errors.New("agent: Meridian image verification failed")
+		return errors.New("agent: Glivela image verification failed")
 	}
 	if err := pull.Close(); err != nil {
 		return err
 	}
 	if b.state == nil {
 		if recovering {
-			return errors.New("agent: reviewed Meridian recovery requires its runtime journal")
+			return errors.New("agent: reviewed Glivela recovery requires its runtime journal")
 		}
 		if current, _, exists, err := inspectCurrentMeridianRuntime(ctx, b.Client); err != nil || exists {
 			return errors.Join(errors.New("agent: existing proxy requires explicit historical adoption or migration"), err)
@@ -110,7 +110,7 @@ func (b *meridianPackageBackend) Prepare(ctx context.Context, task DeploymentTas
 	active := filepath.Join(b.Executor.Store.dataDir, meridianRuntimeDirectory, "config.json")
 	encoded, err := os.ReadFile(active)
 	if err != nil || !artifactMatchesBytes(*state.Applied, encoded) {
-		return errors.New("agent: Meridian installed artifact cannot be proved")
+		return errors.New("agent: Glivela installed artifact cannot be proved")
 	}
 	// Validate the old signed configuration against the candidate image before
 	// stopping any writer; package updates cannot silently discard product state.
@@ -122,7 +122,7 @@ func (b *meridianPackageBackend) Prepare(ctx context.Context, task DeploymentTas
 		return err
 	}
 	if state.AppliedGID == 0 {
-		return errors.New("agent: Meridian host migration must complete before package upgrade")
+		return errors.New("agent: Glivela host migration must complete before package upgrade")
 	}
 	options := meridianHostContainerOptions(task, b.image, active, hy2, state.AppliedGID)
 	options.Name = meridianXrayContainer
@@ -188,7 +188,7 @@ func (b *meridianPackageBackend) Healthy(ctx context.Context, task DeploymentTas
 	}
 	resource := resourceNamed(receipt, "container", "xray")
 	if resource == nil {
-		return errors.New("agent: Meridian runtime receipt missing")
+		return errors.New("agent: Glivela runtime receipt missing")
 	}
 	if err := waitForXrayWorkerRuntime(ctx, b.Client, resource.ID); err != nil {
 		return err
@@ -242,10 +242,10 @@ func (e ApplicationExecutor) applyMeridianContainer(ctx context.Context, docker 
 	applicationID := options.Config.Labels[applicationInstallationLabel]
 	receipt, err := executor.ReadResources(applicationID)
 	if err != nil || receipt.AppKey != meridianKey || receipt.State != "ready" {
-		return "", errors.New("agent: Meridian runtime requires an adopted or newly installed package receipt")
+		return "", errors.New("agent: Glivela runtime requires an adopted or newly installed package receipt")
 	}
 	if !receiptAuthorizesImage(receipt, options.Config.Image) {
-		return "", errors.New("agent: Meridian image is not the installed signed package")
+		return "", errors.New("agent: Glivela image is not the installed signed package")
 	}
 	if err := requireNoInterruptedXrayWorkerDeploy(ctx, docker); err != nil {
 		return "", err

@@ -223,7 +223,7 @@ func loadManagedRealitySecurityState(ctx context.Context, source realitySecurity
 		host, port, err := net.SplitHostPort(target)
 		var names []string
 		if err != nil || port != "443" || json.Unmarshal(namesJSON, &names) != nil || len(names) != 1 || desiredRevision != appliedRevision || runtimeHealthy != 1 || vlessEnabled != 1 {
-			return managedRealitySecurityState{}, errors.New("center: stored Meridian REALITY guard is invalid")
+			return managedRealitySecurityState{}, errors.New("center: stored Glivela REALITY guard is invalid")
 		}
 		state.targetHost, state.serverName, state.revision = host, names[0], desiredRevision
 	default:
