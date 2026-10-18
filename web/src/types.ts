@@ -305,7 +305,7 @@ export type AgentView = {
   credentialRevoked: boolean;
   siteId: string;
   roles: string[];
-  capabilities: { meridianAcceptance?: boolean; executorVersions?: Record<string, number>; runtimeCapabilities?: string[]; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean };
+  capabilities: { landingOnly?: boolean; meridianAcceptance?: boolean; executorVersions?: Record<string, number>; runtimeCapabilities?: string[]; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean };
   networkCandidates: NetworkCandidate[];
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;

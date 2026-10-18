@@ -48,12 +48,8 @@ case "$bootstrap_url" in
 esac
 
 installer="$(mktemp -t vastora-agent-installer.XXXXXX)"
-docker_installer=""
 cleanup() {
   rm -f "$installer"
-  if [ -n "$docker_installer" ]; then
-    rm -f "$docker_installer"
-  fi
 }
 trap cleanup EXIT HUP INT TERM
 bootstrap_curl() {
@@ -63,19 +59,6 @@ bootstrap_curl() {
     curl "$@"
   fi
 }
-if command -v docker >/dev/null 2>&1; then
-  if ! docker info >/dev/null 2>&1; then
-    echo "Docker is installed but the daemon is not running. Start it before installing Vastora Agent." >&2
-    exit 1
-  fi
-  echo "Docker is already installed and running. Continuing with Vastora Agent."
-else
-  docker_installer="$(mktemp -t vastora-docker-installer.XXXXXX)"
-  echo "Docker is not installed; downloading the Vastora Docker installer..."
-  bootstrap_curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 1048576 -fsS \
-    "${bootstrap_url%/}/install/docker.sh" -o "$docker_installer"
-  sh "$docker_installer"
-fi
 bootstrap_curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 1048576 -fsS \
   -H "Authorization: Bearer $token" \
   "${bootstrap_url%/}/install/agent.sh" -o "$installer"
@@ -118,16 +101,12 @@ case "${ID:-}:${VERSION_ID:-}" in
     exit 1 ;;
 esac
 
-for required in curl systemctl docker sha256sum awk dpkg; do
+for required in curl systemctl sha256sum awk dpkg; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     exit 1
   fi
 done
-if ! docker info >/dev/null 2>&1; then
-  echo "Docker is installed but the daemon is not running." >&2
-  exit 1
-fi
 
 arch="$(dpkg --print-architecture)"
 case "$arch" in
@@ -137,6 +116,7 @@ esac
 
 temporary="$(mktemp -t vastora-agent.XXXXXX)"
 headers="$(mktemp -t vastora-agent-headers.XXXXXX)"
+docker_installer=""
 switch_started=0
 cleanup() {
   status=$?
@@ -152,6 +132,7 @@ cleanup() {
     fi
   fi
   rm -f "$temporary" "$headers"
+  if [ -n "$docker_installer" ]; then rm -f "$docker_installer"; fi
   exit "$status"
 }
 trap cleanup EXIT HUP INT TERM
@@ -174,6 +155,7 @@ center_curl() {
     curl "$@"
   fi
 }
+@@DOCKER_BOOTSTRAP@@
 echo "Downloading the Vastora Agent for $arch..."
 bootstrap_curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 268435456 -fsS \
   -D "$headers" -H "Authorization: Bearer $token" \
@@ -285,6 +267,19 @@ func renderAgentInstallLoader(centerURL string) string {
 }
 
 func renderAgentInstallScript(profile AgentEnrollmentInstallProfile, bootstrapURL string) string {
+	dockerBootstrap := ""
+	if profile.Capabilities.Docker {
+		dockerBootstrap = `if ! command -v docker >/dev/null 2>&1; then
+  docker_installer="$(mktemp -t vastora-docker-installer.XXXXXX)"
+  bootstrap_curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 1048576 -fsS \
+    "${bootstrap_url%/}/install/docker.sh" -o "$docker_installer"
+  sh "$docker_installer"
+fi
+if ! docker info >/dev/null 2>&1; then
+  echo "Docker is installed but the daemon is not running." >&2
+  exit 1
+fi`
+	}
 	headscaleBootstrap := ":"
 	tailscaleEnrolled := "false"
 	if profile.HeadscaleCommand != "" {
@@ -353,6 +348,7 @@ fi`
 		"@@CA_FINGERPRINT@@", shellQuote(profile.CAFingerprint),
 		"@@TAILSCALE_ENROLLED@@", tailscaleEnrolled,
 		"@@HEADSCALE_BOOTSTRAP@@", headscaleBootstrap,
+		"@@DOCKER_BOOTSTRAP@@", dockerBootstrap,
 	).Replace(agentInstallScript)
 }
 

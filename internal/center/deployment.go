@@ -191,6 +191,13 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if exists == 0 {
 		return DeploymentView{}, errors.New("center: agent not found")
 	}
+	var landingOnly bool
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json, '$.landingOnly'), 0) FROM agents WHERE id = ?`, request.AgentID).Scan(&landingOnly); err != nil {
+		return DeploymentView{}, err
+	}
+	if landingOnly {
+		return DeploymentView{}, errors.New("center: applications are unavailable on landing-only nodes")
+	}
 	if request.AppKey == threeXUIAppKey && request.Operation == "install" {
 		if err := s.validateThreeXUIInstallRole(ctx, request.AgentID, request.Role); err != nil {
 			return DeploymentView{}, err

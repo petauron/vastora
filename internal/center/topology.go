@@ -28,6 +28,7 @@ var (
 )
 
 type NodeCapabilities struct {
+	LandingOnly           bool           `json:"landingOnly,omitempty"`
 	ExecutorVersions      map[string]int `json:"executorVersions,omitempty"`
 	RuntimeCapabilities   []string       `json:"runtimeCapabilities,omitempty"`
 	NativeEgress          bool           `json:"nativeEgress"`
@@ -52,6 +53,7 @@ type NodeCapabilities struct {
 }
 
 type NodeHeartbeat struct {
+	LandingServerHealth          *landing.ServerHealth
 	LandingEgressAddresses       []landing.EgressAddress
 	PrivateNetworkPeer           *landing.PeerIdentity
 	LandingClientRuntime         *landing.ClientRuntime

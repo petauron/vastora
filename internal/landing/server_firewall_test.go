@@ -80,3 +80,33 @@ func TestServerFirewallRestrictsOnlyDedicatedService(t *testing.T) {
 		}
 	}
 }
+
+func TestServerFirewallRemovalReadsFreshSnapshot(t *testing.T) {
+	policy := testServerFirewall()
+	unrelated := []map[string]nftObject{
+		{"table": {"family": "inet", "name": "user_policy"}},
+		{"chain": {"family": "inet", "table": "user_policy", "name": "input"}},
+		{"rule": {"family": "inet", "table": "user_policy", "chain": "input", "expr": []any{nftObject{"accept": nil}}}},
+	}
+	document := nftDocument{Objects: append(policy.objects(), unrelated...)}
+	writes := 0
+	run := func(_ context.Context, input []byte, _ ...string) ([]byte, error) {
+		if input == nil {
+			return json.Marshal(document)
+		}
+		writes++
+		table, _ := policy.identity()
+		want, _ := json.Marshal(nftObject{"nftables": []any{nftObject{"delete": nftObject{"table": nftObject{"family": "inet", "name": table}}}}})
+		if string(input) != string(want) {
+			t.Fatal("removal touched unrelated objects")
+		}
+		document.Objects = unrelated
+		return nil, nil
+	}
+	if err := policy.remove(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	if err := policy.remove(context.Background(), run); err != nil || writes != 1 {
+		t.Fatalf("idempotent removal: %v, writes %d", err, writes)
+	}
+}

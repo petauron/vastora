@@ -112,6 +112,7 @@ func taskOutcomeIsUncertain(err error) bool {
 }
 
 type Capabilities struct {
+	LandingOnly           bool           `json:"landingOnly,omitempty"`
 	ExecutorVersions      map[string]int `json:"executorVersions,omitempty"`
 	RuntimeCapabilities   []string       `json:"runtimeCapabilities,omitempty"`
 	NativeEgress          bool           `json:"nativeEgress"`

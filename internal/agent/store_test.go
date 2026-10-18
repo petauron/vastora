@@ -138,6 +138,7 @@ func TestAgentSchemaV2MigratesResetJournalForward(t *testing.T) {
 			applied_at TEXT NOT NULL
 		);
 		DROP TABLE applied_installations_v5_test;
+		ALTER TABLE control_plane_connection DROP COLUMN landing_only;
 		PRAGMA user_version = 2`); err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -201,6 +202,7 @@ func TestAgentSchemaV8PurgesOnlyUnrestorableLegacyState(t *testing.T) {
 		DROP TABLE agent_install_operations;
 		ALTER TABLE control_plane_connection DROP COLUMN ca_certificate_pem;
 		ALTER TABLE task_receipts DROP COLUMN runtime_generation;
+		ALTER TABLE control_plane_connection DROP COLUMN landing_only;
 		PRAGMA user_version = 7`); err != nil {
 		t.Fatal(err)
 	}
@@ -248,6 +250,7 @@ func TestAgentSchemaV10PreservesCompletionForArchival(t *testing.T) {
 	DROP TABLE landing_controller_state;
 	DROP TABLE landing_runtime_state;
 	DROP TABLE node_listener_applied_state;
+	ALTER TABLE control_plane_connection DROP COLUMN landing_only;
 	PRAGMA user_version = 9`); err != nil {
 		t.Fatal(err)
 	}

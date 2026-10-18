@@ -336,6 +336,13 @@ func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtime
 		},
 		tailscaleHostsPath: "/etc/hosts",
 		purgeRuntime: func(ctx context.Context, deleteData bool) error {
+			connection, err := agent.InspectConnection(dataDir)
+			if err != nil {
+				return err
+			}
+			if connection.LandingOnly {
+				return agent.PurgeNativeLanding(ctx)
+			}
 			return agent.PurgeManagedRuntime(ctx, dataDir, deleteData, authorize)
 		},
 		run: runHostCommand,
@@ -446,7 +453,10 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 			return err
 		}
 	}
-	if state.TailscaleEnrolled {
+	// A managed installation is stopped and purged below, including its local
+	// keys. Do not make local removal depend on a reachable control server.
+	// External installations remain on the host and must be logged out first.
+	if state.TailscaleEnrolled && state.TailscaleOwnership != "managed" {
 		output, logoutErr := environment.run(ctx, "tailscale", "logout")
 		if logoutErr != nil {
 			return fmt.Errorf("disconnect the external Tailscale installation from Vastora: %s: %w", strings.TrimSpace(string(output)), logoutErr)

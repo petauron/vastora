@@ -156,14 +156,36 @@ func (policy ServerFirewall) Install(ctx context.Context) error {
 	return policy.install(ctx, runNFT)
 }
 
-// Remove is used only while the owned native service is stopped. A changed
-// or foreign table is never deleted to make a configuration update succeed.
-func (policy ServerFirewall) Remove(ctx context.Context) error {
+// Verify is read-only: a health observation must not silently repair drift.
+func (policy ServerFirewall) Verify(ctx context.Context) error {
 	if err := policy.validate(); err != nil {
 		return err
 	}
 	table, _ := policy.identity()
 	data, err := runNFT(ctx, nil, "--json", "list", "ruleset")
+	var document nftDocument
+	if err != nil || len(data) > nftOutputLimit || json.Unmarshal(data, &document) != nil {
+		return errors.New("landing: cannot inspect native firewall")
+	}
+	found, err := validateNFTPolicy(document, table, policy.objects(), false)
+	if err != nil || !found {
+		return errors.New("landing: native firewall is missing or changed")
+	}
+	return nil
+}
+
+// Remove is used only while the owned native service is stopped. A changed
+// or foreign table is never deleted to make a configuration update succeed.
+func (policy ServerFirewall) Remove(ctx context.Context) error {
+	return policy.remove(ctx, runNFT)
+}
+
+func (policy ServerFirewall) remove(ctx context.Context, run func(context.Context, []byte, ...string) ([]byte, error)) error {
+	if err := policy.validate(); err != nil {
+		return err
+	}
+	table, _ := policy.identity()
+	data, err := run(ctx, nil, "--json", "list", "ruleset")
 	var document nftDocument
 	if err != nil || len(data) > nftOutputLimit || json.Unmarshal(data, &document) != nil {
 		return errors.New("landing: cannot inspect native firewall before removal")
@@ -173,8 +195,11 @@ func (policy ServerFirewall) Remove(ctx context.Context) error {
 		return err
 	}
 	command, _ := json.Marshal(nftObject{"nftables": []any{nftObject{"delete": nftObject{"table": nftObject{"family": "inet", "name": table}}}}})
-	_, removeErr := runNFT(ctx, command, "--json", "--file", "-")
-	data, err = runNFT(ctx, nil, "--json", "list", "ruleset")
+	_, removeErr := run(ctx, command, "--json", "--file", "-")
+	data, err = run(ctx, nil, "--json", "list", "ruleset")
+	// Unmarshal reuses slice elements and their maps. A reordered ruleset
+	// would otherwise retain keys from deleted objects and invent drift.
+	document = nftDocument{}
 	if err != nil || len(data) > nftOutputLimit || json.Unmarshal(data, &document) != nil {
 		return errors.New("landing: cannot confirm native firewall removal")
 	}
