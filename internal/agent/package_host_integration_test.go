@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -213,7 +214,73 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 			if err := backend.Inspect(ctx, task, removed.Resources); err != nil {
 				t.Fatal(err)
 			}
+			if kind == "native" {
+				verifyNativeRetainedReinstall(t, ctx, executor, task, removed.Resources)
+			}
 			t.Logf("%s/%s: real install, identity inspection/adoption, upgrade, backup, restore, logs and retained uninstall passed", kind, runtime.GOARCH)
 		})
 	}
+}
+
+func verifyNativeRetainedReinstall(t *testing.T, ctx context.Context, executor PackageExecutor, task DeploymentTask, retained *InstanceResources) {
+	t.Helper()
+	account := *resourceNamed(retained, "user", "worker")
+	data := *resourceNamed(retained, "directory", "data")
+	configuration := *resourceNamed(retained, "file", "controller:environment")
+	custom := []byte("APPLICATION_SETTING=preserved\n")
+	if err := os.WriteFile(configuration.Path, custom, 0600); err != nil {
+		t.Fatal(err)
+	}
+	task.ID, task.Operation = "reinstall-retained", "install"
+	reinstalled, err := executor.Deploy(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resourceNamed(reinstalled.Resources, "user", "worker"); got == nil || got.ID != account.ID || got.Name != account.Name {
+		t.Fatal("reinstallation changed retained account identity")
+	}
+	for _, check := range []struct{ path, content string }{
+		{configuration.Path, string(custom)},
+		{filepath.Join(data.Path, "database"), "before-upgrade"},
+	} {
+		raw, err := os.ReadFile(check.path)
+		if err != nil || string(raw) != check.content {
+			t.Fatal("retained configuration or data was reinitialized", err)
+		}
+	}
+	resources := append([]RuntimeResource(nil), reinstalled.Resources.Resources...)
+	task.ID, task.Operation, task.DeleteData = "delete-native-data", "uninstall", true
+	removed, err := executor.Deploy(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.Resources.State != "removed" || len(removed.Resources.Resources) != 0 {
+		t.Fatal("explicit uninstall retained active resource receipts")
+	}
+	for _, resource := range resources {
+		if resource.Path != "" {
+			if _, err := os.Lstat(resource.Path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("owned resource remains: %s: %v", resource.Kind, err)
+			}
+		}
+	}
+	for _, database := range []string{"passwd", "group"} {
+		output, err := exec.CommandContext(ctx, "getent", database, account.Name).Output()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 2 || len(output) != 0 {
+			t.Fatal("owned account or private group still exists", database, err)
+		}
+	}
+	// Explicit application deletion does not destroy immutable recovery backups.
+	if len(removed.Resources.Backups) == 0 {
+		t.Fatal("recovery backups lost")
+	}
+	for _, backup := range removed.Resources.Backups {
+		file, err := openNativeBackup(executor.StateDirectory, task, backup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file.Close()
+	}
+	t.Log("native retained reinstall preserved account/config/data; explicit deletion removed owned resources and retained verified backups")
 }
