@@ -166,6 +166,19 @@ func loadCheckpoint() (*checkpoint, error) {
 	if json.Unmarshal(b, &s) != nil || s.View.Validate() != nil {
 		return nil, errors.New("security: invalid recovery checkpoint")
 	}
+	if s.View.State == "pending_confirmation" || s.View.State == "verified" || len(s.Original) > 0 || len(s.Written) > 0 {
+		paths := []string{"/etc/default/ufw", "/etc/ufw/before.rules", "/etc/ufw/before6.rules", "/etc/ufw/ufw.conf", "/etc/ufw/sysctl.conf", jailPath}
+		if len(s.Original) != len(paths) || len(s.Written) != len(paths) || s.AppliedAt.IsZero() || s.BootID == "" {
+			return nil, errors.New("security: incomplete recovery ownership")
+		}
+		for _, path := range paths {
+			original, ok := s.Original[path]
+			written, has := s.Written[path]
+			if !ok || !has || len(written) == 0 || path != jailPath && len(original) == 0 {
+				return nil, errors.New("security: incomplete recovery file ownership")
+			}
+		}
+	}
 	return &s, nil
 }
 func saveCheckpoint(s *checkpoint) error {
@@ -818,7 +831,7 @@ func (h Host) CheckPorts(rules []Rule) error {
 	if err != nil {
 		return err
 	}
-	if s == nil || s.View.State == "rolled_back" {
+	if s == nil || s.View.State == "rolled_back" || s.View.State == "preview" || s.View.State == "unconfigured" {
 		return nil
 	}
 	if s.View.State != "verified" {

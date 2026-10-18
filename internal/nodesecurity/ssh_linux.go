@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -88,7 +90,7 @@ func (h Host) VerifySSH(ctx context.Context, revision string) error {
 	if err != nil {
 		return err
 	}
-	fresh := false
+	ancestors := map[int]time.Time{}
 	for pid, depth := os.Getppid(), 0; pid > 1 && depth < 32; depth++ {
 		raw, e := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 		if e != nil {
@@ -104,12 +106,20 @@ func (h Host) VerifySSH(ctx context.Context, revision string) error {
 		}
 		name := strings.TrimSpace(string(comm))
 		started := h.now().Add(-time.Duration((uptime - ticks/hz) * float64(time.Second)))
-		if (name == "sshd" || name == "sshd-session") && started.After(s.AppliedAt) {
-			fresh = true
+		if name == "sshd" || name == "sshd-session" {
+			ancestors[pid] = started
 		}
 		pid = parent
 	}
-	if !fresh {
+	clientPort, e := strconv.Atoi(parts[1])
+	if e != nil || clientPort < 1 || clientPort > 65535 {
+		return errors.New("security: invalid SSH client port")
+	}
+	sockets, e := h.run(ctx, "ss", "-H", "-tnp", fmt.Sprintf("( sport = :%d and dport = :%d )", port, clientPort))
+	if e != nil {
+		return e
+	}
+	if !freshSSHSocket(sockets, parts, ancestors, s.AppliedAt) {
 		return errors.New("security: open a NEW SSH connection after applying the policy (do not reuse an SSH multiplexed connection)")
 	}
 	if s.View.State == "pending_confirmation" {
@@ -119,6 +129,51 @@ func (h Host) VerifySSH(ctx context.Context, revision string) error {
 	}
 	s.SSHVerified = true
 	return saveCheckpoint(s)
+}
+
+var socketPID = regexp.MustCompile(`pid=([0-9]+),`)
+
+func freshSSHSocket(raw string, peer []string, ancestors map[int]time.Time, after time.Time) bool {
+	if len(peer) != 4 {
+		return false
+	}
+	for _, line := range strings.Split(raw, "\n") {
+		local, remote := false, false
+		for _, field := range strings.Fields(line) {
+			host, port, err := net.SplitHostPort(field)
+			if err != nil {
+				continue
+			}
+			ip, err := netip.ParseAddr(host)
+			if err != nil {
+				continue
+			}
+			source, e1 := netip.ParseAddr(peer[0])
+			target, e2 := netip.ParseAddr(peer[2])
+			local = local || e2 == nil && ip == target && port == peer[3]
+			remote = remote || e1 == nil && ip == source && port == peer[1]
+		}
+		if !local || !remote {
+			continue
+		}
+		found := false
+		for _, match := range socketPID.FindAllStringSubmatch(line, -1) {
+			pid, err := strconv.Atoi(match[1])
+			if err != nil {
+				continue
+			}
+			if started, ok := ancestors[pid]; ok {
+				found = true
+				if !started.After(after.Add(time.Second)) {
+					return false
+				}
+			}
+		}
+		if found {
+			return true
+		}
+	}
+	return false
 }
 
 func processStart(raw string) (int, float64, error) {

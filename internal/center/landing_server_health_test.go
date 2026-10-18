@@ -48,7 +48,7 @@ func TestVersion113LandingHealthMigrationBacksUpAndStartsUnknown(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 113 {
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != centerSchemaVersion {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	if _, err = s.db.ExecContext(context.Background(), `SELECT health_json,health_received_at FROM landing_server_states`); err != nil {

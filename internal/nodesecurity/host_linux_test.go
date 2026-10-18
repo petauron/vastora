@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPublicGuardPreservesPrivateAndRequiredNetworkTraffic(t *testing.T) {
@@ -102,5 +103,24 @@ func TestCommandOutputAndProcessEvidenceAreBounded(t *testing.T) {
 	h := Host{run: func(context.Context, string, ...string) (string, error) { return "", errors.New("missing") }}
 	if h.verifyRuntime(context.Background(), &checkpoint{View: View{Policy: fixturePolicy()}}) == nil {
 		t.Fatal("missing runtime treated as protected")
+	}
+}
+
+func TestSSHReceiptBindsActualTCPConnectionNotANewMultiplexedChild(t *testing.T) {
+	now := time.Now()
+	peer := []string{"203.0.113.10", "55000", "192.0.2.10", "2222"}
+	line := `ESTAB 0 0 192.0.2.10:2222 203.0.113.10:55000 users:(("sshd",pid=100,fd=4),("sshd-session",pid=200,fd=4))`
+	if freshSSHSocket(line, peer, map[int]time.Time{100: now.Add(-time.Minute), 200: now.Add(2 * time.Second)}, now) {
+		t.Fatal("old TCP session accepted through a fresh multiplexed child")
+	}
+	if !freshSSHSocket(line, peer, map[int]time.Time{100: now.Add(2 * time.Second), 200: now.Add(3 * time.Second)}, now) {
+		t.Fatal("fresh TCP socket rejected")
+	}
+	if freshSSHSocket(line, peer, map[int]time.Time{300: now.Add(2 * time.Second)}, now) {
+		t.Fatal("unrelated process accepted")
+	}
+	other := []string{"203.0.113.11", "55000", "192.0.2.10", "2222"}
+	if freshSSHSocket(line, other, map[int]time.Time{100: now.Add(2 * time.Second)}, now) {
+		t.Fatal("different source socket accepted")
 	}
 }

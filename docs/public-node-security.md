@@ -32,7 +32,7 @@ the issue or deploy this draft as protection for the proxy fleet.
 5. From an approved management source, open a **new, non-multiplexed SSH
    connection**. Run the displayed root `security-verify-ssh REVISION` command
    with `SSH_CONNECTION` preserved. It checks the actual sshd process ancestry,
-   process start time, approved peer and port. A checkbox, old SSH connection,
+   TCP-socket ownership/start time, approved peer and port. A checkbox, old SSH connection,
    TCP port probe or Center heartbeat is not an SSH receipt.
 6. Explicitly approve application. Agent reruns preflight and checks the exact
    locally reviewed preview, its fresh SSH receipt and its deadline. Before any
