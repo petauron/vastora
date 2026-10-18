@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"syscall"
 	"time"
 )
 
@@ -81,6 +82,13 @@ func (h Host) prepare(ctx context.Context, s *checkpoint) (View, error) {
 			return v, err
 		}
 	}
+	// A cancelled apt parent can leave dpkg children running. Never remove the
+	// persistent mask while a package-manager process can still finish postinst.
+	unlock, err := holdPackageLocks([]string{"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock"})
+	if err != nil {
+		return v, err
+	}
+	defer unlock()
 	if _, err = h.run(ctx, "systemctl", "disable", "fail2ban.service"); err != nil {
 		return v, err
 	}
@@ -102,4 +110,27 @@ func (h Host) prepare(ctx context.Context, s *checkpoint) (View, error) {
 		}
 	}
 	return v, nil
+}
+
+func holdPackageLocks(paths []string) (func(), error) {
+	files := []*os.File{}
+	release := func() {
+		for _, f := range files {
+			_ = f.Close()
+		}
+	}
+	for _, path := range paths {
+		f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		files = append(files, f)
+		lock := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: 0, Len: 0}
+		if err = syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock); err != nil {
+			release()
+			return nil, errors.New("security: package manager is still active; retain the preparation mask and retry after it stops")
+		}
+	}
+	return release, nil
 }
