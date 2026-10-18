@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -180,7 +181,15 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 			_ = os.Remove(databasePath + "-shm")
 		}()
 	}
-	db, err := sql.Open("sqlite", databasePath)
+	// SQLite foreign-key enforcement is per physical connection. Configure the
+	// driver DSN so replacements after cancellation/connection failure also
+	// enforce CASCADE and RESTRICT, not just the initialization connection.
+	absoluteDatabasePath, err := filepath.Abs(databasePath)
+	if err != nil {
+		return nil, fmt.Errorf("center: resolve database path: %w", err)
+	}
+	databaseURL := url.URL{Scheme: "file", Path: filepath.ToSlash(absoluteDatabasePath), RawQuery: url.Values{"_pragma": {"foreign_keys(1)"}}.Encode()}
+	db, err := sql.Open("sqlite", databaseURL.String())
 	if err != nil {
 		return nil, fmt.Errorf("center: open database: %w", err)
 	}

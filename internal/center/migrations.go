@@ -226,6 +226,14 @@ func (s *Store) createMigrationBackup(ctx context.Context, from, to int64) (stri
 }
 
 func verifyMigratedSchema(ctx context.Context, db *sql.DB, expected int64) error {
+	var foreignKeys int
+	if err := db.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+		return fmt.Errorf("center: verify foreign key enforcement: %w", err)
+	}
+	if foreignKeys != 1 {
+		return errors.New("center: database foreign key enforcement is disabled")
+	}
+
 	version, err := sqliteSchemaVersion(ctx, db)
 	if err != nil {
 		return err

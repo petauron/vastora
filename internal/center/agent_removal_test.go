@@ -48,6 +48,12 @@ func TestRemoveOfflineAgentCleansInstallationsAndPreservesOtherNodes(t *testing.
 	if _, err = s.db.Exec(`UPDATE deployments SET operation='uninstall',state='running',reconciliation_required=1,attempt=1 WHERE id=?`, installation.ID); err != nil {
 		t.Fatal(err)
 	}
+	// Seed a dependent history row and then force a new physical connection.
+	// A startup-only PRAGMA silently loses both the cascade and RESTRICT guards.
+	if _, err := s.db.Exec(`INSERT INTO task_events(id,task_id,agent_id,kind,event,created_at) VALUES('retired-event','retired-task',?,'test','queued','')`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	replaceStoreConnection(t, s)
 	expireRemovalNode(t, s, node.ID)
 	if err = s.StartAgentRemoval(ctx, node.ID, " Edge Node B "); err != nil {
 		t.Fatal(err)
@@ -75,6 +81,12 @@ func TestRemoveOfflineAgentCleansInstallationsAndPreservesOtherNodes(t *testing.
 		if removalCount(t, s, `SELECT COUNT(*) FROM `+table+` WHERE `+column+`=?`, node.ID) != 0 {
 			t.Fatalf("%s records remained", table)
 		}
+	}
+	if removalCount(t, s, `SELECT COUNT(*) FROM task_events WHERE id='retired-event'`) != 0 {
+		t.Fatal("orphan task history remained after node removal")
+	}
+	if err := verifyMigratedSchema(ctx, s.db, centerSchemaVersion); err != nil {
+		t.Fatal(err)
 	}
 	if removalCount(t, s, `SELECT COUNT(*) FROM deployments WHERE id=? AND state='pending'`, otherInstall.ID) != 1 {
 		t.Fatal("other installation changed")
