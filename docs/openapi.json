@@ -17299,6 +17299,16 @@
                 "type": "null"
               }
             ]
+          },
+          "nativeServices": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogNativeServicesRuntime"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -17638,6 +17648,48 @@
           },
           "executable": {
             "type": "boolean"
+          }
+        }
+      },
+      "CatalogNativeServicesRuntime": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogNativeService"
+            }
+          }
+        }
+      },
+      "CatalogNativeService": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string"
+          },
+          "managedUser": {
+            "type": "string"
+          },
+          "writableState": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "process": {
+            "$ref": "#/components/schemas/CatalogSystemdRuntime"
           }
         }
       },
