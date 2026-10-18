@@ -122,6 +122,13 @@ func (b *NativeServicesPackageBackend) Resume(ctx context.Context, task Deployme
 	if err != nil {
 		return err
 	}
+	hasUnit := false
+	for _, resource := range receipt.Resources {
+		hasUnit = hasUnit || resource.Kind == "unit"
+	}
+	if !hasUnit {
+		return nil
+	}
 	// Restore only the observed pre-backup set, workers before controllers.
 	for _, automatic := range []bool{false, true} {
 		for _, unit := range plan.Units {

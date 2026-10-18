@@ -20,6 +20,9 @@ func (b *NativeServicesPackageBackend) Backup(ctx context.Context, task Deployme
 	}
 	b.resumeUnits = map[string]bool{}
 	for _, unit := range plan.Units {
+		if resourceNamed(receipt, "unit", unit.LogicalName) == nil {
+			continue
+		}
 		observed, err := b.Manager.readPackageUnit(ctx, unit.Name)
 		if err != nil {
 			return err
@@ -37,6 +40,9 @@ func (b *NativeServicesPackageBackend) Backup(ctx context.Context, task Deployme
 	}()
 	for _, automatic := range []bool{true, false} {
 		for _, unit := range plan.Units {
+			if resourceNamed(receipt, "unit", unit.LogicalName) == nil {
+				continue
+			}
 			if unit.Automatic != automatic {
 				continue
 			}
@@ -47,6 +53,9 @@ func (b *NativeServicesPackageBackend) Backup(ctx context.Context, task Deployme
 	}
 	// Require stopped evidence for every service before opening any snapshot.
 	for _, unit := range plan.Units {
+		if resourceNamed(receipt, "unit", unit.LogicalName) == nil {
+			continue
+		}
 		observed, err := b.Manager.readPackageUnit(ctx, unit.Name)
 		if err != nil || observed.MainPID != 0 {
 			return errors.New("agent: native writer remains active during backup")
