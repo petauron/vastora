@@ -234,7 +234,7 @@ func TestRealitySecurityCheckSupportsMeridianEndpoint(t *testing.T) {
 	}
 }
 
-func TestRealitySecurityCheckEndpointRequiresAdminAndReturnsNoStoreResult(t *testing.T) {
+func TestRetiredRealitySecurityCheckEndpointCannotProbeOrWrite(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	session, csrf, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple")
@@ -242,18 +242,24 @@ func TestRealitySecurityCheckEndpointRequiresAdminAndReturnsNoStoreResult(t *tes
 		t.Fatal(err)
 	}
 	seedRealitySecurityCheckPublication(t, store)
-	store.dialRealitySecurityProbe = func(_ context.Context, _, serverName string) error {
-		if serverName == "www.intel.com" {
-			return nil
-		}
-		return errors.New("rejected")
+	before, err := store.Publication(context.Background(), "verification-publication")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeSecurity, err := json.Marshal(before.SecurityCheck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.dialRealitySecurityProbe = func(_ context.Context, _, _ string) error {
+		t.Error("retired endpoint launched a security probe")
+		return errors.New("retired endpoint must not probe")
 	}
 	handler := NewServer(store, "", false).Handler()
 
 	unauthorized := httptest.NewRequest(http.MethodPost, "/api/v1/publications/verification-publication/security-check", nil)
 	unauthorizedResponse := httptest.NewRecorder()
 	handler.ServeHTTP(unauthorizedResponse, unauthorized)
-	if unauthorizedResponse.Code != http.StatusUnauthorized {
+	if unauthorizedResponse.Code != http.StatusNotFound {
 		t.Fatalf("unauthorized status=%d body=%q", unauthorizedResponse.Code, unauthorizedResponse.Body.String())
 	}
 
@@ -263,12 +269,16 @@ func TestRealitySecurityCheckEndpointRequiresAdminAndReturnsNoStoreResult(t *tes
 	request.Header.Set("X-CSRF-Token", csrf)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+	if response.Code != http.StatusNotFound {
 		t.Fatalf("security check response status=%d cache=%q body=%q", response.Code, response.Header().Get("Cache-Control"), response.Body.String())
 	}
-	var result RealitySecurityCheckView
-	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.Status != realitySecurityCheckSafe || len(result.Checks) != 5 {
-		t.Fatalf("security check response=%#v err=%v", result, err)
+	publication, err := store.Publication(context.Background(), "verification-publication")
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterSecurity, err := json.Marshal(publication.SecurityCheck)
+	if err != nil || string(beforeSecurity) != string(afterSecurity) {
+		t.Fatalf("retired endpoint wrote a security result: %#v %v", publication.SecurityCheck, err)
 	}
 }
 
