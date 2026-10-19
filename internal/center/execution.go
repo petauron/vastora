@@ -440,7 +440,7 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	now := s.now().UTC()
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return controlplane.ExecutionAuthorization{}, err
-	} else if blocked && !preparation && runtime == nil && listener == nil && restoredMonitor == nil {
+	} else if blocked && restoredMonitor == nil {
 		return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {

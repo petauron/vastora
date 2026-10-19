@@ -3,7 +3,6 @@ package center
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
 )
