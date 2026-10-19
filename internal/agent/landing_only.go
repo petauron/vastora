@@ -23,7 +23,7 @@ func (s *Store) ValidateNodePurpose(ctx context.Context, capabilities Capabiliti
 
 func landingOnlyTaskAllowed(kind string) bool {
 	switch kind {
-	case "landing.server.apply", "agent.update", "agent.decommission", "node.security":
+	case "agent.update", "agent.decommission", "node.security":
 		return true
 	default:
 		return false

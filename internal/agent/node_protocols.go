@@ -16,63 +16,6 @@ import (
 	"github.com/petauron/vastora/internal/nodeprotocol"
 )
 
-func (c Client) applyNodeProtocols(ctx context.Context, store *Store, task nodeprotocol.Task) (nodeprotocol.Result, error) {
-	result := nodeprotocol.Result{Phase: task.Phase}
-	if task.Selection.Validate() != nil || task.InboundID < 1 || task.InboundTag == "" || task.ApplicationID == "" {
-		return result, errors.New("agent: invalid node protocol request")
-	}
-	if task.Phase == "prepare" {
-		executor, ok := c.Executor.(interface {
-			ConfigureHY2Port(context.Context, *Store, string, bool) error
-		})
-		if !ok {
-			return result, errors.New("agent: protocol configuration is unavailable")
-		}
-		return result, executor.ConfigureHY2Port(ctx, store, task.ApplicationID, task.HY2)
-	}
-	if task.Phase == "verify" {
-		routes, err := store.localThreeXUILandingRoutes(ctx, task.ApplicationID)
-		if err != nil {
-			return result, err
-		}
-		verifyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			all, err := listRealityInbounds(verifyCtx, routes.baseURL, routes.token)
-			if err == nil && nodeProtocolsMatch(all, task) {
-				result.HY2InboundID = task.HY2InboundID
-				return result, nil
-			}
-			select {
-			case <-verifyCtx.Done():
-				return result, uncertainTaskOutcome(errors.New("agent: node protocols have not converged"))
-			case <-ticker.C:
-			}
-		}
-	}
-	if task.Phase != "apply" {
-		return result, errors.New("agent: invalid node protocol phase")
-	}
-	baseURL, token, err := threeXUIClientAPIConnection(ctx, store)
-	if err != nil {
-		return result, err
-	}
-	if task.HY2 {
-		if err := validateHY2Certificate(task); err != nil {
-			return result, err
-		}
-	}
-	result.HY2InboundID, err = configureThreeXUIProtocols(ctx, baseURL, token, task)
-	if err != nil {
-		// Each write uses stable tags and preserves clients. Reconcile a lost
-		// response instead of reporting a false success or creating duplicates.
-		return result, uncertainTaskOutcome(errors.New("agent: node protocol update needs reconciliation"))
-	}
-	return result, nil
-}
-
 func nodeProtocolsMatch(all []threeXUIRealityInbound, task nodeprotocol.Task) bool {
 	vlessFound, hy2Found := false, !task.HY2
 	for _, inbound := range all {

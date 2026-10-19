@@ -89,14 +89,20 @@ Already implemented:
   bandwidth diagnostics or Xray configuration inspection/recovery. It no
   longer advertises the removed link diagnostic capability. General host,
   return-route and bandwidth diagnostics are unchanged.
+- The Agent task switch no longer executes proxy-related
+  `application.command` payloads or `landing.server.apply` /
+  `landing.proxy.apply`. The removed online legacy export is replaced by
+  Glivela's one-time offline tool. Senulun command branches remain; retired
+  payload fields still count toward single-command validation, so mixing a
+  retired payload with a supported command cannot silently execute either.
+  Restricted hosts no longer authorize the removed landing task kind.
 
 Still active and requiring removal before this migration is complete:
 
-- `task_runner.go` still dispatches proxy-related `application.command`
-  payloads (runtime, acceptance, legacy export/retirement, protocols, REALITY,
-  subscriptions, clients, nodes and controller), `landing.server.apply` and
-  `landing.proxy.apply`. Remove these executors, not just their labels.
-  Preserve the separate Senulun command branches and generic lifecycle tasks.
+- Retired proxy execution helpers and task/result contract fields still need
+  removal after their Center producers are retired. Removing dispatch is not
+  complete deletion of the superseded implementation. Preserve frozen
+  migration/history decoding where actually required, not runtime fallbacks.
 - `application_command_tasks.go` still resets legacy account/endpoint cycles
   and queues proxy runtime/client commands before claiming commands.
   `deployment_tasks.go` still claims landing and Xray recovery tasks. These

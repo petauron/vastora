@@ -16,10 +16,7 @@ import (
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/ipquality"
-	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/nodediagnostics"
-	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/senulun"
@@ -292,13 +289,6 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				result, err = c.Executor.Deploy(ctx, task)
 			}
 		case "application.command":
-			// Mutating commands may restart the panel or replace its database.
-			// The legacy export only reads and validates identities; keeping it
-			// behind a stalled landing write would also stall the migration.
-			if task.MeridianLegacyExport == nil {
-				store.landingMutationMu.Lock()
-				defer store.landingMutationMu.Unlock()
-			}
 			commands := 0
 			if task.MeridianAcceptance != nil {
 				commands++
@@ -344,59 +334,6 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			}
 			if !c.Capabilities.Docker || commands != 1 {
 				err = errors.New("agent: application command received without Docker capability")
-			} else if task.MeridianAcceptance != nil {
-				executor, ok := c.Executor.(interface {
-					VerifyMeridianAcceptance(context.Context, meridianruntime.AcceptanceTask) (meridianruntime.AcceptanceResult, error)
-				})
-				connection, connectionErr := store.Connection(ctx)
-				if connectionErr != nil || task.MeridianAcceptance.VerifierAgentID != connection.AgentID {
-					err = errors.New("agent: recovery verifier identity mismatch")
-				} else if !ok || !c.Capabilities.MeridianAcceptance {
-					err = errors.New("agent: recovery client capability is not configured")
-				} else {
-					var acceptance meridianruntime.AcceptanceResult
-					acceptance, err = executor.VerifyMeridianAcceptance(ctx, *task.MeridianAcceptance)
-					if err == nil {
-						result.MeridianAcceptance = &acceptance
-					}
-				}
-			} else if task.MeridianLegacyExport != nil {
-				var exportResult meridianruntime.LegacyExportResult
-				exportResult, err = exportLegacyMeridianState(ctx, store, *task.MeridianLegacyExport)
-				if err == nil {
-					result.MeridianLegacyExport = &exportResult
-				}
-			} else if task.MeridianRuntime != nil {
-				executor, ok := c.Executor.(interface {
-					ApplyMeridianRuntime(context.Context, meridianruntime.Task) (meridianruntime.Result, error)
-				})
-				if !ok {
-					err = errors.New("agent: Glivela runtime capability is not configured")
-				} else {
-					var runtimeResult meridianruntime.Result
-					runtimeResult, err = executor.ApplyMeridianRuntime(ctx, *task.MeridianRuntime)
-					if err == nil {
-						result.MeridianRuntime = &runtimeResult
-						if observer, ok := c.Executor.(interface {
-							CompleteCommandResources(string, string) (*InstanceResources, error)
-						}); ok {
-							result.Resources, err = observer.CompleteCommandResources(task.MeridianRuntime.ApplicationID, task.ID)
-						}
-					}
-				}
-			} else if task.MeridianLegacyRetire != nil {
-				executor, ok := c.Executor.(interface {
-					RetireLegacyMeridianInstallation(context.Context, meridianruntime.LegacyRetireTask) (meridianruntime.LegacyRetireResult, error)
-				})
-				if !ok {
-					err = errors.New("agent: Glivela legacy retirement capability is not configured")
-				} else {
-					var retireResult meridianruntime.LegacyRetireResult
-					retireResult, err = executor.RetireLegacyMeridianInstallation(ctx, *task.MeridianLegacyRetire)
-					if err == nil {
-						result.MeridianLegacyRetire = &retireResult
-					}
-				}
 			} else if task.SenulunReporting != nil {
 				executor, ok := c.Executor.(interface {
 					InspectSenulunReporting(context.Context, senulun.ReportingTask) (senulun.ReportingResult, error)
@@ -449,52 +386,8 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 						result.SenulunEnrollment = &enrollment
 					}
 				}
-			} else if task.ProtocolCommand != nil {
-				var commandResult nodeprotocol.Result
-				commandResult, err = c.applyNodeProtocols(ctx, store, *task.ProtocolCommand)
-				if err == nil {
-					result.ProtocolCommand = &commandResult
-				}
-			} else if task.ApplicationCommand != nil {
-				var commandResult RealityCommandResult
-				commandResult, err = applyRealityCommand(ctx, store, task.ID, task.Attempt, *task.ApplicationCommand)
-				if err == nil && task.ApplicationCommand.Action == "remove" && task.ApplicationCommand.RemoveHY2 {
-					executor, ok := c.Executor.(interface {
-						ConfigureHY2Port(context.Context, *Store, string, bool) error
-					})
-					if !ok {
-						err = uncertainTaskOutcome(errors.New("agent: protocol port cleanup is unavailable"))
-					} else {
-						err = executor.ConfigureHY2Port(ctx, store, task.ApplicationCommand.TargetApplicationID, false)
-					}
-				}
-				// Preserve partial results in encrypted Center evidence even when a
-				// later step failed. This does not mark the command successful.
-				result.ApplicationCommand = &commandResult
-			} else if task.SubscriptionCommand != nil {
-				var commandResult SubscriptionCommandResult
-				commandResult, err = applySubscriptionCommand(ctx, store, *task.SubscriptionCommand)
-				if err == nil {
-					result.SubscriptionCommand = &commandResult
-				}
-			} else if task.ClientCommand != nil {
-				var commandResult ThreeXUIClientCommandResult
-				commandResult, err = applyThreeXUIClientCommand(ctx, store, *task.ClientCommand)
-				if err == nil {
-					result.ClientCommand = &commandResult
-				}
-			} else if task.NodeCommand != nil {
-				var commandResult ThreeXUINodeCommandResult
-				commandResult, err = applyThreeXUINodeCommand(ctx, store, *task.NodeCommand)
-				if err == nil {
-					result.NodeCommand = &commandResult
-				}
 			} else {
-				var commandResult ThreeXUIControllerCommandResult
-				commandResult, err = c.applyThreeXUIControllerCommand(ctx, store, task.ID, *task.ControllerCommand)
-				if err == nil {
-					result.ControllerCommand = &commandResult
-				}
+				err = errors.New("agent: unsupported application command")
 			}
 		case "gateway.routes.apply":
 			if task.GatewayState == nil || !c.Capabilities.Gateway {
@@ -521,21 +414,6 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 					err = errors.New("agent: invalid gateway component operation")
 				}
 				store.gatewayMutationMu.Unlock()
-			}
-		case "landing.server.apply":
-			err = c.applyLandingServerTask(ctx, store, task)
-			if err == nil && task.LandingServerState.Plan != nil {
-				var peer landing.PeerIdentity
-				peer, err = store.linkChecker.SelfIdentity(ctx, task.LandingServerState.Plan.Address)
-				if err == nil {
-					result.LandingPeer = &peer
-				}
-			}
-		case "landing.proxy.apply":
-			if !c.Capabilities.Docker || task.LandingProxyState == nil || task.Revision <= 0 || uint64(task.Revision) != task.LandingProxyState.Revision {
-				err = errors.New("agent: invalid landing proxy task")
-			} else {
-				err = store.applyLandingProxy(ctx, *task.LandingProxyState)
 			}
 		case "node.listener.apply":
 			if task.NodeListenerState == nil || !c.Capabilities.Docker {

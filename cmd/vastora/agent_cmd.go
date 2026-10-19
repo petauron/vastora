@@ -574,7 +574,6 @@ func runAgent(arguments []string) error {
 		client.Decommissioner = systemHostDecommissioner{dataDir: *dataDir, executable: executable}
 		if runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			client.Updater = systemHostUpdater{dataDir: *dataDir, executable: executable}
-			client.LandingServer = agent.NativeLandingServer{}
 		}
 		if !capabilities.LandingOnly || runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}, Store: store}
@@ -588,7 +587,6 @@ func runAgent(arguments []string) error {
 		client.Capabilities.LandingEgressIP = runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.SenulunInspection = capabilities.Docker && runtime.GOOS == "linux"
 		client.Capabilities.SenulunRotation = client.Capabilities.SenulunInspection
-		client.Capabilities.MeridianAcceptance = client.Capabilities.Docker
 		client.Capabilities.SenulunReporting = client.Capabilities.SenulunInspection
 		client.Capabilities.SenulunRestore = capabilities.Docker && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.HostProfile = !capabilities.LandingOnly && runtime.GOOS == "linux"
