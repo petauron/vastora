@@ -95,6 +95,7 @@ export function DeploymentSheet({
     role?: ThreeXUIRole,
     registryCredentialId?: string,
     authorizedCapabilities?: string[],
+    backupsConfirmed?: boolean,
   ) => Promise<void>;
 }) {
   const [agentID, setAgentID] = useState("");
@@ -106,6 +107,7 @@ export function DeploymentSheet({
   const [error, setError] = useState("");
   const [registryCredentialID, setRegistryCredentialID] = useState("");
   const [approvedCapabilities, setApprovedCapabilities] = useState<string[]>([]);
+  const [backupsConfirmed, setBackupsConfirmed] = useState(false);
   const requiredCapabilities = editor?.app.app.runtime?.requiredCapabilities ?? [];
   const permissionsApproved = requiredCapabilities.every((capability) => approvedCapabilities.includes(capability));
   const currentCatalogApp = editor
@@ -136,6 +138,7 @@ export function DeploymentSheet({
       : data.agents.filter((agent) => agent.id === editor.agent?.id)
     : [];
   const selectedAgent = candidates.find((agent) => agent.id === agentID);
+  const requiresBackupConfirmation = editor?.operation === "install" && Boolean(selectedAgent?.capabilities.landingOnly);
   const installed = data.applications.find((application) => application.nodeId === agentID && application.appKey === editor?.app.key);
   const adoptionBlocked = installed?.adoptionState === "pending" || installed?.adoptionState === "blocked";
   const runtimeBlocker = selectedAgent && editor ? packageNodeBlocker(selectedAgent, editor.app, language) : "";
@@ -205,10 +208,15 @@ export function DeploymentSheet({
     const missing = editor.initialError?.match(/configuration field "([^"]+)" is required/)?.[1];
     setMissingUpgradeFields(missing ? [missing] : []);
     setApprovedCapabilities([]);
+    setBackupsConfirmed(false);
   }, [editor]);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!editor || busy) return;
+    if (requiresBackupConfirmation && !backupsConfirmed) {
+      setError(copy(language, "请先备份并确认节点配置与数据已保留。", "Back up the node configuration and data, then confirm before installing."));
+      return;
+    }
     if (!permissionsApproved || runtimeBlocker || adoptionBlocked) {
       setError(runtimeBlocker || copy(language, "请先完成资源接管，并确认此配方需要的每项权限。", "Complete resource adoption and approve each permission required by this recipe."));
       return;
@@ -249,7 +257,7 @@ export function DeploymentSheet({
     setBusy(true);
     setError("");
     try {
-      await onSubmit(
+      const submission = [
         agent,
         requiresCatalog && currentCatalogApp ? currentCatalogApp : editor.app,
         config,
@@ -259,7 +267,9 @@ export function DeploymentSheet({
           ? undefined
           : registryCredentialID,
         approvedCapabilities,
-      );
+      ] as const;
+      if (requiresBackupConfirmation) await onSubmit(...submission, backupsConfirmed);
+      else await onSubmit(...submission);
     } catch (submitError) {
       if (editor.operation === "upgrade" && submitError instanceof Error) {
         const missing = submitError.message.match(/configuration field "([^"]+)" is required/)?.[1];
@@ -324,6 +334,7 @@ export function DeploymentSheet({
               {adoptionBlocked || runtimeBlocker ? <Alert role="status"><AlertTitle>{copy(language, "暂不能修改此应用", "Application changes are blocked")}</AlertTitle><AlertDescription>{runtimeBlocker || installed?.adoptionError || copy(language, "维护窗口内核实并接管现有资源后才能修改。接管不会重装或重启应用。", "Verify and adopt existing resources during maintenance before changing them. Adoption does not reinstall or restart the application.")}</AlertDescription></Alert> : null}
               {editor ? <details><summary className="cursor-pointer text-xs text-muted-foreground">{copy(language, "技术详情", "Technical details")}</summary><FieldDescription>{copy(language, `配方修订：${installed?.installedPackageRevision ?? 0} → ${editor.app.app.packageRevision ?? 0}`, `Recipe revision: ${installed?.installedPackageRevision ?? 0} → ${editor.app.app.packageRevision ?? 0}`)}</FieldDescription></details> : null}
               {requiredCapabilities.length > 0 ? <FieldSet><FieldLegend>{copy(language, "此配方需要管理员授权", "This recipe requires administrator approval")}</FieldLegend><FieldDescription>{copy(language, "逐项确认。升级不会自动批准新增权限。", "Approve each permission. Upgrades never automatically approve new privileges.")}</FieldDescription><FieldGroup>{requiredCapabilities.map((capability) => <Field orientation="horizontal" key={capability}><Checkbox id={`package-capability-${capability}`} checked={approvedCapabilities.includes(capability)} onCheckedChange={(checked) => setApprovedCapabilities((current) => checked ? [...current, capability] : current.filter((value) => value !== capability))} /><FieldLabel htmlFor={`package-capability-${capability}`}>{capabilityLabel(capability, language)}</FieldLabel></Field>)}</FieldGroup></FieldSet> : null}
+              {requiresBackupConfirmation ? <Field orientation="horizontal"><Checkbox id="native-install-backups" aria-describedby="native-install-backups-help" required checked={backupsConfirmed} onCheckedChange={(checked) => setBackupsConfirmed(checked === true)} /><div className="flex flex-col gap-1"><FieldLabel htmlFor="native-install-backups">{copy(language, "已备份此节点的配置和数据", "I have backed up this node's configuration and data")}</FieldLabel><FieldDescription id="native-install-backups-help">{copy(language, "此确认不会自动创建备份。仅安装已审核的 systemd 应用，不启用 Docker、网关或隧道。", "This confirmation does not create a backup. Only the reviewed systemd app is installed; Docker, gateways and tunnels remain disabled.")}</FieldDescription></div></Field> : null}
               {editor?.app.permissionDetails?.length ? <FieldDescription>{editor.app.permissionDetails.map((detail) => <span className="block break-all font-mono text-xs" key={detail}>{detail}</span>)}</FieldDescription> : null}
               {catalogMessage ? (
                 <Alert role="status" id="deployment-catalog-error">
@@ -349,7 +360,7 @@ export function DeploymentSheet({
                   aria-invalid={nodeUnavailable}
                   disabled={editor?.operation !== "install" || retryInstall}
                   id="deployment-agent"
-                  onValueChange={setAgentID}
+                  onValueChange={(value) => { setAgentID(value); setBackupsConfirmed(false); }}
                   options={nodeOptions}
                   required
                   value={agentID}
@@ -519,7 +530,7 @@ export function DeploymentSheet({
                 catalogMessage ? "deployment-catalog-error" : undefined
               }
               disabled={
-                !permissionsApproved || adoptionBlocked || Boolean(runtimeBlocker) ||
+                !permissionsApproved || adoptionBlocked || Boolean(runtimeBlocker) || (requiresBackupConfirmation && !backupsConfirmed) ||
                 busy ||
                 catalogBlocked ||
                 catalogChanged ||
