@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.0-alpha.332](https://github.com/petauron/vastora/compare/v0.1.0-alpha.331...v0.1.0-alpha.332) (2026-10-19)
+
+
+### Features
+
+* **agent:** install declarative native services and owned runtime users ([2d3a35c](https://github.com/petauron/vastora/commit/2d3a35cec03627d259ae6fc96d8e5544bd011cba))
+* **runtime:** enable backup-bound Glivela replacement without data cleanup ([31a8212](https://github.com/petauron/vastora/commit/31a8212aa627c48609051c5a130ac3851424c332))
+* **security:** add opt-in public-node baseline with guarded SSH confirmation ([941751a](https://github.com/petauron/vastora/commit/941751a9f27d2aa5e3d040bea8589313d5162d52))
+* **subscription:** preview actual inventory and exclusion reasons ([8db9e0d](https://github.com/petauron/vastora/commit/8db9e0d201d642c6178a113b0648e1b48e71263d))
+
+
+### Bug Fixes
+
+* **apps:** recognize HTTP errors across application bundles ([9aecbc9](https://github.com/petauron/vastora/commit/9aecbc91ce8bda16aa4eafdc33ecd4d6206b8c78))
+* **nodes:** allow explicit renewal of unused recovery commands ([698e5b6](https://github.com/petauron/vastora/commit/698e5b63a32e2020638aca3be0bef1bdbd130990))
+* **nodes:** allow reviewed abandonment of failed security tasks ([20a0329](https://github.com/petauron/vastora/commit/20a032989c4118705d5a65fdf077e7c735e5c841))
+* **nodes:** preserve host management through stale and failed requests ([f64f97d](https://github.com/petauron/vastora/commit/f64f97d25d42f734d42b395185e57573694028cf))
+* **nodes:** preserve update failures and verify enrollment identity ([260e393](https://github.com/petauron/vastora/commit/260e393ba203cc2853874622081d273f2d147113))
+
 ## [0.1.0-alpha.331](https://github.com/petauron/vastora/compare/v0.1.0-alpha.330...v0.1.0-alpha.331) (2026-10-18)
 
 
