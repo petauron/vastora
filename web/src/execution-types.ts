@@ -25,6 +25,9 @@ export function isHelperExecution(kind: string) {
 export function executionActions(value: ExecutionView): ExecutionAction[] {
   if (value.disposition || !["failed", "unknown"].includes(value.state)) return [];
   if (value.kind === "legacy.receipt") return value.state === "unknown" ? ["abandon"] : [];
+  // Firewall operations require host-checkpoint review, never generic replay
+  // or a manual success assertion. Reuse the existing audited abandonment.
+  if (value.kind === "node.security") return ["abandon"];
   if (!taskKinds.has(value.kind)) return [];
   return isHelperExecution(value.kind) || value.canConfirm ? ["confirm-completed", "abandon", "reexecute"] : ["abandon", "reexecute"];
 }

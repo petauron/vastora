@@ -17,7 +17,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFo
 import { Spinner } from "@/components/ui/spinner";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 
-function actionLabel(language: Language, action: ExecutionAction) {
+function actionLabel(language: Language, action: ExecutionAction, kind = "") {
+  if (kind === "node.security" && action === "abandon") return copy(language, "核对后放弃", "Abandon after review");
   if (action === "confirm-completed") return copy(language, "确认已完成", "Confirm completed");
   return action === "abandon" ? copy(language, "放弃任务", "Abandon task") : copy(language, "重新执行", "Execute again");
 }
@@ -105,7 +106,7 @@ export function ExecutionSettings({ language, agents, onNavigate }: { language: 
       <Button className="min-h-11" disabled={busy} variant="outline" onClick={() => void load()}>{copy(language, "刷新最新记录", "Refresh latest")}</Button>
       {page?.nextCursor ? <Button className="min-h-11" disabled={busy} variant="outline" onClick={() => void load(page.nextCursor)}>{copy(language, "更早记录", "Older records")}</Button> : null}
     </CardFooter>
-    {selected ? <ExecutionDetail key={selected.id} execution={selected} language={language} onNavigate={onNavigate} name={names.get(selected.agentId) ?? selected.agentId} onClose={() => setSelected(null)} onSaved={() => { setSelected(null); setNotice(copy(language, "处置已记录。", "Disposition recorded.")); void load(); }} /> : null}
+    {selected ? <ExecutionDetail key={selected.id} execution={selected} language={language} onNavigate={onNavigate} name={names.get(selected.agentId) ?? selected.agentId} onClose={() => setSelected(null)} onSaved={() => { setSelected(null); setNotice(selected.kind === "node.security" ? copy(language, "已记录放弃旧安全任务；这不代表回滚完成。请回到节点页重新读取实际状态。", "Old security task abandonment recorded; rollback is not confirmed. Return to the node page and inspect actual host state.") : copy(language, "处置已记录。", "Disposition recorded.")); void load(); }} /> : null}
     {confirmControl && control ? <ClaimControlConfirmation paused={control.paused} language={language} onClose={() => setConfirmControl(false)} onSaved={() => { setConfirmControl(false); setNotice(copy(language, "领取设置已保存。", "Claim settings saved.")); void load(); }} /> : null}
   </Card>;
 }
@@ -141,7 +142,7 @@ export function ExecutionDetail({ execution, name, language, onClose, onSaved, o
     return () => request.abort();
   }, [execution.id, execution.kind, language]);
   const submit = async () => {
-    if (!action || !stopped || !note.trim() || busy) return;
+    if (!action || !executionActions(execution).includes(action) || !stopped || !note.trim() || busy) return;
     setBusy(true); setError("");
     try { await api.disposeExecution(execution.id, execution.kind, { action, executionStopped: true, note: note.trim() }); onSaved(); }
     catch (cause) { setError(userError(language, cause)); }
@@ -153,13 +154,14 @@ export function ExecutionDetail({ execution, name, language, onClose, onSaved, o
       {!execution.disposition && ["failed", "unknown"].includes(execution.state) ? <Alert><AlertTitle>{copy(language,"先核对实际状态","Check the actual state first")}</AlertTitle><AlertDescription><p>{taskError(language, execution.lastError)}</p><p>{copy(language,"如果不确定是否已完成，请保留任务，交由维护人员核对。放弃任务不会撤销服务器上已经发生的修改。","If the outcome is unclear, leave the task for an administrator to review. Abandoning it does not undo changes on the server.")}</p>{onNavigate ? <Button variant="outline" size="sm" onClick={() => { navigating.current = true; onClose(); onNavigate((execution.kind.startsWith("agent.") || execution.kind === "node.security") ? "nodes" : "apps"); }}>{(execution.kind.startsWith("agent.") || execution.kind === "node.security") ? copy(language,"查看节点","View nodes") : copy(language,"查看应用","View apps")}</Button> : null}</AlertDescription></Alert> : null}
       <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer">{copy(language,"技术详情","Technical details")}</summary><dl className="mt-3 grid gap-3"><div><dt>{copy(language,"任务编号","Task ID")}</dt><dd className="break-all text-muted-foreground">{legacy?.taskId ?? execution.taskId}</dd></div><div><dt>{copy(language,"执行阶段","Phase")}</dt><dd>{execution.phase}</dd></div><div><dt>{copy(language,"执行次数","Attempt")}</dt><dd>{execution.attempt}</dd></div></dl>{execution.lastError ? <code className="mt-3 block break-all text-xs">{execution.lastError}</code> : null}</details>
       {execution.kind === "legacy.receipt" ? <p className="text-sm text-muted-foreground">{legacy ? legacy.hasCompletion ? copy(language, "旧执行结果已安全保存，需要核对后处置。这里不会显示其中的凭据。", "Old result securely retained for review. Credentials are not displayed here.") : copy(language, "旧执行没有完成结果，需要核对实际资源。", "No completion result was retained; inspect actual resources.") : copy(language, "正在读取旧执行记录", "Loading legacy evidence")}</p> : null}
-      {!action ? <div className="flex flex-wrap gap-2">{executionActions(execution).map((option) => <Button className="min-h-11" key={option} variant="outline" onClick={() => setAction(option)}>{actionLabel(language, option)}</Button>)}</div> : <FieldGroup>
+      {execution.kind === "node.security" ? <Alert><AlertTitle>{copy(language, "放弃不代表回滚完成", "Abandonment does not prove rollback completed")}</AlertTitle><AlertDescription>{copy(language, "先通过独立管理通道核对旧执行已停止及本机防护检查点。放弃只处置这条任务，不撤销防火墙变更、不取消自动回滚，也不会标记防护成功。处置后请回到节点页，重新读取节点实际状态，再决定后续操作。", "Use an independent management connection to verify the old execution stopped and inspect the host security checkpoint. Abandonment only resolves this task; it does not revert firewall changes, cancel automatic rollback, or mark protection successful. After resolving it, return to the node page and inspect actual host state before any further operation.")}</AlertDescription></Alert> : null}
+      {!action ? <div className="flex flex-wrap gap-2">{executionActions(execution).map((option) => <Button className="min-h-11" key={option} variant="outline" onClick={() => setAction(option)}>{actionLabel(language, option, execution.kind)}</Button>)}</div> : <FieldGroup>
         <p className="text-sm">{action === "reexecute" ? copy(language, "将创建一次新的执行。请确认旧操作已停止，并核对现有资源，避免重复变更。", "A new attempt will be created. Verify the old operation has stopped and inspect resources to avoid duplicate changes.") : action === "abandon" ? copy(language, "只放弃此任务，不撤销已经发生的变更，也不删除历史证据。", "Abandons this task without undoing changes or deleting evidence.") : copy(language, "请核对实际完成结果。节点在线或重连本身不代表任务已完成。", "Verify the actual result. Being online or reconnecting alone does not prove completion.")}</p>
         <Field orientation="horizontal" data-disabled={busy}><Checkbox id="execution-stopped" checked={stopped} disabled={busy} onCheckedChange={setStopped} /><FieldLabel htmlFor="execution-stopped">{copy(language, "已确认旧执行停止，并核对实际资源", "I verified the old execution stopped and inspected resources")}</FieldLabel></Field>
         <Field data-disabled={busy}><FieldLabel htmlFor="execution-note">{copy(language, "核对说明", "Verification notes")}</FieldLabel><Textarea id="execution-note" disabled={busy} maxLength={1024} value={note} onChange={(event) => setNote(event.target.value)} required /></Field>
       </FieldGroup>}
       {error ? <FieldError role="alert">{error}</FieldError> : null}
     </div>
-    <SheetFooter><Button className="min-h-11" disabled={busy} variant="outline" onClick={() => { if (action) { setAction(null); setStopped(false); setNote(""); setError(""); } else onClose(); }}>{copy(language, "返回", "Back")}</Button>{action ? <Button className="min-h-11" disabled={busy || !stopped || !note.trim()} onClick={() => void submit()}>{busy ? <Spinner data-icon="inline-start" /> : null}{actionLabel(language, action)}</Button> : null}</SheetFooter>
+    <SheetFooter><Button className="min-h-11" disabled={busy} variant="outline" onClick={() => { if (action) { setAction(null); setStopped(false); setNote(""); setError(""); } else onClose(); }}>{copy(language, "返回", "Back")}</Button>{action ? <Button className="min-h-11" disabled={busy || !stopped || !note.trim()} onClick={() => void submit()}>{busy ? <Spinner data-icon="inline-start" /> : null}{actionLabel(language, action, execution.kind)}</Button> : null}</SheetFooter>
   </SheetContent></Sheet>;
 }
