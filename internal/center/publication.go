@@ -187,7 +187,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		return PublicationView{}, errors.New("center: publishing a management page publicly requires explicit high-risk confirmation")
 	}
 	if appKey == senulunAppKey && input.Kind == publicationPublic {
-		return PublicationView{}, errors.New("center: Senulun has no built-in dashboard authentication; use private access or an Access-protected Tunnel")
+		return PublicationView{}, errors.New("center: Senulun direct public publication is not enabled; use private access or an Access-protected Tunnel")
 	}
 	if _, _, err := net.SplitHostPort(endpoint); err != nil {
 		return PublicationView{}, errors.New("center: stored service endpoint is invalid")

@@ -1,76 +1,59 @@
 # Senulun
 
-Vastora manages one global Senulun Service container and optional native Senulun
-collectors. It does not embed Senulun in Center, migrate Komari history, or remove
-existing Komari installations.
+Senulun is an independent application. It owns administrator accounts, probe
+enrollment, monitoring configuration, themes and monitoring data. Vastora manages
+package installation, upgrades, runtime resources and access entries; it is not
+required to run a Senulun Service or Agent installed outside Vastora.
 
-## Setup
+## Install
 
-1. Install **Senulun 监控主机** from the application store on one Docker-capable node.
-   Supply the browser's exact HTTPS origin and a private administrator setup token.
-   See [authentication configuration](../../../docs/senulun-collector-config.md).
-2. Add a **private HTTPS** access point to its dashboard service. Prefer the
-   Headscale network when collectors span Sites; every selected collector must
-   resolve and reach this name. A LAN entry only works for nodes that can reach
-   that LAN. HTTPS uses Vastora's existing certificate workflow.
-3. Install **Senulun 探针** on each node to monitor, including the monitoring host
-   itself if desired. Center automatically inherits the node name and Site group.
-4. Use **打开监控** to open Senulun's dashboard and initialize the administrator at
-   `/login` using the setup token. Subsequent access uses the Senulun login.
+1. Install **Senulun 监控主机** on a Docker-capable node. Set `public_url` to the
+   exact HTTPS browser origin. Initialize the administrator at Senulun's `/login`
+   page through a private entry before exposing the dashboard. There is no
+   Vastora-generated administrator setup token.
+2. In Senulun, create an Agent enrollment token.
+3. Install **Senulun 探针**, explicitly supplying its HTTPS Service URL, node name,
+   optional group and enrollment token. The Service may be installed elsewhere,
+   including outside Vastora. Center delivers the token as an encrypted package
+   secret and does not execute enrollment commands on the Service.
 
-No enrollment token is entered or displayed in the UI. Center queues a fixed
-`pulse-service enrollment create` operation on the monitoring host, encrypts the
-short-lived result, and delivers it only to the selected collector. The collector
-uses Senulun's own enrollment implementation and keeps its per-node credential
-across upgrades and keep-data reinstalls. A failed preparation ends the install
-with a retryable error rather than leaving it indefinitely pending.
+Independent Service installations on different hosts are allowed. Each Agent
+chooses its own Service. The usual one-instance-per-package-per-host rule remains.
+For installation without Vastora, see the
+[Senulun standalone guide](https://github.com/petauron/senulun/blob/main/docs/STANDALONE.md).
 
 ## Access and runtime
 
-- Service: pinned `v0.1.0-alpha.4` multi-architecture image, non-root UID 65532,
-  private host port 18080 to container 8080, `vastora-pulse-data` volume.
-- Collector: pinned `v0.1.0-alpha.3` checksum-verified upstream archive,
-  exact executable extraction, dedicated unprivileged systemd account, no
-  Docker, no inbound port. Original
-  archive and license notices remain under `/opt/vastora/pulse-agent`.
-- Current native release requires **Debian 12/13 or Ubuntu 24.04/26.04**. Vastora
-  Agent still supports Ubuntu 22.04, but this Senulun binary does not; installation
-  rejects that runtime before replacing files. No container fallback or TLS bypass.
-- Dashboard and read APIs use Senulun's built-in authentication. Vastora's existing
-  access policy is unchanged: direct public publication is blocked, and optional
-  Internet dashboard access uses a Cloudflare Access-protected Tunnel. Collectors keep
-  using their private HTTPS entry and do not go through browser authentication.
-- Senulun defaults remain seven-day history, 90-second offline threshold, 100 nodes
-  and 2 GiB database limit. These are Senulun's defaults, not new Vastora settings.
-- Vastora does not configure or send a collection interval. New installations and
-  upgrades use Senulun's own default; reporting controls remain in Senulun.
+- Service: checksum-pinned container image, private bind and persistent data
+  volume. Senulun handles its own login and request authentication.
+- Agent: checksum-verified native executable, unprivileged systemd user,
+  persistent identity, no inbound listening port. The current native package
+  requires Debian 12/13 or Ubuntu 24.04/26.04; unsupported hosts fail before
+  replacing files. There is no TLS bypass or container fallback.
+- Existing Vastora access policy remains unchanged: direct public publication is
+  blocked; an Internet dashboard entry uses an Access-protected Tunnel.
+  The Agent's HTTPS API endpoint must not require interactive browser login.
+- Optional `trusted_proxy_ip` is the exact immediate reverse-proxy peer, not a
+  wildcard or a client address. Leave it empty unless the proxy topology is known.
+- Collection intervals, probe targets and monitoring policies belong to Senulun.
+  Vastora does not override them.
 
-## Lifecycle
+## Lifecycle and historical installations
 
-The managed Service upgrade takes Senulun's online backup before replacing the
-running container. For Alpha.4, first stop the old Service in a maintenance
-window, copy the entire `vastora-pulse-data` volume to a separate protected
-location, then restart the old Service before invoking Vastora's upgrade action.
-Alpha.4 performs a forward-only
-schema migration that splits `senulun.db` into paired `senulun.db` and
-`senulun.metrics.db` files; keep the whole volume persistent. A failed upgrade
-never starts an old image against the changed database. Rolling back across the
-split requires the pre-upgrade single-file backup and matching older image, not
-an image-only downgrade. Alpha.4 retains protocol v2, so existing collectors do
-not need an upgrade solely for this storage change. Uninstall collectors before
-the Service.
+Upgrades preserve the Service volume and each Agent's identity and credentials;
+they do not reenroll probes. Service upgrades retain the existing backup and
+forward-only database migration protections. Never start an older program against
+a migrated database; restoration needs its matching backup.
 
-Collector keep-data uninstall preserves its local identity; delete-data uninstall
-removes that credential, so the next installation registers a new Senulun node.
-Pulse's historical records are not deleted by uninstalling a collector. Changing
-the monitoring Service URL is intentionally not an automatic identity migration.
+Uninstall preserves data unless deletion is explicitly requested. Removing the
+Service does not uninstall Agents or move their identities to another Service.
+New independently enrolled Agents use data restoration, not Center-managed
+credential rotation, during host recovery.
 
-Center schema 71 extends the existing typed command queue while preserving queued
-3x-ui operations and exclusion guards. The standard migration runner backs up
-first, fails closed, and refuses downgrade.
+Historical package IDs (`pulse`, `pulse-agent`), container names, unit names,
+paths and installation receipts are resource ownership identifiers, not runtime
+dependencies. This change does not rename or recreate them. Historical queued
+operations and their recovery evidence remain readable; finish pending operations
+before updating the manager. No new automatic Service enrollment is queued.
 
-Regression tests cover the command handoff, secret redaction, failed enrollment,
-native lifecycle, safe archive selection, entry prerequisites, and migration.
-They have been added but not run locally under this repository's verification policy.
-
-Historical upstream Service release (immutable reference, not the current release): https://github.com/petauron/pulse/releases/tag/v0.1.0-alpha.4
+See [configuration](../../../docs/senulun-collector-config.md) for individual fields.

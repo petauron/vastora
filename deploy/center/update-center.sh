@@ -18,7 +18,7 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "Center updates must run as root." >&2
   exit 1
 fi
-for required in awk curl grep mktemp sha256sum; do
+for required in awk curl docker grep mktemp sha256sum; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     exit 1
@@ -82,14 +82,6 @@ write_status() {
   mv "$temporary_status" "$status_file"
 }
 
-installed_version="$(awk -F= '$1 == "VASTORA_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
-installed_image="$(awk -F= '$1 == "VASTORA_CENTER_IMAGE" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
-if [ "$installed_version" = "$target_version" ] && [ "$installed_image" = "$target_image" ]; then
-  write_status succeeded "$installed_version" "Center was updated successfully."
-  rm -f "$request"
-  exit 0
-fi
-
 temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/vastora-center-update.XXXXXX")"
 installer="$temporary_dir/install.sh"
 installer_headers="$temporary_dir/install.headers"
@@ -105,6 +97,46 @@ cleanup() {
   exit "$result"
 }
 trap cleanup EXIT HUP INT TERM
+
+verify_runtime() {
+  write_status applying "$target_version" "Verifying the running Center and co-located Agent."
+  failure_message="The installed release did not pass running Center and Agent verification."
+  center_container="$(docker compose --project-directory "$install_dir" ps -q center)"
+  [ -n "$center_container" ] || return 1
+  [ "$(docker inspect -f '{{.State.Running}}' "$center_container")" = true ] || return 1
+  [ "$(docker inspect -f '{{.Config.Image}}' "$center_container")" = "$target_image" ] || return 1
+  [ "$(docker exec "$center_container" /usr/local/bin/vastora version)" = "$target_version" ] || return 1
+  bootstrap_port="$(awk -F= '$1 == "VASTORA_CENTER_BOOTSTRAP_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/.env")"
+  if [ -z "$bootstrap_port" ]; then bootstrap_port=8080; fi
+  case "$bootstrap_port" in *[!0-9]*|'') return 1 ;; esac
+  for endpoint in healthz readyz; do
+    curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS "http://127.0.0.1:$bootstrap_port/$endpoint" >/dev/null || return 1
+  done
+  agent_unit="${VASTORA_AGENT_UNIT:-/etc/systemd/system/vastora-agent.service}"
+  if [ -f "$agent_unit" ] && grep -Fq 'Description=Vastora Agent' "$agent_unit"; then
+    systemctl is-active --quiet vastora-agent.service || return 1
+    agent_pid="$(systemctl show vastora-agent.service --property=MainPID --value)"
+    case "$agent_pid" in *[!0-9]*|''|0) return 1 ;; esac
+    [ "$("/proc/$agent_pid/exe" version)" = "$target_version" ] || return 1
+    curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:8090/healthz >/dev/null || return 1
+  fi
+  for gateway in vastora-gateway-caddy vastora-gateway-haproxy; do
+    if docker inspect -f '{{.State.Running}}' "$gateway" >/dev/null 2>&1; then
+      [ "$(docker inspect -f '{{.State.Running}}' "$gateway")" = true ] || return 1
+    fi
+  done
+}
+
+installed_version="$(awk -F= '$1 == "VASTORA_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
+installed_image="$(awk -F= '$1 == "VASTORA_CENTER_IMAGE" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
+if [ "$installed_version" = "$target_version" ] && [ "$installed_image" = "$target_image" ]; then
+  # Resume finalization only: never reinstall or downgrade an already-applied release.
+  verify_runtime || exit 1
+  write_status succeeded "$installed_version" "Center was updated successfully."
+  rm -f "$request"
+  completed=yes
+  exit 0
+fi
 
 write_status applying "$target_version" "Downloading the verified release metadata."
 release_base="${installer_base_url%/}/v$target_version"
@@ -184,6 +216,7 @@ if [ "$installed_version" != "$target_version" ] || [ "$installed_image" != "$ta
   failure_message="The Center update completed with an unexpected installed release identity."
   exit 1
 fi
+verify_runtime || exit 1
 write_status succeeded "$installed_version" "Center was updated successfully."
 rm -f "$request"
 completed=yes

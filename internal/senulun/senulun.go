@@ -19,8 +19,9 @@ const (
 )
 
 type AgentConfig struct {
-	ServiceURL           string `json:"service_url"`
-	ServiceApplicationID string `json:"service_application_id"`
+	ServiceURL string `json:"service_url"`
+	// Only historical installation evidence carries a Center application ID.
+	ServiceApplicationID string `json:"service_application_id,omitempty"`
 	NodeName             string `json:"node_name"`
 	NodeGroup            string `json:"node_group"`
 	// Nil preserves an existing host override; a supplied empty region selects automatic discovery.
@@ -42,9 +43,9 @@ type EnrollmentResult struct {
 func (config AgentConfig) Validate() error {
 	u, err := url.Parse(config.ServiceURL)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "/" || strings.ContainsAny(config.ServiceURL, "\r\n") {
-		return errors.New("senulun: a private HTTPS service URL is required")
+		return errors.New("senulun: an HTTPS service URL ending in / is required")
 	}
-	if config.ServiceApplicationID == "" || strings.TrimSpace(config.NodeName) == "" || len(config.NodeName) > 128 || len(config.NodeGroup) > 128 || strings.ContainsAny(config.NodeName+config.NodeGroup, "\r\n\x00") {
+	if strings.TrimSpace(config.NodeName) == "" || len(config.NodeName) > 128 || len(config.NodeGroup) > 128 || strings.ContainsAny(config.NodeName+config.NodeGroup, "\r\n\x00") {
 		return errors.New("senulun: invalid monitoring node identity")
 	}
 	if config.NodeRegion != nil && *config.NodeRegion != "" {

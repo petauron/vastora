@@ -4,14 +4,21 @@ import (
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/senulun"
 	"slices"
+	"strings"
 	"testing"
 )
 
 func TestSenulunUpgradeEnvironmentPreservesConfiguration(t *testing.T) {
 	before := []string{"PULSE_PUBLIC_URL=https://old.example.invalid", "PULSE_DATABASE_PATH=/var/lib/pulse/pulse.db", "PULSE_GITHUB_CLIENT_ID=synthetic-id", "PULSE_TRAFFIC_KEY_FILE=/var/lib/pulse/key", "PULSE_RETENTION_DAYS=23"}
+	before = append(before, "PULSE_SETUP_TOKEN_FILE=/pulse-bootstrap/setup-token")
 	got, err := senulunUpgradeEnvironment(before, []string{"SENULUN_PUBLIC_URL=https://new.example.invalid"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, entry := range got {
+		if strings.Contains(entry, "SETUP_TOKEN") {
+			t.Fatal("obsolete bootstrap token was retained")
+		}
 	}
 	for _, want := range []string{"SENULUN_PUBLIC_URL=https://new.example.invalid", "SENULUN_DATABASE_PATH=/var/lib/senulun/store/senulun.db", "SENULUN_GITHUB_CLIENT_ID=synthetic-id", "SENULUN_TRAFFIC_KEY_FILE=/var/lib/senulun/key", "SENULUN_RETENTION_DAYS=23"} {
 		if !slices.Contains(got, want) {

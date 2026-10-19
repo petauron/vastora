@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.0-alpha.331](https://github.com/petauron/vastora/compare/v0.1.0-alpha.330...v0.1.0-alpha.331) (2026-10-18)
+
+
+### Bug Fixes
+
+* **senulun:** decouple installation and enrollment from Center ([6aefd7b](https://github.com/petauron/vastora/commit/6aefd7b71d067fe757fec053b80258f374552d80))
+
+## [0.1.0-alpha.330](https://github.com/petauron/vastora/compare/v0.1.0-alpha.329...v0.1.0-alpha.330) (2026-10-18)
+
+
+### Bug Fixes
+
+* **agent:** recover landing service after failed updates ([#926](https://github.com/petauron/vastora/issues/926)) ([de8810b](https://github.com/petauron/vastora/commit/de8810b993b2126dc89b8d61d28cda0ad47ed077))
+* **agent:** restore native landing services after reboot ([#952](https://github.com/petauron/vastora/issues/952)) ([10f2d9f](https://github.com/petauron/vastora/commit/10f2d9fc2d10d2eec4e72d0e58579355e5caaad7))
+* verify Center runtime before completing failed upgrades ([#918](https://github.com/petauron/vastora/issues/918)) ([841a1f5](https://github.com/petauron/vastora/commit/841a1f5bce50eba6e00b548511a0308a2af7c569))
+
 ## [0.1.0-alpha.329](https://github.com/petauron/vastora/compare/v0.1.0-alpha.328...v0.1.0-alpha.329) (2026-10-18)
 
 

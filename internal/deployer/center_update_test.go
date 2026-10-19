@@ -11,6 +11,27 @@ import (
 
 const testCenterImage = "ghcr.io/petauron/vastora-center@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+func TestFileCenterUpdaterQueuesFailedSameReleaseForVerification(t *testing.T) {
+	installDir := t.TempDir()
+	for _, name := range []string{".update-service-enabled", "update-center.sh"} {
+		if err := os.WriteFile(filepath.Join(installDir, name), []byte("ready\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	version := "0.1.0-alpha.47"
+	if err := os.WriteFile(filepath.Join(installDir, "release.env"), []byte("VASTORA_VERSION="+version+"\nVASTORA_CENTER_IMAGE="+testCenterImage+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCenterUpdateStatus(filepath.Join(installDir, ".update-status.json"), deployapi.CenterUpdateExecution{State: "failed", TargetVersion: version}); err != nil {
+		t.Fatal(err)
+	}
+	updater := FileCenterUpdater{InstallDir: installDir, RuntimeImage: testCenterImage}
+	status, err := updater.StartCenterUpdate(context.Background(), centerUpdateRequest(version))
+	if err != nil || status.State != "queued" {
+		t.Fatalf("failed installed release was not queued for verification: %#v %v", status, err)
+	}
+}
+
 func centerUpdateRequest(version string) deployapi.CenterUpdateRequest {
 	return deployapi.CenterUpdateRequest{Version: version, Image: testCenterImage, InstallerBaseURL: "https://releases.example.com", InstallerHost: "releases.example.com", InstallerPort: "443", InstallerAddress: "203.0.113.10"}
 }

@@ -306,7 +306,7 @@ func RemoveLanding(ctx context.Context, nodeID string, revision uint64) error {
 
 // ApplyLanding installs a native service; it never installs Docker, x-ui or
 // compilers. The caller has persisted the desired revision and serialized tasks.
-func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) error {
+func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) (applyErr error) {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 || nodeID == "" {
 		return errors.New("agent: landing installation requires a managed Linux root Agent")
 	}
@@ -349,6 +349,29 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 	if err := verifyLandingFiles(journal); err != nil {
 		return err
 	}
+	if err := retireLegacyLandingDNSHook(); err != nil {
+		return err
+	}
+	recovery, err := prepareLandingRecovery(ctx, journal)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		preserve := false
+		if applyErr != nil && recovery.stopped {
+			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+			defer cancel()
+			if err := recovery.restore(recoveryCtx, journal); err != nil {
+				preserve = true
+				applyErr = errors.Join(applyErr, errors.New("agent: previous landing service recovery failed"), err)
+			} else {
+				applyErr = errors.Join(applyErr, errors.New("agent: previous landing service restored; requested revision was not applied"))
+			}
+		}
+		if !preserve {
+			recovery.cleanup()
+		}
+	}()
 	journal.Revision, journal.PlanDigest, journal.Removed = plan.Revision, digest, false
 	if err := saveLandingHostJournal(journal); err != nil {
 		return err
@@ -374,9 +397,9 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 	if err := saveLandingHostJournal(journal); err != nil {
 		return err
 	}
-	// A failed explicit binding must not leave the previous egress serving
-	// traffic while the requested revision is reported as failed.
-	if plan.EgressIP != "" {
+	// An explicit exit change must fail closed, never keep serving through
+	// the previous exit when validation of the requested address fails.
+	if plan.EgressIP != "" && (journal.Policy == nil || journal.Policy.EgressIP != plan.EgressIP) {
 		if err := stopLandingService(ctx); err != nil {
 			return err
 		}
@@ -405,6 +428,9 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 			policy.TCPOnlySources = append(policy.TCPOnlySources, source.Address)
 		}
 	}
+	// All non-disruptive validation and file preparation precedes cutover.
+	// Arm recovery before stopping: even a failed stop may have taken effect.
+	recovery.stopped = recovery.directory != "" && recovery.journal.Policy.Address == plan.Address && recovery.journal.Policy.EgressIP == plan.EgressIP
 	if err := stopLandingService(ctx); err != nil {
 		return err
 	}
@@ -484,6 +510,14 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 	// A self-dial is intentionally denied by the source allowlist. Inspect the
 	// kernel listener owned by the dedicated UID instead; actual remote TCP/UDP
 	// business health is established by the selected proxy node's probe.
+	if err := waitLandingListener(ctx, plan.Address, journal.UID); err != nil {
+		return err
+	}
+	journal.Files, journal.PendingFiles = journal.PendingFiles, nil
+	return saveLandingHostJournal(journal)
+}
+
+func waitLandingListener(ctx context.Context, address string, uid uint32) error {
 	readyCtx, cancelReady := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelReady()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -493,7 +527,7 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 		if err != nil {
 			return errors.New("agent: landing private listener could not be inspected")
 		}
-		if landingListenerPresent(listeners, plan.Address, journal.UID) {
+		if landingListenerPresent(listeners, address, uid) {
 			break
 		}
 		select {
@@ -502,8 +536,7 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 		case <-ticker.C:
 		}
 	}
-	journal.Files, journal.PendingFiles = journal.PendingFiles, nil
-	return saveLandingHostJournal(journal)
+	return nil
 }
 
 func landingListenerPresent(data []byte, address string, uid uint32) bool {

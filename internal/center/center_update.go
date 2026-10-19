@@ -196,6 +196,11 @@ func (s *Server) centerUpdateStatus(ctx context.Context, refreshOfficial bool) C
 	result.CurrentImageDigest = releaseImageDigest(execution.InstalledImage)
 	result.ImageMismatch = latest.Version == strings.TrimPrefix(Version, "v") && execution.InstalledImage != latest.Image
 	result.UpdateAvailable = result.UpdateAvailable || result.ImageMismatch
+	// A failed same-release update must finish host-side health verification,
+	// not remain permanently blocked just because its files were replaced.
+	if execution.State == "failed" && execution.TargetVersion == strings.TrimPrefix(Version, "v") && latest.Version == execution.TargetVersion && !result.ImageMismatch {
+		result.UpdateAvailable = true
+	}
 	if execution.State == "queued" || execution.State == "applying" || execution.TargetVersion == latest.Version {
 		result.State = execution.State
 		result.TargetVersion = execution.TargetVersion
@@ -279,6 +284,8 @@ func centerUpdateProgress(execution deployapi.CenterUpdateExecution) (string, in
 	case "Finishing Center startup reconciliation.":
 		return "reconciling", 94
 	case "Verifying the co-located Agent.":
+		return "finalizing", 97
+	case "Verifying the running Center and co-located Agent.":
 		return "finalizing", 97
 	default:
 		return "installing", 30

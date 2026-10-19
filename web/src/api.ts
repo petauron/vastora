@@ -5,6 +5,7 @@ import type { Action, AgentReinstallLandingSource, AgentReinstallDNS, AgentReins
 import type { LandingView } from "./landing-types";
 import type { IPQualityPreferences, IPQualityResponse } from "./ip-quality-types";
 import type { NodeDiagnosticCheck } from "./node-diagnostics-types";
+import type { NodeSecurity, SecurityTask } from "./node-security-types";
 import type { NodeProtocols } from "./types";
 import type { MeridianTraffic, MeridianAccountCreated, MeridianAccountInput, MeridianAccount, MeridianEndpoint, MeridianInventory, MeridianRouteGrant, MeridianSourceRecovery } from "./meridian-types";
 import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type ExecutionView, type LegacyReceiptView } from "./execution-types";
@@ -18,6 +19,18 @@ export class APIError extends Error {
   ) {
     super(message);
   }
+}
+
+// Application workspaces build their own APIError class. Validate the existing
+// HTTP error contract at that boundary rather than comparing class identities.
+export function isAPIError(error: unknown): error is Pick<APIError, "message" | "status" | "code" | "captchaRequired"> {
+  if (!error || typeof error !== "object" || Array.isArray(error)) return false;
+  const fields = Object.getOwnPropertyDescriptors(error);
+  const status: unknown = fields.status?.value;
+  return typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599
+    && typeof fields.message?.value === "string"
+    && typeof fields.code?.value === "string"
+    && typeof fields.captchaRequired?.value === "boolean";
 }
 
 function csrfToken(): string {
@@ -65,6 +78,8 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
+	 nodeSecurity: (id: string, signal?: AbortSignal) => request<NodeSecurity>(`/api/v1/agents/${encodeURIComponent(id)}/security`, { signal }),
+	 configureNodeSecurity: (id: string, input: SecurityTask, signal?: AbortSignal) => request<NodeSecurity>(`/api/v1/agents/${encodeURIComponent(id)}/security`, { method: "POST", body: JSON.stringify(input), signal }),
   ipQuality: (signal?: AbortSignal, preferences?: IPQualityPreferences, compareNodeId?: string, compareAddress?: string) => {
     const params = new URLSearchParams();
     if (preferences) { params.set("required", preferences.requiredServices.join(",")); params.set("region", preferences.targetRegion); }
@@ -219,7 +234,7 @@ export const api = {
 	integrations: (signal?: AbortSignal) => request<{ integrations: Integration[] }>("/api/v1/integrations", { signal }),
 	actions: (limit = 50, signal?: AbortSignal) => request<{ actions: Action[] }>(`/api/v1/actions?limit=${encodeURIComponent(String(limit))}`, { signal }),
   createDeployment: (agentId: string, appKey: string, config: Record<string, string | boolean | number>, operation: Deployment["operation"] = "install", deleteData = false, role?: "master" | "worker", registryCredentialId?: string, operationKey?: string, authorizedCapabilities?: string[], packageIdentity?: { packageRevision: number; manifestSha256: string }) => request<Deployment>("/api/v1/deployments", { method: "POST", headers: operationKey ? { "Idempotency-Key": operationKey } : undefined, body: JSON.stringify({ agentId, appKey, config, operation, deleteData, role, registryCredentialId, authorizedCapabilities, ...packageIdentity }) }),
-  revealDeploymentCredentials: (id: string, operationKey: string) => request<{ username?: string; password?: string; setupToken?: string }>(`/api/v1/deployments/${encodeURIComponent(id)}/credentials/reveal`, { method: "POST", headers: { "Idempotency-Key": operationKey }, body: "{}" }),
+  revealDeploymentCredentials: (id: string, operationKey: string) => request<{ username?: string; password?: string }>(`/api/v1/deployments/${encodeURIComponent(id)}/credentials/reveal`, { method: "POST", headers: { "Idempotency-Key": operationKey }, body: "{}" }),
   acknowledgeDeploymentCredentials: (id: string, operationKey: string) => request<{ acknowledged: boolean }>(`/api/v1/deployments/${encodeURIComponent(id)}/credentials/ack`, { method: "POST", headers: { "Idempotency-Key": operationKey }, body: "{}" }),
   confirmNetworkProfile: (agentId: string, profile: NetworkProfile) => request<NetworkProfile>(`/api/v1/agents/${encodeURIComponent(agentId)}/network-profile`, { method: "PUT", body: JSON.stringify(profile) }),
 	createPublication: (input: CreatePublicationInput) => request<Publication>("/api/v1/publications", { method: "POST", body: JSON.stringify(input) }),
