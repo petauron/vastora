@@ -103,7 +103,12 @@ func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request
 		return
 	}
 	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusCreated, enrollment)
+	statusID, err := s.store.agentEnrollmentStatusID(enrollment.Token)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, errors.New("center: enrollment status reference could not be prepared"))
+		return
+	}
+	writeJSON(writer, http.StatusCreated, AgentEnrollmentCommand{AgentEnrollment: enrollment, StatusID: statusID})
 }
 
 func (s *Server) handleCreateAgentReconnectEnrollment(writer http.ResponseWriter, request *http.Request) {

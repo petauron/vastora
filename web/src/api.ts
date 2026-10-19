@@ -6,7 +6,7 @@ import type { LandingView } from "./landing-types";
 import type { IPQualityPreferences, IPQualityResponse } from "./ip-quality-types";
 import type { NodeDiagnosticCheck } from "./node-diagnostics-types";
 import type { NodeSecurity, SecurityTask } from "./node-security-types";
-import type { NodeProtocols } from "./types";
+import type { AgentEnrollmentStatus, NodeProtocols } from "./types";
 import type { MeridianTraffic, MeridianAccountCreated, MeridianAccountInput, MeridianAccount, MeridianEndpoint, MeridianInventory, MeridianRouteGrant, MeridianSourceRecovery } from "./meridian-types";
 import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type ExecutionView, type LegacyReceiptView } from "./execution-types";
 
@@ -154,7 +154,8 @@ export const api = {
 	rotateRegistryCredential: (id: string, username: string, token: string) => request<RegistryCredential>(`/api/v1/registry-credentials/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ username, token }) }),
 	deleteRegistryCredential: (id: string) => request<{ deleted: boolean }>(`/api/v1/registry-credentials/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" }),
 	agents: (signal?: AbortSignal) => request<{ agents: AgentView[] }>("/api/v1/agents", { signal }),
-	createAgentEnrollment: (siteId: string, name: string, centerUrl: string, useHeadscale: boolean, gateway: boolean, tunnel: boolean, caCertificatePem = "", landingOnly = false) => request<AgentEnrollment>("/api/v1/agent-enrollments", { method: "POST", body: JSON.stringify({ siteId, name, centerUrl, useHeadscale, gateway, tunnel, caCertificatePem, landingOnly }) }),
+	createAgentEnrollment: (siteId: string, name: string, centerUrl: string, useHeadscale: boolean, gateway: boolean, tunnel: boolean, caCertificatePem = "", landingOnly = false) => request<AgentEnrollment & { statusId: string }>("/api/v1/agent-enrollments", { method: "POST", body: JSON.stringify({ siteId, name, centerUrl, useHeadscale, gateway, tunnel, caCertificatePem, landingOnly }) }),
+  agentEnrollmentStatus: (statusId: string, signal?: AbortSignal) => request<AgentEnrollmentStatus>(`/api/v1/agent-enrollments/${encodeURIComponent(statusId)}/status`, { signal }),
 	agentReinstallPlan: (agentId: string) => request<AgentReinstallPlan>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-plan`),
   createAgentReconnectEnrollment: (agentId: string, input: AgentReinstallInput) => request<AgentEnrollment>(`/api/v1/agents/${encodeURIComponent(agentId)}/reconnect`, { method: "POST", body: JSON.stringify(input) }),
   approveAgentReinstallNetwork: (agentId: string, input: AgentReinstallNetworkInput) => request<AgentReinstallNetworkApproval>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-network/approve`, { method: "POST", body: JSON.stringify(input) }),

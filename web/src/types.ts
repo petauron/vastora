@@ -416,6 +416,7 @@ export type AgentReinstallNetworkReview = {
 export type AgentReinstallNetworkInput = { operationId: string; planRevision: string; confirmMigration: boolean; profile: NetworkProfile };
 
 export type AgentEnrollment = { token: string; siteId: string; centerUrl?: string; installerUrl: string; caCertificatePem?: string; expiresAt: string };
+export type AgentEnrollmentStatus = { state: "pending" | "expired" | "enrolled" | "connected" | "unavailable"; agentId?: string; connected: boolean };
 
 export type NetworkKind = "lan" | "headscale" | "public";
 export type NetworkCandidate = { address: string; interface: string; kind: NetworkKind; observedAt: string };
