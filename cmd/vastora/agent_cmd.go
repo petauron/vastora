@@ -21,7 +21,6 @@ import (
 
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/controlplane"
-	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/tailscalehost"
@@ -587,8 +586,6 @@ func runAgent(arguments []string) error {
 		client.Capabilities.BandwidthDiagnostics = !capabilities.LandingOnly && runtime.GOOS == "linux" && iperfErr == nil
 		client.Capabilities.NativeEgress = (capabilities.Docker || capabilities.LandingOnly) && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.LandingEgressIP = runtime.GOOS == "linux" && os.Geteuid() == 0
-		client.Capabilities.MeridianLinkBandwidth = capabilities.Docker && runtime.GOOS == "linux"
-		client.Capabilities.MeridianLinkRevision = nodediagnostics.LinkBandwidthRevision
 		client.Capabilities.SenulunInspection = capabilities.Docker && runtime.GOOS == "linux"
 		client.Capabilities.SenulunRotation = client.Capabilities.SenulunInspection
 		client.Capabilities.MeridianAcceptance = client.Capabilities.Docker

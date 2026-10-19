@@ -23,7 +23,6 @@ import (
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/senulun"
-	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
 func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) {
@@ -250,26 +249,6 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				value, checkErr := checker.CheckInternationalBandwidth(ctx, *task.NodeDiagnostics)
 				result.NodeDiagnostics, err = &value, checkErr
 			}
-		case nodediagnostics.LinkServerKind:
-			checker, ok := c.Executor.(interface {
-				CheckMeridianLinkServer(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
-			})
-			if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
-				err = errors.New("agent: Glivela link server is unavailable")
-			} else {
-				value, checkErr := checker.CheckMeridianLinkServer(ctx, *task.NodeDiagnostics)
-				result.NodeDiagnostics, err = &value, checkErr
-			}
-		case nodediagnostics.LinkBandwidthKind:
-			checker, ok := c.Executor.(interface {
-				CheckMeridianLinkBandwidth(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
-			})
-			if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
-				err = errors.New("agent: Glivela link bandwidth is unavailable")
-			} else {
-				value, checkErr := checker.CheckMeridianLinkBandwidth(ctx, *task.NodeDiagnostics)
-				result.NodeDiagnostics, err = &value, checkErr
-			}
 		case nodediagnostics.HostProfileKind:
 			checker, ok := c.Executor.(interface {
 				CheckHostProfile(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
@@ -279,26 +258,6 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			} else {
 				value, checkErr := checker.CheckHostProfile(ctx, *task.NodeDiagnostics)
 				result.NodeDiagnostics, err = &value, checkErr
-			}
-		case xrayrecovery.InspectKind:
-			manager, ok := c.Executor.(interface {
-				InspectXrayConfiguration(context.Context, xrayrecovery.Task) (xrayrecovery.Result, error)
-			})
-			if !ok || task.XrayRecovery == nil {
-				err = errors.New("agent: Xray configuration recovery is unavailable")
-			} else {
-				value, recoveryErr := manager.InspectXrayConfiguration(ctx, *task.XrayRecovery)
-				result.XrayRecovery, err = &value, recoveryErr
-			}
-		case xrayrecovery.ApplyKind:
-			manager, ok := c.Executor.(interface {
-				ApplyXrayConfigurationRecovery(context.Context, xrayrecovery.Task) (xrayrecovery.Result, error)
-			})
-			if !ok || task.XrayRecovery == nil {
-				err = errors.New("agent: Xray configuration recovery is unavailable")
-			} else {
-				value, recoveryErr := manager.ApplyXrayConfigurationRecovery(ctx, *task.XrayRecovery)
-				result.XrayRecovery, err = &value, recoveryErr
 			}
 		case "application.maintenance":
 			manager, ok := c.Executor.(interface {
