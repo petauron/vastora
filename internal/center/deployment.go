@@ -14,18 +14,22 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/senulun"
 	"golang.org/x/mod/semver"
 )
 
 type DeploymentRequest struct {
-	AgentID    string          `json:"agentId"`
-	AppKey     string          `json:"appKey"`
-	Role       string          `json:"role,omitempty"`
-	Config     json.RawMessage `json:"config"`
-	Operation  string          `json:"operation"`
-	DeleteData bool            `json:"deleteData"`
+	ReplaceApplicationID string          `json:"replaceApplicationId,omitempty"`
+	SourceReceiptSHA256  string          `json:"sourceReceiptSha256,omitempty"`
+	BackupsConfirmed     bool            `json:"backupsConfirmed,omitempty"`
+	AgentID              string          `json:"agentId"`
+	AppKey               string          `json:"appKey"`
+	Role                 string          `json:"role,omitempty"`
+	Config               json.RawMessage `json:"config"`
+	Operation            string          `json:"operation"`
+	DeleteData           bool            `json:"deleteData"`
 	// Omission preserves existing grants but can never authorize an expansion.
 	AuthorizedCapabilities *[]string `json:"authorizedCapabilities,omitempty"`
 	PackageRevision        *int      `json:"packageRevision,omitempty"`
@@ -180,6 +184,9 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if request.Operation != "install" && request.Operation != "upgrade" && request.Operation != "configure" && request.Operation != "uninstall" {
 		return DeploymentView{}, errors.New("center: invalid deployment operation")
 	}
+	if (request.ReplaceApplicationID == "") != (request.SourceReceiptSHA256 == "") || request.ReplaceApplicationID != "" && (request.Operation != "install" || !request.BackupsConfirmed || request.Role != "" || request.AuthorizedCapabilities == nil) {
+		return DeploymentView{}, errors.New("center: explicit native handover requires the original application, receipt digest, backup confirmation and reviewed target permissions")
+	}
 	if err := s.validateSenulunDeployment(ctx, request); err != nil {
 		return DeploymentView{}, err
 	}
@@ -194,8 +201,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json, '$.landingOnly'), 0) FROM agents WHERE id = ?`, request.AgentID).Scan(&landingOnly); err != nil {
 		return DeploymentView{}, err
 	}
-	if landingOnly {
-		return DeploymentView{}, errors.New("center: applications are unavailable on landing-only nodes")
+	if landingOnly && request.Operation == "install" && (!request.BackupsConfirmed || request.AuthorizedCapabilities == nil) {
+		return DeploymentView{}, errors.New("center: landing-only host native installation requires backup confirmation and explicit reviewed package permissions")
 	}
 	if request.AppKey == threeXUIAppKey && request.Operation == "install" {
 		if err := s.validateThreeXUIInstallRole(ctx, request.AgentID, request.Role); err != nil {
@@ -328,6 +335,9 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	}
 	if err != nil {
 		return DeploymentView{}, err
+	}
+	if landingOnly && (manifest.Runtime == nil || !controlplane.NativeLifecycleAllowed(manifest.Runtime.Kind, manifest.Runtime.Version, request.Operation, grants)) {
+		return DeploymentView{}, errors.New("center: landing-only host permits only reviewed native systemd installation, upgrade and uninstall")
 	}
 	grantsJSON, err := json.Marshal(grants)
 	if err != nil {
@@ -548,8 +558,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation, change_proposal_id, pre_dispatch_application_status)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, nullableString(registryCredentialID), deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration, nullableString(request.ChangeProposalID), preDispatchApplicationStatus); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation, change_proposal_id, pre_dispatch_application_status,source_receipt_sha256)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?,?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, nullableString(registryCredentialID), deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration, nullableString(request.ChangeProposalID), preDispatchApplicationStatus, request.SourceReceiptSHA256); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	if producesCredentials {

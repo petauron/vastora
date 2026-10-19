@@ -1504,6 +1504,15 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "replaceApplicationId": {
+                    "type": "string"
+                  },
+                  "sourceReceiptSha256": {
+                    "type": "string"
+                  },
+                  "backupsConfirmed": {
+                    "type": "boolean"
+                  },
                   "agentId": {
                     "type": "string"
                   },
@@ -6032,6 +6041,200 @@
             "$ref": "#/components/responses/Error"
           }
         }
+      }
+    },
+    "/api/v1/services/{id}/handover": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Preview Service Handover",
+        "operationId": "previewServiceHandover_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "sourceServiceId": {
+                      "type": "string"
+                    },
+                    "targetServiceId": {
+                      "type": "string"
+                    },
+                    "sourceSha256": {
+                      "type": "string"
+                    },
+                    "targetSha256": {
+                      "type": "string"
+                    },
+                    "publications": {
+                      "type": "integer"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "targetServiceId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "description": "Explicit same-node/site managed service ownership transfer. Preserves original service/publication/route IDs and public/access boundaries. Existing IDs only, no caller-selected endpoint. Requires current owned resources and no active/uncertain work. Binding changes remain pending real publication verification; no old task is acknowledged as successful."
+      },
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Service Handover",
+        "operationId": "serviceHandover_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "sourceServiceId": {
+                      "type": "string"
+                    },
+                    "targetServiceId": {
+                      "type": "string"
+                    },
+                    "sourceSha256": {
+                      "type": "string"
+                    },
+                    "targetSha256": {
+                      "type": "string"
+                    },
+                    "publications": {
+                      "type": "integer"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "One strict JSON object, bounded to 4096 bytes; preview fingerprints must still match at commit.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "targetServiceId": {
+                    "type": "string"
+                  },
+                  "sourceSha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "targetSha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "backupsConfirmed": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "targetServiceId",
+                  "sourceSha256",
+                  "targetSha256",
+                  "backupsConfirmed"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Explicit same-node/site managed service ownership transfer. Preserves original service/publication/route IDs and public/access boundaries. Existing IDs only, no caller-selected endpoint. Requires current owned resources and no active/uncertain work. Binding changes remain pending real publication verification; no old task is acknowledged as successful."
       }
     },
     "/api/v1/publications": {
@@ -18278,6 +18481,9 @@
           "user": {
             "type": "string"
           },
+          "bindService": {
+            "type": "boolean"
+          },
           "health": {
             "anyOf": [
               {
@@ -18316,6 +18522,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "namespace": {
+            "type": "string"
+          },
           "users": {
             "type": "array",
             "items": {
@@ -18431,6 +18640,9 @@
             "type": "string"
           },
           "protocol": {
+            "type": "string"
+          },
+          "proxyProtocol": {
             "type": "string"
           },
           "containerPort": {

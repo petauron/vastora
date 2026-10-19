@@ -14,7 +14,8 @@ import (
 // attempt. This runs in the claim transaction before sealing the new task.
 func (s *Store) attachPackageRecovery(ctx context.Context, tx *sql.Tx, agentID string, task *AgentTask) error {
 	task.PackageRecovery = nil
-	if task.Kind != "application.apply" || task.Attempt < 2 || (task.Operation != "upgrade" && task.Operation != "configure") {
+	nativeHandover := task.Operation == "install" && task.SourceReceiptSHA256 != ""
+	if task.Kind != "application.apply" || task.Attempt < 2 || (task.Operation != "upgrade" && task.Operation != "configure" && !nativeHandover) {
 		return nil
 	}
 	var id, state, disposition, retired string
@@ -35,7 +36,7 @@ func (s *Store) attachPackageRecovery(ctx context.Context, tx *sql.Tx, agentID s
 		return errors.New("center: package recovery evidence cannot be verified")
 	}
 	var previous AgentTask
-	if json.Unmarshal(raw, &previous) != nil || previous.ID != task.ID || previous.Kind != task.Kind || previous.Attempt != task.Attempt-1 || previous.ApplicationID != task.ApplicationID || previous.AppKey != task.AppKey || previous.Operation != task.Operation || previous.ManifestSHA256 != task.ManifestSHA256 || previous.PackageRevision != task.PackageRevision || previous.Manifest.Version != task.Manifest.Version {
+	if json.Unmarshal(raw, &previous) != nil || previous.ID != task.ID || previous.Kind != task.Kind || previous.Attempt != task.Attempt-1 || previous.ApplicationID != task.ApplicationID || previous.AppKey != task.AppKey || previous.Operation != task.Operation || previous.ManifestSHA256 != task.ManifestSHA256 || previous.PackageRevision != task.PackageRevision || previous.Manifest.Version != task.Manifest.Version || previous.SourceReceiptSHA256 != task.SourceReceiptSHA256 {
 		return errors.New("center: package recovery does not match the reviewed task")
 	}
 	task.PackageRecovery = &controlplane.PackageRecovery{ExecutionID: id, TaskID: task.ID, Attempt: previous.Attempt}

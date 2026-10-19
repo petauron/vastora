@@ -154,6 +154,7 @@ type ApplicationView struct {
 }
 
 type ServiceView struct {
+	ProxyProtocol  string    `json:"proxyProtocol,omitempty"`
 	Protocols      []string  `json:"protocols,omitempty"`
 	ID             string    `json:"id"`
 	ApplicationID  string    `json:"applicationId"`

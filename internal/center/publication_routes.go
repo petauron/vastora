@@ -211,9 +211,13 @@ func (s *Store) reconcileDockerGatewayEndpoints(ctx context.Context) error {
 }
 
 func (s *Store) reconcileApplicationPublications(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time) error {
+	return s.reconcileServicePublications(ctx, tx, applicationID, "", now)
+}
+
+func (s *Store) reconcileServicePublications(ctx context.Context, tx *sql.Tx, applicationID, serviceID string, now time.Time) error {
 	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.kind, p.ingress_owner, p.entry_node_id, p.hostname, p.tls_enabled, s.id, s.site_id, s.protocol, s.endpoint
 		FROM publications p JOIN services s ON s.id = p.service_id
-		WHERE s.application_id = ? AND p.status <> 'stopped' AND s.status <> 'stopped'`, applicationID)
+		WHERE s.application_id = ? AND (? = '' OR s.id = ?) AND p.status <> 'stopped' AND s.status <> 'stopped'`, applicationID, serviceID, serviceID)
 	if err != nil {
 		return err
 	}
@@ -268,6 +272,9 @@ func (s *Store) reconcileApplicationPublications(ctx context.Context, tx *sql.Tx
 		if err := s.queueTunnelState(ctx, tx, id, now); err != nil {
 			return err
 		}
+	}
+	if serviceID != "" {
+		return nil
 	}
 	return s.retireStoppedMigratedTunnelConnectors(ctx, tx, applicationID, now)
 }

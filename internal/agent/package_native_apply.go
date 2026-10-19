@@ -15,6 +15,12 @@ import (
 // applying intent. Every completed resource is durably receipted before moving
 // on. A partial failure is review-required, never an implicit installation retry.
 func applyNativePackage(ctx context.Context, manager SystemdHostApplicationManager, task DeploymentTask, prepared nativePreparedPackage, receipt *InstanceResources, persist func() error) error {
+	return installNativePackage(ctx, manager, task, prepared, receipt, persist, true)
+}
+
+// The one-time local handover stages the same verified resources without
+// enabling or starting services. Ordinary application tasks always activate.
+func installNativePackage(ctx context.Context, manager SystemdHostApplicationManager, task DeploymentTask, prepared nativePreparedPackage, receipt *InstanceResources, persist func() error, activate bool) error {
 	if task.Operation != "install" && task.Operation != "upgrade" {
 		return errors.New("agent: native bundles support install or upgrade only")
 	}
@@ -157,7 +163,7 @@ func applyNativePackage(ctx context.Context, manager SystemdHostApplicationManag
 	}
 	for _, unit := range prepared.Plan.Units {
 		action := "disable"
-		if unit.Automatic {
+		if activate && unit.Automatic {
 			action = "enable"
 		}
 		if err := manager.run(ctx, "systemctl", action, unit.Name); err != nil {
@@ -165,7 +171,7 @@ func applyNativePackage(ctx context.Context, manager SystemdHostApplicationManag
 		}
 	}
 	for _, unit := range prepared.Plan.Units {
-		if unit.Automatic {
+		if activate && unit.Automatic {
 			if err := manager.run(ctx, "systemctl", "start", unit.Name); err != nil {
 				return errors.New("agent: native service start failed")
 			}

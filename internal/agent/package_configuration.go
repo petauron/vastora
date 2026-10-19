@@ -24,6 +24,17 @@ func (b *DockerPackageBackend) preserveUpgradeConfiguration(ctx context.Context,
 	if task.Operation != "upgrade" {
 		return nil
 	}
+	// An image-only installation has never created a configuration writer or
+	// persistent storage. Starting its first declared component is initialization,
+	// not replacement of application-owned configuration. Inspect has already
+	// verified these immutable image resources against the installed receipt.
+	imageOnly := len(receipt.Resources) > 0 && len(receipt.ConfigurationPaths) == 0 && len(receipt.Backups) == 0
+	for _, resource := range receipt.Resources {
+		if resource.Kind != "image" {
+			imageOnly = false
+			break
+		}
+	}
 	var stopped []string
 	defer func() {
 		if err != nil {
@@ -62,6 +73,9 @@ func (b *DockerPackageBackend) preserveUpgradeConfiguration(ctx context.Context,
 		}
 		old := resourceNamed(receipt, "container", plan.logical)
 		if old == nil {
+			if imageOnly {
+				continue
+			}
 			return errors.New("agent: upgrade requires existing application configuration; explicit migration is required")
 		}
 		current, inspectErr := b.Docker.ContainerInspect(ctx, old.ID, client.ContainerInspectOptions{})

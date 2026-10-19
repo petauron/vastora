@@ -149,7 +149,9 @@ func TestSecurityMigration114MatchesFreshSchema(t *testing.T) {
 	s := openOrchestrationStore(t)
 	defer s.Close()
 	ctx := context.Background()
-	if _, err := s.db.Exec(`DROP TABLE node_security_tasks; DELETE FROM goose_db_version WHERE version_id>=114; PRAGMA user_version=113`); err != nil {
+	// Reconstruct the released v113 shape, not a current database with only
+	// its marker decremented. Otherwise the later ADD COLUMN correctly fails.
+	if _, err := s.db.Exec(`ALTER TABLE deployments DROP COLUMN source_receipt_sha256; ALTER TABLE services DROP COLUMN proxy_protocol; DROP TABLE node_security_tasks; DELETE FROM goose_db_version WHERE version_id>=114; PRAGMA user_version=113`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.migrateSchema(ctx); err != nil {
@@ -162,7 +164,7 @@ func TestSecurityMigration114MatchesFreshSchema(t *testing.T) {
 	if sql == "" {
 		t.Fatal("migration did not create security state")
 	}
-	if version, err := sqliteSchemaVersion(ctx, s.db); err != nil || version != 114 {
+	if version, err := sqliteSchemaVersion(ctx, s.db); err != nil || version != centerSchemaVersion {
 		t.Fatalf("schema=%d err=%v", version, err)
 	}
 }

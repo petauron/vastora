@@ -30,8 +30,8 @@ func validateCenterNodeListenerState(state gateway.NodeListenerState) error {
 	}
 	for _, route := range state.Listener.Routes {
 		if !route.ManagedReality {
-			if route.ProxyProtocol == gateway.ProxyProtocolV2 {
-				return errors.New("center: Proxy Protocol v2 is reserved for managed REALITY routes")
+			if route.ProxyProtocol == gateway.ProxyProtocolV2 && (len(route.Upstreams) != 1 || !networking.IsPrivateServiceAddress(route.Upstreams[0].Address) || net.ParseIP(route.Upstreams[0].Address).IsLoopback()) {
+				return errors.New("center: service forwarding requires one private backend")
 			}
 			continue
 		}
@@ -123,23 +123,23 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 		          AND cutover.state IN ('project','verify') AND cutover.subscription_authority = 'meridian'
 		          AND NOT COALESCE(meridian.status = 'ready' AND meridian.runtime_healthy = 1 AND meridian.desired_revision = meridian.applied_revision, 0)
 		     THEN CASE WHEN a.id = cutover.legacy_controller_application_id THEN 'controller' ELSE 'worker' END
-		     ELSE '' END
+		     ELSE '' END, s.proxy_protocol, s.protocol
 		FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id
 		LEFT JOIN three_x_ui_reality_guards g ON g.service_id = s.id
 		LEFT JOIN meridian_endpoints meridian ON meridian.service_id = s.id
 		LEFT JOIN meridian_cutover cutover ON cutover.id = 1
 		WHERE p.ingress_owner = 'application_node' AND p.entry_node_id = ? AND p.kind = 'public_shared_443' AND a.node_id = ?
 		AND p.status <> 'stopped' AND s.status <> 'stopped'
-		AND (meridian.id IS NULL OR meridian.vless_enabled=1) ORDER BY p.id`, nodeID, nodeID)
+		AND (a.runtime='host' OR meridian.id IS NULL OR meridian.vless_enabled=1) ORDER BY p.id`, nodeID, nodeID)
 	if err != nil {
 		return gateway.NodeListenerState{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var route gateway.Layer4Route
-		var endpoint, applicationID, applicationNodeID, runtime, role, appKey, cutoverLegacyRuntime string
+		var endpoint, applicationID, applicationNodeID, runtime, role, appKey, cutoverLegacyRuntime, serviceForwarding, serviceProtocol string
 		var containerPort, managedReality, runtimeGeneration, actionRequired int
-		if err := rows.Scan(&route.ID, &route.Hostname, &endpoint, &applicationID, &applicationNodeID, &runtime, &role, &appKey, &runtimeGeneration, &containerPort, &actionRequired, &managedReality, &route.ProxyProtocol, &cutoverLegacyRuntime); err != nil {
+		if err := rows.Scan(&route.ID, &route.Hostname, &endpoint, &applicationID, &applicationNodeID, &runtime, &role, &appKey, &runtimeGeneration, &containerPort, &actionRequired, &managedReality, &route.ProxyProtocol, &cutoverLegacyRuntime, &serviceForwarding, &serviceProtocol); err != nil {
 			return gateway.NodeListenerState{}, err
 		}
 		route.ManagedReality = managedReality != 0
@@ -147,6 +147,26 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 			return gateway.NodeListenerState{}, errors.New("center: node-direct listener upstream belongs to another Agent")
 		}
 		route.ApplicationNodeID = applicationNodeID
+		if runtime == "host" && restore == nil {
+			// Native packages report their own private service endpoint and the
+			// signed recipe declares forwarding metadata. Do not infer a proxy
+			// component, fixed port or Docker alias from the application's key.
+			host, value, err := net.SplitHostPort(endpoint)
+			port, portErr := strconv.Atoi(value)
+			if err != nil || portErr != nil || port < 1 || port > 65535 || serviceProtocol != "tcp" || !networking.IsPrivateServiceAddress(host) || net.ParseIP(host).IsLoopback() || (serviceForwarding != "" && serviceForwarding != gateway.ProxyProtocolV2) {
+				return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("native shared listener requires a declared private TCP service")}
+			}
+			var address string
+			var owned int
+			if err := tx.QueryRowContext(ctx, `SELECT p.service_address,EXISTS(SELECT 1 FROM application_resources r WHERE r.application_id=? AND r.adoption_state='ready' AND json_extract(r.resources_json,'$.applicationId')=? AND json_extract(r.resources_json,'$.appKey')=? AND json_extract(r.resources_json,'$.runtime')='systemd' AND json_extract(r.resources_json,'$.state')='ready' AND json_extract(r.resources_json,'$.manifestSha256')=r.manifest_sha256) FROM agent_network_profiles p WHERE p.agent_id=?`, applicationID, applicationID, appKey, nodeID).Scan(&address, &owned); err != nil || owned != 1 || address != host {
+				return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("native shared backend must match its ready installation and confirmed node service address")}
+			}
+			route.ManagedReality = false
+			route.ProxyProtocol = serviceForwarding
+			route.Upstreams = []gateway.Upstream{{Address: host, Port: port}}
+			routes = append(routes, route)
+			continue
+		}
 		if restore != nil {
 			if actionRequired != 0 {
 				return gateway.NodeListenerState{}, errors.New("center: resolve pending entry changes before restoring its listener")

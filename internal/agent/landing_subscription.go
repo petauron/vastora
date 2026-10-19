@@ -1,16 +1,14 @@
 package agent
 
 import (
-	"context"
 	"crypto/subtle"
-	"errors"
+
 	"fmt"
-	"net"
+
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/petauron/vastora/internal/landing"
 )
@@ -141,100 +139,4 @@ func validSubscriptionToken(token string) bool {
 		}
 	}
 	return true
-}
-
-func (s *Store) runLandingSubscriptions(ctx context.Context, report func(error)) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	var server *http.Server
-	var address string
-	var blockedAddress string
-	var inputRule []string
-	workerCleanupAttempted := false
-	stop := func() {
-		s.landingSubscriptionMu.Lock()
-		s.landingSubscriptionAddress = ""
-		s.landingSubscriptionMu.Unlock()
-		if server != nil {
-			_ = server.Close()
-			server = nil
-		}
-		if inputRule != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := runSubscriptionIPTables(cleanupCtx, append([]string{"-D", "INPUT"}, inputRule...)...); err != nil && report != nil {
-				report(errors.New("agent: private subscription input rule cleanup failed"))
-			}
-			cancel()
-			inputRule = nil
-		}
-		address = ""
-	}
-	defer stop()
-	for {
-		installation, err := s.AppliedInstallation(ctx, threeXUIKey)
-		if err != nil || (landing.ServerPlan{Revision: 1, Address: installation.ServiceAddress}).Validate() != nil {
-			stop()
-			workerCleanupAttempted = false
-		} else if installation.ApplicationRole == "worker" {
-			stop()
-			if !workerCleanupAttempted {
-				workerCleanupAttempted = true
-				cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				cleanupErr := removeLandingSubscriptionAccess(cleanupCtx, installation.ServiceAddress)
-				cancel()
-				if cleanupErr != nil && report != nil {
-					report(cleanupErr)
-				}
-			}
-		} else if installation.ApplicationRole != "master" {
-			stop()
-			workerCleanupAttempted = false
-		} else if address != installation.ServiceAddress && blockedAddress != installation.ServiceAddress {
-			workerCleanupAttempted = false
-			stop()
-			listener, err := net.Listen("tcp4", net.JoinHostPort(installation.ServiceAddress, strconv.Itoa(landing.SubscriptionPort)))
-			if err == nil {
-				inputRule, err = openLandingSubscriptionAccess(ctx, installation)
-				if err != nil {
-					_ = listener.Close()
-					// Do not replay an uncertain firewall mutation every five seconds.
-					blockedAddress = installation.ServiceAddress
-				}
-			}
-			if err != nil {
-				if report != nil {
-					report(errors.New("agent: private subscription endpoint is unavailable"))
-				}
-			} else {
-				address = installation.ServiceAddress
-				server = &http.Server{Handler: s.landingSubscriptionHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
-				s.landingSubscriptionMu.Lock()
-				s.landingSubscriptionAddress = address
-				s.landingSubscriptionMu.Unlock()
-				go func(serving *http.Server, bound string) {
-					if err := serving.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-						s.landingSubscriptionMu.Lock()
-						if s.landingSubscriptionAddress == bound {
-							s.landingSubscriptionAddress = ""
-						}
-						s.landingSubscriptionMu.Unlock()
-						if report != nil {
-							report(errors.New("agent: private subscription endpoint stopped"))
-						}
-					}
-				}(server, address)
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-		s.landingSubscriptionMu.RLock()
-		healthy := s.landingSubscriptionAddress == address
-		s.landingSubscriptionMu.RUnlock()
-		if !healthy {
-			stop()
-		}
-	}
 }

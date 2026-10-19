@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -123,6 +124,11 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		PackageCapabilities(bool) (map[string]int, []string)
 	}); ok {
 		c.Capabilities.ExecutorVersions, c.Capabilities.RuntimeCapabilities = executor.PackageCapabilities(c.Capabilities.Docker)
+	} else if c.Capabilities.LandingOnly && runtime.GOOS == "linux" && os.Geteuid() == 0 {
+		// Availability is observation, not a host-wide executor grant. The task
+		// runner constructs an executor only for a reviewed native lifecycle.
+		c.Capabilities.ExecutorVersions = map[string]int{"systemd": 2}
+		c.Capabilities.RuntimeCapabilities = []string{"native-services", "root"}
 	}
 	// The host ownership journal uses "none"; the wire schema represents
 	// absence with the empty string, not a third ownership type.
@@ -412,8 +418,8 @@ func observeMeridianState(artifact glivela.DesiredArtifact) ([]ApplicationEndpoi
 }
 
 func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.Duration, report func(error)) {
-	go store.runLandingAccounts(ctx, report)
-	go store.runLandingSubscriptions(ctx, report)
+	// Glivela owns proxy account enforcement and subscription serving.
+	// Keep the retained source data without launching those old writers.
 	if interval < time.Second {
 		interval = 15 * time.Second
 	}

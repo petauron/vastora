@@ -33,6 +33,8 @@ func runAgent(arguments []string) error {
 		return errors.New("agent command is required")
 	}
 	switch arguments[0] {
+	case "stage-native-package":
+		return runStageNativePackage(arguments[1:])
 	case "security-watchdog":
 		if len(arguments) != 1 {
 			return errors.New("security-watchdog takes no arguments")
@@ -620,17 +622,8 @@ func runAgent(arguments []string) error {
 		// Reconnection is observation only. A failed heartbeat must not trigger
 		// offline application restoration or replay a management operation.
 		go func() {
-			if err := store.ResumeNativeLanding(context.Background()); err != nil {
-				controlLogger.Error("Native landing boot recovery blocked", "event", "landing.server.recovery", "error", controlplane.SafeError(err.Error()))
-			}
-			if !capabilities.LandingOnly {
-				if err := store.ResumeXrayWorker(context.Background(), ""); err != nil {
-					controlLogger.Error("Xray worker recovery blocked", "event", "xray.worker.recovery", "error", controlplane.SafeError(err.Error()))
-				}
-			}
-			if err := store.ResumeLandingRuntime(context.Background()); err != nil {
-				controlLogger.Error("Landing monitor recovery blocked", "event", "landing.monitor.recovery", "error", controlplane.SafeError(err.Error()))
-			}
+			// Glivela resumes its own proxy processes. Agent reconnection must
+			// not restart retained Dante/Xray installations after handover.
 			for {
 				if err := client.StartupHeartbeat(context.Background(), store); err == nil {
 					break

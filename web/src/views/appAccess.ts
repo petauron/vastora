@@ -100,6 +100,7 @@ export function gatewaysForKind(data: AppData, service: Service, kind: Publicati
 export function packageNodeBlocker(agent: AgentView, app: AppView | undefined, language: Language) {
   const runtime = app?.app.runtime;
   if (!runtime) return copy(language, "需要 schema 4 安装配方。", "A schema 4 recipe is required.");
+  if (agent.capabilities.landingOnly && (runtime.kind !== "systemd" || runtime.version !== 2 || !runtime.requiredCapabilities?.includes("native-services") || runtime.requiredCapabilities.some((value) => value !== "native-services" && value !== "root"))) return copy(language, "此节点仅允许审核授权的原生 systemd 应用，不启用 Docker、网关或隧道。", "This node permits reviewed native systemd apps only, without Docker, gateways or tunnels.");
   if (agent.capabilities.executorVersions?.[runtime.kind] !== runtime.version) return copy(language, `节点不支持执行器 ${runtime.kind} v${runtime.version}，请升级 Agent。`, `The node does not support executor ${runtime.kind} v${runtime.version}. Upgrade its Agent.`);
   const missing = runtime.requiredCapabilities?.filter((value) => !agent.capabilities.runtimeCapabilities?.includes(value)) ?? [];
   return missing.length ? copy(language, `节点缺少能力：${missing.join(", ")}`, `Missing node capabilities: ${missing.join(", ")}`) : "";
