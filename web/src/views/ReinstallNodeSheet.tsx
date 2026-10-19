@@ -24,6 +24,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
   const [checkingEntry, setCheckingEntry] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
+  const [replacementReview, setReplacementReview] = useState<string | null>(null);
   const request = useRef<AgentReinstallInput | null>(null);
   const generation = useRef(0);
   // A dashboard update is evidence to refresh the saved operation, not evidence
@@ -32,6 +33,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
     const current = ++generation.current;
     setCheckingEntry(null);
     setWorkingDNS(null);
+    setReplacementReview(null);
     setBusy(true);
     api.agentReinstallPlan(agent.id).then((value) => {
       if (generation.current === current) { setPlan(value); setError(""); }
@@ -45,17 +47,45 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
   const localTasks = plan ? plan.executions.filter((execution) => execution.agentId === agent.id && execution.resolution === "local_after_isolation").length + plan.unclaimedLocalWork.length : 0;
   const settledTasks = plan?.localWorkDisposition ? plan.localWorkDisposition.executionIds.length + plan.localWorkDisposition.unclaimedWork.length : 0;
   const command = enrollment && !joined ? agentInstallCommand({ centerURL: enrollment.centerUrl ?? "", enrollment, installerAvailable }) : "";
-  const confirm = async (resumeIsolation = false) => {
+  const reviewUnusedCommand = async () => {
+    if (busy || recovery?.state !== "awaiting_enrollment") return;
+    const current = generation.current;
+    setBusy(true); setError(""); setReplacementReview(null);
+    try {
+      const latest = await api.agentReinstallPlan(agent.id);
+      if (generation.current !== current) return;
+      setPlan(latest);
+      if (latest.recovery?.state !== "awaiting_enrollment") {
+        setError(copy(language, "恢复状态已变化，不能替换未使用命令。请核对最新进度。", "Recovery state changed. Review the latest progress instead of replacing an unused command."));
+        return;
+      }
+      setReplacementReview(latest.revision);
+    } catch (cause) {
+      if (generation.current === current) setError(userError(language, cause));
+    } finally {
+      if (generation.current === current) setBusy(false);
+    }
+  };
+  const confirm = async (mode: "retrieve" | "continue_isolation" | "replace_unused" = "retrieve") => {
     if (!plan || busy) return;
     const current = generation.current;
-    request.current ??= {
-      operationId: recovery?.state === "awaiting_enrollment" ? recovery.id : crypto.randomUUID(),
-      planRevision: recovery?.state === "awaiting_enrollment" ? recovery.planRevision : plan.revision,
-      confirmReplacement: true,
-    };
+    if (mode === "replace_unused") {
+      if (recovery?.state !== "awaiting_enrollment" || replacementReview !== plan.revision) return;
+      // Only this second, explicit confirmation authorizes a new operation.
+      // Retain its identity after a lost response so retrieval can replay it.
+      request.current = { operationId: crypto.randomUUID(), planRevision: plan.revision, confirmReplacement: true };
+      setReplacementReview(null);
+      setEnrollment(null);
+    } else {
+      request.current ??= {
+        operationId: recovery?.state === "awaiting_enrollment" ? recovery.id : crypto.randomUUID(),
+        planRevision: recovery?.state === "awaiting_enrollment" ? recovery.planRevision : plan.revision,
+        confirmReplacement: true,
+      };
+    }
     setBusy(true); setError("");
     try {
-      const result = resumeIsolation && recovery
+      const result = mode === "continue_isolation" && recovery
         ? await api.continueAgentReinstallIsolation(agent.id, { operationId: recovery.id, expectedAttempt: recovery.attempt, confirmIsolation: true })
         : await api.createAgentReconnectEnrollment(agent.id, request.current);
       if (generation.current !== current) return;
@@ -295,6 +325,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
             {recovery.state === "failed" || recovery.state === "preparing" ? copy(language, "命令准备尚未完成。核对现场后再继续，系统不会自动重复操作。", "Command preparation is incomplete. Inspect the operation before continuing; it will not run again automatically.") : copy(language, "需要继续核对网络地址和应用恢复；节点在线不代表业务已恢复。", "Network addresses and application recovery still need verification. Being online does not mean business is restored.")}
           </AlertDescription></Alert> : <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "确认后替换管理身份", "Confirm management identity replacement")}</AlertTitle><AlertDescription>{copy(language, "旧 Agent 凭据、接入命令和受管私网身份将撤销，任务领取暂停。应用、订阅和历史执行记录保留。", "The previous Agent credential, enrollment command and managed private identity will be revoked, and task claims paused. Apps, subscriptions and execution history are retained.")}</AlertDescription></Alert>}
           {recovery?.lastError ? <Alert variant="destructive"><AlertTitle>{copy(language, "恢复已暂停", "Recovery paused")}</AlertTitle><AlertDescription>{userError(language, recovery.lastError)}</AlertDescription></Alert> : null}
+          {replacementReview === plan.revision && recovery?.state === "awaiting_enrollment" ? <Alert variant="destructive"><AlertTitle>{copy(language, "重新审核后替换未使用命令", "Replace the unused command after a fresh review")}</AlertTitle><AlertDescription>{copy(language, "已重新读取下方恢复清单。请确认旧命令尚未执行，且不存在结果不明的安装操作。确认后旧授权将作废，再生成新命令；应用、订阅和历史记录保留。取消或刷新不会生成命令。", "The recovery checklist below was reloaded. Confirm the old command has not been run and no installation has an uncertain outcome. Confirmation invalidates the old authorization and generates a new command; apps, subscriptions and history remain. Cancelling or refreshing creates no command.")}</AlertDescription></Alert> : null}
           <section aria-label={copy(language, "恢复清单", "Recovery checklist")} className="flex flex-col gap-3 rounded-xl border p-4">
             <div className="flex items-start justify-between gap-3 text-sm"><span>{copy(language, "私网与入口", "Network and access")}</span><span className="text-right text-muted-foreground">{plan.privateNetwork.privateAddress || plan.privateNetwork.serviceAddress || copy(language, "待确认", "Needs review")}</span></div>
             {recovery?.privateIsolation === "withdrawn" ? <p className="text-xs text-muted-foreground">{copy(language, "已确认旧私网身份撤销。", "Previous private identity withdrawal verified.")}</p> : null}
@@ -320,7 +351,8 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
         {joined ? <Button disabled={busy} onClick={() => void completeRecovery()}>{copy(language, "校验并完成恢复", "Verify and complete recovery")}</Button> : null}
         <Button onClick={onClose} variant="outline">{copy(language, "关闭", "Close")}</Button>
         {plan && !command && (!recovery || recovery.state === "awaiting_enrollment") ? <Button disabled={busy || (agent.connected && !recovery)} onClick={() => void confirm()}>{recovery ? copy(language, "取回接入命令", "Retrieve command") : copy(language, "确认接替并生成命令", "Confirm and create command")}</Button> : null}
-        {recovery?.privateIsolation === "pending" && (recovery.state === "failed" || recovery.state === "preparing") ? <Button disabled={busy} onClick={() => void confirm(true)}>{copy(language, "核对并继续隔离", "Inspect and continue isolation")}</Button> : null}
+        {recovery?.state === "awaiting_enrollment" ? replacementReview === plan?.revision ? <><Button disabled={busy} variant="outline" onClick={() => setReplacementReview(null)}>{copy(language, "取消替换", "Cancel replacement")}</Button><Button disabled={busy} variant="destructive" onClick={() => void confirm("replace_unused")}>{copy(language, "确认作废旧命令并生成新命令", "Invalidate old command and create a new one")}</Button></> : <Button disabled={busy} variant="outline" onClick={() => void reviewUnusedCommand()}>{copy(language, "重新审核并替换未使用命令", "Review and replace unused command")}</Button> : null}
+        {recovery?.privateIsolation === "pending" && (recovery.state === "failed" || recovery.state === "preparing") ? <Button disabled={busy} onClick={() => void confirm("continue_isolation")}>{copy(language, "核对并继续隔离", "Inspect and continue isolation")}</Button> : null}
       </SheetFooter>
     </SheetContent>
   </Sheet>;
