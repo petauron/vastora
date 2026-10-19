@@ -577,7 +577,7 @@ func runAgent(arguments []string) error {
 			client.Updater = systemHostUpdater{dataDir: *dataDir, executable: executable}
 			client.LandingServer = agent.NativeLandingServer{}
 		}
-		if !capabilities.LandingOnly {
+		if !capabilities.LandingOnly || runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}, Store: store}
 		}
 		client.Capabilities.IPQuality = capabilities.Docker && runtime.GOOS == "linux"

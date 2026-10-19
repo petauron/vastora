@@ -14,6 +14,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/senulun"
 	"golang.org/x/mod/semver"
@@ -200,8 +201,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json, '$.landingOnly'), 0) FROM agents WHERE id = ?`, request.AgentID).Scan(&landingOnly); err != nil {
 		return DeploymentView{}, err
 	}
-	if landingOnly {
-		return DeploymentView{}, errors.New("center: applications are unavailable on landing-only nodes")
+	if landingOnly && request.Operation == "install" && (!request.BackupsConfirmed || request.AuthorizedCapabilities == nil) {
+		return DeploymentView{}, errors.New("center: restricted host native installation requires backup confirmation and explicit reviewed package permissions")
 	}
 	if request.AppKey == threeXUIAppKey && request.Operation == "install" {
 		if err := s.validateThreeXUIInstallRole(ctx, request.AgentID, request.Role); err != nil {
@@ -334,6 +335,9 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	}
 	if err != nil {
 		return DeploymentView{}, err
+	}
+	if landingOnly && (manifest.Runtime == nil || !controlplane.NativeLifecycleAllowed(manifest.Runtime.Kind, manifest.Runtime.Version, request.Operation, grants)) {
+		return DeploymentView{}, errors.New("center: restricted host permits only reviewed native systemd installation, upgrade and uninstall")
 	}
 	grantsJSON, err := json.Marshal(grants)
 	if err != nil {

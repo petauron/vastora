@@ -188,6 +188,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	decommissionHandedOff := false
 	updateHandedOff := false
+	nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
 	if len(publicRules) > 0 {
 		err = nodesecurity.NewHost().CheckPorts(publicRules)
 	}
@@ -196,7 +197,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	if err != nil {
 		// Preserve the normal authenticated failure/receipt lifecycle below.
-	} else if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) {
+	} else if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) && !nativeLifecycle {
 		err = errors.New("agent: task is not authorized for a landing-only node")
 	} else {
 		switch task.Kind {
