@@ -59,6 +59,13 @@ func (s *Store) disposeTaskExecution(ctx context.Context, executionID, adminID s
 		return errors.New("center: previous machine identity was retired; create a new recovery task from reviewed intent")
 	}
 	if kind == "application.command" && input.Action == "reexecute" {
+		var commandKind string
+		if err := tx.QueryRowContext(ctx, `SELECT kind FROM application_commands WHERE id=? AND agent_id=?`, taskID, agentID).Scan(&commandKind); err != nil {
+			return err
+		}
+		if strings.HasPrefix(commandKind, "3xui.") || strings.HasPrefix(commandKind, "meridian.") {
+			return errors.New("center: retired proxy command cannot be reexecuted; retain its evidence for legacy disposition")
+		}
 		if blocked, err := reinstallCommandTargetBlocked(ctx, tx, agentID, taskID); err != nil {
 			return err
 		} else if blocked {
@@ -173,10 +180,8 @@ func executionRequeueStatement(task AgentTask, agentID, now string) (string, []a
 	switch task.Kind {
 	case "node.ip-quality":
 		return `UPDATE ip_quality_checks SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
-	case "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server":
+	case "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile":
 		return `UPDATE node_diagnostic_checks SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
-	case "xray.configuration.inspect", "xray.configuration.apply":
-		return `UPDATE xray_configuration_recoveries SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.apply":
 		return `UPDATE deployments SET state='pending',reconciliation_required=0,reconciliation_requested=0,lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.adopt":
@@ -187,10 +192,6 @@ func executionRequeueStatement(task AgentTask, agentID, now string) (string, []a
 		return `UPDATE agent_updates SET state='pending',lease_expires_at='',last_error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending','installing')`, identity, nil
 	case "agent.decommission":
 		return `UPDATE agent_decommissions SET state='pending',callback_token_hash=X'',lease_expires_at='',last_error='',updated_at=? WHERE agent_id=? AND attempt=? AND state IN ('running','failed','pending','cleaning')`, []any{now, agentID, task.Attempt}, nil
-	case "landing.proxy.apply":
-		return `UPDATE landing_proxy_states SET status='pending',lease_expires_at='',updated_at=? WHERE node_id=? AND desired_revision=? AND attempt=? AND status IN ('applying','failed','pending')`, revision, nil
-	case "landing.server.apply":
-		return `UPDATE landing_server_states SET status='pending',lease_expires_at='',updated_at=? WHERE node_id=? AND desired_revision=? AND attempt=? AND status IN ('applying','failed','pending')`, revision, nil
 	case "gateway.routes.apply":
 		return `UPDATE gateway_states SET status='pending',lease_expires_at='',updated_at=? WHERE gateway_node_id=? AND desired_revision=? AND attempt=? AND status IN ('applying','failed','pending')`, revision, nil
 	case "gateway.component.apply":

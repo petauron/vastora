@@ -14,15 +14,21 @@ func TestExecutionRequeueStatementsMatchSchemaAndDoNotCreateTasks(t *testing.T) 
 	for _, kind := range []string{"node.ip-quality", "application.apply", "application.command", "agent.update", "agent.decommission", "landing.proxy.apply", "landing.server.apply", "gateway.routes.apply", "gateway.component.apply", "node.listener.apply", "tunnel.state.apply"} {
 		t.Run(kind, func(t *testing.T) {
 			query, args, err := executionRequeueStatement(AgentTask{ID: "nonexistent-task", Kind: kind, Attempt: 2, Revision: 7}, "nonexistent-agent", time.Now().UTC().Format(time.RFC3339Nano))
-			if err != nil {
-				t.Fatal(err)
-			}
-			result, err := store.db.ExecContext(context.Background(), query, args...)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if rows, err := result.RowsAffected(); err != nil || rows != 0 {
-				t.Fatalf("unexpected task created or changed: %d %v", rows, err)
+			if kind == "landing.proxy.apply" || kind == "landing.server.apply" {
+				if err == nil || query != "" {
+					t.Fatal("retired proxy task was offered for replay")
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := store.db.ExecContext(context.Background(), query, args...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rows, err := result.RowsAffected(); err != nil || rows != 0 {
+					t.Fatalf("unexpected task created or changed: %d %v", rows, err)
+				}
 			}
 			if kind == "agent.update" || kind == "agent.decommission" {
 				return // These have the protected-helper resolution workflow.
@@ -31,7 +37,7 @@ func TestExecutionRequeueStatementsMatchSchemaAndDoNotCreateTasks(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err = store.db.ExecContext(context.Background(), query, args...)
+			result, err := store.db.ExecContext(context.Background(), query, args...)
 			if err != nil {
 				t.Fatal(err)
 			}
