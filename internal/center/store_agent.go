@@ -1165,8 +1165,8 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 				switch message {
 				case errNodeRemovalShared.Error():
 					view.Reason = "shared_service"
-				case errNodeRemovalControllerOffline.Error():
-					view.Reason = "controller_unavailable"
+				case errNodeRemovalRetainedData.Error():
+					view.Reason = "application_data_retained"
 				default:
 					view.Reason = "cleanup_failed"
 				}

@@ -3,10 +3,8 @@ package center
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 )
@@ -24,11 +22,10 @@ const agentRemovalSchema = `CREATE TABLE agent_removals (
 )`
 
 var (
-	errNodeRemovalOnline            = errors.New("center: permanent removal requires an offline node")
-	errNodeRemovalName              = errors.New("center: node removal confirmation does not match")
-	errNodeRemovalShared            = errors.New("center: node removal would affect a shared service")
-	errNodeRemovalWaiting           = errors.New("center: node removal is waiting for subscription cleanup")
-	errNodeRemovalControllerOffline = errors.New("center: subscription controller must be online to remove its node entry")
+	errNodeRemovalOnline       = errors.New("center: permanent removal requires an offline node")
+	errNodeRemovalName         = errors.New("center: node removal confirmation does not match")
+	errNodeRemovalShared       = errors.New("center: node removal would affect a shared service")
+	errNodeRemovalRetainedData = errors.New("center: node retains application data; retire or migrate that data before permanent removal")
 )
 
 // StartAgentRemoval records irreversible administrative intent, not a remote
@@ -78,7 +75,7 @@ func (s *Store) StartAgentRemoval(ctx context.Context, id, confirmation string) 
 	} else {
 		// Explicit retry preserves task identity and receipt reconciliation on
 		// the surviving controller; it never creates competing remove tasks.
-		if err := retryRemovedAgentCommands(ctx, tx, id, now); err != nil {
+		if err := validateAgentRemovalDependencies(ctx, tx, id); err != nil {
 			return err
 		}
 	}
@@ -94,6 +91,9 @@ func (s *Store) StartAgentRemoval(ctx context.Context, id, confirmation string) 
 }
 
 func validateAgentRemovalDependencies(ctx context.Context, tx *sql.Tx, id string) error {
+	if err := validateRetainedRemovalData(ctx, tx, id); err != nil {
+		return err
+	}
 	// Removing one expired worker must never implicitly destroy a controller,
 	// switch another node's egress to direct, or take down another app's entry.
 	checks := []string{
@@ -161,38 +161,6 @@ func cancelRemovedAgentTasks(ctx context.Context, tx *sql.Tx, id string, now tim
 	return err
 }
 
-func retryRemovedAgentCommands(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
-	if err := retireMigratedAgentTopology(ctx, tx, id, now); err != nil {
-		return err
-	}
-	// Retry only the latest unresolved command for each retired application.
-	// Old failed attempts must not supersede a later successful receipt.
-	rows, err := tx.QueryContext(ctx, `SELECT c.id FROM application_commands c JOIN applications a ON a.id=c.application_id JOIN three_x_ui_nodes n ON n.worker_application_id=a.id
-	 WHERE a.node_id=? AND n.status<>'stopped' AND c.kind=? AND c.state='failed'
-	 AND (json_extract(c.input_json,'$.action')='remove' OR c.reconciliation_required=1)
-	 AND c.rowid=(SELECT latest.rowid FROM application_commands latest WHERE latest.application_id=c.application_id AND latest.kind=c.kind ORDER BY latest.created_at DESC,latest.rowid DESC LIMIT 1)`, id, nodeCommandKind)
-	if err != nil {
-		return err
-	}
-	commands, err := scanRemovalStrings(rows)
-	if err != nil {
-		return err
-	}
-	for _, command := range commands {
-		var active int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id=(SELECT agent_id FROM application_commands WHERE id=?) AND id<>? AND kind NOT IN('3xui.controller.manage','pulse.enrollment.create') AND (state IN('pending','running') OR reconciliation_required=1)`, command, command).Scan(&active); err != nil {
-			return err
-		}
-		if active > 0 {
-			return errors.New("center: subscription controller has another operation in progress")
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state='pending',reconciliation_requested=reconciliation_required,lease_expires_at='',error='',updated_at=? WHERE id=?`, now.Format(time.RFC3339Nano), command); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (s *Store) RunAgentRemovals(ctx context.Context, report func(error)) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -224,7 +192,7 @@ func (s *Store) resumeAgentRemovals(ctx context.Context) error {
 		operationCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		err := s.resumeAgentRemoval(operationCtx, id)
 		cancel()
-		if err == nil || errors.Is(err, errNodeRemovalWaiting) {
+		if err == nil {
 			continue
 		}
 		if ctx.Err() != nil {
@@ -240,6 +208,10 @@ func (s *Store) resumeAgentRemovals(ctx context.Context) error {
 }
 
 func (s *Store) resumeAgentRemoval(ctx context.Context, id string) error {
+	// Recheck jobs created before this upgrade before touching providers.
+	if err := validateRetainedRemovalData(ctx, s.db, id); err != nil {
+		return err
+	}
 	if err := s.removeAgentPrivateIdentity(ctx, id); err != nil {
 		return err
 	}
@@ -265,9 +237,6 @@ func (s *Store) resumeAgentRemoval(ctx context.Context, id string) error {
 		return errors.New("center: node entry cleanup did not finish")
 	}
 	if err = s.removeAgentTunnel(ctx, id); err != nil {
-		return err
-	}
-	if err = s.removeAgentSubscriptionNodes(ctx, id); err != nil {
 		return err
 	}
 	return s.finishAgentRemoval(ctx, id)
@@ -318,9 +287,6 @@ func (s *Store) prepareAgentRemoval(ctx context.Context, id string) error {
 			return err
 		}
 	}
-	if err = s.removeAgentLandingReferences(ctx, tx, id); err != nil {
-		return err
-	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM site_gateways WHERE agent_id=?`, id); err != nil {
 		return err
 	}
@@ -330,159 +296,24 @@ func (s *Store) prepareAgentRemoval(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
-func (s *Store) removeAgentSubscriptionNodes(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+// Legacy storage references are not permission to run proxy cleanup. Keep the
+// records intact until their application-owned inventory has been retired.
+// This guard never modifies component health, routes, credentials or history.
+func validateRetainedRemovalData(ctx context.Context, q networkQueryer, id string) error {
+	var retained bool
+	err := q.QueryRowContext(ctx, `SELECT
+ EXISTS(SELECT 1 FROM three_x_ui_nodes n JOIN applications a ON a.id=n.worker_application_id WHERE a.node_id=? AND n.status<>'stopped')
+ OR EXISTS(SELECT 1 FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=? AND e.status<>'retired')
+ OR EXISTS(SELECT 1 FROM meridian_credentials c JOIN meridian_endpoints e ON e.id=c.endpoint_id JOIN applications a ON a.id=e.application_id WHERE a.node_id=? AND c.enabled=1)
+ OR EXISTS(SELECT 1 FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id JOIN applications a ON a.id=e.application_id WHERE a.node_id=? AND (g.enabled=1 OR g.status<>'revoked'))
+ OR EXISTS(SELECT 1 FROM landing_server_states WHERE node_id=? AND status<>'stopped')
+ OR EXISTS(SELECT 1 FROM landing_proxy_states WHERE node_id=? AND status<>'stopped')
+ OR EXISTS(SELECT 1 FROM landing_client_grants g JOIN applications a ON a.id=g.application_id WHERE a.node_id=? AND g.status<>'revoked')`, id, id, id, id, id, id, id).Scan(&retained)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
-	if err = retireMigratedAgentTopology(ctx, tx, id, s.now().UTC()); err != nil {
-		return err
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT n.worker_application_id FROM three_x_ui_nodes n JOIN applications a ON a.id=n.worker_application_id WHERE a.node_id=? AND n.status<>'stopped' ORDER BY n.worker_application_id`, id)
-	if err != nil {
-		return err
-	}
-	apps, err := scanRemovalStrings(rows)
-	if err != nil {
-		return err
-	}
-	waiting := false
-	for _, app := range apps {
-		var failed bool
-		err = tx.QueryRowContext(ctx, `SELECT state='failed' AND (json_extract(input_json,'$.action')='remove' OR reconciliation_required=1) FROM application_commands WHERE application_id=? AND kind=? ORDER BY created_at DESC,rowid DESC LIMIT 1`, app, nodeCommandKind).Scan(&failed)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if failed {
-			return errors.New("center: subscription node removal failed; retry cleanup")
-		}
-		var needsController, available bool
-		var lastSeen string
-		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(n.remote_node_id,0)>0,a.status='active' AND a.credential_revoked_at='',a.last_seen_at FROM three_x_ui_nodes n JOIN applications m ON m.id=n.master_application_id JOIN agents a ON a.id=m.node_id WHERE n.worker_application_id=?`, app).Scan(&needsController, &available, &lastSeen); err != nil {
-			return err
-		}
-		seen, parseErr := time.Parse(time.RFC3339Nano, lastSeen)
-		if needsController && (!available || parseErr != nil || !seen.After(s.now().Add(-agentConnectedMaxAge))) {
-			return errNodeRemovalControllerOffline
-		}
-		var active int
-		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id=? AND (state IN ('pending','running') OR reconciliation_required=1)`, app).Scan(&active); err != nil {
-			return err
-		}
-		if active > 0 {
-			waiting = true
-			continue
-		}
-		if err = s.queueThreeXUINodeRemoval(ctx, tx, app, s.now().UTC()); err != nil {
-			return err
-		}
-		var stopped bool
-		if err = tx.QueryRowContext(ctx, `SELECT status='stopped' FROM three_x_ui_nodes WHERE worker_application_id=?`, app).Scan(&stopped); err != nil {
-			return err
-		}
-		waiting = waiting || !stopped
-	}
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	if waiting {
-		var started string
-		if err = s.db.QueryRowContext(ctx, `SELECT updated_at FROM agent_removals WHERE agent_id=?`, id).Scan(&started); err != nil {
-			return err
-		}
-		startedAt, parseErr := time.Parse(time.RFC3339Nano, started)
-		if parseErr != nil || s.now().Sub(startedAt) > 2*time.Minute {
-			return errors.New("center: subscription cleanup has not confirmed completion; retry cleanup")
-		}
-		return errNodeRemovalWaiting
+	if retained {
+		return errNodeRemovalRetainedData
 	}
 	return nil
-}
-
-// Completed Meridian cutover receipts prove the old controller and worker
-// runtimes were retired. Their retained topology is history, not an installed
-// 3x-ui node to remove remotely. In-flight commands still require reconciliation.
-func retireMigratedAgentTopology(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
-	_, err := tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status='stopped',last_error='',updated_at=?
-		WHERE worker_application_id IN (SELECT id FROM applications WHERE node_id=? AND app_key=?)
-		AND master_application_id IN (
-			SELECT controller.id FROM applications controller JOIN meridian_cutover cutover
-			ON cutover.legacy_controller_application_id=controller.id
-			WHERE controller.app_key=? AND cutover.state='complete' AND cutover.subscription_authority='meridian')
-		AND EXISTS (SELECT 1 FROM meridian_endpoints WHERE application_id=worker_application_id AND legacy_retired=1)
-		AND NOT EXISTS (SELECT 1 FROM meridian_endpoints WHERE application_id=worker_application_id AND legacy_retired=0)
-		AND NOT EXISTS (SELECT 1 FROM application_commands WHERE application_id=worker_application_id
-			AND kind=? AND (state IN ('pending','running') OR reconciliation_required=1))`,
-		now.Format(time.RFC3339Nano), id, meridianAppKey, meridianAppKey, nodeCommandKind)
-	return err
-}
-
-func (s *Store) removeAgentLandingReferences(ctx context.Context, tx *sql.Tx, id string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT landing_node_id FROM landing_proxy_states WHERE node_id=? UNION SELECT landing_node_id FROM landing_proxy_retirements WHERE node_id=? UNION SELECT landing_node_id FROM landing_client_grants WHERE application_id IN(SELECT id FROM applications WHERE node_id=?)`, id, id, id)
-	if err != nil {
-		return err
-	}
-	owners, err := scanRemovalStrings(rows)
-	if err != nil {
-		return err
-	}
-	secrets, err := removedAgentGrantSecrets(ctx, tx, id)
-	if err != nil {
-		return err
-	}
-	for _, query := range []string{
-		`DELETE FROM landing_client_grants WHERE application_id IN(SELECT id FROM applications WHERE node_id=?)`,
-		`DELETE FROM landing_client_blocks WHERE application_id IN(SELECT id FROM applications WHERE node_id=?)`,
-		`DELETE FROM landing_proxy_states WHERE node_id=?`,
-	} {
-		if _, err = tx.ExecContext(ctx, query, id); err != nil {
-			return err
-		}
-	}
-	if err = deleteUnreferencedRemovalSecrets(ctx, tx, secrets); err != nil {
-		return err
-	}
-	for _, owner := range owners {
-		if owner != id {
-			if err = s.refreshClientLandingSources(ctx, tx, owner); err != nil {
-				return err
-			}
-		}
-	}
-	selection, err := readLandingSelection(ctx, tx)
-	if err != nil {
-		return err
-	}
-	if slices.Contains(selection.NodeIDs, id) {
-		selection.NodeIDs = slices.DeleteFunc(selection.NodeIDs, func(value string) bool { return value == id })
-		delete(selection.LandingRegionCodes, id)
-		selection.Revision++
-		encoded, err := json.Marshal(selection)
-		if err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE settings SET value=? WHERE key=?`, string(encoded), landingSelectionKey); err != nil {
-			return err
-		}
-	}
-	if slices.Contains(selection.RetiringNodeIDs, id) {
-		selection.RetiringNodeIDs = slices.DeleteFunc(selection.RetiringNodeIDs, func(value string) bool { return value == id })
-		encoded, err := json.Marshal(selection)
-		if err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE settings SET value=? WHERE key=?`, string(encoded), landingSelectionKey); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func removedAgentGrantSecrets(ctx context.Context, tx *sql.Tx, id string) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT credential_secret_id FROM landing_client_grants WHERE application_id IN(SELECT id FROM applications WHERE node_id=?) UNION SELECT material_secret_id FROM landing_client_grants WHERE material_secret_id IS NOT NULL AND application_id IN(SELECT id FROM applications WHERE node_id=?)`, id, id)
-	if err != nil {
-		return nil, err
-	}
-	return scanRemovalStrings(rows)
 }
