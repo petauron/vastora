@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -80,7 +82,15 @@ func TestNativePackagePrepareAuthenticatesAndScopesAllServices(t *testing.T) {
 			}
 			for _, unit := range prepared.Plan.Units {
 				digest := sha256.Sum256(prepared.Files[unit.Path].Data)
-				if installation.Services[unit.LogicalName] != (nativeInstallationService{Unit: unit.Name, User: unit.Process.User, SHA256: hex.EncodeToString(digest[:])}) {
+				want := nativeInstallationService{Unit: unit.Name, User: unit.Process.User, SHA256: hex.EncodeToString(digest[:])}
+				if unit.LogicalName == "controller" {
+					path := filepath.Join(unit.ConfigDirectory, "config", "config.json")
+					want.ConfigFiles = map[string]string{"config.json": path}
+					want.Credentials = map[string]string{"config-config.json": path}
+				} else {
+					want.Credentials = map[string]string{"runtime": filepath.Join(prepared.Plan.State["private"].Path, "runtime.json")}
+				}
+				if !reflect.DeepEqual(installation.Services[unit.LogicalName], want) {
 					t.Fatal("installation does not identify exact compiled service")
 				}
 				text := string(prepared.Files[unit.Path].Data)

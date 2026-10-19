@@ -36,9 +36,11 @@ type nativePreparedPackage struct {
 }
 
 type nativeInstallationService struct {
-	Unit   string `json:"unit"`
-	User   string `json:"user"`
-	SHA256 string `json:"sha256"`
+	Unit        string            `json:"unit"`
+	User        string            `json:"user"`
+	SHA256      string            `json:"sha256"`
+	ConfigFiles map[string]string `json:"configFiles,omitempty"`
+	Credentials map[string]string `json:"credentials,omitempty"`
 }
 
 type nativeInstallation struct {
@@ -148,6 +150,8 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		}
 		common["service-address:"+service.Name] = common["private-address:"] + ":" + strconv.Itoa(port)
 	}
+	configurationPaths := map[string]map[string]string{}
+	credentialPaths := map[string]map[string]string{}
 	for _, unit := range plan.Units {
 		values := map[string]string{}
 		for key, value := range common {
@@ -183,6 +187,10 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 				return nativePreparedPackage{}, errors.New("agent: generated configuration credential names collide")
 			}
 			path := filepath.Join(unit.ConfigDirectory, "config", file.Path)
+			if configurationPaths[unit.LogicalName] == nil {
+				configurationPaths[unit.LogicalName] = map[string]string{}
+			}
+			configurationPaths[unit.LogicalName][file.Path] = path
 			raw, err := catalog.RenderConfigFile(file, config, secrets, values)
 			if err != nil {
 				return nativePreparedPackage{}, err
@@ -205,6 +213,9 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 			if err := configFile(path, "credential:"+name, []byte(value)); err != nil {
 				return nativePreparedPackage{}, err
 			}
+		}
+		if len(credentials) > 0 {
+			credentialPaths[unit.LogicalName] = credentials
 		}
 		var environment strings.Builder
 		var keys []string
@@ -238,7 +249,7 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 	installation := nativeInstallation{Version: 1, Services: map[string]nativeInstallationService{}}
 	for _, unit := range plan.Units {
 		digest := sha256.Sum256(prepared.Files[unit.Path].Data)
-		installation.Services[unit.LogicalName] = nativeInstallationService{Unit: unit.Name, User: unit.Process.User, SHA256: hex.EncodeToString(digest[:])}
+		installation.Services[unit.LogicalName] = nativeInstallationService{Unit: unit.Name, User: unit.Process.User, SHA256: hex.EncodeToString(digest[:]), ConfigFiles: configurationPaths[unit.LogicalName], Credentials: credentialPaths[unit.LogicalName]}
 	}
 	raw, err := json.Marshal(installation)
 	if err != nil {
