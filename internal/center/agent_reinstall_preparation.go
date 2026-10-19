@@ -308,12 +308,6 @@ func (s *Store) claimAgentReinstallTask(ctx context.Context, agentID, credential
 	if err != nil {
 		return nil, err
 	}
-	if strings.HasPrefix(id, "node-listener-") {
-		return s.claimReinstallListener(ctx, tx, agentID, id, commitTask)
-	}
-	if strings.HasPrefix(id, "reinstall-runtime-") {
-		return s.claimReinstallRuntime(ctx, tx, agentID, id, commitTask)
-	}
 	pending, err := readPendingApplicationDeployment(ctx, tx, agentID, id)
 	if err != nil {
 		return nil, err
@@ -343,16 +337,11 @@ func (s *Server) handleAgentReinstallPreparation(writer http.ResponseWriter, req
 
 func pendingAgentReinstallTask(ctx context.Context, tx *sql.Tx, agentID, requiredTaskID string) (string, error) {
 	var id string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM (
- SELECT d.id,d.created_at FROM agent_reinstall_app_preparations p JOIN deployments d ON d.id=p.deployment_id JOIN agent_reinstall_operations op ON op.id=p.operation_id
+	// Proxy package/runtime/listener restoration is owned by Glivela. Only
+	// the existing independent monitor recovery remains in this channel.
+	err := tx.QueryRowContext(ctx, `SELECT d.id FROM agent_reinstall_monitor_restorations m JOIN deployments d ON d.id=m.deployment_id JOIN agent_reinstall_monitor_rotations r ON r.command_id=m.rotation_command_id JOIN agent_reinstall_operations op ON op.id=r.operation_id
  WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND d.attempt=0
- UNION ALL SELECT c.id,c.created_at FROM agent_reinstall_app_preparations p JOIN application_commands c ON c.id=p.runtime_command_id JOIN agent_reinstall_operations op ON op.id=p.operation_id
- WHERE c.agent_id=? AND op.agent_id=c.agent_id AND op.state='review_required' AND c.state='pending' AND c.attempt=0
- UNION ALL SELECT p.listener_task_id,n.updated_at FROM agent_reinstall_app_preparations p JOIN agent_reinstall_operations op ON op.id=p.operation_id JOIN node_listener_states n ON n.node_id=op.agent_id
- WHERE op.agent_id=? AND op.state='review_required' AND p.listener_state='pending' AND n.status='pending' AND n.desired_revision=p.listener_revision AND n.attempt=p.listener_attempt-1
- UNION ALL SELECT d.id,d.created_at FROM agent_reinstall_monitor_restorations m JOIN deployments d ON d.id=m.deployment_id JOIN agent_reinstall_monitor_rotations r ON r.command_id=m.rotation_command_id JOIN agent_reinstall_operations op ON op.id=r.operation_id
- WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND d.attempt=0
- ) WHERE (?='' OR id=?) ORDER BY created_at,id LIMIT 1`, agentID, agentID, agentID, agentID, requiredTaskID, requiredTaskID).Scan(&id)
+ AND (?='' OR d.id=?) ORDER BY d.created_at,d.id LIMIT 1`, agentID, requiredTaskID, requiredTaskID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errExecutionBlocked
 	}

@@ -92,7 +92,7 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
       return { ...shared, centerUpdate, sites: sites.sites, actions: actions.actions };
     }
     case "nodes": {
-      const auxiliary = Promise.allSettled([api.integrations(signal), api.meridian(signal)]);
+      const auxiliary = Promise.allSettled([api.integrations(signal)]);
       const [shared, sites, results] = await Promise.all([
         desktop, api.sites(signal), auxiliary
       ]);
@@ -100,25 +100,22 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
       for (const result of results) {
         if (result.status === "rejected" && (result.reason instanceof APIError && result.reason.status === 401 || result.reason instanceof Error && result.reason.name === "AbortError")) throw result.reason;
       }
-      const [integrations, meridian] = results;
+      const [integrations] = results;
       // Keep failed auxiliary data out of the patch, not fake empty inventories.
       // Node controls fence dependent actions until a complete refresh succeeds.
       return {
         ...shared, sites: sites.sites,
         ...(integrations.status === "fulfilled" ? { integrations: integrations.value.integrations } : {}),
-        ...(meridian.status === "fulfilled" ? { meridian: meridian.value } : {}),
         nodeAuxiliaryDataUnavailable: results.some((result) => result.status === "rejected")
       };
     }
     case "apps": {
-      const [shared, registryCredentials, deployments, integrations, sites, migrations, meridian, remoteAccess, catalogSources] = await Promise.all([
+      const [shared, registryCredentials, deployments, integrations, sites, remoteAccess, catalogSources] = await Promise.all([
         desktop,
         api.registryCredentials(signal),
         api.deployments(signal),
         api.integrations(signal),
         api.sites(signal),
-        api.threeXUIControllerMigrations(signal),
-        api.meridian(signal),
         loadCenterRemoteAccess(signal),
         loadCatalogSources(signal)
       ]);
@@ -128,8 +125,6 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
         deployments: deployments.deployments,
         integrations: integrations.integrations,
         sites: sites.sites,
-        threeXUIControllerMigrations: migrations.migrations,
-        meridian,
         ...remoteAccess,
         ...catalogSources
       };

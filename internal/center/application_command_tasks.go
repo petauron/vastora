@@ -6,13 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/meridianruntime"
-	"github.com/petauron/vastora/internal/networking"
-	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/senulun"
 )
 
@@ -22,96 +18,28 @@ var (
 )
 
 func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
-	if err := s.resetDueMeridianAccounts(ctx, tx); err != nil {
-		return nil, err
-	}
-	if err := s.resetDueMeridianEndpoints(ctx, tx); err != nil {
-		return nil, err
-	}
-	if err := s.queueNextMeridianRuntime(ctx, tx, agentID); err != nil {
-		return nil, err
-	}
-	if err := s.queueNextLandingClientCommand(ctx, tx, agentID); err != nil {
-		return nil, err
-	}
+	// Proxy business commands belong to Glivela's authenticated connection.
+	// Retain historical rows, but never reset proxy accounts, create proxy
+	// commands or claim them through the generic application task channel.
 	var id, kind string
 	var inputJSON []byte
 	var attempt int64
 	var reconciliationRequested int
 	err := tx.QueryRowContext(ctx, `SELECT c.id, c.kind, c.input_json, c.attempt, c.reconciliation_requested FROM application_commands c
-		WHERE c.agent_id = ? AND state = 'pending'
-		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=c.gateway_node_id AND r.state NOT IN ('superseded','completed') AND NOT (`+reinstallInspectionAuthoritySQL+` OR `+reinstallRotationAuthoritySQL+` OR `+reinstallReportingAuthoritySQL+` OR `+reinstallAcceptanceAuthoritySQL+`))
-		ORDER BY CASE WHEN kind = ? AND COALESCE(json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END, '$.migrationId'), '') = '' THEN 1 ELSE 0 END,
-		created_at, c.rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt, &reconciliationRequested)
+		WHERE c.agent_id = ? AND c.state = 'pending' AND c.kind IN (?, ?, ?, ?)
+		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=c.gateway_node_id AND r.state NOT IN ('superseded','completed') AND NOT (`+reinstallInspectionAuthoritySQL+` OR `+reinstallRotationAuthoritySQL+` OR `+reinstallReportingAuthoritySQL+`))
+		ORDER BY c.created_at, c.rowid LIMIT 1`, agentID, senulun.ReportingKind, senulun.RotationKind, senulun.InspectionKind, senulun.EnrollmentKind).Scan(&id, &kind, &inputJSON, &attempt, &reconciliationRequested)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("center: read pending application operation: %w", err)
 	}
-	var reality *RealityCommandTask
-	var subscription *SubscriptionCommandTask
-	var client *ThreeXUIClientCommandTask
-	var node *ThreeXUINodeCommandTask
-	var controller *ThreeXUIControllerCommandTask
-	var protocols *nodeprotocol.Task
 	var senulunReporting *senulun.ReportingTask
 	var senulunRotation *senulun.RotationTask
 	var senulunInspection *senulun.InspectionTask
 	var senulunEnrollment *senulun.EnrollmentTask
-	var meridianTask *meridianruntime.Task
-	var meridianAcceptance *meridianruntime.AcceptanceTask
-	var meridianLegacyExport *meridianruntime.LegacyExportCommand
-	var meridianLegacyRetire *meridianruntime.LegacyRetireTask
 	switch kind {
-	case meridianruntime.AcceptanceKind:
-		task, err := s.validateReinstallAcceptance(ctx, tx, agentID, id)
-		if err != nil {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
-		}
-		meridianAcceptance = &task
-	case meridianruntime.LegacyExportKind:
-		var command meridianruntime.LegacyExportCommand
-		if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored Glivela legacy export command is invalid"))
-		}
-		var cutoverState, controllerApplicationID string
-		if err := tx.QueryRowContext(ctx, `SELECT state,COALESCE(legacy_controller_application_id,'') FROM meridian_cutover WHERE id=1`).Scan(&cutoverState, &controllerApplicationID); err != nil || cutoverState != "import" || controllerApplicationID != command.ApplicationID {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: Glivela legacy export is outside the import phase"))
-		}
-		meridianLegacyExport = &command
-	case meridianruntime.ApplyKind:
-		var command meridianruntime.Command
-		if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
-			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, errors.New("center: stored Glivela runtime command is invalid"))
-		}
-		if superseded, supersedeErr := s.discardSupersededMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID); superseded || supersedeErr != nil {
-			return nil, supersedeErr
-		}
-		projection, buildErr := s.buildMeridianRuntimeTask(ctx, tx, command.EndpointID, agentID)
-		if buildErr != nil {
-			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, buildErr)
-		}
-		projection.task.ReplacePendingState = command.ReplacePendingState
-		if projection.task.Validate() != nil {
-			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, errors.New("center: stored Glivela recovery command is invalid"))
-		}
-		meridianTask = &projection.task
-	case meridianruntime.LegacyRetireKind:
-		var command meridianruntime.LegacyRetireTask
-		if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored Glivela legacy retirement command is invalid"))
-		}
-		var authorized int
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM meridian_cutover cutover JOIN applications application ON application.id=cutover.legacy_controller_application_id
-			WHERE cutover.id=1 AND cutover.state='retire' AND cutover.subscription_authority='meridian'
-			AND application.id=? AND application.node_id=? AND application.app_key=? AND application.status='running'
-			AND NOT EXISTS(SELECT 1 FROM meridian_endpoints endpoint WHERE endpoint.application_id=application.id)
-		)`, command.ApplicationID, agentID, meridianAppKey).Scan(&authorized); err != nil || authorized != 1 {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: Glivela legacy retirement is outside the authorized controller-only phase"))
-		}
-		meridianLegacyRetire = &command
 	case senulun.ReportingKind:
 		_, task, err := s.validateReinstallMonitorReporting(ctx, tx, agentID, id)
 		if err != nil {
@@ -136,146 +64,10 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, errors.New("center: invalid Senulun enrollment task")
 		}
 		senulunEnrollment = &command
-	case nodeprotocol.CommandKind:
-		var command nodeprotocol.Task
-		if json.Unmarshal(inputJSON, &command) != nil {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: invalid node protocol task"))
-		}
-		recipient := command.TargetAgentID
-		if command.Phase == "apply" {
-			recipient = command.ControllerAgentID
-		}
-		if recipient != agentID {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: node protocol recipient changed"))
-		}
-		if err := s.hydrateNodeProtocolTask(ctx, tx, &command); err != nil {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
-		}
-		protocols = &command
-	case realityCommandKind, realityVerifyCommandKind, realityHardenCommandKind, realityRenameCommandKind, realityRemoveCommandKind:
-		var command RealityCommandTask
-		if json.Unmarshal(inputJSON, &command) != nil || command.TargetApplicationID == "" {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY operation is invalid"))
-		}
-		if kind == realityCommandKind && (command.VerifiedTarget == nil || !validRealityCandidate(*command.VerifiedTarget) || command.VerifiedTarget.TargetHost != command.TargetHost || command.VerifiedTarget.ServerName != command.ServerName) {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY target selection is invalid; check the target again"))
-		}
-		if kind == realityCommandKind && (command.Action != "create" || !validRegionPrefixedRealityName(command.RegionCode, command.DisplayName) || (command.CreateInitialClient && !validThreeXUIClientName(command.ClientName)) || command.InboundTag != realityCommandInboundTag(id) || command.ConnectHostname == "" || !networking.IsPrivateServiceAddress(command.TargetAddress) || net.ParseIP(command.TargetPublicAddress) == nil || !validRealityTargetHostname(command.TargetHost) || !validRealityTargetHostname(command.ServerName) || command.InboundTotalBytes < 0 || command.InboundResetDay < 0 || command.InboundResetDay > maxThreeXUIResetDay || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0) {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY creation operation is invalid"))
-		}
-		if kind == realityVerifyCommandKind && (command.Action != "verify" || net.ParseIP(command.TargetPublicAddress) == nil || !command.Recommend && (!validRealityTargetHostname(command.TargetHost) || !validRealityTargetHostname(command.ServerName)) || command.Recommend && (command.TargetHost != "" || command.ServerName != "")) {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY verification operation is invalid"))
-		}
-		if kind == realityHardenCommandKind && (command.Action != "harden" || command.ServiceID == "" || command.InboundID < 1 || command.InboundTag == "" || net.ParseIP(command.TargetAddress) == nil || command.GuardRevision < 1) {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY hardening operation is invalid"))
-		}
-		if kind == realityRenameCommandKind && (command.Action != "rename" || command.InboundID < 1) {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY rename operation is invalid"))
-		}
-		if kind == realityRemoveCommandKind {
-			ready, removeErr := s.realityRemovalReady(ctx, tx, agentID, command)
-			if removeErr != nil {
-				return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, removeErr)
-			}
-			if !ready {
-				// Let the scheduler deliver the prerequisite landing restoration.
-				return nil, nil
-			}
-		}
-		if (kind == realityCommandKind || kind == realityHardenCommandKind) && command.TargetNodeID > 0 {
-			command.TargetAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.TargetApplicationID)
-			if err != nil {
-				if errors.Is(err, errThreeXUIAPISecretUnavailable) {
-					return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
-				}
-				return nil, err
-			}
-		}
-		reality = &command
-	case subscriptionCommandKind:
-		var command SubscriptionCommandTask
-		if json.Unmarshal(inputJSON, &command) != nil || command.Domain == "" || command.BaseURI == "" || command.PublicationID == "" {
-			cause := errors.New("center: stored subscription operation is invalid")
-			if err := s.failUnclaimableSubscriptionCommand(ctx, tx, id, agentID, command, cause); err != nil {
-				return nil, err
-			}
-			return nil, errApplicationCommandDiscarded
-		}
-		subscription = &command
-	case clientCommandKind:
-		var command ThreeXUIClientCommandTask
-		if json.Unmarshal(inputJSON, &command) != nil || !threeXUIClientActions[command.Action] {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored 3x-ui client operation is invalid"))
-		}
-		if command.Action == "update_inbound" || command.Action == "reset_inbound_plan" {
-			if err := s.hydrateThreeXUIInboundPlanTask(ctx, tx, &command); err != nil {
-				if !errors.Is(err, errApplicationCommandUnavailable) && !errors.Is(err, errThreeXUIAPISecretUnavailable) {
-					return nil, err
-				}
-				if failErr := s.failUnclaimableThreeXUIInboundPlanCommand(ctx, tx, id, agentID, command, err); failErr != nil {
-					return nil, failErr
-				}
-				return nil, errApplicationCommandDiscarded
-			}
-		}
-		if command.Action == "landing_grant" {
-			if err := s.hydrateLandingClientCommand(ctx, tx, &command); err != nil {
-				if _, updateErr := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='failed',last_error='Landing identity changed; refresh and retry.' WHERE id=? AND desired_revision=?`, command.GrantID, command.GrantRevision); updateErr != nil {
-					return nil, updateErr
-				}
-				return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, int64(command.GrantRevision), nil, nil, err)
-			}
-		}
-		if command.ManagedParentID != "" {
-			ready, err := s.landingParentMutationReady(ctx, tx, id, command.ManagedParentID)
-			if err != nil || !ready {
-				return nil, err
-			}
-		}
-		client = &command
-	case nodeCommandKind:
-		var command ThreeXUINodeCommandTask
-		if json.Unmarshal(inputJSON, &command) != nil || command.WorkerApplicationID == "" || (command.Action != "reconcile" && command.Action != "remove") {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, &command, nil, errors.New("center: stored 3x-ui node operation is invalid"))
-		}
-		if command.Action == "reconcile" {
-			command.APIToken, err = s.threeXUIAPISecret(ctx, tx, command.WorkerApplicationID)
-			if err != nil {
-				if errors.Is(err, errThreeXUIAPISecretUnavailable) {
-					return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, &command, nil, err)
-				}
-				return nil, err
-			}
-		}
-		node = &command
-	case controllerCommandKind:
-		var command ThreeXUIControllerCommandTask
-		if json.Unmarshal(inputJSON, &command) != nil || command.ApplicationID == "" || (command.Action != "backup" && command.Action != "promote" && command.Action != "demote") {
-			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, &command, errors.New("center: stored 3x-ui controller operation is invalid"))
-		}
-		if command.Action == "promote" {
-			command.SourceAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.SourceApplicationID)
-		} else {
-			command.SourceAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.ApplicationID)
-		}
-		if err != nil {
-			if errors.Is(err, errThreeXUIAPISecretUnavailable) {
-				return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, &command, err)
-			}
-			return nil, err
-		}
-		controller = &command
 	default:
-		return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored application operation kind is invalid"))
+		return nil, errors.New("center: unsupported application command")
 	}
 	now := s.now().UTC()
-	taskRevision := int64(1)
-	if client != nil && client.PlanRevision > 0 {
-		taskRevision = client.PlanRevision
-	}
-	if meridianTask != nil {
-		taskRevision = int64(meridianTask.Desired.Revision)
-	}
 	result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'running', attempt = attempt + 1, lease_expires_at = ?, error = '', updated_at = ? WHERE id = ? AND state = 'pending' AND attempt = ?`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), id, attempt)
 	if err != nil {
 		return nil, fmt.Errorf("center: claim application operation: %w", err)
@@ -283,30 +75,10 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return nil, errors.New("center: application operation changed while claiming")
 	}
-	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", taskRevision, "claimed", fmt.Sprintf("attempt %d", attempt+1)); err != nil {
+	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "claimed", fmt.Sprintf("attempt %d", attempt+1)); err != nil {
 		return nil, err
 	}
-	if node != nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status = 'applying', updated_at = ? WHERE worker_application_id = ?`, now.Format(time.RFC3339Nano), node.WorkerApplicationID); err != nil {
-			return nil, err
-		}
-	}
-	if meridianTask != nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET status='applying',last_error='',updated_at=? WHERE command_id=? AND desired_revision=?`, now.Format(time.RFC3339Nano), id, meridianTask.Desired.Revision); err != nil {
-			return nil, err
-		}
-		endpointStatus := "applying"
-		if meridianTask.RetireLegacy {
-			// Retirement changes only the legacy receipt and temporary aliases.
-			// Keep the already verified Meridian entry in subscriptions while the
-			// cleanup command runs.
-			endpointStatus = "ready"
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET status=?,last_error='',updated_at=? WHERE id=(SELECT endpoint_id FROM meridian_deployments WHERE command_id=?)`, endpointStatus, now.Format(time.RFC3339Nano), id); err != nil {
-			return nil, err
-		}
-	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, SenulunEnrollment: senulunEnrollment, SenulunInspection: senulunInspection, SenulunReporting: senulunReporting, SenulunRotation: senulunRotation, MeridianRuntime: meridianTask, MeridianAcceptance: meridianAcceptance, MeridianLegacyExport: meridianLegacyExport, MeridianLegacyRetire: meridianLegacyRetire, Reconcile: reconciliationRequested == 1}, nil
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: 1, SenulunEnrollment: senulunEnrollment, SenulunInspection: senulunInspection, SenulunReporting: senulunReporting, SenulunRotation: senulunRotation, Reconcile: reconciliationRequested == 1}, nil
 }
 
 func (s *Store) failUnclaimableThreeXUIInboundPlanCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command ThreeXUIClientCommandTask, cause error) error {
@@ -433,64 +205,17 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 	if currentState != "running" || expectedAttempt <= 0 || expectedAttempt != attempt {
 		return errors.New("center: stale application operation result")
 	}
-	if strings.HasPrefix(taskID, "reinstall-runtime-") {
-		if reconciliationRequired {
-			return errInvalidReconciliationDisposition
-		}
-		return s.completeReinstallRuntime(ctx, tx, commit, agentID, taskID, succeeded, taskError, rawResult)
+	// Historical terminal acknowledgements above remain idempotent. Active
+	// proxy results must not project into resources now owned by Glivela.
+	// Generic install, maintenance and adoption results use separate handlers.
+	if kind != senulun.ReportingKind && kind != senulun.RotationKind && kind != senulun.InspectionKind && kind != senulun.EnrollmentKind {
+		return errors.New("center: retired application operation requires explicit legacy execution disposition")
 	}
 	if reconciliationRequired {
-		if succeeded || taskError == "" || appKey != threeXUIAppKey && appKey != meridianAppKey {
-			return errInvalidReconciliationDisposition
-		}
-		now := s.now().UTC().Format(time.RFC3339Nano)
-		result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', reconciliation_required = 1, reconciliation_requested = 0, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ?`, taskError, now, taskID, agentID, expectedAttempt)
-		if err != nil {
-			return err
-		}
-		if changed, _ := result.RowsAffected(); changed != 1 {
-			return errors.New("center: application operation is not active")
-		}
-		if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, "failed", taskError); err != nil {
-			return err
-		}
-		if kind == meridianruntime.ApplyKind {
-			var command meridianruntime.Command
-			if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
-				return errors.New("center: stored Glivela runtime command is invalid")
-			}
-			if err := markUncertainMeridianRuntimeFailure(ctx, tx, command.EndpointID, taskID, taskError, now); err != nil {
-				return err
-			}
-		}
-		return commit(tx)
+		return errInvalidReconciliationDisposition
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET reconciliation_required = 0, reconciliation_requested = 0 WHERE id = ?`, taskID); err != nil {
 		return err
-	}
-	if kind == meridianruntime.LegacyExportKind {
-		return s.completeMeridianLegacyExport(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind == meridianruntime.ApplyKind {
-		if succeeded {
-			var result ApplicationTaskResult
-			if json.Unmarshal(rawResult, &result) != nil {
-				return errors.New("center: invalid Glivela runtime result")
-			}
-			if err := storeIntegratedPackageReceipt(ctx, tx, taskID, applicationID, appKey, result.Resources, s.now()); err != nil {
-				return err
-			}
-		}
-		return s.completeMeridianRuntimeCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind == meridianruntime.LegacyRetireKind {
-		return s.completeMeridianLegacyRetirement(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind == subscriptionCommandKind {
-		return s.completeSubscriptionCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind == meridianruntime.AcceptanceKind {
-		return s.completeReinstallAcceptance(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
 	}
 	if kind == senulun.ReportingKind {
 		return s.completeReinstallMonitorReporting(ctx, commit, tx, taskID, agentID, succeeded, rawResult)
@@ -504,34 +229,7 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 	if kind == senulun.EnrollmentKind {
 		return s.completeSenulunEnrollment(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, rawResult)
 	}
-	if kind == nodeprotocol.CommandKind {
-		return s.completeNodeProtocolCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind == clientCommandKind {
-		return s.completeThreeXUIClientCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind == nodeCommandKind {
-		return s.completeThreeXUINodeCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind == controllerCommandKind {
-		return s.completeThreeXUIControllerCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind == realityVerifyCommandKind {
-		return s.completeRealityVerifyCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind == realityHardenCommandKind {
-		return s.completeRealityHardenCommand(ctx, commit, tx, taskID, agentID, applicationID, gatewayID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind == realityRenameCommandKind {
-		return s.completeRealityRenameCommand(ctx, commit, tx, taskID, agentID, applicationID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind == realityRemoveCommandKind {
-		return s.completeRealityRemoveCommand(ctx, commit, tx, taskID, agentID, applicationID, inputJSON, succeeded, taskError, rawResult)
-	}
-	if kind != realityCommandKind {
-		return errors.New("center: stored application operation kind is invalid")
-	}
-	return s.completeRealityCreateCommand(ctx, commit, tx, taskID, agentID, applicationID, gatewayID, inputJSON, succeeded, taskError, rawResult)
+	return errors.New("center: stored application operation kind is invalid")
 }
 
 // An uncertain Agent result still needs a terminal endpoint projection. Keep a

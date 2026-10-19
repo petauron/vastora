@@ -121,7 +121,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			return err
 		}
 		nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
-		if landingOnly && !nativeLifecycle && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind {
+		if landingOnly && !nativeLifecycle && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind {
 			return errors.New("center: task is not authorized for a landing-only node")
 		}
 		return commitAuthorized(tx, task)
@@ -178,16 +178,6 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, err
 	}
 	if executionBlocked {
-		recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
-		if recoveryErr != nil {
-			return nil, recoveryErr
-		}
-		if recovery != nil {
-			if err := commitTask(tx, recovery); err != nil {
-				return nil, err
-			}
-			return recovery, nil
-		}
 		if requiredTaskID == "" {
 			updateBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, agentVersion)
 			if err != nil {
@@ -297,26 +287,6 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			}
 			return commandTask, nil
 		}
-		landingTask, landingErr := s.claimLandingServerTask(ctx, tx, agentID)
-		if landingErr != nil {
-			return nil, landingErr
-		}
-		if landingTask != nil {
-			if err := commitTask(tx, landingTask); err != nil {
-				return nil, err
-			}
-			return landingTask, nil
-		}
-		proxyTask, proxyErr := s.claimLandingProxyTask(ctx, tx, agentID)
-		if proxyErr != nil {
-			return nil, proxyErr
-		}
-		if proxyTask != nil {
-			if err := commitTask(tx, proxyTask); err != nil {
-				return nil, err
-			}
-			return proxyTask, nil
-		}
 		listenerTask, listenerErr := s.claimNodeListenerTask(ctx, tx, agentID)
 		if listenerErr != nil {
 			return nil, listenerErr
@@ -369,16 +339,6 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 					return nil, decommissionErr
 				}
 				if decommissionTask == nil {
-					recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
-					if recoveryErr != nil {
-						return nil, recoveryErr
-					}
-					if recovery != nil {
-						if err := commitTask(tx, recovery); err != nil {
-							return nil, err
-						}
-						return recovery, nil
-					}
 					securityTask, securityErr := s.claimNodeSecurity(ctx, tx, agentID)
 					if securityErr != nil {
 						return nil, securityErr
@@ -679,11 +639,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 		return err
 	}
 	if applicationCommand {
-		err := s.completeApplicationCommand(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
-		if err == nil && succeeded && !reconciliationRequired {
-			s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
-		}
-		return err
+		return s.completeApplicationCommand(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
 	}
 	if strings.HasPrefix(taskID, "ip-quality-") {
 		if reconciliationRequired {
@@ -702,9 +658,6 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 			return errInvalidReconciliationDisposition
 		}
 		return s.completeNodeDiagnostic(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
-	}
-	if strings.HasPrefix(taskID, "xray-recovery-") {
-		return s.completeXrayConfigurationRecovery(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
 	}
 	if taskID == agentDecommissionTaskID(agentID) {
 		if succeeded || reconciliationRequired {
@@ -768,7 +721,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 		return err
 	}
 	defer tx.Rollback()
-	appKey, publicationCleanups, err := s.projectApplicationDeployment(ctx, tx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired, executedRuntimeGenerations...)
+	_, publicationCleanups, err := s.projectApplicationDeployment(ctx, tx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired, executedRuntimeGenerations...)
 	if err != nil {
 		return err
 	}
@@ -776,9 +729,6 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 		return err
 	}
 	s.resumeCredentialRotationForDeployment(ctx, taskID)
-	if succeeded && !reconciliationRequired && appKey == threeXUIAppKey {
-		s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
-	}
 	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
 	}

@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe("screen-scoped data loading", () => {
-  it("loads Glivela recovery state on a direct nodes visit", async () => {
+  it("loads nodes without calling the retired platform proxy API", async () => {
     vi.spyOn(api, "status").mockResolvedValue(status);
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
     vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
@@ -36,7 +36,7 @@ describe("screen-scoped data loading", () => {
     const result = await loadScreenData("nodes");
 
     expect(result.meridian).toEqual(meridian);
-    expect(loadMeridian).toHaveBeenCalledWith(undefined);
+    expect(loadMeridian).not.toHaveBeenCalled();
   });
 
   it("loads the persistent desktop and overview summary without deployment history", async () => {

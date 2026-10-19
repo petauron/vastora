@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/petauron/catalog/catalog"
-	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/senulun"
@@ -83,56 +82,19 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 	} else if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', site_id = ?, runtime = CASE WHEN ?='uninstall' THEN runtime ELSE ? END, role = CASE WHEN ? = 'install' THEN ? ELSE role END, updated_at = ? WHERE id = ?`, siteID, request.Operation, packageRuntimeName(manifest), request.Operation, request.Role, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return "", fmt.Errorf("center: update application: %w", err)
 	}
-	if request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role == threeXUIRoleMaster {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM three_x_ui_nodes WHERE worker_application_id = ?`, applicationID); err != nil {
-			return "", fmt.Errorf("center: reset 3x-ui topology role: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO three_x_ui_control_plane(id, controller_application_id, selection_reason, selected_at)
-			VALUES(1, ?, 'install:first-global-controller', ?)
-			ON CONFLICT(id) DO UPDATE SET controller_application_id = excluded.controller_application_id,
-			selection_reason = excluded.selection_reason, selected_at = excluded.selected_at`, applicationID, now.Format(time.RFC3339Nano)); err != nil {
-			return "", fmt.Errorf("center: select global 3x-ui subscription controller: %w", err)
-		}
-	}
-	if request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role == threeXUIRoleWorker {
-		masterApplicationID, _, err := runningGlobalThreeXUIController(ctx, tx)
-		if err != nil {
-			return "", errors.New("center: the global 3x-ui subscription controller is unavailable")
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO three_x_ui_nodes(worker_application_id, master_application_id, status, last_error, created_at, updated_at)
-			VALUES(?, ?, 'pending', '', ?, ?)
-			ON CONFLICT(worker_application_id) DO UPDATE SET master_application_id = excluded.master_application_id, remote_node_id = NULL, status = 'pending', last_error = '', updated_at = excluded.updated_at`,
-			applicationID, masterApplicationID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
-			return "", fmt.Errorf("center: reserve 3x-ui VLESS node: %w", err)
-		}
-	}
 	return applicationID, nil
 }
 
 // Retire control-plane access after either a confirmed uninstall or explicit
 // offline-node removal. This makes no claim that remote resources were removed.
 func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time, cleanups *[]publicationCleanup) error {
-	var uninstallAppKey string
-	if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&uninstallAppKey); err != nil {
+	var applicationExists int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM applications WHERE id=?`, applicationID).Scan(&applicationExists); err != nil {
 		return err
 	}
 	values, err := s.applicationPublicationCleanups(ctx, tx, applicationID)
 	if err != nil {
 		return err
-	}
-	if uninstallAppKey == meridianAppKey {
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET enabled=0,runtime_healthy=0,status='revoked',last_error='',updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?) AND status<>'revoked'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_credentials SET enabled=0,updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?)`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM meridian_deployments WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?)`, applicationID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=0,status='retired',last_error='',updated_at=? WHERE application_id=? AND status<>'retired'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return err
-		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'stopped', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return err
@@ -167,8 +129,8 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	if operation == "uninstall" {
 		return s.retireApplicationManagement(ctx, tx, applicationID, now, cleanups)
 	}
-	var siteID, appKey, role string
-	if err := tx.QueryRowContext(ctx, `SELECT site_id, app_key, role FROM applications WHERE id = ?`, applicationID).Scan(&siteID, &appKey, &role); err != nil {
+	var siteID string
+	if err := tx.QueryRowContext(ctx, `SELECT site_id FROM applications WHERE id = ?`, applicationID).Scan(&siteID); err != nil {
 		return fmt.Errorf("center: read application site: %w", err)
 	}
 	var manifestJSON []byte
@@ -186,11 +148,6 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status='running',image=?,runtime_generation=?,runtime=?,updated_at=? WHERE id=?`, installedImage, executedRuntimeGeneration, packageRuntimeName(manifest), now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return err
 	}
-	if appKey == threeXUIAppKey && role == threeXUIRoleWorker {
-		if _, err := tx.ExecContext(ctx, `UPDATE services SET endpoint = ? || ':' || container_port, updated_at = ? WHERE application_id = ? AND status <> 'stopped'`, dockerruntime.LegacyXrayAlias, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return fmt.Errorf("center: switch worker services to Vastora Xray: %w", err)
-		}
-	}
 	managementServices := map[string]bool{}
 	forwardingModes := map[string]string{}
 	for _, service := range manifest.Services {
@@ -199,9 +156,6 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	}
 	reportedServices := make(map[string]bool, len(result.Services))
 	for _, reported := range result.Services {
-		if role == threeXUIRoleWorker {
-			continue
-		}
 		reportedServices[reported.Name] = true
 		if net.ParseIP(reported.Address) == nil || reported.HostPort < 1 || reported.HostPort > 65535 || reported.ContainerPort < 1 || reported.ContainerPort > 65535 {
 			return errors.New("center: Agent reported an invalid service endpoint")
@@ -263,42 +217,8 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		}
 		*cleanups = append(*cleanups, values...)
 	}
-	if appKey == meridianAppKey {
-		if _, err := s.ensureMeridianSubscriptionServiceInTx(ctx, tx, applicationID, now); err != nil {
-			return err
-		}
-		if operation == "upgrade" {
-			var endpointID string
-			if err := tx.QueryRowContext(ctx, `SELECT id FROM meridian_endpoints WHERE application_id=? AND status<>'retired'`, applicationID).Scan(&endpointID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			} else if err == nil {
-				if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
-					return err
-				}
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE application_id=? AND status<>'retired'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-				return err
-			}
-		}
-	}
-	reconcilePublications := true
-	if appKey == meridianAppKey {
-		var cutoverProjection bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM meridian_endpoints endpoint JOIN meridian_cutover cutover ON cutover.id=1
-			WHERE endpoint.application_id=? AND cutover.state IN ('project','verify')
-		)`, applicationID).Scan(&cutoverProjection); err != nil {
-			return err
-		}
-		reconcilePublications = !cutoverProjection
-	}
-	if reconcilePublications {
-		if err := s.reconcileApplicationPublications(ctx, tx, applicationID, now); err != nil {
-			return err
-		}
-	}
-	if appKey == meridianAppKey {
-		return s.reconcileMeridianCutoverInTx(ctx, tx, now.Format(time.RFC3339Nano))
+	if err := s.reconcileApplicationPublications(ctx, tx, applicationID, now); err != nil {
+		return err
 	}
 	return nil
 }
