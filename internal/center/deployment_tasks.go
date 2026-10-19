@@ -111,6 +111,11 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	}
 	commitAuthorized := commitTask
 	commitTask = func(tx *sql.Tx, task *AgentTask) error {
+		// A discarded unauthorized command commits its rejection with no task.
+		// This is not authorization to dispatch any work to the Agent.
+		if task == nil {
+			return commitAuthorized(tx, nil)
+		}
 		var landingOnly bool
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json, '$.landingOnly'), 0) FROM agents WHERE id = ?`, agentID).Scan(&landingOnly); err != nil {
 			return err
