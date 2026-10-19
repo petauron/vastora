@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/nodesecurity"
 )
 
 const (
@@ -312,6 +313,9 @@ func writeRootFileAtomic(path string, content []byte, mode os.FileMode) error {
 }
 
 func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtimeCleaned, keepBinary bool, authorize func(context.Context, string) error) error {
+	if err := nodesecurity.NewHost().CheckRemoval(); err != nil {
+		return err
+	}
 	dataDir, err := safeAgentDataDir(dataDir)
 	if err != nil {
 		return err

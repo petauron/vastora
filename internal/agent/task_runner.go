@@ -20,6 +20,7 @@ import (
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
+	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/senulun"
 	"github.com/petauron/vastora/internal/xrayrecovery"
@@ -164,6 +165,21 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	var result ApplicationTaskResult
 	var err error
+	publicRules := []nodesecurity.Rule{}
+	if task.NodeListenerState != nil && len(task.NodeListenerState.Listener.Routes) > 0 {
+		publicRules = append(publicRules, nodesecurity.Rule{Protocol: "tcp", Port: task.NodeListenerState.Listener.Port})
+	}
+	if task.GatewayState != nil {
+		for _, listener := range task.GatewayState.Listeners {
+			if listener.Kind == "public" {
+				for _, port := range []int{listener.HTTPPort, listener.HTTPSPort} {
+					if port > 0 {
+						publicRules = append(publicRules, nodesecurity.Rule{Protocol: "tcp", Port: port})
+					}
+				}
+			}
+		}
+	}
 	if task.Kind == "application.apply" {
 		// Hold through RecordApplied/RemoveApplied as well as Deploy: landing
 		// must never prepare a route against an installation being replaced.
@@ -172,10 +188,27 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	decommissionHandedOff := false
 	updateHandedOff := false
-	if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) {
+	if len(publicRules) > 0 {
+		err = nodesecurity.NewHost().CheckPorts(publicRules)
+	}
+	if err == nil && task.Kind == "agent.decommission" {
+		err = nodesecurity.NewHost().CheckRemoval()
+	}
+	if err != nil {
+		// Preserve the normal authenticated failure/receipt lifecycle below.
+	} else if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) {
 		err = errors.New("agent: task is not authorized for a landing-only node")
 	} else {
 		switch task.Kind {
+		case nodesecurity.Kind:
+			if !c.Capabilities.NodeSecurity || task.NodeSecurity == nil {
+				err = errors.New("agent: node security capability is not configured")
+			} else {
+				store.landingMutationMu.Lock()
+				value, securityErr := nodesecurity.NewHost().Execute(ctx, *task.NodeSecurity)
+				store.landingMutationMu.Unlock()
+				result.NodeSecurity, err = &value, securityErr
+			}
 		case ipquality.Kind:
 			checker, ok := c.Executor.(interface {
 				CheckIPQuality(context.Context, ipquality.Task) (ipquality.Result, error)

@@ -15,6 +15,7 @@ import (
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
+	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/realitytarget"
 	"github.com/petauron/vastora/internal/senulun"
 	"github.com/petauron/vastora/internal/xrayrecovery"
@@ -129,6 +130,7 @@ type Capabilities struct {
 	MeridianLinkBandwidth bool           `json:"meridianLinkBandwidth"`
 	MeridianLinkRevision  int            `json:"meridianLinkRevision"`
 	HostProfile           bool           `json:"hostProfile"`
+	NodeSecurity          bool           `json:"nodeSecurity"`
 	Docker                bool           `json:"docker"`
 	Gateway               bool           `json:"gateway"`
 	Tunnel                bool           `json:"tunnel"`
@@ -145,6 +147,7 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
 	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
 	PackageMaintenance        *PackageMaintenanceTask              `json:"packageMaintenance,omitempty"`
 	HistoricalManifest        json.RawMessage                      `json:"historicalManifest,omitempty"`
@@ -218,6 +221,7 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	NodeSecurity         *nodesecurity.View                  `json:"nodeSecurity,omitempty"`
 	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
 	Resources            *InstanceResources                  `json:"resources,omitempty"`
 	MeridianAcceptance   *meridianruntime.AcceptanceResult   `json:"meridianAcceptance,omitempty"`

@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { CircleAlertIcon, CircleCheckIcon, LogOutIcon, RefreshCwIcon } from "lucide-react";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { CredentialPage } from "./views/CredentialPage";
-import { APIError, api } from "./api";
+import { APIError, api, isAPIError } from "./api";
 import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import type { AppData, CenterUpdateStatus, Screen, SetupStatus } from "./types";
 import type { Language } from "./translations";
@@ -242,11 +242,11 @@ export function App() {
     try {
       await operation();
     } catch (error) {
-      if (error instanceof APIError && error.status === 401) {
+      if (isAPIError(error) && error.status === 401) {
         setPhase("login");
         return;
       }
-      if (!(error instanceof APIError)) {
+      if (!isAPIError(error)) {
         setConnection("reconnecting");
         setConnectionError(error);
       }

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 113
+const centerSchemaVersion = 114
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -1063,6 +1063,9 @@ CREATE TABLE agent_reinstall_access_activations (
 	}
 	if _, err := tx.ExecContext(ctx, ipQualitySchemaSQL); err != nil {
 		return fmt.Errorf("center: initialize IP quality schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, nodeSecuritySchema); err != nil {
+		return fmt.Errorf("center: initialize node security schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, nodeDiagnosticsSchemaSQL); err != nil {
 		return fmt.Errorf("center: initialize node diagnostics schema: %w", err)

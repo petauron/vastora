@@ -21,6 +21,7 @@ import (
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
+	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 	"github.com/petauron/vastora/internal/senulun"
@@ -28,6 +29,7 @@ import (
 )
 
 type AgentTask struct {
+	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
 	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
 	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
@@ -112,7 +114,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json, '$.landingOnly'), 0) FROM agents WHERE id = ?`, agentID).Scan(&landingOnly); err != nil {
 			return err
 		}
-		if landingOnly && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" {
+		if landingOnly && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind {
 			return errors.New("center: task is not authorized for a landing-only node")
 		}
 		return commitAuthorized(tx, task)
@@ -369,6 +371,16 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 							return nil, err
 						}
 						return recovery, nil
+					}
+					securityTask, securityErr := s.claimNodeSecurity(ctx, tx, agentID)
+					if securityErr != nil {
+						return nil, securityErr
+					}
+					if securityTask != nil {
+						if err := commitTask(tx, securityTask); err != nil {
+							return nil, err
+						}
+						return securityTask, nil
 					}
 					diagnostic, diagnosticErr := s.claimNodeDiagnostic(ctx, tx, agentID)
 					if diagnosticErr != nil {
@@ -671,6 +683,12 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 			return errInvalidReconciliationDisposition
 		}
 		return s.completeIPQuality(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
+	}
+	if strings.HasPrefix(taskID, "node-security-") {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeNodeSecurity(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
 	}
 	if strings.HasPrefix(taskID, "node-diagnostic-") {
 		if reconciliationRequired {
