@@ -47,3 +47,22 @@ existing reviewed execution-recovery flow, not automatic fallback or reinstall.
 Completing these generic prerequisites is not the complete proxy cutover. The
 Glivela state handover, removal of legacy business writers, signed catalog
 publication and runtime route verification must finish before deployment.
+
+## Preserve the shared gateway
+
+The native deployment decision applies to Glivela node and Xray processes, not
+to Vastora's existing shared gateway. Keep HAProxy's deployment, public 443
+ownership, other SNI routes and unmatched-SNI behavior unchanged. Do not replace
+a shared listener with an application-exclusive listener.
+
+A ready native installation supplies its ordinary private TCP service endpoint.
+The shared listener uses the forwarding mode declared by the signed package and
+stored with that service. The endpoint must match the application's node and
+its confirmed service address; loopback, public addresses and missing or stale
+installation ownership evidence are rejected. Literal private backends do not
+use a Docker DNS alias. The generic gateway does not select Xray versions or
+understand Glivela roles, accounts, DNS policy or business health.
+
+This does not prove live forwarding or change existing firewall permissions.
+Retain service/publication identities during the separately reviewed handover,
+and do not clear a route alert merely because a listener configuration exists.
