@@ -48,6 +48,32 @@ func independentRuntimeStore(t *testing.T) (*Store, AgentCredential, catalog.App
 	return store, node, app
 }
 
+func TestCatalogRuntimeNativeBundleRequiresCapableNode(t *testing.T) {
+	store, node, app := independentRuntimeStore(t)
+	app.Images = nil
+	app.Artifacts = []catalog.Artifact{{Name: "bundle", OperatingSystem: "linux", Architecture: "amd64", URL: "https://example.com/bundle", SHA256: strings.Repeat("a", 64), Format: "raw"}}
+	app.Runtime = &catalog.RuntimeSpec{Kind: "systemd", Version: 2, RequiredCapabilities: []string{"native-services"}, NativeServices: &catalog.NativeServicesRuntime{Users: []string{"worker"}, Services: []catalog.NativeService{{Name: "worker", Start: "automatic", ManagedUser: "worker", Process: catalog.SystemdRuntime{Artifact: "bundle", Executable: "worker", Files: []catalog.ArtifactFile{{Path: "worker", Executable: true}}}}}}}
+	if err := requireCatalogRuntime(app); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []int{1, 2} {
+		raw, err := json.Marshal(NodeCapabilities{ExecutorVersions: map[string]int{"systemd": version}, RuntimeCapabilities: []string{"native-services"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.db.ExecContext(context.Background(), `UPDATE agents SET capabilities_json=? WHERE id=?`, raw, node.ID); err != nil {
+			t.Fatal(err)
+		}
+		err = requireNodeRuntime(context.Background(), store.db, node.ID, app)
+		if version == 1 && err == nil {
+			t.Fatal("old Agent admitted v2 bundle")
+		}
+		if version == 2 && err != nil {
+			t.Fatal("capable Agent rejected", err)
+		}
+	}
+}
+
 func confirmIndependentTask(t *testing.T, store *Store, node AgentCredential, task *AgentTask) {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{"resources": map[string]any{"version": 1, "applicationId": task.ApplicationID, "appKey": task.AppKey, "taskId": task.ID, "runtime": "docker", "packageVersion": task.Manifest.Version, "packageRevision": task.PackageRevision, "manifestSha256": task.ManifestSHA256, "authorizedCapabilities": task.AuthorizedCapabilities, "state": "ready", "resources": []any{map[string]string{"kind": "container", "logicalName": "app", "name": "test-instance", "id": "test-container-id"}}}})

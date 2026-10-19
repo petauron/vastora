@@ -22,8 +22,8 @@ func requireCatalogRuntime(manifest catalog.AppManifest) error {
 		return err
 	}
 	result := catalog.CheckRuntimeSupport(manifest, catalog.ExecutorSupport{
-		Versions:     map[string]int{"docker": 1, "systemd": 1},
-		Capabilities: []string{"root", "host-network", "host-path", "devices", "meridian-runtime"},
+		Versions:     map[string]int{"docker": 1, "systemd": 2},
+		Capabilities: []string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services"},
 	})
 	if !result.Supported {
 		return fmt.Errorf("center: unsupported package: %s", strings.Join(result.Reasons, "; "))
@@ -205,6 +205,7 @@ func storePackageReceipt(ctx context.Context, tx *sql.Tx, taskID, applicationID,
 		AuthorizedCapabilities []string          `json:"authorizedCapabilities"`
 		State                  string            `json:"state"`
 		Runtime                string            `json:"runtime"`
+		RuntimeVersion         int               `json:"runtimeVersion"`
 		Resources              []json.RawMessage `json:"resources"`
 	}
 	if json.Unmarshal(raw, &receipt) != nil || receipt.Version != 1 || receipt.ApplicationID != applicationID || receipt.AppKey != appKey || receipt.TaskID != taskID {
@@ -229,6 +230,13 @@ func storePackageReceipt(ctx context.Context, tx *sql.Tx, taskID, applicationID,
 	var manifest catalog.AppManifest
 	if json.Unmarshal(manifestRaw, &manifest) != nil || revision > 0 && (manifest.Runtime == nil || manifest.Runtime.Kind != receipt.Runtime) {
 		return errors.New("center: package resource receipt runtime differs from the authorized recipe")
+	}
+	installedRuntimeVersion := receipt.RuntimeVersion
+	if installedRuntimeVersion == 0 {
+		installedRuntimeVersion = 1
+	}
+	if revision > 0 && manifest.Runtime.Version != installedRuntimeVersion {
+		return errors.New("center: package receipt runtime contract differs from the authorized recipe")
 	}
 	var grants []string
 	if json.Unmarshal(grantsRaw, &grants) != nil {

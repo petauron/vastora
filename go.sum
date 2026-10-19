@@ -79,6 +79,14 @@ github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJw
 github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
 github.com/petauron/catalog v0.3.1-0.20261017182737-a896f24d7577 h1:4/yEzZCh9tJ43G8tjq+tRqVuot/QpaNVFPzZuZtFvUg=
 github.com/petauron/catalog v0.3.1-0.20261017182737-a896f24d7577/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
+github.com/petauron/catalog v0.3.2-0.20261018105326-c8481ad5cf76 h1:yDo1Jaeb6FnG/s/nmi0TTqjJmrNLs11zqyxF9zsas5I=
+github.com/petauron/catalog v0.3.2-0.20261018105326-c8481ad5cf76/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
+github.com/petauron/catalog v0.3.2-0.20261018112435-c299015213f4 h1:Ni7d32cmg0XlR2f9d9LKgkUc5OWs5Cpn8prU8vYSyF8=
+github.com/petauron/catalog v0.3.2-0.20261018112435-c299015213f4/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
+github.com/petauron/catalog v0.3.2-0.20261018120742-8a4d6d4386ee h1:oe+G3+oTB1TfttLe9EhHBjhgyE6HdfRJ2mlJLA3Xxpw=
+github.com/petauron/catalog v0.3.2-0.20261018120742-8a4d6d4386ee/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
+github.com/petauron/catalog v0.3.2-0.20261018121923-91b49469c1d1 h1:HUb9jqqx3W2+40vncbHG1miRGUJ8iGKMDaJQd3I210o=
+github.com/petauron/catalog v0.3.2-0.20261018121923-91b49469c1d1/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
 github.com/petauron/glivela v0.1.0-alpha.21.0.20261017182649-fb8298167478 h1:3NWhkammGDCtPIJVGklOybBsR3fbbNeNQUJEy2ZibRA=
 github.com/petauron/glivela v0.1.0-alpha.21.0.20261017182649-fb8298167478/go.mod h1:FQftrZdVkgelHse92MsZq85pAYTE6qZpAnT9jBIo4lY=
 github.com/petauron/glivela v0.1.0-alpha.24.0.20261018115648-011a0efc9777 h1:FkOv3jO5qDoJbyBLiKOVea+d71OTfcJKoYVAIIs585A=

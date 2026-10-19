@@ -268,6 +268,17 @@ func unitCredentialPath(value string) (string, error) {
 
 func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executable, environmentPath string, credentials map[string]string, config map[string]any, secrets map[string]string, runtimeValues map[string]string) ([]byte, error) {
 	spec := task.Manifest.Runtime.Systemd
+	statePaths := map[string]string{}
+	for _, name := range spec.StateDirectories {
+		statePaths[name] = "/var/lib/" + packageIdentity(task.ApplicationID) + "-" + name
+		if old := resourceNamed(receipt, "directory", name); old != nil {
+			statePaths[name] = old.Path
+		}
+	}
+	return compileNativeProcessUnit(task.ApplicationID, task.Manifest.ID, spec, packageIdentity(task.ApplicationID), statePaths, nil, executable, environmentPath, credentials, config, secrets, runtimeValues)
+}
+
+func compileNativeProcessUnit(applicationID, appName string, spec *catalog.SystemdRuntime, runtimeDirectory string, statePaths map[string]string, writablePaths []string, executable, environmentPath string, credentials map[string]string, config map[string]any, secrets map[string]string, runtimeValues map[string]string) ([]byte, error) {
 	arguments, err := runtimeStrings(spec.Arguments, config, secrets, runtimeValues)
 	if err != nil {
 		return nil, err
@@ -275,7 +286,7 @@ func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executa
 	var unit strings.Builder
 	// Wait for successful exec, including StateDirectory and credential setup,
 	// rather than accepting the initial fork before those resources exist.
-	fmt.Fprintf(&unit, "# Managed by Vastora\n# Application: %s\n[Unit]\nDescription=Managed package %s\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=exec\n", task.ApplicationID, task.Manifest.ID)
+	fmt.Fprintf(&unit, "# Managed by Vastora\n# Application: %s\n[Unit]\nDescription=Managed package %s\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=exec\n", applicationID, appName)
 	if spec.User == "" {
 		unit.WriteString("User=65534\nGroup=65534\n")
 	} else {
@@ -291,7 +302,7 @@ func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executa
 		credentialNames = append(credentialNames, name)
 	}
 	sort.Strings(credentialNames)
-	baseName := packageIdentity(task.ApplicationID)
+	baseName := runtimeDirectory
 	if len(credentialNames) > 0 {
 		fmt.Fprintf(&unit, "RuntimeDirectory=%s\nRuntimeDirectoryMode=0700\n", baseName)
 	}
@@ -311,14 +322,22 @@ func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executa
 	}
 	fmt.Fprintf(&unit, "EnvironmentFile=%s\n", environment)
 	for _, name := range spec.StateDirectories {
-		directory := packageIdentity(task.ApplicationID) + "-" + name
-		if old := resourceNamed(receipt, "directory", name); old != nil {
-			if !strings.HasPrefix(old.Path, "/var/lib/") {
-				return nil, errors.New("agent: retained state is outside systemd StateDirectory")
-			}
-			directory = strings.TrimPrefix(old.Path, "/var/lib/")
+		path := statePaths[name]
+		if !strings.HasPrefix(path, "/var/lib/") || filepath.Clean(path) != path || strings.ContainsAny(path, "\n\r\x00%\\") {
+			return nil, errors.New("agent: retained state is outside systemd StateDirectory")
 		}
+		directory := strings.TrimPrefix(path, "/var/lib/")
 		fmt.Fprintf(&unit, "StateDirectory=%s\nStateDirectoryMode=0700\n", directory)
+	}
+	for _, path := range writablePaths {
+		if !strings.HasPrefix(path, "/var/lib/") {
+			return nil, errors.New("agent: writable state is outside managed storage")
+		}
+		quoted, err := unitDirectivePath(path)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(&unit, "ReadWritePaths=%s\n", quoted)
 	}
 	if spec.Limits != nil {
 		if spec.Limits.MemoryBytes > 0 {
