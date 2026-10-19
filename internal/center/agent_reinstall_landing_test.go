@@ -1,17 +1,15 @@
 package center
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
+
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -68,29 +66,26 @@ func reinstallLandingFixture(t *testing.T, sameAddress bool) (*Store, AgentCrede
 	return s, node, egress, input
 }
 
+// Model a recorded pre-upgrade landing transition for import/authority tests.
+// This never uses the live Agent dispatcher or constitutes installed acceptance.
 func applyReinstallLanding(t *testing.T, s *Store, egress AgentCredential, success bool) {
 	t.Helper()
 	ctx := context.Background()
-	session := "landing-recovery-session"
-	if err := s.RegisterExecutionSession(ctx, egress.ID, egress.Credential, session, controlplane.ExecutionProtocol); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := s.claimExecutionTask(ctx, egress.ID, egress.Credential, session, 0)
-	if err != nil || task == nil || task.Kind != "landing.server.apply" {
-		t.Fatalf("claim landing: %+v %v", task, err)
+	task, err := s.claimLandingServerTask(ctx, tx, egress.ID)
+	if err != nil || task == nil {
+		_ = tx.Rollback()
+		t.Fatalf("historical landing transition: %v", err)
 	}
-	if err = s.StartExecution(ctx, egress.ID, session, task.Authorization.ID, task.Authorization.Digest); err != nil {
+	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	peer := landing.PeerIdentity{ID: "tailnet-" + egress.ID, PublicKey: "nodekey:test-" + egress.ID, Address: "100.64.0.62"}
-	body, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": session, "attempt": task.Attempt, "succeeded": success, "result": map[string]any{"landingPeer": peer}})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+egress.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+egress.Credential)
-	req.Header.Set("Content-Type", "application/json")
-	resp := httptest.NewRecorder()
-	NewServer(s, "", false).Handler().ServeHTTP(resp, req)
-	if resp.Code != http.StatusOK {
-		t.Fatalf("result: %d %s", resp.Code, resp.Body.String())
+	if err := s.completeLandingServer(ctx, commitProjectionOnlyForTest, egress.ID, task.Revision, task.Attempt, success, &peer); err != nil {
+		t.Fatal(err)
 	}
 }
 
