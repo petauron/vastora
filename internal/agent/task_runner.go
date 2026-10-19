@@ -326,13 +326,11 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			} else if task.Manifest.Runtime != nil && task.Manifest.Runtime.Kind == "docker" && !c.Capabilities.Docker {
 				err = errors.New("agent: Docker capability is not configured")
 			} else {
-				landingState, landingErr := store.prepareLandingXrayRuntimeMigration(ctx, task)
-				if landingErr != nil {
-					err = landingErr
-				} else {
-					result, err = c.Executor.Deploy(ctx, task)
-					err = store.finishLandingXrayRuntimeMigration(ctx, landingState, err)
-				}
+				// Application lifecycle must not infer a component's proxy state,
+				// manipulate its route gates or resume an obsolete proxy writer.
+				// Explicit installation handover belongs to the reviewed package
+				// receipt path; Glivela owns its own business/runtime migration.
+				result, err = c.Executor.Deploy(ctx, task)
 			}
 		case "application.command":
 			// Mutating commands may restart the panel or replace its database.
