@@ -199,6 +199,14 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		// Preserve the normal authenticated failure/receipt lifecycle below.
 	} else if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) && !nativeLifecycle {
 		err = errors.New("agent: task is not authorized for a landing-only node")
+	} else if task.Kind == "landing.server.apply" || task.Kind == "landing.proxy.apply" || task.XrayRecovery != nil ||
+		task.MeridianRuntime != nil || task.MeridianLegacyRetire != nil || task.MeridianLegacyExport != nil || task.MeridianAcceptance != nil ||
+		task.ApplicationCommand != nil || task.SubscriptionCommand != nil || task.ClientCommand != nil || task.NodeCommand != nil || task.ControllerCommand != nil || task.ProtocolCommand != nil {
+		// These fields are RealityCommandTask, ThreeXUIClientCommandTask,
+		// ThreeXUINodeCommandTask, ThreeXUIControllerCommandTask and the
+		// 3xui.protocols.configure payload, not generic node management.
+		// Never execute a second proxy writer after application handover.
+		err = errors.New("agent: proxy execution belongs to the application-owned controller")
 	} else {
 		// A value-copy of Client scopes this executor to this exact authorized
 		// native lifecycle task. No host-wide executor/capability is enabled.
@@ -331,13 +339,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			} else if task.Manifest.Runtime != nil && task.Manifest.Runtime.Kind == "docker" && !c.Capabilities.Docker {
 				err = errors.New("agent: Docker capability is not configured")
 			} else {
-				landingState, landingErr := store.prepareLandingXrayRuntimeMigration(ctx, task)
-				if landingErr != nil {
-					err = landingErr
-				} else {
-					result, err = c.Executor.Deploy(ctx, task)
-					err = store.finishLandingXrayRuntimeMigration(ctx, landingState, err)
-				}
+				// The owned package performs its own replacement/recovery.
+				// Generic lifecycle must not resume the old proxy writer.
+				result, err = c.Executor.Deploy(ctx, task)
 			}
 		case "application.command":
 			// Mutating commands may restart the panel or replace its database.

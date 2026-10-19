@@ -151,6 +151,8 @@ never attempted automatically.
 
 Read [the architecture](docs/architecture.md), [catalog format](docs/catalog.md),
 and [threat model](docs/threat-model.md) before contributing.
+For backup-bound native replacements and retained public service identity, see
+[installation handover](docs/native-lifecycle-handover.md).
 
 ## License
 

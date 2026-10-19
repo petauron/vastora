@@ -418,8 +418,8 @@ func observeMeridianState(artifact glivela.DesiredArtifact) ([]ApplicationEndpoi
 }
 
 func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.Duration, report func(error)) {
-	go store.runLandingAccounts(ctx, report)
-	go store.runLandingSubscriptions(ctx, report)
+	// Glivela owns proxy account enforcement and subscription serving.
+	// Keep the retained source data without launching those old writers.
 	if interval < time.Second {
 		interval = 15 * time.Second
 	}
