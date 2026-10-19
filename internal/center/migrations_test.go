@@ -181,7 +181,7 @@ func TestVersion83MigrationMovesManagedRealityToLocalDockerAlias(t *testing.T) {
 	}
 }
 
-func TestVersion57MigrationSelectsOneGlobalThreeXUIControllerAndQueuesLegacyConvergence(t *testing.T) {
+func TestVersion57MigrationPreservesControllerSelectionWithoutStartingRetiredConvergence(t *testing.T) {
 	directory := t.TempDir()
 	createLegacyVersion3Database(t, directory)
 	ctx := context.Background()
@@ -238,15 +238,12 @@ func TestVersion57MigrationSelectsOneGlobalThreeXUIControllerAndQueuesLegacyConv
 	if err := migrated.db.QueryRowContext(ctx, `SELECT controller_application_id FROM three_x_ui_control_plane WHERE id = 1`).Scan(&controllerID); err != nil || controllerID != "global-controller-b" {
 		t.Fatalf("global controller = %q, err = %v", controllerID, err)
 	}
-	var kind, sourceID, targetID, state, step string
-	if err := migrated.db.QueryRowContext(ctx, `SELECT kind, source_application_id, target_application_id, state, step FROM three_x_ui_migrations WHERE kind = 'consolidate'`).Scan(&kind, &sourceID, &targetID, &state, &step); err != nil {
-		t.Fatal(err)
-	}
-	if kind != "consolidate" || sourceID != "global-controller-a" || targetID != "global-controller-b" || state != "backing_up" || step != "backup" {
-		t.Fatalf("automatic convergence = kind=%q source=%q target=%q state=%q step=%q", kind, sourceID, targetID, state, step)
+	var convergence int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM three_x_ui_migrations WHERE kind='consolidate'`).Scan(&convergence); err != nil || convergence != 0 {
+		t.Fatalf("opening historical data started retired convergence: count=%d err=%v", convergence, err)
 	}
 	var queued int
-	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = 'global-controller-a' AND kind = '3xui.controller.manage' AND state = 'pending'`).Scan(&queued); err != nil || queued != 1 {
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = 'global-controller-a' AND kind = '3xui.controller.manage' AND state = 'pending'`).Scan(&queued); err != nil || queued != 0 {
 		t.Fatalf("queued restore point commands = %d, err = %v", queued, err)
 	}
 	if _, err := migrated.db.ExecContext(ctx, `UPDATE applications SET status = 'running' WHERE id = 'global-controller-a'`); err != nil {
