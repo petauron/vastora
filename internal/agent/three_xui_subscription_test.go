@@ -71,6 +71,12 @@ func TestRetiredSubscriptionCommandCannotChangeManagedInstallation(t *testing.T)
 	if _, err := store.RecordApplied(ctx, original); err != nil {
 		t.Fatal(err)
 	}
+	// RecordApplied canonicalizes JSON. Compare the persisted state before
+	// and after the rejected command, not its original input key ordering.
+	original, err = store.AppliedInstallation(ctx, threeXUIKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	client := Client{HTTPClient: server.Client(), Capabilities: Capabilities{Docker: true}, execution: executionAuthorizationForTest(), executionSession: "test-execution-session"}
 	var reported error
 	if err := client.processTask(ctx, store, DeploymentTask{Kind: "application.command", ID: "retired-subscription", Attempt: 1, SubscriptionCommand: &SubscriptionCommandTask{Domain: "subscribe.example.com", BaseURI: "https://subscribe.example.com/sub/"}}, func(err error) { reported = err }); err != nil {
