@@ -3,7 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+
 	"errors"
 	"slices"
 	"time"
@@ -123,114 +123,6 @@ func (s *Store) landingParentMutationReady(ctx context.Context, tx *sql.Tx, comm
 		return false, err
 	}
 	return total > 0 && incomplete == 0, nil
-}
-
-func (s *Store) finishLandingParentMutation(ctx context.Context, tx *sql.Tx, input ThreeXUIClientCommandTask, result ThreeXUIClientCommandResult) error {
-	if input.ManagedParentID == "" {
-		return nil
-	}
-	var client *ThreeXUIClientView
-	for i := range result.Clients {
-		if result.Clients[i].ID == input.ManagedParentID {
-			client = &result.Clients[i]
-		}
-	}
-	if client == nil && input.Action != "delete" {
-		return errors.New("center: shared parent result was not observed")
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT application_id FROM landing_client_blocks WHERE parent_id=? ORDER BY application_id`, input.ManagedParentID)
-	if err != nil {
-		return err
-	}
-	apps := []string{}
-	for rows.Next() {
-		var app string
-		if err := rows.Scan(&app); err != nil {
-			rows.Close()
-			return err
-		}
-		if !slices.Contains(apps, app) {
-			apps = append(apps, app)
-		}
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	if input.Action == "delete" {
-		return s.finishDeletedLandingParent(ctx, tx, input.ManagedParentID, apps)
-	}
-	rows, err = tx.QueryContext(ctx, `SELECT id FROM landing_client_grants WHERE parent_id=? AND status<>'revoked' ORDER BY id`, input.ManagedParentID)
-	if err != nil {
-		return err
-	}
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_client_accounts SET pending_command_id='',revision=revision+1 WHERE id=?`, input.ManagedParentID); err != nil {
-		return err
-	}
-	if client != nil && client.Enabled {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM landing_client_blocks WHERE parent_id=?`, input.ManagedParentID); err != nil {
-			return err
-		}
-	}
-	preparing := map[string]bool{}
-	for _, id := range ids {
-		record, err := readLandingGrant(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		record.Revision++
-		if client != nil {
-			record.Grant.BaseUser = client.Email
-		}
-		allowed := client != nil && client.Enabled
-		if input.Action == "delete" {
-			record.Grant.Enabled = false
-		}
-		if input.Action == "update" {
-			for _, inbound := range input.Inbounds {
-				if inbound.ServiceID == record.ServiceID && !slices.Contains(input.InboundIDs, inbound.ID) {
-					record.Grant.Enabled = false
-				}
-			}
-		}
-		data, _ := json.Marshal(record.Grant)
-		status := "prepared"
-		if allowed && record.Grant.Enabled {
-			status = "preparing"
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET grant_json=?,desired_revision=?,status=?,last_error='',updated_at=? WHERE id=?`, data, record.Revision, status, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
-			return err
-		}
-		if status == "preparing" {
-			if err := s.queueLandingClientCommand(ctx, tx, record, "prepare"); err != nil {
-				return err
-			}
-			preparing[record.ApplicationID] = true
-		}
-	}
-	for _, app := range apps {
-		if !preparing[app] {
-			if err := s.queueClientLandingRoutes(ctx, tx, app); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func (s *Store) failLandingParentFence(ctx context.Context, tx *sql.Tx, nodeID string) error {

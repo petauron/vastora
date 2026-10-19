@@ -6,11 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
+
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/secret"
 )
 
 var errLandingRouteApplying = errors.New("center: landing route operation is still applying")
@@ -95,57 +94,6 @@ func (s *Store) queueNextLandingClientCommand(ctx context.Context, tx *sql.Tx, n
 	return s.queueLandingClientCommand(ctx, tx, record, phase)
 }
 
-func (s *Store) hydrateLandingClientCommand(ctx context.Context, tx *sql.Tx, command *ThreeXUIClientCommandTask) error {
-	record, err := readLandingGrant(ctx, tx, command.GrantID)
-	if err != nil {
-		return err
-	}
-	if record.Revision != command.GrantRevision || command.GrantPhase != "prepare" && command.GrantPhase != "activate" && command.GrantPhase != "retire" {
-		return errors.New("center: stale landing client command")
-	}
-	var controllerID, mode string
-	if err := tx.QueryRowContext(ctx, `SELECT controller_id,mode FROM three_x_ui_client_accounts WHERE id=?`, record.ParentID).Scan(&controllerID, &mode); err != nil {
-		return err
-	}
-	inbounds, err := threeXUIClientInbounds(ctx, tx, controllerID)
-	if err != nil {
-		return err
-	}
-	var selected *ThreeXUIClientInbound
-	for i := range inbounds {
-		if inbounds[i].ServiceID == record.ServiceID {
-			selected = &inbounds[i]
-		}
-	}
-	if command.GrantPhase != "retire" && (selected == nil || selected.ApplicationID != record.ApplicationID || selected.InboundTag != record.Grant.InboundTag) {
-		return errors.New("center: landing entry ownership changed")
-	}
-	if command.GrantPhase != "retire" {
-		if err := s.checkClientLandingIdentity(ctx, tx, record); err != nil {
-			return err
-		}
-	}
-	var sealed []byte
-	if err := tx.QueryRowContext(ctx, `SELECT sealed FROM secrets WHERE id=?`, record.CredentialSecretID).Scan(&sealed); err != nil {
-		return err
-	}
-	credential, err := secret.Open(s.key, sealed, []byte("landing-credential:"+record.ID))
-	if err != nil || landing.Identity(string(credential)) != record.Grant.FixedIdentity {
-		return errors.New("center: landing credential is unavailable")
-	}
-	selection, err := readLandingSelection(ctx, tx)
-	if err != nil {
-		return err
-	}
-	command.Landing = &landing.ControllerTask{Grant: record.Grant.Published(landing.PublishingMode(mode)), Revision: record.Revision, Phase: command.GrantPhase, ControllerID: controllerID, FixedUUID: string(credential), LandingRegionCode: selection.LandingRegionCodes[record.LandingNodeID], Mode: landing.PublishingMode(mode)}
-	if selected != nil {
-		command.Landing.InboundID = selected.ID
-		command.Landing.ConnectHostname = selected.ConnectHostname
-		command.Landing.EntryName = selected.NodeName
-	}
-	return nil
-}
-
 func (s *Store) checkClientLandingIdentity(ctx context.Context, tx *sql.Tx, record landingGrantRecord) error {
 	var sourceJSON, peerJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT c.peer_json FROM agent_private_peer_capabilities c JOIN applications app ON app.node_id=c.node_id JOIN agents a ON a.id=c.node_id WHERE app.id=? AND c.generation=? AND a.status='active' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed'`, record.ApplicationID, landing.ClientRuntimeGeneration).Scan(&sourceJSON); err != nil {
@@ -157,125 +105,6 @@ func (s *Store) checkClientLandingIdentity(ctx context.Context, tx *sql.Tx, reco
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT s.peer_json FROM landing_server_states s JOIN agents a ON a.id=s.node_id WHERE s.node_id=? AND a.status='active' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed'`, record.LandingNodeID).Scan(&peerJSON); err != nil || json.Unmarshal(peerJSON, &peer) != nil || peer != record.Grant.Peer {
 		return errLandingPrivateIdentityChanged
-	}
-	return nil
-}
-
-func (s *Store) completeLandingClientCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, nodeID string, input ThreeXUIClientCommandTask, succeeded bool, raw json.RawMessage) error {
-	record, err := readLandingGrant(ctx, tx, input.GrantID)
-	if err != nil {
-		return err
-	}
-	if record.Revision != input.GrantRevision {
-		return errors.New("center: stale landing client completion")
-	}
-	var envelope ApplicationTaskResult
-	var result *landing.ControllerResult
-	if succeeded && json.Unmarshal(raw, &envelope) == nil && envelope.ClientCommand != nil {
-		result = envelope.ClientCommand.Landing
-	}
-	if result == nil || result.GrantID != record.ID || result.Revision != record.Revision || result.Phase != input.GrantPhase {
-		succeeded = false
-	}
-	status, message := "succeeded", ""
-	var retirementCleanupErr error
-	if !succeeded {
-		status, message = "failed", "Landing configuration failed; retry the operation."
-		if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='failed',last_error=?,updated_at=? WHERE id=?`, message, s.now().UTC().Format(time.RFC3339Nano), record.ID); err != nil {
-			return err
-		}
-	} else {
-		switch input.GrantPhase {
-		case "prepare":
-			if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='prepared',last_error='' WHERE id=?`, record.ID); err != nil {
-				return err
-			}
-			var waiting int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM landing_client_grants WHERE application_id=? AND status='preparing'`, record.ApplicationID).Scan(&waiting); err != nil {
-				return err
-			}
-			if waiting == 0 {
-				if err := s.queueClientLandingRoutes(ctx, tx, record.ApplicationID); err != nil {
-					if !errors.Is(err, errLandingRouteApplying) {
-						return err
-					}
-				}
-			}
-		case "activate":
-			if result.BaseLink == "" || result.SubscriptionToken == "" {
-				return errors.New("center: subscription material was not confirmed")
-			}
-			data, _ := json.Marshal(result)
-			secretID, err := s.putSecret(ctx, tx, data, "landing-material:"+record.ID)
-			if err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='ready',applied_revision=desired_revision,material_secret_id=?,last_error='',updated_at=? WHERE id=?`, secretID, s.now().UTC().Format(time.RFC3339Nano), record.ID); err != nil {
-				return err
-			}
-			if record.MaterialSecretID.Valid {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id=?`, record.MaterialSecretID.String); err != nil {
-					return err
-				}
-			}
-			if err := s.reconcileLandingSubscriptionOrigin(ctx, tx, nodeID, s.now().UTC()); err != nil {
-				return err
-			}
-		case "retire":
-			if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='revoked',applied_revision=desired_revision,last_error='',updated_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), record.ID); err != nil {
-				return err
-			}
-		default:
-			return errors.New("center: invalid landing completion phase")
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state=?,result_json='{}',error=?,lease_expires_at='',updated_at=? WHERE id=? AND state='running'`, status, message, s.now().UTC().Format(time.RFC3339Nano), taskID); err != nil {
-		return err
-	}
-	if err := s.recordTaskEvent(ctx, tx, taskID, nodeID, "application.command", int64(record.Revision), status, message); err != nil {
-		return err
-	}
-	if succeeded && input.GrantPhase == "retire" {
-		if err := s.recordTaskEvent(ctx, tx, taskID, nodeID, "application.command", int64(record.Revision), "succeeded", "Grant "+record.ID+" revoked for parent "+record.ParentID+" on entry "+record.ApplicationID+" and landing "+record.LandingNodeID+"."); err != nil {
-			return err
-		}
-		// The Agent's confirmed retirement is the scoped result. Route and
-		// landing-source cleanup are derived work: a peer identity conflict or
-		// an applying route must not roll that result back. The revoked grant is
-		// the durable retry marker until both plans have been queued together.
-		if _, err := tx.ExecContext(ctx, `SAVEPOINT landing_retirement_cleanup`); err != nil {
-			return err
-		}
-		retirementCleanupErr = s.queueRevokedLandingGrantRoutes(ctx, tx, record.LandingNodeID)
-		if retirementCleanupErr == nil {
-			retirementCleanupErr = s.refreshClientLandingSources(ctx, tx, record.LandingNodeID)
-		}
-		if retirementCleanupErr == nil {
-			retirementCleanupErr = s.deleteRevokedLandingGrantTombstones(ctx, tx, record.LandingNodeID)
-		}
-		if retirementCleanupErr != nil {
-			if _, err := tx.ExecContext(ctx, `ROLLBACK TO landing_retirement_cleanup`); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `RELEASE landing_retirement_cleanup`); err != nil {
-			return err
-		}
-	}
-	// The scoped Agent operation and its durable projection are the authority
-	// for this execution. Commit them before deriving any unrelated global-pool
-	// work so one unhealthy pair cannot retain a successful execution fence.
-	if err := commit(tx); err != nil {
-		return err
-	}
-	if retirementCleanupErr != nil {
-		slog.ErrorContext(ctx, "Landing retirement cleanup deferred after confirmed Agent result", "grant_id", record.ID, "error", retirementCleanupErr)
-	}
-	// Reconciliation is a separate convergence pass. Its durable grant rows
-	// remain available for the next startup or topology event if it cannot make
-	// progress now.
-	if err := s.resumeGlobalLandingPool(context.WithoutCancel(ctx)); err != nil {
-		slog.ErrorContext(ctx, "Global landing pool reconciliation failed after task commit", "grant_id", record.ID, "error", err)
 	}
 	return nil
 }

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
+
 	"strconv"
 	"strings"
 	"time"
@@ -16,29 +16,6 @@ import (
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/secret"
 )
-
-func (s *Server) handleNodeProtocols(w http.ResponseWriter, request *http.Request) {
-	value, err := s.store.NodeProtocols(request.Context(), request.PathValue("id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, value)
-}
-
-func (s *Server) handleConfigureNodeProtocols(w http.ResponseWriter, request *http.Request) {
-	var input nodeprotocol.Selection
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	value, err := s.store.ConfigureNodeProtocols(request.Context(), request.PathValue("id"), input)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, value)
-}
 
 func (s *Store) NodeProtocols(ctx context.Context, serviceID string) (nodeprotocol.View, error) {
 	value := nodeprotocol.View{Selection: nodeprotocol.Selection{VLESS: true}, State: "succeeded"}
@@ -433,58 +410,6 @@ func (s *Store) validateNodeProtocolPreconditions(ctx context.Context, q network
 		}
 	}
 	return nil
-}
-
-func (s *Store) completeNodeProtocolCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, id, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
-	var task nodeprotocol.Task
-	var envelope struct {
-		ProtocolCommand *nodeprotocol.Result `json:"protocolCommand"`
-	}
-	if json.Unmarshal(inputJSON, &task) != nil {
-		return errors.New("center: invalid node protocol task")
-	}
-	if succeeded && (json.Unmarshal(rawResult, &envelope) != nil || envelope.ProtocolCommand == nil || envelope.ProtocolCommand.Phase != task.Phase || (task.Phase == "apply" || task.Phase == "verify") && task.HY2 && envelope.ProtocolCommand.HY2InboundID < 1 || task.Phase == "verify" && envelope.ProtocolCommand.HY2InboundID != task.HY2InboundID) {
-		succeeded = false
-		taskError = "Agent did not confirm the requested protocols"
-	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	if succeeded && (task.Phase == "prepare" || task.Phase == "apply") {
-		nextAgent := task.ControllerAgentID
-		if task.Phase == "prepare" {
-			task.Phase = "apply"
-		} else {
-			task.Phase = "verify"
-			task.HY2InboundID = envelope.ProtocolCommand.HY2InboundID
-			nextAgent = task.TargetAgentID
-		}
-		encoded, _ := json.Marshal(task)
-		nextID := task.RootCommandID + "-" + task.Phase
-		nextResult, _ := json.Marshal(map[string]string{"nextCommandId": nextID})
-		if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state='succeeded',result_json=?,lease_expires_at='',updated_at=? WHERE id=?`, nextResult, now, id); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, nextID, task.ApplicationID, nextAgent, task.TargetAgentID, nodeprotocol.CommandKind, encoded, now, now); err != nil {
-			return err
-		}
-		if err := s.recordTaskEvent(ctx, tx, nextID, nextAgent, "application.command", 1, "queued", "Updating node protocols"); err != nil {
-			return err
-		}
-		return commit(tx)
-	}
-	state := "failed"
-	if succeeded {
-		state = "succeeded"
-		if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_node_protocols SET vless_enabled=?,hy2_enabled=?,hy2_inbound_id=?,certificate_applied_not_after=CASE WHEN ? THEN certificate_not_after ELSE '' END WHERE service_id=? AND command_id=?`, task.VLESS, task.HY2, envelope.ProtocolCommand.HY2InboundID, task.HY2, task.ServiceID, task.RootCommandID); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state=?,error=?,result_json=?,lease_expires_at='',updated_at=? WHERE id=?`, state, taskError, []byte(`{}`), now, id); err != nil {
-		return err
-	}
-	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, state, taskError); err != nil {
-		return err
-	}
-	return commit(tx)
 }
 
 func (s *Store) renewNodeProtocolCertificates(ctx context.Context) error {

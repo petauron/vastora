@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"net/http"
+
 	"reflect"
 	"strings"
 	"time"
@@ -375,24 +375,4 @@ func inspectReinstallDNSRecord(ctx context.Context, client cloudflareClient, tar
 		}
 	}
 	return state
-}
-
-func (s *Server) handleAgentReinstallDNS(writer http.ResponseWriter, request *http.Request) {
-	var input AgentReinstallDNSInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	adminID, err := s.requestAdminID(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.runReinstallDNS(request.Context(), request.PathValue("id"), adminID, input, strings.HasSuffix(request.URL.Path, "/inspect-dns"))
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, result)
 }

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"net/http"
+
 	"time"
 )
 
@@ -198,24 +198,4 @@ func reinstallEntryDNSMatches(address string, addresses []net.IPAddr) bool {
 		}
 	}
 	return true
-}
-
-func (s *Server) handleAgentReinstallEntryCheck(writer http.ResponseWriter, request *http.Request) {
-	var input AgentReinstallApplicationInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	adminID, err := s.requestAdminID(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.VerifyAgentReinstallEntry(request.Context(), request.PathValue("id"), adminID, input)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, result)
 }

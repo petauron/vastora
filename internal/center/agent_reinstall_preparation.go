@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/http"
+
 	"slices"
 	"strings"
 	"time"
@@ -313,26 +313,6 @@ func (s *Store) claimAgentReinstallTask(ctx context.Context, agentID, credential
 		return nil, err
 	}
 	return s.claimApplicationDeployment(ctx, tx, agentID, generation, pending, commitTask)
-}
-
-func (s *Server) handleAgentReinstallPreparation(writer http.ResponseWriter, request *http.Request) {
-	var input AgentReinstallApplicationInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	adminID, err := s.requestAdminID(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.QueueAgentReinstallPreparation(request.Context(), request.PathValue("id"), adminID, input)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, result)
 }
 
 func pendingAgentReinstallTask(ctx context.Context, tx *sql.Tx, agentID, requiredTaskID string) (string, error) {

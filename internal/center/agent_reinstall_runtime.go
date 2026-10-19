@@ -8,11 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
-	"net/http"
+
 	"strings"
 	"time"
 
-	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
@@ -214,132 +213,4 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 	}
 	s.taskChanges.notify("agent:" + agentID)
 	return AgentReinstallRuntime{CommandID: id, State: "pending"}, nil
-}
-
-func (s *Store) claimReinstallRuntime(ctx context.Context, tx *sql.Tx, agentID, id string, commitTask func(*sql.Tx, *AgentTask) error) (*AgentTask, error) {
-	task, err := s.reinstallRuntimeTask(ctx, tx, agentID, id, false)
-	if err != nil {
-		return nil, err
-	}
-	if task == nil {
-		return nil, errExecutionAuthorization
-	}
-	now := s.now().UTC()
-	update, err := tx.ExecContext(ctx, `UPDATE application_commands SET state='running',attempt=1,lease_expires_at=?,updated_at=? WHERE id=? AND state='pending' AND attempt=0`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), id)
-	if err != nil {
-		return nil, err
-	}
-	if n, _ := update.RowsAffected(); n != 1 {
-		return nil, errExecutionAuthorization
-	}
-	if err = s.recordReinstallRuntimeProgress(ctx, tx, id); err != nil {
-		return nil, err
-	}
-	if err = s.recordTaskEvent(ctx, tx, id, agentID, task.Kind, task.Revision, "claimed", "Restore approved runtime"); err != nil {
-		return nil, err
-	}
-	if err = commitTask(tx, task); err != nil {
-		return nil, err
-	}
-	return task, nil
-}
-
-func (s *Store) recordReinstallRuntimeProgress(ctx context.Context, tx *sql.Tx, id string) error {
-	_, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_operations SET updated_at=? WHERE id=(SELECT operation_id FROM agent_reinstall_app_preparations WHERE runtime_command_id=?)`, s.now().UTC().Format(time.RFC3339Nano), id)
-	return err
-}
-
-func (s *Store) completeReinstallRuntime(ctx context.Context, tx *sql.Tx, commit projectionCommit, agentID, id string, succeeded bool, taskError string, raw json.RawMessage) error {
-	task, err := s.reinstallRuntimeTask(ctx, tx, agentID, id, false)
-	if err != nil {
-		return err
-	}
-	if task == nil {
-		return errExecutionAuthorization
-	}
-	resultJSON := []byte(`{}`)
-	state := "failed"
-	if succeeded {
-		var envelope ApplicationTaskResult
-		// LegacyRetired also describes a fresh machine with no legacy installation.
-		// Removal authority is constrained by the task, not this observed state.
-		if json.Unmarshal(raw, &envelope) != nil || envelope.MeridianRuntime == nil || len(envelope.GeneratedSecrets) != 0 || envelope.MeridianRuntime.Validate(task.MeridianRuntime.Desired) != nil {
-			return errors.New("center: invalid restored Glivela runtime receipt")
-		}
-		health, err := envelope.MeridianRuntime.PeerHealth(*task.MeridianRuntime, s.now().UTC())
-		if err != nil {
-			return err
-		}
-		// Validate retained usage evidence without inventing a reset or changing the
-		// account ledger during isolated runtime preparation.
-		var endpointID string
-		if err = tx.QueryRowContext(ctx, `SELECT runtime_endpoint_id FROM agent_reinstall_app_preparations WHERE runtime_command_id=?`, id).Scan(&endpointID); err != nil {
-			return err
-		}
-		materials, _, err := s.meridianRuntimeMaterials(ctx, tx, endpointID, task.MeridianRuntime.ApplicationID)
-		if err != nil {
-			return err
-		}
-		if _, err = glivela.ParseXrayUserCounters(materials, envelope.MeridianRuntime.Stats); err != nil {
-			return err
-		}
-		transportReady := true
-		for _, healthy := range health {
-			if !healthy {
-				transportReady = false
-			}
-		}
-		resultJSON, _ = json.Marshal(struct {
-			Runtime        *meridianruntime.Result `json:"runtime"`
-			TransportReady bool                    `json:"transportReady"`
-		}{envelope.MeridianRuntime, transportReady})
-		// Execution success records the applied configuration. Transport is
-		// independent evidence: a negative result blocks recovery progression
-		// without rewriting the successful execution as a failed side effect.
-		state, taskError = "succeeded", ""
-
-	}
-	updated, err := tx.ExecContext(ctx, `UPDATE application_commands SET state=?,result_json=?,error=?,lease_expires_at='',updated_at=? WHERE id=? AND state='running' AND attempt=1`, state, resultJSON, taskError, s.now().UTC().Format(time.RFC3339Nano), id)
-	if err != nil {
-		return err
-	}
-	if n, _ := updated.RowsAffected(); n != 1 {
-		return errExecutionAuthorization
-	}
-	if succeeded {
-		var envelope ApplicationTaskResult
-		if json.Unmarshal(raw, &envelope) != nil || envelope.MeridianRuntime == nil {
-			return errExecutionAuthorization
-		}
-		if err = s.recordReinstallRuntimeObservation(ctx, tx, agentID, *envelope.MeridianRuntime, s.now().UTC()); err != nil {
-			return err
-		}
-	}
-	if err = s.recordReinstallRuntimeProgress(ctx, tx, id); err != nil {
-		return err
-	}
-	if err = s.recordTaskEvent(ctx, tx, id, agentID, task.Kind, task.Revision, state, "Runtime restoration receipt recorded; client verification remains pending"); err != nil {
-		return err
-	}
-	return commit(tx)
-}
-
-func (s *Server) handleAgentReinstallRuntime(writer http.ResponseWriter, request *http.Request) {
-	var input AgentReinstallApplicationInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	adminID, err := s.requestAdminID(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.QueueAgentReinstallRuntime(request.Context(), request.PathValue("id"), adminID, input)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, result)
 }

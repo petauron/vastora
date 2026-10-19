@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
+
 	"strings"
 	"time"
 
@@ -254,40 +254,4 @@ func (s *Store) completeXrayConfigurationRecovery(ctx context.Context, commit pr
 		return err
 	}
 	return commit(tx)
-}
-
-func (s *Server) handleGetXrayConfigurationRecovery(writer http.ResponseWriter, request *http.Request) {
-	view, err := s.store.XrayConfigurationRecovery(request.Context(), request.PathValue("id"))
-	if errors.Is(err, sql.ErrNoRows) {
-		writeJSON(writer, http.StatusOK, map[string]any{"recovery": nil})
-		return
-	}
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, errors.New("xray_recovery_read_failed"))
-		return
-	}
-	writeJSON(writer, http.StatusOK, map[string]any{"recovery": view})
-}
-
-func (s *Server) handleInspectXrayConfiguration(writer http.ResponseWriter, request *http.Request) {
-	if err := s.store.StartXrayConfigurationInspection(request.Context(), request.PathValue("id")); err != nil {
-		writeError(writer, http.StatusConflict, err)
-		return
-	}
-	writeJSON(writer, http.StatusAccepted, map[string]bool{"queued": true})
-}
-
-func (s *Server) handleApplyXrayConfigurationRecovery(writer http.ResponseWriter, request *http.Request) {
-	var input struct {
-		Source string `json:"source"`
-	}
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.store.StartXrayConfigurationApply(request.Context(), request.PathValue("id"), input.Source); err != nil {
-		writeError(writer, http.StatusConflict, err)
-		return
-	}
-	writeJSON(writer, http.StatusAccepted, map[string]bool{"queued": true})
 }

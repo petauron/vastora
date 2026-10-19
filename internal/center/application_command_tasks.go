@@ -81,36 +81,6 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: 1, SenulunEnrollment: senulunEnrollment, SenulunInspection: senulunInspection, SenulunReporting: senulunReporting, SenulunRotation: senulunRotation, Reconcile: reconciliationRequested == 1}, nil
 }
 
-func (s *Store) failUnclaimableThreeXUIInboundPlanCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command ThreeXUIClientCommandTask, cause error) error {
-	now := s.now().UTC()
-	if command.Action == "reset_inbound_plan" {
-		plan, err := readThreeXUIInboundPlan(ctx, tx, command.ServiceID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if err == nil && plan.Revision == command.PlanRevision && plan.NextResetAt == command.ExpectedNextResetAt && plan.Status == "resetting" {
-			if err := s.completeThreeXUIInboundPlanReset(ctx, tx, command, nil, false, applicationCommandFailureMessage(cause), now); err != nil {
-				return err
-			}
-		}
-	}
-	return s.failUnclaimableApplicationCommand(ctx, tx, commandID, agentID, command.PlanRevision, nil, nil, cause)
-}
-
-func (s *Store) failUnclaimableSubscriptionCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command SubscriptionCommandTask, cause error) error {
-	message := applicationCommandFailureMessage(cause)
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	if strings.TrimSpace(command.PublicationID) != "" {
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND status NOT IN ('ready', 'stopped')`, message, now, command.PublicationID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE routes SET status = 'failed', last_error = ?, updated_at = ? WHERE publication_id = ? AND status <> 'ready'`, message, now, command.PublicationID); err != nil {
-			return err
-		}
-	}
-	return s.failUnclaimableApplicationCommand(ctx, tx, commandID, agentID, 1, nil, nil, cause)
-}
-
 func (s *Store) discardUnclaimableApplicationCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, revision int64, node *ThreeXUINodeCommandTask, controller *ThreeXUIControllerCommandTask, cause error) (*AgentTask, error) {
 	if err := s.failUnclaimableApplicationCommand(ctx, tx, commandID, agentID, revision, node, controller, cause); err != nil {
 		return nil, err
@@ -180,10 +150,6 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 		return err
 	} else if blocked {
 		return errExecutionBlocked
-	}
-	taskError = strings.TrimSpace(taskError)
-	if len(taskError) > 1024 {
-		taskError = taskError[:1024]
 	}
 	var applicationID, gatewayID, kind, currentState, appKey string
 	var inputJSON []byte
@@ -262,44 +228,6 @@ func markUncertainMeridianRuntimeFailure(ctx context.Context, tx *sql.Tx, endpoi
 	return err
 }
 
-func (s *Store) completeRealityVerifyCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
-	var input RealityCommandTask
-	var envelope ApplicationTaskResult
-	if json.Unmarshal(inputJSON, &input) != nil || input.Action != "verify" {
-		return errors.New("center: stored REALITY verification operation is invalid")
-	}
-	if succeeded {
-		if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.ApplicationCommand == nil {
-			succeeded = false
-			taskError = "center: Agent returned an invalid REALITY verification result"
-		} else {
-			result := envelope.ApplicationCommand
-			if !validRealityVerification(input, *result) {
-				succeeded = false
-				taskError = "center: Agent returned an unsafe REALITY target verification"
-			}
-		}
-	}
-	if !succeeded && taskError == "" {
-		taskError = "REALITY target verification failed"
-	}
-	state, event, message := "succeeded", "succeeded", "REALITY target verified"
-	resultJSON := []byte(`{}`)
-	if succeeded {
-		resultJSON, _ = json.Marshal(envelope.ApplicationCommand)
-	} else {
-		state, event, message = "failed", "failed", taskError
-	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = ?, result_json = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND state = 'running'`, state, resultJSON, taskError, now, taskID); err != nil {
-		return err
-	}
-	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
-		return err
-	}
-	return commit(tx)
-}
-
 func (s *Store) resumeSucceededRealityPublications(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT command.id, command.application_id, command.gateway_node_id, command.input_json, command.result_json
 		FROM application_commands command
@@ -349,53 +277,6 @@ func (s *Store) resumeSucceededRealityPublications(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) completeRealityRenameCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID, applicationID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
-	var input RealityCommandTask
-	if json.Unmarshal(inputJSON, &input) != nil || input.Action != "rename" || input.InboundID < 1 || !validRegionPrefixedRealityName(input.RegionCode, input.DisplayName) {
-		return errors.New("center: stored REALITY rename operation is invalid")
-	}
-	var envelope ApplicationTaskResult
-	if succeeded {
-		if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.ApplicationCommand == nil {
-			succeeded = false
-			taskError = "center: Agent returned an invalid REALITY rename result"
-		} else if result := envelope.ApplicationCommand; result.Action != "rename" || result.InboundID != input.InboundID || result.DisplayName != input.DisplayName {
-			succeeded = false
-			taskError = "center: Agent changed the requested REALITY node name"
-		}
-	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	state, event, message := "succeeded", "succeeded", "3x-ui REALITY node renamed"
-	resultJSON := []byte(`{}`)
-	if succeeded {
-		serviceName := fmt.Sprintf("inbound-%d", input.InboundID)
-		result, err := tx.ExecContext(ctx, `UPDATE services SET display_name = ?, region_code = ?, updated_at = ? WHERE application_id = ? AND name = ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped'`, input.DisplayName, input.RegionCode, now, applicationID, serviceName)
-		if err != nil {
-			return err
-		}
-		if changed, _ := result.RowsAffected(); changed != 1 {
-			succeeded = false
-			taskError = "center: REALITY service changed while renaming"
-		} else {
-			resultJSON, _ = json.Marshal(envelope.ApplicationCommand)
-		}
-	}
-	if !succeeded {
-		state, event = "failed", "failed"
-		if taskError == "" {
-			taskError = "application operation failed"
-		}
-		message = taskError
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = ?, result_json = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND state = 'running'`, state, resultJSON, taskError, now, taskID); err != nil {
-		return err
-	}
-	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
-		return err
-	}
-	return commit(tx)
-}
-
 func (s *Store) ensureRealityPublication(ctx context.Context, serviceID, gatewayID string, input RealityCommandTask, sniHostname string) error {
 	var guardStatus string
 	if err := s.db.QueryRowContext(ctx, `SELECT status FROM three_x_ui_reality_guards WHERE service_id = ?`, serviceID).Scan(&guardStatus); err != nil || guardStatus != "ready" {
@@ -433,42 +314,4 @@ func (s *Store) ensureRealityPublication(ctx context.Context, serviceID, gateway
 		return errors.Join(createErr, lookupErr)
 	}
 	return createErr
-}
-
-func (s *Store) completeSubscriptionCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
-	var input SubscriptionCommandTask
-	if json.Unmarshal(inputJSON, &input) != nil || input.PublicationID == "" {
-		return errors.New("center: stored subscription operation is invalid")
-	}
-	var envelope ApplicationTaskResult
-	if succeeded {
-		if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.SubscriptionCommand == nil {
-			succeeded = false
-			taskError = "center: Agent returned an invalid subscription result"
-		} else if envelope.SubscriptionCommand.Domain != input.Domain || envelope.SubscriptionCommand.BaseURI != input.BaseURI {
-			succeeded = false
-			taskError = "center: Agent changed the requested subscription address"
-		}
-	}
-	if taskError == "" && !succeeded {
-		taskError = "application operation failed"
-	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	state, event, message := "succeeded", "succeeded", "3x-ui public subscription configured"
-	var resultJSON []byte
-	if succeeded {
-		resultJSON, _ = json.Marshal(envelope.SubscriptionCommand)
-	} else {
-		state, event, message = "failed", "failed", taskError
-		resultJSON = []byte(`{}`)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = ?, result_json = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND state = 'running'`, state, resultJSON, taskError, now, taskID); err != nil {
-		return err
-	}
-	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
-		return err
-	}
-	// Preserve the observed publication on failure. Disabling it is a separate
-	// operator-authorized change, not an automatic compensation for this task.
-	return commit(tx)
 }

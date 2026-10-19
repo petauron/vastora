@@ -86,12 +86,12 @@ func TestServiceHandoverPreservesPublicIdentityAndFencesConcurrentChanges(t *tes
 	front := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var upstream []byte
 		if err := store.db.QueryRow(`SELECT upstreams_json FROM routes WHERE id=?`, routeID).Scan(&upstream); err != nil {
-			http.Error(w, "route unavailable", 503)
+			http.Error(w, "route unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		var addresses []string
 		if json.Unmarshal(upstream, &addresses) != nil || len(addresses) != 1 {
-			http.Error(w, "route invalid", 503)
+			http.Error(w, "route invalid", http.StatusServiceUnavailable)
 			return
 		}
 		proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: addresses[0]})

@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
-	"net/http"
+
 	"time"
 )
 
@@ -183,37 +183,6 @@ func (s *Store) QueueAgentReinstallListener(ctx context.Context, agentID, adminI
 	return AgentReinstallListener{TaskID: id, State: "pending"}, nil
 }
 
-func (s *Store) claimReinstallListener(ctx context.Context, tx *sql.Tx, agentID, id string, commitTask func(*sql.Tx, *AgentTask) error) (*AgentTask, error) {
-	expected, err := s.reinstallListenerTask(ctx, tx, agentID, id, false)
-	if err != nil {
-		return nil, err
-	}
-	if expected == nil {
-		return nil, errExecutionAuthorization
-	}
-	task, err := s.claimNodeListenerTask(ctx, tx, agentID)
-	if err != nil {
-		return nil, err
-	}
-	if task == nil || task.ID != expected.ID || task.Attempt != expected.Attempt {
-		return nil, errExecutionAuthorization
-	}
-	update, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_app_preparations SET listener_state='running' WHERE listener_task_id=? AND listener_state='pending'`, id)
-	if err != nil {
-		return nil, err
-	}
-	if n, _ := update.RowsAffected(); n != 1 {
-		return nil, errExecutionAuthorization
-	}
-	if err = s.recordReinstallListenerProgress(ctx, tx, id); err != nil {
-		return nil, err
-	}
-	if err = commitTask(tx, task); err != nil {
-		return nil, err
-	}
-	return task, nil
-}
-
 func (s *Store) recordReinstallListenerProgress(ctx context.Context, tx *sql.Tx, id string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_operations SET updated_at=? WHERE id=(SELECT operation_id FROM agent_reinstall_app_preparations WHERE listener_task_id=?)`, s.now().UTC().Format(time.RFC3339Nano), id)
 	return err
@@ -255,24 +224,4 @@ func (s *Store) completeReinstallListener(ctx context.Context, tx *sql.Tx, commi
 		return err
 	}
 	return commit(tx)
-}
-
-func (s *Server) handleAgentReinstallListener(writer http.ResponseWriter, request *http.Request) {
-	var input AgentReinstallApplicationInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	admin, err := s.requestAdminID(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.QueueAgentReinstallListener(request.Context(), request.PathValue("id"), admin, input)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, result)
 }

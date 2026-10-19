@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/http"
+
 	"net/url"
 	"strings"
 	"time"
@@ -173,21 +173,6 @@ func (s *Store) MeridianSubscriptionPreview(ctx context.Context, accountID strin
 	digest := sha256.Sum256(metadata)
 	view.Fingerprint = hex.EncodeToString(digest[:])
 	return view, nil
-}
-
-func (s *Server) handleMeridianSubscriptionPreview(writer http.ResponseWriter, request *http.Request) {
-	writer.Header().Set("Cache-Control", "no-store")
-	writer.Header().Set("Referrer-Policy", "no-referrer")
-	view, err := s.store.MeridianSubscriptionPreview(request.Context(), request.PathValue("id"))
-	if errors.Is(err, sql.ErrNoRows) {
-		writeError(writer, http.StatusNotFound, errors.New("center: account not found"))
-		return
-	}
-	if err != nil {
-		writeError(writer, http.StatusServiceUnavailable, errors.New("center: subscription preview unavailable"))
-		return
-	}
-	writeJSON(writer, http.StatusOK, view)
 }
 
 // Snapshot removal is observed where it actually occurs. Resolve only display

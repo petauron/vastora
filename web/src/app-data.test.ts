@@ -35,7 +35,7 @@ describe("screen-scoped data loading", () => {
 
     const result = await loadScreenData("nodes");
 
-    expect(result.meridian).toEqual(meridian);
+    expect(result.meridian).toBeUndefined();
     expect(loadMeridian).not.toHaveBeenCalled();
   });
 
