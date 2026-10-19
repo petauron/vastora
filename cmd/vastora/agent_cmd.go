@@ -33,6 +33,8 @@ func runAgent(arguments []string) error {
 		return errors.New("agent command is required")
 	}
 	switch arguments[0] {
+	case "stage-native-package":
+		return runStageNativePackage(arguments[1:])
 	case "security-watchdog":
 		if len(arguments) != 1 {
 			return errors.New("security-watchdog takes no arguments")

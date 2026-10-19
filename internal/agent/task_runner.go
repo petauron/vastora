@@ -188,6 +188,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	decommissionHandedOff := false
 	updateHandedOff := false
+	nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
 	if len(publicRules) > 0 {
 		err = nodesecurity.NewHost().CheckPorts(publicRules)
 	}
@@ -196,9 +197,14 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	if err != nil {
 		// Preserve the normal authenticated failure/receipt lifecycle below.
-	} else if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) {
+	} else if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) && !nativeLifecycle {
 		err = errors.New("agent: task is not authorized for a landing-only node")
 	} else {
+		// A value-copy of Client scopes this executor to this exact authorized
+		// native lifecycle task. No host-wide executor/capability is enabled.
+		if c.Capabilities.LandingOnly && nativeLifecycle {
+			c.Executor = ApplicationExecutor{Host: SystemdHostApplicationManager{}, Store: store}
+		}
 		switch task.Kind {
 		case nodesecurity.Kind:
 			if !c.Capabilities.NodeSecurity || task.NodeSecurity == nil {
@@ -659,6 +665,12 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		err = c.executionTransition(ctx, store, "step", "persist", false, "")
 		if err == nil {
 			_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+			if err == nil {
+				err = store.completeNativeReplacement(ctx, task)
+			}
+		}
+		if err != nil && task.SourceReceiptSHA256 != "" {
+			err = uncertainTaskOutcome(err)
 		}
 		if err != nil && committedProxyRuntime {
 			err = uncertainTaskOutcome(err)

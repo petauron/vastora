@@ -53,6 +53,9 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 	if err := validatePackageTask(task); err != nil {
 		return ApplicationTaskResult{}, err
 	}
+	if task.SourceReceiptSHA256 != "" {
+		return e.replaceStagedNative(ctx, task)
+	}
 	if e.PackageBackend != nil {
 		return (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: e.PackageBackend}).Deploy(ctx, task)
 	}
@@ -119,10 +122,6 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 	}
 	defer docker.Close()
 	backend := &DockerPackageBackend{Docker: docker, StateDirectory: e.packageDirectory()}
-	if task.AppKey == meridianKey {
-		integrated := &meridianPackageBackend{DockerPackageBackend: backend, Executor: e, Client: docker}
-		return (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: integrated}).Deploy(ctx, task)
-	}
 	return (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: backend}).Deploy(ctx, task)
 }
 
@@ -139,9 +138,6 @@ func (e ApplicationExecutor) PackageCapabilities(dockerAvailable bool) (map[stri
 	capabilities := []string{"root", "host-network", "host-path", "devices"}
 	if versions["systemd"] == 2 {
 		capabilities = append(capabilities, "native-services")
-	}
-	if dockerAvailable && e.Store != nil {
-		capabilities = append(capabilities, "meridian-runtime")
 	}
 	return versions, capabilities
 }

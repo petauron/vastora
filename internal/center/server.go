@@ -189,6 +189,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/application-commands/{id}/reveal", s.requireAuth(true, s.handleRevealApplicationCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/{id}/ack", s.requireAuth(true, s.handleAcknowledgeApplicationCommand))
 	mux.HandleFunc("GET /api/v1/services", s.requireAuth(false, s.handleListServices))
+	mux.HandleFunc("GET /api/v1/services/{id}/handover", s.requireAuth(false, s.handlePreviewServiceHandover))
+	mux.HandleFunc("POST /api/v1/services/{id}/handover", s.requireAuth(true, s.handleServiceHandover))
 	mux.HandleFunc("GET /api/v1/publications", s.requireAuth(false, s.handleListPublications))
 	mux.HandleFunc("POST /api/v1/publications", s.requireAuth(true, s.handleCreatePublication))
 	mux.HandleFunc("PUT /api/v1/publications/{id}/tls", s.requireAuth(true, s.handleUpdatePublicationTLS))

@@ -73,6 +73,9 @@ func planNativePackage(applicationID string, app catalog.AppManifest) (nativePac
 			process.User = p.Users[service.ManagedUser]
 		}
 		name := base + "-" + service.Name
+		if namespace := app.Runtime.NativeServices.Namespace; namespace != "" {
+			name = "vastora-pkg-" + namespace + "-" + service.Name
+		}
 		p.Units = append(p.Units, nativeUnitPlan{
 			LogicalName: service.Name, Name: name + ".service",
 			Path:             filepath.Join("/etc/systemd/system", name+".service"),
