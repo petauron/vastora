@@ -1,12 +1,9 @@
 package center
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -62,20 +59,6 @@ func reinstallPreparationNetworkFixture(t *testing.T, public bool, publicExit ..
 		t.Fatal(err)
 	}
 	return s, node, AgentReinstallApplicationInput{OperationID: plan.Recovery.ID, PlanRevision: plan.Revision, ApplicationID: "retained-meridian"}
-}
-
-func preparationResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, succeeded bool) *httptest.ResponseRecorder {
-	t.Helper()
-	if err := s.StartExecution(context.Background(), node.ID, "package-preparation-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
-		t.Fatal(err)
-	}
-	input, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": "package-preparation-session", "attempt": task.Attempt, "succeeded": succeeded, "applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration, "result": json.RawMessage(`{"services":[]}`)})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(input))
-	request.Header.Set("Authorization", "Bearer "+node.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	NewServer(s, "", false).Handler().ServeHTTP(response, request)
-	return response
 }
 
 // Seed an old on-disk record, not a new executable package. Upgrade must keep

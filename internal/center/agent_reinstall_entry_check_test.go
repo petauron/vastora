@@ -13,15 +13,25 @@ func reinstallEntryCheckFixture(t *testing.T, publicExit ...string) (*Store, Age
 	t.Helper()
 	s, node, input := reinstallListenerFixture(t, publicExit...)
 	ctx := context.Background()
-	if _, err := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input); err != nil {
+	receipt, err := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input)
+	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatalf("claim: %v", err)
+	// Reconstruct the recorded listener state for historical reader/authority
+	// cases, not a new live restore or a fake Agent result acknowledgement.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if response := submitReinstallListener(t, s, node, task, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE agent_reinstall_app_preparations SET listener_state='succeeded' WHERE listener_task_id=?`, receipt.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`UPDATE node_listener_states SET status='ready',applied_revision=desired_revision,attempt=(SELECT listener_attempt FROM agent_reinstall_app_preparations WHERE listener_task_id=?) WHERE node_id=?`, receipt.TaskID, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
