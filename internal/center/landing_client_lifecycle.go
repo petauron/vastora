@@ -155,16 +155,3 @@ func (s *Store) failLandingParentFence(ctx context.Context, tx *sql.Tx, nodeID s
 	return nil
 }
 
-func (s *Store) retryLandingParentFence(ctx context.Context, tx *sql.Tx, commandID string) error {
-	var parentID string
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(input_json,'$.managedParentId'),'') FROM application_commands WHERE id=?`, commandID).Scan(&parentID); err != nil {
-		return err
-	}
-	if parentID == "" {
-		return nil
-	}
-	// Reuse the same desired revision/checkpoint. A fresh revision could
-	// incorrectly replace a partially applied cutover after a lost response.
-	_, err := tx.ExecContext(ctx, `UPDATE landing_proxy_states SET status='pending',lease_expires_at='',last_error='',updated_at=? WHERE status='failed' AND application_id IN (SELECT application_id FROM landing_client_blocks WHERE parent_id=?)`, s.now().UTC().Format(time.RFC3339Nano), parentID)
-	return err
-}
