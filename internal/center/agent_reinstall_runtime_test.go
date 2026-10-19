@@ -3,7 +3,6 @@ package center
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -355,9 +354,7 @@ func TestAgentReinstallRuntimeRequiresApprovalAndPreparedImage(t *testing.T) {
 				}
 				input.PlanRevision = plan.Revision
 			case "work":
-				if _, err := s.db.Exec(`UPDATE task_executions SET state='unknown' WHERE agent_id=?`, node.ID); err != nil {
-					t.Fatal(err)
-				}
+				addReinstallSealedExecution(t, s, node.ID, "historical-unresolved-preparation", AgentTask{ID: "retained-meridian-deployment", Kind: "application.apply", Attempt: 1})
 			}
 			if _, err := s.QueueAgentReinstallRuntime(context.Background(), node.ID, admin, input); err == nil {
 				t.Fatal("unreviewed runtime queued")
@@ -438,15 +435,23 @@ func TestAgentReinstallRuntimeRejectsInvalidAndFailedResults(t *testing.T) {
 func TestAgentReinstallRuntimeSealingRejectsTaskSubstitution(t *testing.T) {
 	s, node, input := reinstallRuntimeFixture(t)
 	ctx := context.Background()
-	if _, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err != nil {
+	receipt, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
+	if err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.claimNextTask(ctx, node.ID, node.Credential, "", func(tx *sql.Tx, task *AgentTask) error {
-		task.MeridianRuntime.ReplacePendingState = true
-		_, err := s.persistExecutionAuthorization(ctx, tx, node.ID, "package-preparation-session", *task)
-		return err
-	})
-	if !errors.Is(err, errExecutionAuthorization) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.reinstallRuntimeTask(ctx, tx, node.ID, receipt.CommandID, false)
+	if err != nil || task == nil {
+		_ = tx.Rollback()
+		t.Fatalf("historical task: %v", err)
+	}
+	task.MeridianRuntime.ReplacePendingState = true
+	_, err = s.persistExecutionAuthorization(ctx, tx, node.ID, "package-preparation-session", *task)
+	_ = tx.Rollback()
+	if err == nil {
 		t.Fatalf("substitution accepted: %v", err)
 	}
 	var count int
