@@ -620,17 +620,6 @@ func runAgent(arguments []string) error {
 		// Reconnection is observation only. A failed heartbeat must not trigger
 		// offline application restoration or replay a management operation.
 		go func() {
-			if err := store.ResumeNativeLanding(context.Background()); err != nil {
-				controlLogger.Error("Native landing boot recovery blocked", "event", "landing.server.recovery", "error", controlplane.SafeError(err.Error()))
-			}
-			if !capabilities.LandingOnly {
-				if err := store.ResumeXrayWorker(context.Background(), ""); err != nil {
-					controlLogger.Error("Xray worker recovery blocked", "event", "xray.worker.recovery", "error", controlplane.SafeError(err.Error()))
-				}
-			}
-			if err := store.ResumeLandingRuntime(context.Background()); err != nil {
-				controlLogger.Error("Landing monitor recovery blocked", "event", "landing.monitor.recovery", "error", controlplane.SafeError(err.Error()))
-			}
 			for {
 				if err := client.StartupHeartbeat(context.Background(), store); err == nil {
 					break
@@ -639,9 +628,6 @@ func runAgent(arguments []string) error {
 				}
 				time.Sleep(time.Second)
 			}
-			go client.RunLandingLatencyChecks(context.Background(), store, func(err error) {
-				controlLogger.Error("Landing latency report failed", "event", "landing.latency", "error", controlplane.SafeError(err.Error()))
-			})
 			go client.RunHeartbeats(context.Background(), store, *heartbeatInterval, func(err error) {
 				controlLogger.Error("Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
 			})

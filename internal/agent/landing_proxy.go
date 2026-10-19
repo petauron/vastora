@@ -15,23 +15,6 @@ import (
 	"github.com/petauron/vastora/internal/platform"
 )
 
-func (s *Store) landingHealth() *landing.Health {
-	s.landingStatusMu.RLock()
-	defer s.landingStatusMu.RUnlock()
-	status := s.landingStatus
-	if status.Revision == 0 && len(s.landingPeerStatuses) == 0 {
-		return nil
-	}
-	healthy := status.State == "healthy" && status.LinkState == "direct" && status.TCP && status.UDP && status.AllowedUntil.After(s.now())
-	value := &landing.Health{Revision: status.Revision, Healthy: healthy, CheckedAt: status.CheckedAt, Peers: []landing.PeerHealth{}}
-	for _, peer := range s.landingPeerStatuses {
-		peerHealthy := peer.Status.State == "healthy" && peer.Status.LinkState == "direct" && peer.Status.TCP && peer.Status.AllowedUntil.After(s.now())
-		value.Peers = append(value.Peers, landing.PeerHealth{Peer: peer.Peer, Revision: peer.Status.Revision, Healthy: peerHealthy, State: peer.Status.State, Reason: peer.Status.Reason, CheckedAt: peer.Status.CheckedAt})
-	}
-	slices.SortFunc(value.Peers, func(a, b landing.PeerHealth) int { return strings.Compare(a.Peer.ID, b.Peer.ID) })
-	return value
-}
-
 func (s *Store) setLandingPeerStatus(peer landing.PeerIdentity, status landing.MonitorStatus) {
 	s.landingStatusMu.Lock()
 	defer s.landingStatusMu.Unlock()

@@ -136,9 +136,6 @@ func (e ApplicationExecutor) PackageCapabilities(dockerAvailable bool) (map[stri
 	if versions["systemd"] == 2 {
 		capabilities = append(capabilities, "native-services")
 	}
-	if dockerAvailable && e.Store != nil {
-		capabilities = append(capabilities, "meridian-runtime")
-	}
 	return versions, capabilities
 }
 
