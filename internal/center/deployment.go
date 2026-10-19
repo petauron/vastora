@@ -20,12 +20,15 @@ import (
 )
 
 type DeploymentRequest struct {
-	AgentID    string          `json:"agentId"`
-	AppKey     string          `json:"appKey"`
-	Role       string          `json:"role,omitempty"`
-	Config     json.RawMessage `json:"config"`
-	Operation  string          `json:"operation"`
-	DeleteData bool            `json:"deleteData"`
+	ReplaceApplicationID string          `json:"replaceApplicationId,omitempty"`
+	SourceReceiptSHA256  string          `json:"sourceReceiptSha256,omitempty"`
+	BackupsConfirmed     bool            `json:"backupsConfirmed,omitempty"`
+	AgentID              string          `json:"agentId"`
+	AppKey               string          `json:"appKey"`
+	Role                 string          `json:"role,omitempty"`
+	Config               json.RawMessage `json:"config"`
+	Operation            string          `json:"operation"`
+	DeleteData           bool            `json:"deleteData"`
 	// Omission preserves existing grants but can never authorize an expansion.
 	AuthorizedCapabilities *[]string `json:"authorizedCapabilities,omitempty"`
 	PackageRevision        *int      `json:"packageRevision,omitempty"`
@@ -179,6 +182,9 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	}
 	if request.Operation != "install" && request.Operation != "upgrade" && request.Operation != "configure" && request.Operation != "uninstall" {
 		return DeploymentView{}, errors.New("center: invalid deployment operation")
+	}
+	if (request.ReplaceApplicationID == "") != (request.SourceReceiptSHA256 == "") || request.ReplaceApplicationID != "" && (request.Operation != "install" || !request.BackupsConfirmed || request.Role != "" || request.AuthorizedCapabilities == nil) {
+		return DeploymentView{}, errors.New("center: explicit native handover requires the original application, receipt digest, backup confirmation and reviewed target permissions")
 	}
 	if err := s.validateSenulunDeployment(ctx, request); err != nil {
 		return DeploymentView{}, err
@@ -548,8 +554,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation, change_proposal_id, pre_dispatch_application_status)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, nullableString(registryCredentialID), deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration, nullableString(request.ChangeProposalID), preDispatchApplicationStatus); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation, change_proposal_id, pre_dispatch_application_status,source_receipt_sha256)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?,?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, nullableString(registryCredentialID), deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration, nullableString(request.ChangeProposalID), preDispatchApplicationStatus, request.SourceReceiptSHA256); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	if producesCredentials {

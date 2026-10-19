@@ -659,6 +659,12 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		err = c.executionTransition(ctx, store, "step", "persist", false, "")
 		if err == nil {
 			_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+			if err == nil {
+				err = store.completeNativeReplacement(ctx, task)
+			}
+		}
+		if err != nil && task.SourceReceiptSHA256 != "" {
+			err = uncertainTaskOutcome(err)
 		}
 		if err != nil && committedProxyRuntime {
 			err = uncertainTaskOutcome(err)

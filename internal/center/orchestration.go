@@ -28,6 +28,7 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	SourceReceiptSHA256  string                              `json:"sourceReceiptSha256,omitempty"`
 	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
 	Resources            json.RawMessage                     `json:"resources,omitempty"`
 	SenulunRestored      *senulun.RestoreResult              `json:"pulseRestored,omitempty"`
@@ -44,6 +45,9 @@ type ApplicationTaskResult struct {
 }
 
 func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request DeploymentRequest, manifest catalog.AppManifest, now time.Time) (string, error) {
+	if request.ReplaceApplicationID != "" {
+		return s.prepareNativeReplacement(ctx, tx, request, manifest, now)
+	}
 	var siteID string
 	var capabilitiesJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT site_id, capabilities_json FROM agents WHERE id = ?`, request.AgentID).Scan(&siteID, &capabilitiesJSON); err != nil {
@@ -150,6 +154,9 @@ func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, app
 }
 
 func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, executedRuntimeGeneration int, result ApplicationTaskResult, now time.Time, cleanups *[]publicationCleanup) error {
+	if err := completeNativeReplacement(ctx, tx, deploymentID, applicationID, result, now); err != nil {
+		return err
+	}
 	var receiptAppKey string
 	if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&receiptAppKey); err != nil {
 		return err

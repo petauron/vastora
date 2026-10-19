@@ -147,6 +147,7 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
 	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
 	PackageMaintenance        *PackageMaintenanceTask              `json:"packageMaintenance,omitempty"`
@@ -221,6 +222,7 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	SourceReceiptSHA256  string                              `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity         *nodesecurity.View                  `json:"nodeSecurity,omitempty"`
 	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
 	Resources            *InstanceResources                  `json:"resources,omitempty"`

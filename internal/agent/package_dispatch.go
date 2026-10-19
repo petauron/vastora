@@ -53,6 +53,9 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 	if err := validatePackageTask(task); err != nil {
 		return ApplicationTaskResult{}, err
 	}
+	if task.SourceReceiptSHA256 != "" {
+		return e.replaceStagedNative(ctx, task)
+	}
 	if e.PackageBackend != nil {
 		return (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: e.PackageBackend}).Deploy(ctx, task)
 	}

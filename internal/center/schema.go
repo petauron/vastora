@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 115
+const centerSchemaVersion = 116
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -795,6 +795,7 @@ CREATE TABLE agent_reinstall_access_activations (
 			registry_credential_id TEXT REFERENCES registry_credentials(id) ON DELETE RESTRICT,
 			operation TEXT NOT NULL CHECK(operation IN ('install', 'upgrade', 'configure', 'uninstall')),
 			pre_dispatch_application_status TEXT NOT NULL DEFAULT 'failed' CHECK(pre_dispatch_application_status IN ('running', 'failed', 'stopped')),
+			source_receipt_sha256 TEXT NOT NULL DEFAULT '',
 			delete_data INTEGER NOT NULL DEFAULT 0,
 			state TEXT NOT NULL CHECK(state IN ('pending', 'running', 'succeeded', 'failed')),
 			reconciliation_required INTEGER NOT NULL DEFAULT 0 CHECK(reconciliation_required IN (0, 1)),

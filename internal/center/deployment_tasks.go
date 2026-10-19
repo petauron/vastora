@@ -29,6 +29,7 @@ import (
 )
 
 type AgentTask struct {
+	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
 	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
 	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
@@ -458,7 +459,7 @@ type pendingApplicationDeployment struct {
 
 func readPendingApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, requiredTaskID string) (pendingApplicationDeployment, error) {
 	var p pendingApplicationDeployment
-	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, a.role, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation, d.package_revision, d.manifest_sha256, d.authorized_capabilities_json
+	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, CASE WHEN d.source_receipt_sha256<>'' THEN '' ELSE a.role END, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation, d.package_revision, d.manifest_sha256, d.authorized_capabilities_json,d.source_receipt_sha256
 		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending'
 		AND NOT (d.app_key = 'vastora-official/pulse-agent' AND d.operation = 'install' AND d.secret_id IS NULL)`
 	queryArgs := []any{agentID}
@@ -467,7 +468,7 @@ func readPendingApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, 
 		queryArgs = append(queryArgs, requiredTaskID)
 	}
 	query += ` ORDER BY d.created_at, d.rowid LIMIT 1`
-	err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&p.task.ID, &p.task.AppKey, &p.manifest, &p.config, &p.secretID, &p.registryCredentialID, &p.task.Operation, &p.task.DeleteData, &p.task.ApplicationID, &p.task.ApplicationRole, &p.task.ServiceAddress, &p.attempt, &p.reconciliationRequested, &p.requiredRuntimeGeneration, &p.task.PackageRevision, &p.task.ManifestSHA256, &p.authorizedCapabilitiesJSON)
+	err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&p.task.ID, &p.task.AppKey, &p.manifest, &p.config, &p.secretID, &p.registryCredentialID, &p.task.Operation, &p.task.DeleteData, &p.task.ApplicationID, &p.task.ApplicationRole, &p.task.ServiceAddress, &p.attempt, &p.reconciliationRequested, &p.requiredRuntimeGeneration, &p.task.PackageRevision, &p.task.ManifestSHA256, &p.authorizedCapabilitiesJSON, &p.task.SourceReceiptSHA256)
 	return p, err
 }
 

@@ -1504,6 +1504,15 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "replaceApplicationId": {
+                    "type": "string"
+                  },
+                  "sourceReceiptSha256": {
+                    "type": "string"
+                  },
+                  "backupsConfirmed": {
+                    "type": "boolean"
+                  },
                   "agentId": {
                     "type": "string"
                   },
