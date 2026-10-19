@@ -80,7 +80,7 @@ async function loadDesktopData(signal?: AbortSignal, allowUnavailable = false): 
 }
 
 export async function loadScreenData(screen: Screen, signal?: AbortSignal): Promise<AppDataPatch> {
-  const desktop = loadDesktopData(signal, screen === "activity");
+  const desktop = loadDesktopData(signal, screen === "activity" || screen === "nodes");
   switch (screen) {
     case "home":
     case "assistant":
@@ -92,10 +92,23 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
       return { ...shared, centerUpdate, sites: sites.sites, actions: actions.actions };
     }
     case "nodes": {
-      const [shared, sites, integrations, meridian] = await Promise.all([
-        desktop, api.sites(signal), api.integrations(signal), api.meridian(signal)
+      const auxiliary = Promise.allSettled([api.integrations(signal), api.meridian(signal)]);
+      const [shared, sites, results] = await Promise.all([
+        desktop, api.sites(signal), auxiliary
       ]);
-      return { ...shared, sites: sites.sites, integrations: integrations.integrations, meridian };
+      signal?.throwIfAborted();
+      for (const result of results) {
+        if (result.status === "rejected" && (result.reason instanceof APIError && result.reason.status === 401 || result.reason instanceof Error && result.reason.name === "AbortError")) throw result.reason;
+      }
+      const [integrations, meridian] = results;
+      // Keep failed auxiliary data out of the patch, not fake empty inventories.
+      // Node controls fence dependent actions until a complete refresh succeeds.
+      return {
+        ...shared, sites: sites.sites,
+        ...(integrations.status === "fulfilled" ? { integrations: integrations.value.integrations } : {}),
+        ...(meridian.status === "fulfilled" ? { meridian: meridian.value } : {}),
+        nodeAuxiliaryDataUnavailable: results.some((result) => result.status === "rejected")
+      };
     }
     case "apps": {
       const [shared, registryCredentials, deployments, integrations, sites, migrations, meridian, remoteAccess, catalogSources] = await Promise.all([

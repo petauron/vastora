@@ -8716,7 +8716,51 @@
             "description": "Created.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    },
+                    "siteId": {
+                      "type": "string"
+                    },
+                    "centerUrl": {
+                      "type": "string"
+                    },
+                    "installerUrl": {
+                      "type": "string"
+                    },
+                    "caCertificatePem": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "statusId": {
+                      "type": "string",
+                      "description": "Opaque read-only status locator, not an enrollment or Agent credential. Requires an administrator session."
+                    }
+                  },
+                  "required": [
+                    "token",
+                    "siteId",
+                    "installerUrl",
+                    "expiresAt",
+                    "statusId"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               }
             }
           },
@@ -8777,6 +8821,92 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/agent-enrollments/{statusID}/status": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Enrollment Status",
+        "operationId": "agentEnrollmentStatus_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "expired",
+                        "enrolled",
+                        "connected",
+                        "unavailable"
+                      ]
+                    },
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "connected": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "connected"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "statusID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Administrator-only read-only lookup of this enrollment operation's exact Agent ID. connected requires a fresh heartbeat after registration, active state and valid credentials. Never matches names, creates credentials, retries enrollment or exposes tokens, credentials or sealed receipts. Missing/removed records return unavailable."
       }
     },
     "/api/v1/agents/{id}/reconnect": {
