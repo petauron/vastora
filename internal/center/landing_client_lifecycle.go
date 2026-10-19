@@ -154,4 +154,3 @@ func (s *Store) failLandingParentFence(ctx context.Context, tx *sql.Tx, nodeID s
 	}
 	return nil
 }
-
