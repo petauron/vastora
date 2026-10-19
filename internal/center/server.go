@@ -224,6 +224,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/regions", s.requireAuth(false, s.handleListRegions))
 	mux.HandleFunc("GET /api/v1/agents/{id}/region-suggestion", s.requireAuth(false, s.handleSuggestAgentRegion))
 	mux.HandleFunc("POST /api/v1/agent-enrollments", s.requireAuth(true, s.handleCreateAgentEnrollment))
+	mux.HandleFunc("GET /api/v1/agent-enrollments/{statusID}/status", s.requireAuth(false, s.handleAgentEnrollmentStatus))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reconnect", s.requireAuth(true, s.handleCreateAgentReconnectEnrollment))
 	mux.HandleFunc("GET /api/v1/agents/{id}/reinstall-plan", s.requireAuth(false, s.handleAgentReinstallPlan))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-isolation/continue", s.requireAuth(true, s.handleContinueAgentReinstallIsolation))

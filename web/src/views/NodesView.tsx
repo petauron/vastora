@@ -6,7 +6,7 @@ import { CheckCircle2Icon, CircleArrowUpIcon, GitCompareArrowsIcon, MapPinIcon, 
 import { api } from "../api";
 import { validCenterURL } from "../lib/network";
 import type { AppData, Mutate, Screen } from "../App";
-import type { AgentEnrollment, AgentView } from "../types";
+import type { AgentEnrollment, AgentEnrollmentStatus, AgentView } from "../types";
 import type { Language } from "../translations";
 import { CopyButton, PageHeading, StateBadge, copy, formatDate, userError } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -114,7 +114,7 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
       </div>
     </div>}
     <AddNodeSheet data={data} language={language} onClose={() => { setAdding(false); onAddFirstNodeHandled?.(); }} onJoined={() => { setAdding(false); onAddFirstNodeHandled?.(); onNavigate("network"); }} open={adding} />
-    <NodeSettingsSheet agent={currentEditing} data={data} language={language} mutate={mutate} onClose={() => setEditing(null)} onStopAccess={() => { if (currentEditing) { setStoppingAccessID(currentEditing.id); setEditing(null); } }} />
+    <NodeSettingsSheet agent={currentEditing} data={data} language={language} mutate={mutate} onNavigate={onNavigate} onClose={() => setEditing(null)} onStopAccess={() => { if (currentEditing) { setStoppingAccessID(currentEditing.id); setEditing(null); } }} />
     {stoppingAccessAgent ? <StopNodeAccessSheet agent={stoppingAccessAgent} key={stoppingAccessAgent.id} language={language} mutate={mutate} onClose={() => setStoppingAccessID(null)} /> : null}
     {removingAgent ? <RemoveNodeDialog agent={removingAgent} key={removingAgent.id} language={language} mutate={mutate} onClose={() => setRemovingID(null)} /> : null}
     {currentReconnecting ? <ReinstallNodeSheet agent={currentReconnecting} installerAvailable={data.status.agentInstallerAvailable} key={currentReconnecting.id} language={language} onClose={() => setReconnecting(null)} /> : null}
@@ -253,8 +253,9 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
   const [useHeadscale, setUseHeadscale] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [enrollment, setEnrollment] = useState<AgentEnrollment | null>(null);
-  const [existingAgentIDs, setExistingAgentIDs] = useState<string[]>([]);
+  const [enrollment, setEnrollment] = useState<(AgentEnrollment & { statusId: string }) | null>(null);
+  const [enrollmentStatus, setEnrollmentStatus] = useState<AgentEnrollmentStatus | null>(null);
+  const [statusError, setStatusError] = useState("");
   const initialized = useRef(false);
   const requestGeneration = useRef(0);
   const submitting = useRef(false);
@@ -267,14 +268,37 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
     setCenterURL(data.status.agentConnectUrl);
     setUseHeadscale(data.status.agentConnectionMode === "headscale");
   }, [open, data.sites, data.status.agentConnectUrl, data.status.agentConnectionMode]);
+  useEffect(() => {
+    if (!open || !enrollment) return;
+    const controller = new AbortController();
+    const generation = requestGeneration.current;
+    let timer = 0;
+    const statusID = enrollment.statusId;
+    const refresh = async () => {
+      try {
+        const next = await api.agentEnrollmentStatus(statusID, controller.signal);
+        if (controller.signal.aborted || requestGeneration.current !== generation) return;
+        setEnrollmentStatus(next); setStatusError("");
+        if (next.state === "expired" || next.state === "unavailable") return;
+      } catch (cause) {
+        if (controller.signal.aborted || requestGeneration.current !== generation) return;
+        // A read failure is not successful enrollment and never creates a token.
+        setEnrollmentStatus(null); setStatusError(userError(language, cause));
+      }
+      if (!controller.signal.aborted && requestGeneration.current === generation) timer = window.setTimeout(() => void refresh(), 3000);
+    };
+    void refresh();
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [open, enrollment, language]);
   const headscaleReady = data.integrations.some((integration) => integration.kind === "headscale" && integration.status === "configured");
   const firstPrivateNode = data.agents.length === 0 && data.status.agentConnectionMode === "headscale" && useHeadscale && headscaleReady;
   const command = useMemo(() => {
     if (!enrollment) return "";
     return agentInstallCommand({ centerURL, enrollment, installerAvailable: data.status.agentInstallerAvailable });
   }, [enrollment, data.status.agentInstallerAvailable, centerURL]);
-  const joinedAgent = enrollment ? data.agents.find((agent) => agent.status === "active" && agent.name === name && !existingAgentIDs.includes(agent.id)) : undefined;
-  const close = () => { requestGeneration.current += 1; submitting.current = false; initialized.current = false; setLandingOnly(false); setName(""); setSiteID(""); setCenterURL(""); setGateway(true); setTunnel(false); setCACertificate(""); setEnrollment(null); setExistingAgentIDs([]); setUseHeadscale(false); setError(""); setBusy(false); onClose(); };
+  const joinedAgent = enrollmentStatus?.state === "connected" && enrollmentStatus.connected
+    ? data.agents.find((agent) => agent.id === enrollmentStatus.agentId && agent.status === "active" && agent.connected && !agent.credentialRevoked) : undefined;
+  const close = () => { requestGeneration.current += 1; submitting.current = false; initialized.current = false; setLandingOnly(false); setName(""); setSiteID(""); setCenterURL(""); setGateway(true); setTunnel(false); setCACertificate(""); setEnrollment(null); setEnrollmentStatus(null); setStatusError(""); setUseHeadscale(false); setError(""); setBusy(false); onClose(); };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!open || submitting.current || data.nodeAuxiliaryDataUnavailable) return;
@@ -284,11 +308,10 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
     submitting.current = true;
     setBusy(true);
     try {
-      setExistingAgentIDs(data.agents.map((agent) => agent.id));
       const next = await api.createAgentEnrollment(siteID, name, centerURL, (landingOnly || useHeadscale) && headscaleReady, !landingOnly && gateway, !landingOnly && tunnel, centerURL.startsWith("https://") ? caCertificate : "", landingOnly);
       // A closed or replaced form must not inherit an earlier one-shot token.
       // Ignoring a response does not undo creation or automatically retry it.
-      if (requestGeneration.current === current) setEnrollment(next);
+      if (requestGeneration.current === current) { setEnrollmentStatus(null); setStatusError(""); setEnrollment(next); }
     } catch (submitError) {
       if (requestGeneration.current === current) setError(userError(language, submitError));
     } finally {
@@ -306,7 +329,8 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
         {enrollment ? <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4">
           <Alert><TerminalIcon /><AlertTitle>{copy(language, "在目标设备运行一次", "Run once on the target device")}</AlertTitle><AlertDescription>{data.status.agentInstallerAvailable ? <><p>{copy(language, "支持 Debian 12/13 或 Ubuntu 22.04/24.04/26.04（x64/ARM64），需要 systemd 和 curl。", "Supports Debian 12/13 or Ubuntu 22.04/24.04/26.04 (x64/ARM64) with systemd and curl.")}</p><p>{copy(language, landingOnly ? "脚本只安装 Agent 和 Tailscale；配置落地时安装原生 Dante，不安装或启动 Docker。" : useHeadscale ? "脚本会按需安装 Docker 和 Tailscale、加入安全私网并安装 Agent。" : "脚本会先检查 Docker，缺少时自动安装，再安装 Agent。", landingOnly ? "Installs Agent and Tailscale only; native Dante is installed when egress is configured. Docker is never installed or started." : useHeadscale ? "The script installs Docker and Tailscale when needed, joins the secure private network, and installs Agent." : "The script checks Docker first, installs it when missing, and then installs Agent.")}</p></> : copy(language, "当前 Center 没有内置 Agent 文件，请先把 vastora 放到 /usr/local/bin/vastora。", "This Center does not include Agent binaries. Put vastora at /usr/local/bin/vastora first.")}</AlertDescription></Alert>
           <div className="relative"><code className="block max-h-56 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div>
-          <div aria-live="polite" className="flex items-start gap-3 rounded-xl border p-4">{joinedAgent ? <CheckCircle2Icon className="mt-0.5 text-success" /> : <Spinner className="mt-0.5" />}<div><p className="text-sm font-medium">{joinedAgent ? copy(language, `${joinedAgent.name} 已上线`, `${joinedAgent.name} is online`) : copy(language, "正在等待节点上线…", "Waiting for the node to come online…")}</p><p className="mt-1 text-xs text-muted-foreground">{joinedAgent ? copy(language, "下一步确认 Agent 自动发现的网络地址。", "Next, confirm the network addresses discovered by the Agent.") : copy(language, `命令将在 ${formatDate(language, enrollment.expiresAt)} 失效。`, `The command expires at ${formatDate(language, enrollment.expiresAt)}.`)}</p></div></div>
+          <div aria-live="polite" className="flex items-start gap-3 rounded-xl border p-4">{joinedAgent ? <CheckCircle2Icon className="mt-0.5 text-success" /> : enrollmentStatus?.state !== "expired" && enrollmentStatus?.state !== "unavailable" ? <Spinner className="mt-0.5" /> : null}<div><p className="text-sm font-medium">{joinedAgent ? copy(language, `${joinedAgent.name} 已上线`, `${joinedAgent.name} is online`) : enrollmentStatus?.state === "expired" ? copy(language, "接入命令已过期", "Join command expired") : enrollmentStatus?.state === "unavailable" ? copy(language, "本次接入记录不可用", "Enrollment record unavailable") : copy(language, "正在等待本次节点上线…", "Waiting for this enrolled node to come online…")}</p><p className="mt-1 text-xs text-muted-foreground">{joinedAgent ? copy(language, "下一步确认 Agent 自动发现的网络地址。", "Next, confirm the network addresses discovered by the Agent.") : enrollmentStatus?.state === "enrolled" ? copy(language, "本次注册已完成，等待该节点的实时心跳；其他同名节点不会作为成功依据。", "Registration completed; waiting for this node’s live heartbeat, not another node with the same name.") : enrollmentStatus?.state === "unavailable" ? copy(language, "请先核对节点列表中的实际设备，不会自动重新注册。", "Inspect the actual device in the node list. Registration will not retry automatically.") : copy(language, `命令将在 ${formatDate(language, enrollment.expiresAt)} 失效。`, `The command expires at ${formatDate(language, enrollment.expiresAt)}.`)}</p></div></div>
+          {statusError ? <FieldError role="alert">{statusError}</FieldError> : null}
           <Alert><CheckCircle2Icon /><AlertTitle>{copy(language, "凭据仅显示这一次", "Credential is shown only once")}</AlertTitle><AlertDescription>{copy(language, "令牌十分钟后失效且只能使用一次。关闭后如未执行，请重新生成。", "The token expires in ten minutes and works only once. Generate a new one if you close before running it.")}</AlertDescription></Alert>
         </div> : (
           <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
@@ -339,7 +363,8 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
   );
 }
 
-function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAccess }: { agent: AgentView | null; data: AppData; language: Language; mutate: Mutate; onClose: () => void; onStopAccess: () => void }) {
+function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAccess, onNavigate }: { agent: AgentView | null; data: AppData; language: Language; mutate: Mutate; onClose: () => void; onStopAccess: () => void; onNavigate: (screen: Screen) => void }) {
+  const navigating = useRef(false);
   const [name, setName] = useState("");
   const [siteID, setSiteID] = useState("");
   const [gateway, setGateway] = useState(false);
@@ -356,6 +381,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
   const dependenciesUnavailable = Boolean(data.desktopDataUnavailable || data.nodeAuxiliaryDataUnavailable);
   useEffect(() => {
     if (!agent) return;
+    navigating.current = false;
     setName(agent.name);
     setSiteID(agent.siteId);
     setGateway(agent.capabilities.gateway);
@@ -375,6 +401,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
   const manualUpdateCommand = "sudo /usr/local/bin/vastora agent update --data-dir /var/lib/vastora/agent";
   const updateActive = agent?.update?.state === "pending" || agent?.update?.state === "running" || agent?.update?.state === "installing";
   const updateRequired = Boolean(agent && agent.version !== data.status.version);
+  const updateFailed = agent?.update?.state === "failed";
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!agent) return;
@@ -418,7 +445,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
   };
   return (
     <Sheet onOpenChange={(next) => { if (!next && !recoveringUpdateID) onClose(); }} open={Boolean(agent)}>
-      <SheetContent className="sm:max-w-xl">
+      <SheetContent className="sm:max-w-xl" finalFocus={() => !navigating.current}>
         <SheetHeader>
           <SheetTitle>{copy(language, `管理 ${agent?.name ?? ""}`, `Manage ${agent?.name ?? ""}`)}</SheetTitle>
           <SheetDescription>{deleting ? copy(language, "从 Center 移除这个已停用的节点。", "Remove this disabled node from Center.") : danger ? copy(language, "停用会立即拒绝此 Agent 的后续连接。", "Disabling immediately rejects future connections from this Agent.") : copy(language, "修改名称、位置或节点用途；支持的 Agent 可以由 Center 安全更新。", "Change its name, location, or purpose. Supported Agents can update securely through Center.")}</SheetDescription>
@@ -441,7 +468,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
               </div>
               <Button className="mt-3" disabled={dependenciesUnavailable || !purposeChanged || agent?.capabilities.landingOnly} onClick={() => setCommandKind("purpose")} size="sm" type="button" variant="outline"><TerminalIcon data-icon="inline-start" />{copy(language, "生成修改命令", "Generate change command")}</Button>
             </div>
-            <div className="rounded-xl border p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium">Agent</p><p className="mt-1 text-xs text-muted-foreground">{copy(language, `节点版本 ${agent?.version ?? "—"} · Center 版本 ${data.status.version}`, `Node ${agent?.version ?? "—"} · Center ${data.status.version}`)}</p></div><StateBadge value={updateActive ? "applying" : !updateRequired ? "ready" : agent?.update?.state === "failed" ? "failed" : "pending"} /></div>{(updateRequired || updateActive) && agent?.remoteUpdateSupported ? <><Button className="mt-3" disabled={!agent.connected || updateActive || updateBusy} onClick={() => void startUpdate()} size="sm" type="button" variant="outline">{updateBusy || updateActive ? <Spinner data-icon="inline-start" /> : agent.update?.state === "failed" ? <RotateCcwIcon data-icon="inline-start" /> : <CircleArrowUpIcon data-icon="inline-start" />}{updateActive ? copy(language, "正在更新", "Updating") : agent.update?.state === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "通过 Center 更新", "Update through Center")}</Button>{!agent.connected ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, "节点重新上线后才能开始更新。", "The node must reconnect before updating.")}</p> : null}{updateActive ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, `正在安全更新到 ${agent.update?.targetVersion}；节点会短暂离线并自动重新连接。`, `Safely updating to ${agent.update?.targetVersion}. The node briefly disconnects and reconnects automatically.`)}</p> : null}{agent.update?.lastError ? <FieldError className="mt-2">{agent.update.lastError}</FieldError> : null}</> : null}{updateRequired && !agent?.remoteUpdateSupported ? <Alert className="mt-3"><TerminalIcon /><AlertTitle>{copy(language, "需要一次手动更新", "One manual update required")}</AlertTitle><AlertDescription><p>{copy(language, "当前版本还不支持 Center 远程更新。完成这一次后，后续版本可直接在这里更新。", "This version predates Center-managed updates. After this one-time step, future updates can run here.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{manualUpdateCommand}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={manualUpdateCommand} /></div></AlertDescription></Alert> : null}</div>
+            <div className="rounded-xl border p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium">Agent</p><p className="mt-1 text-xs text-muted-foreground">{copy(language, `节点版本 ${agent?.version ?? "—"} · Center 版本 ${data.status.version}`, `Node ${agent?.version ?? "—"} · Center ${data.status.version}`)}</p></div><StateBadge value={updateActive ? "applying" : updateFailed ? "failed" : !updateRequired ? "ready" : "pending"} /></div>{agent?.update?.lastError ? <FieldError className="mt-2">{agent.update.lastError}</FieldError> : null}{updateFailed ? <Button className="mt-3" type="button" size="sm" variant="outline" onClick={() => { navigating.current = true; onClose(); onNavigate("activity"); }}>{copy(language, "核对更新任务", "Review update task")}</Button> : null}{(updateRequired || updateActive) && agent?.remoteUpdateSupported ? <><Button className="mt-3" disabled={!agent.connected || updateActive || updateBusy} onClick={() => void startUpdate()} size="sm" type="button" variant="outline">{updateBusy || updateActive ? <Spinner data-icon="inline-start" /> : agent.update?.state === "failed" ? <RotateCcwIcon data-icon="inline-start" /> : <CircleArrowUpIcon data-icon="inline-start" />}{updateActive ? copy(language, "正在更新", "Updating") : agent.update?.state === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "通过 Center 更新", "Update through Center")}</Button>{!agent.connected ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, "节点重新上线后才能开始更新。", "The node must reconnect before updating.")}</p> : null}{updateActive ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, `正在安全更新到 ${agent.update?.targetVersion}；节点会短暂离线并自动重新连接。`, `Safely updating to ${agent.update?.targetVersion}. The node briefly disconnects and reconnects automatically.`)}</p> : null}</> : null}{updateRequired && !agent?.remoteUpdateSupported ? <Alert className="mt-3"><TerminalIcon /><AlertTitle>{copy(language, "需要一次手动更新", "One manual update required")}</AlertTitle><AlertDescription><p>{copy(language, "当前版本还不支持 Center 远程更新。完成这一次后，后续版本可直接在这里更新。", "This version predates Center-managed updates. After this one-time step, future updates can run here.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{manualUpdateCommand}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={manualUpdateCommand} /></div></AlertDescription></Alert> : null}</div>
             {agent?.capabilities.nodeSecurity ? <NodeSecurityControls key={`security-${agent.id}`} nodeId={agent.id} language={language} /> : null}
             {agent && !agent.capabilities.landingOnly ? <NodeEgressControls key={agent.id} nodeId={agent.id} language={language} /> : null}
             {commandKind && !dependenciesUnavailable ? <Alert><TerminalIcon /><AlertTitle>{copy(language, "在节点运行一次", "Run once on the node")}</AlertTitle><AlertDescription><p>{copy(language, "命令会更新 systemd 配置并重启 Agent，Center 会自动看到新用途。", "The command updates systemd, restarts Agent, and Center detects the new purpose automatically.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{purposeCommand}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={purposeCommand} /></div></AlertDescription></Alert> : null}

@@ -626,6 +626,19 @@ for (const route of routes) {
     operation.parameters.push({ name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" }, description: "Stable operation key for product-generated one-time credential operations; retain it for an exact retry." });
     operation.description = "Install/upgrade requires the exact reviewed catalog package revision and canonical manifest SHA256. Stale identity, unsupported node runtime, missing grants, expired trust or pending/blocked adoption rejects admission. Configuration/uninstall use recorded resources. Uninstall retains data unless deleteData is explicitly true. Catalog refresh never creates this task.";
     operation.responses["201"].content["application/json"].schema = schemaForGoType("DeploymentView");
+  } else if (route.handler === "handleCreateAgentEnrollment") {
+    const schema = schemaForGoType("AgentEnrollment");
+    schema.properties.statusId = { type: "string", description: "Opaque read-only status locator, not an enrollment or Agent credential. Requires an administrator session." };
+    schema.required = ["token", "siteId", "installerUrl", "expiresAt", "statusId"];
+    operation.responses["201"].content["application/json"].schema = schema;
+    operation.responses["201"].headers = noStoreHeaders;
+  } else if (route.handler === "handleAgentEnrollmentStatus") {
+    const schema = schemaForGoType("AgentEnrollmentStatus");
+    schema.properties.state.enum = ["pending", "expired", "enrolled", "connected", "unavailable"];
+    schema.required = ["state", "connected"];
+    operation.responses["200"].content["application/json"].schema = schema;
+    operation.responses["200"].headers = noStoreHeaders;
+    operation.description = "Administrator-only read-only lookup of this enrollment operation's exact Agent ID. connected requires a fresh heartbeat after registration, active state and valid credentials. Never matches names, creates credentials, retries enrollment or exposes tokens, credentials or sealed receipts. Missing/removed records return unavailable.";
   } else if (["handleListDeployments", "handleListApplications", "handleListAgents"].includes(route.handler)) {
     const [field, type] = { handleListDeployments: ["deployments", "DeploymentView"], handleListApplications: ["applications", "ApplicationView"], handleListAgents: ["agents", "AgentView"] }[route.handler];
     const item = schemaForGoType(type);

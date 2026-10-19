@@ -26,6 +26,7 @@ function kindLabel(language: Language, kind: string) {
   const labels: Record<string, [string, string]> = {
     "application.apply": ["应用配置", "App configuration"], "application.command": ["应用操作", "App operation"],
     "agent.update": ["节点更新", "Node update"], "agent.decommission": ["节点卸载", "Node removal"],
+    "node.security": ["节点安全基线", "Node security baseline"],
     "landing.proxy.apply": ["落地连接", "Landing connection"], "landing.server.apply": ["落地服务", "Landing service"],
     "gateway.routes.apply": ["网关路由", "Gateway routes"], "gateway.component.apply": ["网关配置", "Gateway configuration"],
     "node.listener.apply": ["节点入口", "Node entry"], "tunnel.state.apply": ["隧道配置", "Tunnel configuration"],
@@ -126,6 +127,7 @@ function ClaimControlConfirmation({ paused, language, onClose, onSaved }: { paus
 }
 
 export function ExecutionDetail({ execution, name, language, onClose, onSaved, onNavigate }: { execution: ExecutionView; name: string; language: Language; onClose: () => void; onSaved: () => void; onNavigate?: (screen: Screen) => void }) {
+  const navigating = useRef(false);
   const [action, setAction] = useState<ExecutionAction | null>(null);
   const [stopped, setStopped] = useState(false);
   const [note, setNote] = useState("");
@@ -145,10 +147,10 @@ export function ExecutionDetail({ execution, name, language, onClose, onSaved, o
     catch (cause) { setError(userError(language, cause)); }
     finally { setBusy(false); }
   };
-  return <Sheet open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><SheetContent showCloseButton={!busy} className="sm:max-w-lg">
+  return <Sheet open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><SheetContent showCloseButton={!busy} className="sm:max-w-lg" finalFocus={() => !navigating.current}>
     <SheetHeader><SheetTitle>{name}</SheetTitle><SheetDescription>{stateLabel(language, execution)} · {kindLabel(language, execution.kind)}</SheetDescription></SheetHeader>
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4">
-      {!execution.disposition && ["failed", "unknown"].includes(execution.state) ? <Alert><AlertTitle>{copy(language,"先核对实际状态","Check the actual state first")}</AlertTitle><AlertDescription><p>{taskError(language, execution.lastError)}</p><p>{copy(language,"如果不确定是否已完成，请保留任务，交由维护人员核对。放弃任务不会撤销服务器上已经发生的修改。","If the outcome is unclear, leave the task for an administrator to review. Abandoning it does not undo changes on the server.")}</p>{onNavigate ? <Button variant="outline" size="sm" onClick={() => onNavigate(execution.kind.startsWith("agent.") ? "nodes" : "apps")}>{execution.kind.startsWith("agent.") ? copy(language,"查看节点","View nodes") : copy(language,"查看应用","View apps")}</Button> : null}</AlertDescription></Alert> : null}
+      {!execution.disposition && ["failed", "unknown"].includes(execution.state) ? <Alert><AlertTitle>{copy(language,"先核对实际状态","Check the actual state first")}</AlertTitle><AlertDescription><p>{taskError(language, execution.lastError)}</p><p>{copy(language,"如果不确定是否已完成，请保留任务，交由维护人员核对。放弃任务不会撤销服务器上已经发生的修改。","If the outcome is unclear, leave the task for an administrator to review. Abandoning it does not undo changes on the server.")}</p>{onNavigate ? <Button variant="outline" size="sm" onClick={() => { navigating.current = true; onClose(); onNavigate((execution.kind.startsWith("agent.") || execution.kind === "node.security") ? "nodes" : "apps"); }}>{(execution.kind.startsWith("agent.") || execution.kind === "node.security") ? copy(language,"查看节点","View nodes") : copy(language,"查看应用","View apps")}</Button> : null}</AlertDescription></Alert> : null}
       <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer">{copy(language,"技术详情","Technical details")}</summary><dl className="mt-3 grid gap-3"><div><dt>{copy(language,"任务编号","Task ID")}</dt><dd className="break-all text-muted-foreground">{legacy?.taskId ?? execution.taskId}</dd></div><div><dt>{copy(language,"执行阶段","Phase")}</dt><dd>{execution.phase}</dd></div><div><dt>{copy(language,"执行次数","Attempt")}</dt><dd>{execution.attempt}</dd></div></dl>{execution.lastError ? <code className="mt-3 block break-all text-xs">{execution.lastError}</code> : null}</details>
       {execution.kind === "legacy.receipt" ? <p className="text-sm text-muted-foreground">{legacy ? legacy.hasCompletion ? copy(language, "旧执行结果已安全保存，需要核对后处置。这里不会显示其中的凭据。", "Old result securely retained for review. Credentials are not displayed here.") : copy(language, "旧执行没有完成结果，需要核对实际资源。", "No completion result was retained; inspect actual resources.") : copy(language, "正在读取旧执行记录", "Loading legacy evidence")}</p> : null}
       {!action ? <div className="flex flex-wrap gap-2">{executionActions(execution).map((option) => <Button className="min-h-11" key={option} variant="outline" onClick={() => setAction(option)}>{actionLabel(language, option)}</Button>)}</div> : <FieldGroup>

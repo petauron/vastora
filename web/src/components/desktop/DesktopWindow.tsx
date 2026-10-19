@@ -20,7 +20,7 @@ export function DesktopWindow({ entry, title, active, stackIndex, launchIndex, l
   useImperativeHandle(ref, () => ({ toggleMaximize: desktopWindow.toggleMaximize }));
   const hidden = entry.minimized || (desktopWindow.compact && !active);
   return <Activity mode={hidden ? "hidden" : "visible"}>
-    <div className="desktop-window" style={{ ...desktopWindow.style, zIndex: 10 + stackIndex }} data-window-id={entry.id} data-active={active} data-maximized={desktopWindow.maximized} onPointerDownCapture={() => { if (!active) onFocus(entry); }} onFocusCapture={() => { if (!active) onFocus(entry); }} role="region" aria-label={title} data-interacting={desktopWindow.interacting || undefined}>
+    <div className="desktop-window" style={{ ...desktopWindow.style, zIndex: 10 + stackIndex }} data-window-id={entry.id} data-active={active} data-maximized={desktopWindow.maximized} onPointerDownCapture={() => { if (!active) onFocus(entry); }} onFocusCapture={(event) => { if (!active && event.currentTarget.contains(event.target as Node)) onFocus(entry); }} role="region" aria-label={title} data-interacting={desktopWindow.interacting || undefined}>
       <div className="desktop-window-bar" {...desktopWindow.titleBarProps} tabIndex={desktopWindow.compact ? undefined : 0} role="group" aria-label={copy(language, `${title}窗口标题栏`, `${title} window title bar`)} aria-describedby={helpID}>
         <div className="desktop-traffic-lights">
           <button className="desktop-traffic-light" data-kind="close" aria-label={copy(language, "关闭窗口", "Close window")} title={copy(language, "关闭窗口", "Close window")} onClick={() => onDismiss(entry.id, true)}><XIcon /></button>
