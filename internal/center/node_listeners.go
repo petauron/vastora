@@ -76,13 +76,17 @@ func (s *Store) saveNodeListenerState(ctx context.Context, tx *sql.Tx, state gat
 func (s *Store) claimNodeListenerTask(ctx context.Context, tx *sql.Tx, nodeID string) (*AgentTask, error) {
 	var encoded []byte
 	var revision, attempt int64
-	err := tx.QueryRowContext(ctx, `SELECT desired_revision, desired_json, attempt FROM node_listener_states
-		WHERE node_id = ? AND desired_revision > applied_revision AND status = 'pending'`, nodeID).Scan(&revision, &encoded, &attempt)
+	err := tx.QueryRowContext(ctx, `SELECT desired_revision, desired_json, attempt FROM node_listener_states n
+		WHERE node_id = ? AND desired_revision > applied_revision AND status = 'pending'
+		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_app_preparations p WHERE p.listener_task_id='node-listener-' || n.node_id || '-r' || n.desired_revision)`, nodeID).Scan(&revision, &encoded, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("center: read node listener desired state: %w", err)
+	}
+	if err := rejectRetiredApplicationPreparation(ctx, tx, nodeID, nodeListenerTaskID(nodeID, revision)); err != nil {
+		return nil, err
 	}
 	var state gateway.NodeListenerState
 	if json.Unmarshal(encoded, &state) != nil || validateCenterNodeListenerState(state) != nil || state.NodeID != nodeID || state.Revision != revision {
@@ -483,7 +487,9 @@ func (s *Store) projectNodeListenerState(ctx context.Context, tx *sql.Tx, commit
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return err
 	} else if blocked || recoveryTask {
-		return s.completeReinstallListener(ctx, tx, commit, agentID, revision, expectedAttempt, succeeded, taskError)
+		// Retain the old receipt as evidence, never resume proxy-specific
+		// restoration through the generic shared-listener result channel.
+		return errExecutionBlocked
 	}
 	var err error
 	var desired, applied, attempt int64

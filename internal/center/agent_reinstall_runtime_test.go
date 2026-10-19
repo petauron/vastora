@@ -276,8 +276,16 @@ func TestAgentReinstallRuntimeRejectsChangedAuthorization(t *testing.T) {
 				}
 				var task *AgentTask
 				if stage == "result" {
-					task, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
+					tx, beginErr := s.db.BeginTx(ctx, nil)
+					if beginErr != nil {
+						t.Fatal(beginErr)
+					}
+					task, err = s.reinstallRuntimeTask(ctx, tx, node.ID, receipt.CommandID, false)
+					_ = tx.Rollback()
 					if err != nil || task == nil {
+						t.Fatal(err)
+					}
+					if _, err = s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, receipt.CommandID); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -309,7 +317,12 @@ func TestAgentReinstallRuntimeRejectsChangedAuthorization(t *testing.T) {
 						t.Fatal("changed authority claimed")
 					}
 				} else {
-					if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code == http.StatusOK {
+					result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+					raw, marshalErr := json.Marshal(ApplicationTaskResult{MeridianRuntime: &result})
+					if marshalErr != nil {
+						t.Fatal(marshalErr)
+					}
+					if err := s.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, receipt.CommandID, 1, true, "", raw, false); err == nil {
 						t.Fatal("changed authority projected")
 					}
 				}

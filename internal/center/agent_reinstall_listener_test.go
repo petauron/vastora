@@ -115,14 +115,26 @@ func TestAgentReinstallListenerRejectsChangedAuthority(t *testing.T) {
 			t.Run(at+"/"+mode, func(t *testing.T) {
 				s, node, input := reinstallListenerFixture(t)
 				ctx := context.Background()
-				if _, err := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input); err != nil {
-					t.Fatal(err)
+				receipt, queueErr := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input)
+				if queueErr != nil {
+					t.Fatal(queueErr)
 				}
 				var task *AgentTask
 				var err error
 				if at == "result" {
-					task, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
+					tx, beginErr := s.db.BeginTx(ctx, nil)
+					if beginErr != nil {
+						t.Fatal(beginErr)
+					}
+					task, err = s.reinstallListenerTask(ctx, tx, node.ID, receipt.TaskID, false)
+					_ = tx.Rollback()
 					if err != nil || task == nil {
+						t.Fatal(err)
+					}
+					if _, err = s.db.Exec(`UPDATE node_listener_states SET status='applying',attempt=? WHERE node_id=?`, task.Attempt, node.ID); err != nil {
+						t.Fatal(err)
+					}
+					if _, err = s.db.Exec(`UPDATE agent_reinstall_app_preparations SET listener_state='running' WHERE listener_task_id=?`, receipt.TaskID); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -158,7 +170,7 @@ func TestAgentReinstallListenerRejectsChangedAuthority(t *testing.T) {
 						t.Fatalf("changed authority claimed: %+v %v", task, err)
 					}
 				} else {
-					if response := submitReinstallListener(t, s, node, task, true); response.Code == http.StatusOK {
+					if err := s.completeNodeListenerState(ctx, commitProjectionOnlyForTest, node.ID, task.Revision, task.Attempt, true, ""); err == nil {
 						t.Fatal("changed authority projected")
 					}
 				}
