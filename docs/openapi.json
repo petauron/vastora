@@ -18303,6 +18303,9 @@
           "protocol": {
             "type": "string"
           },
+          "proxyProtocol": {
+            "type": "string"
+          },
           "containerPort": {
             "type": "integer"
           },
