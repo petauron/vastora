@@ -202,7 +202,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, err
 	}
 	if landingOnly && request.Operation == "install" && (!request.BackupsConfirmed || request.AuthorizedCapabilities == nil) {
-		return DeploymentView{}, errors.New("center: restricted host native installation requires backup confirmation and explicit reviewed package permissions")
+		return DeploymentView{}, errors.New("center: landing-only host native installation requires backup confirmation and explicit reviewed package permissions")
 	}
 	if request.AppKey == threeXUIAppKey && request.Operation == "install" {
 		if err := s.validateThreeXUIInstallRole(ctx, request.AgentID, request.Role); err != nil {
@@ -337,7 +337,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, err
 	}
 	if landingOnly && (manifest.Runtime == nil || !controlplane.NativeLifecycleAllowed(manifest.Runtime.Kind, manifest.Runtime.Version, request.Operation, grants)) {
-		return DeploymentView{}, errors.New("center: restricted host permits only reviewed native systemd installation, upgrade and uninstall")
+		return DeploymentView{}, errors.New("center: landing-only host permits only reviewed native systemd installation, upgrade and uninstall")
 	}
 	grantsJSON, err := json.Marshal(grants)
 	if err != nil {
