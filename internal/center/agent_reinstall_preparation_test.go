@@ -1,13 +1,9 @@
 package center
 
 import (
-	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -65,76 +61,70 @@ func reinstallPreparationNetworkFixture(t *testing.T, public bool, publicExit ..
 	return s, node, AgentReinstallApplicationInput{OperationID: plan.Recovery.ID, PlanRevision: plan.Revision, ApplicationID: "retained-meridian"}
 }
 
-func preparationResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, succeeded bool) *httptest.ResponseRecorder {
+// Seed an old on-disk record, not a new executable package. Upgrade must keep
+// this evidence, including incomplete attempts, without issuing it again.
+func seedArchivedReinstallPreparation(t *testing.T, s *Store, node AgentCredential, input AgentReinstallApplicationInput, state string) string {
 	t.Helper()
-	if err := s.StartExecution(context.Background(), node.ID, "package-preparation-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
+	id := "reinstall-package-archived"
+	_, err := s.db.Exec(`INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,operation,state,created_at,updated_at,application_id,service_address,runtime_generation)
+ SELECT ?,agent_id,app_key,app_version,manifest_json,config_json,'install',?,created_at,updated_at,application_id,service_address,runtime_generation FROM deployments WHERE id='retained-meridian-deployment'`, id, state)
+	if err != nil {
 		t.Fatal(err)
 	}
-	input, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": "package-preparation-session", "attempt": task.Attempt, "succeeded": succeeded, "applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration, "result": json.RawMessage(`{"services":[]}`)})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(input))
-	request.Header.Set("Authorization", "Bearer "+node.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	NewServer(s, "", false).Handler().ServeHTTP(response, request)
-	return response
+	_, err = s.db.Exec(`INSERT INTO agent_reinstall_app_preparations(deployment_id,source_deployment_id,operation_id,application_id,plan_revision,source_revision,replacement_key,approval_json,task_json)
+ VALUES(?,'retained-meridian-deployment',?,?,?,'frozen-source',X'0102','{}','{}')`, id, input.OperationID, input.ApplicationID, input.PlanRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
-func TestAgentReinstallPreparationRoundTripKeepsBusinessFenced(t *testing.T) {
+// Read persisted legacy evidence explicitly in archive tests. The current
+// generic recovery plan must not advertise the retired proxy actions again.
+func readHistoricalReinstallPreparation(t *testing.T, s *Store, node AgentCredential, input AgentReinstallApplicationInput) *AgentReinstallPreparation {
+	t.Helper()
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := s.readReinstallPreparation(context.Background(), tx, node.ID, input.ApplicationID)
+	_ = tx.Rollback()
+	if err != nil || value == nil {
+		t.Fatalf("retained preparation evidence unavailable: %v", err)
+	}
+	return value
+}
+
+func TestRetiredAgentReinstallPreparationKeepsBusinessFenced(t *testing.T) {
 	s, node, input := reinstallPreparationFixture(t)
 	ctx := context.Background()
-	before, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replay, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil || replay != receipt {
-		t.Fatalf("duplicate preparation: %+v %v", replay, err)
-	}
-	pendingPlan, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil || len(pendingPlan.UnclaimedLocalWork) != 0 {
-		t.Fatalf("new package treated as old work: %+v %v", pendingPlan.UnclaimedLocalWork, err)
-	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatalf("claim: %+v %v", task, err)
-	}
-	if task.ID != receipt.DeploymentID || task.ID == "retained-meridian-deployment" || task.ApplicationID != input.ApplicationID || task.ServiceAddress != "10.0.0.8" || task.Manifest.Version != "0.1.0-alpha.12" || task.Attempt != 1 {
-		t.Fatalf("wrong restore binding: %+v", task)
-	}
-	claimedPlan, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pendingPlan.Recovery.UpdatedAt == before.Recovery.UpdatedAt || claimedPlan.Recovery.UpdatedAt == pendingPlan.Recovery.UpdatedAt {
-		t.Fatal("queued/claimed progress did not refresh recovery")
-	}
-	response := preparationResult(t, s, node, task, true)
-	if response.Code != http.StatusOK {
-		t.Fatalf("result: %d %s", response.Code, response.Body.String())
+	for range 2 {
+		if _, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input); err == nil {
+			t.Fatal("retired proxy preparation was queued")
+		}
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Applications) != 1 || plan.Applications[0].DeploymentID != "retained-meridian-deployment" || plan.Applications[0].Preparation == nil || plan.Applications[0].Preparation.State != "succeeded" || plan.Recovery.State != "review_required" {
-		t.Fatalf("preparation became business restoration: %+v", plan)
+	if len(plan.Applications) != 1 || plan.Applications[0].Recovery != "restore_data" || plan.Applications[0].Preparation != nil {
+		t.Fatalf("proxy recovery still platform-owned: %+v", plan.Applications)
 	}
-	if plan.Recovery.UpdatedAt == claimedPlan.Recovery.UpdatedAt {
-		t.Fatal("completion did not refresh recovery")
+	var deployments, preparations, activated int
+	if err := s.db.QueryRow(`SELECT count(*) FROM deployments WHERE application_id=?`, input.ApplicationID).Scan(&deployments); err != nil || deployments != 1 {
+		t.Fatalf("original installation replaced: %d %v", deployments, err)
 	}
-	var activated int
-	if err = s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM agent_network_profiles WHERE agent_id=?)+(SELECT COUNT(*) FROM services WHERE application_id=?)`, node.ID, input.ApplicationID).Scan(&activated); err != nil || activated != 0 {
-		t.Fatalf("activated business: %d %v", activated, err)
+	if err := s.db.QueryRow(`SELECT count(*) FROM agent_reinstall_app_preparations`).Scan(&preparations); err != nil || preparations != 0 {
+		t.Fatalf("retired preparation persisted: %d %v", preparations, err)
 	}
-	if _, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
-		t.Fatalf("released fence: %v", err)
+	if err := s.db.QueryRow(`SELECT (SELECT count(*) FROM agent_network_profiles WHERE agent_id=?)+(SELECT count(*) FROM services WHERE application_id=?)`, node.ID, input.ApplicationID).Scan(&activated); err != nil || activated != 0 {
+		t.Fatalf("business activated: %d %v", activated, err)
+	}
+	if _, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
+		t.Fatalf("recovery fence released: %v", err)
 	}
 	directory := s.dataDir
-	if err = s.Close(); err != nil {
+	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
 	s, err = Open(directory)
@@ -142,9 +132,8 @@ func TestAgentReinstallPreparationRoundTripKeepsBusinessFenced(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	replay, err = s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil || replay.DeploymentID != receipt.DeploymentID || replay.State != "succeeded" {
-		t.Fatalf("restart lost receipt: %+v %v", replay, err)
+	if _, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input); err == nil {
+		t.Fatal("restart revived retired preparation")
 	}
 }
 
@@ -188,15 +177,12 @@ func TestAgentReinstallPreparationRechecksBeforeClaimAndProjection(t *testing.T)
 			t.Run(stage+"/"+mode, func(t *testing.T) {
 				s, node, input := reinstallPreparationFixture(t)
 				ctx := context.Background()
-				receipt, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var task *AgentTask
+				id := seedArchivedReinstallPreparation(t, s, node, input, "pending")
+				receipt := AgentReinstallPreparation{DeploymentID: id}
+				var err error
 				if stage == "projection" {
-					task, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-					if err != nil || task == nil {
-						t.Fatalf("claim: %+v %v", task, err)
+					if _, err = s.db.Exec(`UPDATE deployments SET state='running',attempt=1 WHERE id=?`, id); err != nil {
+						t.Fatal(err)
 					}
 				}
 				var query string
@@ -234,8 +220,13 @@ func TestAgentReinstallPreparationRechecksBeforeClaimAndProjection(t *testing.T)
 						t.Fatal("changed authority claimed")
 					}
 				} else {
-					response := preparationResult(t, s, node, task, true)
-					if response.Code == http.StatusOK {
+					tx, beginErr := s.db.BeginTx(ctx, nil)
+					if beginErr != nil {
+						t.Fatal(beginErr)
+					}
+					_, _, projectionErr := s.projectApplicationDeployment(ctx, tx, node.ID, id, 1, true, "", json.RawMessage(`{"services":[]}`), false, platform.ApplicationRuntimeGeneration)
+					_ = tx.Rollback()
+					if projectionErr == nil {
 						t.Fatal("changed authority projected")
 					}
 				}
@@ -250,69 +241,54 @@ func TestAgentReinstallPreparationRechecksBeforeClaimAndProjection(t *testing.T)
 
 func TestAgentReinstallPreparationFailedOutcomeNeverRetries(t *testing.T) {
 	s, node, input := reinstallPreparationFixture(t)
-	ctx := context.Background()
-	receipt, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil {
-		t.Fatal(err)
+	id := seedArchivedReinstallPreparation(t, s, node, input, "failed")
+	if _, err := s.QueueAgentReinstallPreparation(context.Background(), node.ID, "reinstall-review-admin", input); err == nil {
+		t.Fatal("retired failed preparation was resumed")
 	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatalf("claim: %v", err)
-	}
-	response := preparationResult(t, s, node, task, false)
-	if response.Code != http.StatusOK {
-		t.Fatalf("failure: %d %s", response.Code, response.Body.String())
-	}
-	replay, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil || replay.DeploymentID != receipt.DeploymentID || replay.State != "failed" {
-		t.Fatalf("failure retried: %+v %v", replay, err)
-	}
-	if _, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
+	if _, err := s.claimExecutionTask(context.Background(), node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
 		t.Fatalf("failed task released fence: %v", err)
+	}
+	var state string
+	if err := s.db.QueryRow(`SELECT state FROM deployments WHERE id=?`, id).Scan(&state); err != nil || state != "failed" {
+		t.Fatalf("historical failure rewritten: %s %v", state, err)
 	}
 }
 
 func TestAgentReinstallPreparationAuthorizationRejectsSubstitutedPayload(t *testing.T) {
 	s, node, input := reinstallPreparationFixture(t)
+	id := seedArchivedReinstallPreparation(t, s, node, input, "pending")
 	ctx := context.Background()
-	receipt, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.claimNextTask(ctx, node.ID, node.Credential, "", func(tx *sql.Tx, task *AgentTask) error {
-		task.ServiceAddress = "10.0.0.99"
-		_, err := s.persistExecutionAuthorization(ctx, tx, node.ID, "package-preparation-session", *task)
-		return err
-	})
-	if !errors.Is(err, errExecutionAuthorization) {
-		t.Fatalf("substituted payload sealed: %v", err)
+	defer tx.Rollback()
+	task := AgentTask{ID: id, Kind: "application.apply", ApplicationID: input.ApplicationID, AppKey: meridianAppKey, ServiceAddress: "10.0.0.99", Attempt: 1}
+	if _, err := s.persistExecutionAuthorization(ctx, tx, node.ID, "package-preparation-session", task); err == nil {
+		t.Fatal("retired substituted payload sealed")
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
 	}
 	var state string
 	var attempt int
-	if err = s.db.QueryRow(`SELECT state,attempt FROM deployments WHERE id=?`, receipt.DeploymentID).Scan(&state, &attempt); err != nil || state != "pending" || attempt != 0 {
-		t.Fatal("failed authorization committed selection")
+	if err := s.db.QueryRow(`SELECT state,attempt FROM deployments WHERE id=?`, id).Scan(&state, &attempt); err != nil || state != "pending" || attempt != 0 {
+		t.Fatalf("rejected authorization changed history: %s/%d %v", state, attempt, err)
 	}
 }
 
 func TestAgentReinstallPreparationExpiredClaimRequiresReview(t *testing.T) {
 	s, node, input := reinstallPreparationFixture(t)
-	ctx := context.Background()
-	receipt, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil {
+	id := seedArchivedReinstallPreparation(t, s, node, input, "running")
+	if _, err := s.db.Exec(`UPDATE deployments SET attempt=1,lease_expires_at='2000-01-01T00:00:00Z' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatalf("claim: %v", err)
+	if _, err := s.claimExecutionTask(context.Background(), node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
+		t.Fatalf("expired retired work replayed: %v", err)
 	}
-	if _, err = s.db.Exec(`UPDATE deployments SET lease_expires_at='2000-01-01T00:00:00Z' WHERE id=?`, receipt.DeploymentID); err != nil {
-		t.Fatal(err)
-	}
-	plan, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil || plan.Applications[0].Preparation.State != "needs_review" {
-		t.Fatalf("uncertain task shown as in progress: %+v %v", plan.Applications, err)
-	}
-	if _, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
-		t.Fatalf("expired work replayed: %v", err)
+	var state string
+	var attempt int
+	if err := s.db.QueryRow(`SELECT state,attempt FROM deployments WHERE id=?`, id).Scan(&state, &attempt); err != nil || state != "running" || attempt != 1 {
+		t.Fatalf("uncertain evidence rewritten: %s/%d %v", state, attempt, err)
 	}
 }

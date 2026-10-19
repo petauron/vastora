@@ -2,9 +2,9 @@ package center
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
-	"net/http"
 	"testing"
 	"time"
 )
@@ -13,15 +13,25 @@ func reinstallEntryCheckFixture(t *testing.T, publicExit ...string) (*Store, Age
 	t.Helper()
 	s, node, input := reinstallListenerFixture(t, publicExit...)
 	ctx := context.Background()
-	if _, err := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input); err != nil {
+	receipt, err := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input)
+	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatalf("claim: %v", err)
+	// Reconstruct the recorded listener state for historical reader/authority
+	// cases, not a new live restore or a fake Agent result acknowledgement.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if response := submitReinstallListener(t, s, node, task, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE agent_reinstall_app_preparations SET listener_state='succeeded' WHERE listener_task_id=?`, receipt.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`UPDATE node_listener_states SET status='ready',applied_revision=desired_revision,attempt=(SELECT listener_attempt FROM agent_reinstall_app_preparations WHERE listener_task_id=?) WHERE node_id=?`, receipt.TaskID, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
@@ -29,6 +39,20 @@ func reinstallEntryCheckFixture(t *testing.T, publicExit ...string) (*Store, Age
 	}
 	input.PlanRevision = plan.Revision
 	return s, node, input
+}
+
+// A stored Current flag is historical, not fresh authority for today's owner.
+func readHistoricalEntryCheck(t *testing.T, s *Store, applicationID string) AgentReinstallEntryCheck {
+	t.Helper()
+	var raw []byte
+	if err := s.db.QueryRow(`SELECT c.result_json FROM agent_reinstall_entry_checks c JOIN agent_reinstall_app_preparations p ON p.deployment_id=c.preparation_id WHERE p.application_id=? ORDER BY c.started_at DESC,c.rowid DESC LIMIT 1`, applicationID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var value AgentReinstallEntryCheck
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 func TestAgentReinstallEntryCheckRecordsEvidenceWithoutCompletingRecovery(t *testing.T) {
@@ -53,8 +77,8 @@ func TestAgentReinstallEntryCheckRecordsEvidenceWithoutCompletingRecovery(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved := plan.Applications[0].Preparation.EntryCheck
-	if saved == nil || saved.ID != result.ID || !saved.Current || plan.Recovery.State != "review_required" {
+	saved := readHistoricalEntryCheck(t, s, input.ApplicationID)
+	if saved.ID != result.ID || !saved.CheckedAt.Equal(result.CheckedAt) || plan.Recovery.State != "review_required" || plan.Applications[0].Preparation != nil {
 		t.Fatalf("receipt: %+v", saved)
 	}
 	var profiles int
@@ -88,7 +112,10 @@ func TestAgentReinstallEntryCheckRecordsEvidenceWithoutCompletingRecovery(t *tes
 	defer s.Close()
 	s.now = clock
 	plan, err = s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil || plan.Applications[0].Preparation.EntryCheck.ID != next.ID || !plan.Applications[0].Preparation.EntryCheck.Current {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readHistoricalEntryCheck(t, s, input.ApplicationID).ID != next.ID || plan.Applications[0].Preparation != nil {
 		t.Fatalf("restart lost evidence: %v", err)
 	}
 }
@@ -133,7 +160,7 @@ func TestAgentReinstallEntryCheckFencesChangedReview(t *testing.T) {
 					change()
 				}
 				probes := 0
-				_, err := s.verifyAgentReinstallEntry(context.Background(), node.ID, "reinstall-review-admin", input, func(context.Context, AgentReinstallEntryCheckResult) string {
+				verified, err := s.verifyAgentReinstallEntry(context.Background(), node.ID, "reinstall-review-admin", input, func(context.Context, AgentReinstallEntryCheckResult) string {
 					probes++
 					if at == "during" {
 						change()
@@ -149,9 +176,18 @@ func TestAgentReinstallEntryCheckFencesChangedReview(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					saved := plan.Applications[0].Preparation.EntryCheck
-					if saved == nil || saved.Current {
-						t.Fatalf("changed evidence current: %+v", saved)
+					saved := readHistoricalEntryCheck(t, s, input.ApplicationID)
+					if saved.ID != verified.ID || plan.Applications[0].Preparation != nil {
+						t.Fatal("changed intent rewrote history or exposed retired checks")
+					}
+					tx, beginErr := s.db.BeginTx(context.Background(), nil)
+					if beginErr != nil {
+						t.Fatal(beginErr)
+					}
+					_, _, authorityErr := s.reinstallEntryCheckTargets(context.Background(), tx, node.ID, "reinstall-review-admin", input)
+					_ = tx.Rollback()
+					if authorityErr == nil {
+						t.Fatal("changed evidence retained request authority")
 					}
 				} else {
 					if err == nil || at == "before" && probes != 0 {
@@ -196,7 +232,11 @@ func TestAgentReinstallEntryCheckRejectsUnreviewedAndExpiredEvidence(t *testing.
 	now := s.now()
 	s.now = func() time.Time { return now.Add(31 * time.Minute) }
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil || plan.Applications[0].Preparation.EntryCheck.Current {
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := readHistoricalEntryCheck(t, s, input.ApplicationID)
+	if plan.Applications[0].Preparation != nil || !history.CheckedAt.Add(30*time.Minute).Before(s.now()) {
 		t.Fatalf("expired check current: %v", err)
 	}
 }

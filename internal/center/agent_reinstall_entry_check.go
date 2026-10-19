@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"net/http"
+
 	"time"
 )
 
@@ -26,35 +26,6 @@ type AgentReinstallEntryCheckResult struct {
 	PublicAddress string `json:"publicAddress"`
 	SNIHostname   string `json:"sniHostname"`
 	State         string `json:"state"`
-}
-
-func (s *Store) readReinstallEntryCheck(ctx context.Context, tx *sql.Tx, preparationID, revision string) (*AgentReinstallEntryCheck, error) {
-	var encoded []byte
-	var reviewed, agentID, listenerID, runtimeState, listenerState string
-	var listenerReady bool
-	err := tx.QueryRowContext(ctx, `SELECT e.result_json,e.plan_revision,op.agent_id,p.listener_task_id,c.state,p.listener_state,
- n.status='ready' AND n.applied_revision=p.listener_revision AND n.desired_revision=p.listener_revision AND n.attempt=p.listener_attempt
- FROM agent_reinstall_entry_checks e JOIN agent_reinstall_app_preparations p ON p.deployment_id=e.preparation_id
- JOIN agent_reinstall_operations op ON op.id=p.operation_id JOIN application_commands c ON c.id=p.runtime_command_id
- JOIN node_listener_states n ON n.node_id=op.agent_id
- WHERE e.preparation_id=? ORDER BY e.started_at DESC,e.id DESC LIMIT 1`, preparationID).Scan(&encoded, &reviewed, &agentID, &listenerID, &runtimeState, &listenerState, &listenerReady)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var result AgentReinstallEntryCheck
-	if err = json.Unmarshal(encoded, &result); err != nil {
-		return nil, err
-	}
-	age := s.now().UTC().Sub(result.CheckedAt)
-	result.Current = revision == reviewed && listenerReady && runtimeState == "succeeded" && listenerState == "succeeded" && age >= 0 && age <= 30*time.Minute
-	if result.Current {
-		task, checkErr := s.reinstallListenerTask(ctx, tx, agentID, listenerID, false)
-		result.Current = checkErr == nil && task != nil
-	}
-	return &result, nil
 }
 
 func (s *Store) reinstallEntryCheckTargets(ctx context.Context, tx *sql.Tx, agentID, adminID string, input AgentReinstallApplicationInput) (string, []AgentReinstallEntryCheckResult, error) {
@@ -198,24 +169,4 @@ func reinstallEntryDNSMatches(address string, addresses []net.IPAddr) bool {
 		}
 	}
 	return true
-}
-
-func (s *Server) handleAgentReinstallEntryCheck(writer http.ResponseWriter, request *http.Request) {
-	var input AgentReinstallApplicationInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	adminID, err := s.requestAdminID(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.VerifyAgentReinstallEntry(request.Context(), request.PathValue("id"), adminID, input)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, result)
 }

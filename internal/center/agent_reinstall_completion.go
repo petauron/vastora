@@ -3,11 +3,10 @@ package center
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+
 	"errors"
 
 	"github.com/petauron/vastora/internal/meridianruntime"
-	"github.com/petauron/vastora/internal/secret"
 )
 
 // These values are reconstructed inside the final write transaction. Never
@@ -77,90 +76,11 @@ func (s *Store) requireReinstallCompletion(ctx context.Context, tx *sql.Tx, targ
 			if !verified {
 				return evidence, errors.New("center: fresh reports from the original monitoring identity are required")
 			}
-		case app.AppKey == meridianAppKey && app.Recovery == "rebuild_configuration":
-			p := app.Preparation
-			if p == nil || p.State != "succeeded" || p.Runtime == nil || p.Runtime.State != "succeeded" || p.Access == nil || p.Access.State != "applied" || p.Landing != nil && p.Landing.State != "authorized" {
-				return evidence, errors.New("center: restored application runtime and reviewed access are required")
-			}
-			if !reinstallCompletionDNSVerified(p.DNS, p.EntryCheck) {
-				return evidence, errors.New("center: current entry DNS verification is required")
-			}
-			if app.SharedEntry && (p.Listener == nil || p.Listener.State != "succeeded" || p.EntryCheck == nil || !p.EntryCheck.Current || p.EntryCheck.State != "passed") {
-				return evidence, errors.New("center: current shared entry verification is required")
-			}
-			_, task, err := s.reinstallAccessTarget(ctx, tx, target, p.DeploymentID)
-			if err != nil {
-				return evidence, err
-			}
-			runtime, err := s.reinstallRuntimeProof(ctx, tx, target, p.Runtime.CommandID, *task.MeridianRuntime)
-			if err != nil {
-				return evidence, err
-			}
-			evidence.Runtimes[app.ApplicationID] = runtime
-			ids, err := s.requireReinstallClientCoverage(ctx, tx, target, admin, AgentReinstallApplicationInput{OperationID: operation, PlanRevision: revision, ApplicationID: app.ApplicationID})
-			if err != nil {
-				return evidence, err
-			}
-			evidence.Clients[app.ApplicationID] = ids
 		default:
 			return evidence, errors.New("center: an application has no verified recovery procedure")
 		}
 	}
 	return evidence, nil
-}
-
-func (s *Store) reinstallRuntimeProof(ctx context.Context, tx *sql.Tx, target, id string, task meridianruntime.Task) (meridianruntime.Result, error) {
-	var result meridianruntime.Result
-	var execution string
-	var sealed []byte
-	if err := tx.QueryRowContext(ctx, `SELECT id,sealed_result FROM task_executions WHERE task_id=? AND agent_id=? AND kind='application.command' AND attempt=1 AND state='succeeded' AND phase='reported' AND identity_retired_at=''`, id, target).Scan(&execution, &sealed); err != nil {
-		return result, errExecutionAuthorization
-	}
-	raw, err := secret.Open(s.key, sealed, []byte("execution-result:"+execution))
-	if err != nil {
-		return result, errExecutionAuthorization
-	}
-	var proof executionResultEvidence
-	var envelope ApplicationTaskResult
-	if json.Unmarshal(raw, &proof) != nil || !proof.Succeeded || proof.Unknown || json.Unmarshal(proof.Result, &envelope) != nil || envelope.MeridianRuntime == nil || envelope.MeridianRuntime.Validate(task.Desired) != nil {
-		return result, errExecutionAuthorization
-	}
-	return s.currentReinstallRuntimeObservation(ctx, tx, id, task)
-}
-
-// Only the latest explicit batch is authoritative. A failed recheck cannot be
-// hidden by an earlier successful batch, and every expected identity/protocol
-// must have its own current authenticated proof in that batch.
-func (s *Store) requireReinstallClientCoverage(ctx context.Context, tx *sql.Tx, target, admin string, input AgentReinstallApplicationInput) ([]string, error) {
-	var verifier, request string
-	err := tx.QueryRowContext(ctx, `SELECT c.agent_id,json_extract(a.input_json,'$.requestId') FROM agent_reinstall_client_checks a JOIN application_commands c ON c.id=a.command_id WHERE a.operation_id=? AND c.application_id=? ORDER BY c.rowid DESC LIMIT 1`, input.OperationID, input.ApplicationID).Scan(&verifier, &request)
-	if err != nil {
-		return nil, errors.New("center: real client verification is required")
-	}
-	expected, err := s.reinstallAcceptanceTasks(ctx, tx, target, verifier, admin, input)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]string, 0, len(expected))
-	for _, task := range expected {
-		digest, err := task.Digest()
-		if err != nil {
-			return nil, err
-		}
-		var id string
-		if err = tx.QueryRowContext(ctx, `SELECT c.id FROM agent_reinstall_client_checks a JOIN application_commands c ON c.id=a.command_id WHERE a.operation_id=? AND c.application_id=? AND c.agent_id=? AND json_extract(a.input_json,'$.requestId')=? AND json_extract(a.input_json,'$.taskDigest')=? ORDER BY c.rowid DESC LIMIT 1`, input.OperationID, input.ApplicationID, verifier, request, digest).Scan(&id); err != nil {
-			return nil, errors.New("center: an original client identity has no current verification")
-		}
-		receipt, err := s.readReinstallClientCheck(ctx, tx, verifier, id)
-		if err != nil {
-			return nil, err
-		}
-		if receipt.State != "verified" {
-			return nil, errors.New("center: current authenticated client verification is incomplete")
-		}
-		ids = append(ids, id)
-	}
-	return ids, nil
 }
 
 // Manual records have no provider-write receipt. Their supported completion

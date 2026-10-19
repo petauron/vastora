@@ -181,16 +181,14 @@ func TestHeartbeatAllowsMeridianSubscriptionHostWithoutLocalXrayRuntime(t *testi
 		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" {
 			t.Fatalf("unexpected request path: %s", request.URL.Path)
 		}
-		var payload struct {
-			ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
-			ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
-			MeridianRuntime              json.RawMessage                  `json:"meridianRuntime"`
-		}
+		var payload map[string]json.RawMessage
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload.ApplicationEndpointsObserved || len(payload.ApplicationEndpoints) != 0 || string(payload.MeridianRuntime) != "null" {
-			t.Fatalf("controller-only Glivela package reported a proxy runtime: %#v", payload)
+		for _, key := range []string{"applicationEndpoints", "applicationEndpointsObserved", "meridianRuntime", "landingHealth", "landingServerHealth", "landingClientRuntime", "landingEgressAddresses"} {
+			if _, present := payload[key]; present {
+				t.Fatalf("generic Agent heartbeat transported application business field %s", key)
+			}
 		}
 		heartbeats++
 		response.Header().Set("Content-Type", "application/json")
@@ -444,7 +442,7 @@ func TestTerminalTaskAuthorityConflictStartsFreshSessionWithoutReplayingTask(t *
 	}
 }
 
-func TestHeartbeatKeepsCenterConnectedWhenThreeXUIObservationFails(t *testing.T) {
+func TestHeartbeatDoesNotInspectLegacyProxyConfiguration(t *testing.T) {
 	heartbeats := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" {
@@ -481,8 +479,8 @@ func TestHeartbeatKeepsCenterConnectedWhenThreeXUIObservationFails(t *testing.T)
 	if heartbeatErr != nil {
 		t.Fatalf("observation failure blocked heartbeat: %v", heartbeatErr)
 	}
-	if observationErr == nil || heartbeats != 1 {
-		t.Fatalf("observation error was not isolated: err=%v heartbeats=%d", observationErr, heartbeats)
+	if observationErr != nil || heartbeats != 1 {
+		t.Fatalf("generic heartbeat inspected legacy proxy configuration: err=%v heartbeats=%d", observationErr, heartbeats)
 	}
 }
 

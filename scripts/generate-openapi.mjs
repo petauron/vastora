@@ -599,6 +599,21 @@ for (const route of routes) {
       }
     }
   }
+  if (route.handler === "handlePreviewServiceHandover" || route.handler === "handleServiceHandover") {
+    operation.responses[status].content["application/json"].schema = schemaForGoType("ServiceHandoverPlan");
+    operation.description = "Explicit same-node/site managed service ownership transfer. Preserves original service/publication/route IDs and public/access boundaries. Existing IDs only, no caller-selected endpoint. Requires current owned resources and no active/uncertain work. Binding changes remain pending real publication verification; no old task is acknowledged as successful.";
+    if (route.handler === "handlePreviewServiceHandover") {
+      operation.parameters = [...pathParameters(route.path), { name: "targetServiceId", in: "query", required: true, schema: { type: "string", minLength: 1, maxLength: 128 } }];
+    } else {
+      const schema = schemaForGoType("ServiceHandover");
+      schema.required = ["targetServiceId", "sourceSha256", "targetSha256", "backupsConfirmed"];
+      schema.properties.backupsConfirmed = { type: "boolean", const: true };
+      schema.properties.sourceSha256 = { type: "string", pattern: "^[a-f0-9]{64}$" };
+      schema.properties.targetSha256 = { type: "string", pattern: "^[a-f0-9]{64}$" };
+      operation.requestBody.content["application/json"].schema = schema;
+      operation.requestBody.description = "One strict JSON object, bounded to 4096 bytes; preview fingerprints must still match at commit.";
+    }
+  }
   if (route.handler === "handleClaimTask") {
     operation.parameters ||= [];
     operation.parameters.push({ name: "X-Vastora-Execution-Session", in: "header", required: true, schema: { type: "string", minLength: 1 } });

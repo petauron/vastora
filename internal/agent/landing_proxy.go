@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -14,23 +13,6 @@ import (
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/platform"
 )
-
-func (s *Store) landingHealth() *landing.Health {
-	s.landingStatusMu.RLock()
-	defer s.landingStatusMu.RUnlock()
-	status := s.landingStatus
-	if status.Revision == 0 && len(s.landingPeerStatuses) == 0 {
-		return nil
-	}
-	healthy := status.State == "healthy" && status.LinkState == "direct" && status.TCP && status.UDP && status.AllowedUntil.After(s.now())
-	value := &landing.Health{Revision: status.Revision, Healthy: healthy, CheckedAt: status.CheckedAt, Peers: []landing.PeerHealth{}}
-	for _, peer := range s.landingPeerStatuses {
-		peerHealthy := peer.Status.State == "healthy" && peer.Status.LinkState == "direct" && peer.Status.TCP && peer.Status.AllowedUntil.After(s.now())
-		value.Peers = append(value.Peers, landing.PeerHealth{Peer: peer.Peer, Revision: peer.Status.Revision, Healthy: peerHealthy, State: peer.Status.State, Reason: peer.Status.Reason, CheckedAt: peer.Status.CheckedAt})
-	}
-	slices.SortFunc(value.Peers, func(a, b landing.PeerHealth) int { return strings.Compare(a.Peer.ID, b.Peer.ID) })
-	return value
-}
 
 func (s *Store) setLandingPeerStatus(peer landing.PeerIdentity, status landing.MonitorStatus) {
 	s.landingStatusMu.Lock()
@@ -106,43 +88,6 @@ func (s *Store) prepareLandingXrayRuntimeMigration(ctx context.Context, task Dep
 		return nil, err
 	}
 	return state, nil
-}
-
-// Caller holds landingMutationMu. A successful replacement is not complete
-// until the landing checkpoint names the new container, its restart policy is
-// fenced again, and the fail-closed monitor has resumed.
-func (s *Store) finishLandingXrayRuntimeMigration(ctx context.Context, previous *landingRuntimeState, deploymentErr error) error {
-	if previous == nil {
-		return deploymentErr
-	}
-	recoveryContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer cancel()
-	if deploymentErr != nil {
-		if resumeErr := s.resumeLandingRuntimeLocked(recoveryContext); resumeErr != nil {
-			return uncertainTaskOutcome(errors.Join(deploymentErr, fmt.Errorf("agent: resume landing after Xray rollback: %w", resumeErr)))
-		}
-		return deploymentErr
-	}
-	docker, bridge, _, err := openLandingDocker(recoveryContext, previous.ApplicationID, "")
-	if err != nil {
-		return uncertainTaskOutcome(fmt.Errorf("agent: adopt migrated Xray landing runtime: %w", err))
-	}
-	defer docker.engine.Close()
-	if docker.component != "xray" || bridge != previous.Bridge {
-		return uncertainTaskOutcome(errors.New("agent: migrated Xray landing runtime identity changed"))
-	}
-	if err := docker.restartPolicy(recoveryContext, "no"); err != nil {
-		return uncertainTaskOutcome(fmt.Errorf("agent: fence migrated Xray landing runtime: %w", err))
-	}
-	updated := *previous
-	updated.ContainerID = docker.containerID
-	if err := s.saveLandingRuntime(recoveryContext, updated); err != nil {
-		return uncertainTaskOutcome(fmt.Errorf("agent: persist migrated Xray landing identity: %w", err))
-	}
-	if err := s.resumeLandingRuntimeLocked(recoveryContext); err != nil {
-		return uncertainTaskOutcome(fmt.Errorf("agent: resume migrated Xray landing runtime: %w", err))
-	}
-	return nil
 }
 
 // ResumeLandingRuntime restores only the fail-closed runtime monitor. It never

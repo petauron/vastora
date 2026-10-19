@@ -29,6 +29,7 @@ import (
 )
 
 type AgentTask struct {
+	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
 	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
 	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
@@ -110,11 +111,17 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	}
 	commitAuthorized := commitTask
 	commitTask = func(tx *sql.Tx, task *AgentTask) error {
+		// A discarded unauthorized command commits its rejection with no task.
+		// This is not authorization to dispatch any work to the Agent.
+		if task == nil {
+			return commitAuthorized(tx, nil)
+		}
 		var landingOnly bool
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json, '$.landingOnly'), 0) FROM agents WHERE id = ?`, agentID).Scan(&landingOnly); err != nil {
 			return err
 		}
-		if landingOnly && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind {
+		nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
+		if landingOnly && !nativeLifecycle && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind {
 			return errors.New("center: task is not authorized for a landing-only node")
 		}
 		return commitAuthorized(tx, task)
@@ -171,16 +178,6 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, err
 	}
 	if executionBlocked {
-		recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
-		if recoveryErr != nil {
-			return nil, recoveryErr
-		}
-		if recovery != nil {
-			if err := commitTask(tx, recovery); err != nil {
-				return nil, err
-			}
-			return recovery, nil
-		}
 		if requiredTaskID == "" {
 			updateBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, agentVersion)
 			if err != nil {
@@ -290,26 +287,6 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			}
 			return commandTask, nil
 		}
-		landingTask, landingErr := s.claimLandingServerTask(ctx, tx, agentID)
-		if landingErr != nil {
-			return nil, landingErr
-		}
-		if landingTask != nil {
-			if err := commitTask(tx, landingTask); err != nil {
-				return nil, err
-			}
-			return landingTask, nil
-		}
-		proxyTask, proxyErr := s.claimLandingProxyTask(ctx, tx, agentID)
-		if proxyErr != nil {
-			return nil, proxyErr
-		}
-		if proxyTask != nil {
-			if err := commitTask(tx, proxyTask); err != nil {
-				return nil, err
-			}
-			return proxyTask, nil
-		}
 		listenerTask, listenerErr := s.claimNodeListenerTask(ctx, tx, agentID)
 		if listenerErr != nil {
 			return nil, listenerErr
@@ -362,16 +339,6 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 					return nil, decommissionErr
 				}
 				if decommissionTask == nil {
-					recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
-					if recoveryErr != nil {
-						return nil, recoveryErr
-					}
-					if recovery != nil {
-						if err := commitTask(tx, recovery); err != nil {
-							return nil, err
-						}
-						return recovery, nil
-					}
 					securityTask, securityErr := s.claimNodeSecurity(ctx, tx, agentID)
 					if securityErr != nil {
 						return nil, securityErr
@@ -458,8 +425,9 @@ type pendingApplicationDeployment struct {
 
 func readPendingApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, requiredTaskID string) (pendingApplicationDeployment, error) {
 	var p pendingApplicationDeployment
-	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, a.role, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation, d.package_revision, d.manifest_sha256, d.authorized_capabilities_json
+	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, CASE WHEN d.source_receipt_sha256<>'' THEN '' ELSE a.role END, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation, d.package_revision, d.manifest_sha256, d.authorized_capabilities_json,d.source_receipt_sha256
 		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending'
+		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_app_preparations p WHERE p.deployment_id=d.id)
 		AND NOT (d.app_key = 'vastora-official/pulse-agent' AND d.operation = 'install' AND d.secret_id IS NULL)`
 	queryArgs := []any{agentID}
 	if requiredTaskID != "" {
@@ -467,7 +435,7 @@ func readPendingApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, 
 		queryArgs = append(queryArgs, requiredTaskID)
 	}
 	query += ` ORDER BY d.created_at, d.rowid LIMIT 1`
-	err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&p.task.ID, &p.task.AppKey, &p.manifest, &p.config, &p.secretID, &p.registryCredentialID, &p.task.Operation, &p.task.DeleteData, &p.task.ApplicationID, &p.task.ApplicationRole, &p.task.ServiceAddress, &p.attempt, &p.reconciliationRequested, &p.requiredRuntimeGeneration, &p.task.PackageRevision, &p.task.ManifestSHA256, &p.authorizedCapabilitiesJSON)
+	err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&p.task.ID, &p.task.AppKey, &p.manifest, &p.config, &p.secretID, &p.registryCredentialID, &p.task.Operation, &p.task.DeleteData, &p.task.ApplicationID, &p.task.ApplicationRole, &p.task.ServiceAddress, &p.attempt, &p.reconciliationRequested, &p.requiredRuntimeGeneration, &p.task.PackageRevision, &p.task.ManifestSHA256, &p.authorizedCapabilitiesJSON, &p.task.SourceReceiptSHA256)
 	return p, err
 }
 
@@ -476,15 +444,14 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	manifest, config := pending.manifest, pending.config
 	secretID, registryCredentialID := pending.secretID, pending.registryCredentialID
 	attempt, reconciliationRequested, requiredRuntimeGeneration := pending.attempt, pending.reconciliationRequested, pending.requiredRuntimeGeneration
-	preparation, err := s.validateReinstallPreparation(ctx, tx, agentID, task.ID)
-	if err != nil {
+	if err := rejectRetiredApplicationPreparation(ctx, tx, agentID, task.ID); err != nil {
 		return nil, err
 	}
 	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, task.ID, false)
 	if err != nil {
 		return nil, err
 	}
-	preparation = preparation || restoredMonitor != nil
+	preparation := restoredMonitor != nil
 	task.Config = json.RawMessage(config)
 	if err := json.Unmarshal(manifest, &task.Manifest); err != nil {
 		return nil, fmt.Errorf("center: decode pending task: %w", err)
@@ -595,7 +562,7 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 		return nil, fmt.Errorf("center: mark application deploying: %w", err)
 	}
 	if preparation {
-		if err := s.recordReinstallPreparationProgress(ctx, tx, task.ID); err != nil {
+		if err := s.recordReinstallMonitorRestoreProgress(ctx, tx, task.ID); err != nil {
 			return nil, err
 		}
 	}
@@ -672,11 +639,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 		return err
 	}
 	if applicationCommand {
-		err := s.completeApplicationCommand(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
-		if err == nil && succeeded && !reconciliationRequired {
-			s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
-		}
-		return err
+		return s.completeApplicationCommand(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
 	}
 	if strings.HasPrefix(taskID, "ip-quality-") {
 		if reconciliationRequired {
@@ -695,9 +658,6 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 			return errInvalidReconciliationDisposition
 		}
 		return s.completeNodeDiagnostic(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
-	}
-	if strings.HasPrefix(taskID, "xray-recovery-") {
-		return s.completeXrayConfigurationRecovery(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
 	}
 	if taskID == agentDecommissionTaskID(agentID) {
 		if succeeded || reconciliationRequired {
@@ -761,7 +721,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 		return err
 	}
 	defer tx.Rollback()
-	appKey, publicationCleanups, err := s.projectApplicationDeployment(ctx, tx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired, executedRuntimeGenerations...)
+	_, publicationCleanups, err := s.projectApplicationDeployment(ctx, tx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired, executedRuntimeGenerations...)
 	if err != nil {
 		return err
 	}
@@ -769,9 +729,6 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 		return err
 	}
 	s.resumeCredentialRotationForDeployment(ctx, taskID)
-	if succeeded && !reconciliationRequired && appKey == threeXUIAppKey {
-		s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
-	}
 	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
 	}
@@ -815,15 +772,14 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 	if executedRuntimeGeneration < 0 || executedRuntimeGeneration < requiredRuntimeGeneration || agentRuntimeGeneration < executedRuntimeGeneration {
 		return "", nil, errors.New("center: Agent task result does not prove the required application runtime generation")
 	}
-	preparation, err := s.validateReinstallPreparation(ctx, tx, agentID, taskID)
-	if err != nil {
+	if err := rejectRetiredApplicationPreparation(ctx, tx, agentID, taskID); err != nil {
 		return "", nil, err
 	}
 	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, taskID, false)
 	if err != nil {
 		return "", nil, err
 	}
-	preparation = preparation || restoredMonitor != nil
+	preparation := restoredMonitor != nil
 	if preparation && reconciliationRequired {
 		return "", nil, errors.New("center: package preparation requires explicit outcome review")
 	}
@@ -934,7 +890,7 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 		return "", nil, errors.New("center: task is not active")
 	}
 	if preparation {
-		if err := s.recordReinstallPreparationProgress(ctx, tx, taskID); err != nil {
+		if err := s.recordReinstallMonitorRestoreProgress(ctx, tx, taskID); err != nil {
 			return "", nil, err
 		}
 	}

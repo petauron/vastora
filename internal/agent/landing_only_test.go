@@ -121,12 +121,12 @@ func TestLandingOnlyPurposePersistsAndRejectsLocalEscalation(t *testing.T) {
 }
 
 func TestLandingOnlyTaskAllowlist(t *testing.T) {
-	for _, kind := range []string{"landing.server.apply", "agent.update", "agent.decommission"} {
+	for _, kind := range []string{"agent.update", "agent.decommission", "node.security"} {
 		if !landingOnlyTaskAllowed(kind) {
 			t.Fatalf("required lifecycle task blocked: %s", kind)
 		}
 	}
-	for _, kind := range []string{"application.apply", "application.adopt", "application.command", "application.maintenance", "gateway.routes.apply", "gateway.component.apply", "tunnel.state.apply", "node.listener.apply", "landing.proxy.apply", "unknown"} {
+	for _, kind := range []string{"application.apply", "application.adopt", "application.command", "application.maintenance", "gateway.routes.apply", "gateway.component.apply", "tunnel.state.apply", "node.listener.apply", "landing.server.apply", "landing.proxy.apply", "unknown"} {
 		if landingOnlyTaskAllowed(kind) {
 			t.Fatalf("unauthorized task allowed: %s", kind)
 		}

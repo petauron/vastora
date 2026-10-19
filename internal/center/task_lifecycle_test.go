@@ -149,7 +149,7 @@ func TestTaskEncryptionFailureReleasesTheCommittedLease(t *testing.T) {
 	}
 }
 
-func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t *testing.T) {
+func TestRetiredThreeXUICommandQuarantineCannotBeReplayed(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -167,8 +167,8 @@ func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t
 		VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, commandID, applicationID, node.ID, node.ID, clientCommandKind, input, now, now); err != nil {
 		t.Fatal(err)
 	}
-	task := claimTask(t, store, node)
-	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, false, "remote API result is uncertain", nil, true); err != nil {
+	// Retained pre-migration uncertainty is evidence, not a new proxy execution.
+	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='failed',attempt=1,reconciliation_required=1,error='remote API result is uncertain' WHERE id=?`, commandID); err != nil {
 		t.Fatal(err)
 	}
 	command, err := store.ApplicationCommand(ctx, commandID)
@@ -195,16 +195,15 @@ func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t
 	authorizedRequest.Header.Set("X-CSRF-Token", csrf)
 	authorized := httptest.NewRecorder()
 	server.ServeHTTP(authorized, authorizedRequest)
-	if authorized.Code != http.StatusAccepted {
+	if authorized.Code != http.StatusBadRequest {
 		t.Fatalf("authorized reconciliation retry status = %d body=%q", authorized.Code, authorized.Body.String())
 	}
 	command, err = store.ApplicationCommand(ctx, commandID)
-	if err != nil || command.State != "pending" || command.ReconciliationRequired || command.Error != "" {
-		t.Fatalf("retried command was not reset safely: %#v err=%v", command, err)
+	if err != nil || command.State != "failed" || !command.ReconciliationRequired || command.Error != "remote API result is uncertain" {
+		t.Fatalf("retired command evidence was changed: %#v err=%v", command, err)
 	}
-	replayed := claimTask(t, store, node)
-	if replayed.ID != commandID || replayed.Attempt != task.Attempt+1 || !replayed.Reconcile {
-		t.Fatalf("command reconciliation did not preserve task identity and attempt history: first=%#v replay=%#v", task, replayed)
+	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential, commandID); err == nil && task != nil {
+		t.Fatal("retired uncertain command was delivered to the Agent")
 	}
 }
 
@@ -531,18 +530,11 @@ func TestNetworkProfileChangeAndDeploymentCreationRemainConsistent(t *testing.T)
 	}
 }
 
-func TestTaskLongPollWakesWhenACommandIsQueued(t *testing.T) {
+func TestTaskLongPollWakesWhenADeploymentIsQueued(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "long-poll", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
-	siteID := testSiteID(t, store)
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
-		VALUES('long-poll-controller', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, siteID, threeXUIAppKey, now, now); err != nil {
-		t.Fatal(err)
-	}
-	selectTestThreeXUIController(t, store, "long-poll-controller")
 	result := make(chan *AgentTask, 1)
 	errors := make(chan error, 1)
 	go func() {
@@ -554,33 +546,19 @@ func TestTaskLongPollWakesWhenACommandIsQueued(t *testing.T) {
 		result <- task
 	}()
 	time.Sleep(50 * time.Millisecond)
-	tx, err := store.db.BeginTx(ctx, nil)
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
-		t.Fatal(err)
-	}
-	commandID := "application-command-long-poll"
-	input, _ := json.Marshal(ThreeXUIClientCommandTask{Action: "list", Inbounds: []ThreeXUIClientInbound{}})
-	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
-		VALUES(?, 'long-poll-controller', ?, ?, ?, ?, 'pending', ?, ?)`, commandID, node.ID, node.ID, clientCommandKind, input, now, now); err != nil {
-		tx.Rollback()
-		t.Fatal(err)
-	}
-	if err := store.recordTaskEvent(ctx, tx, commandID, node.ID, "application.command", 1, "queued", "test command queued"); err != nil {
-		tx.Rollback()
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case err := <-errors:
 		t.Fatal(err)
 	case task := <-result:
-		if task == nil || task.ID != commandID || task.ClientCommand == nil || task.ClientCommand.Action != "list" {
+		if task == nil || task.ID != deployment.ID || task.Kind != "application.apply" || task.AppKey != cpaAppKey {
 			t.Fatalf("unexpected long-polled task: %#v", task)
 		}
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("queued task did not wake the Agent long poll")
+		t.Fatal("queued deployment did not wake the Agent long poll")
 	}
 }
 
@@ -808,7 +786,7 @@ func TestThreeXUIDeploymentsAndDataPlaneCommandsAreMutuallyExclusive(t *testing.
 	}
 }
 
-func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
+func TestRetiredEndpointObservationPreservesLastSnapshot(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -817,6 +795,10 @@ func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
 		VALUES('observation-legacy-app','Existing proxy',?,?,?,'','running','docker','master',?,?)`, node.ID, testSiteID(t, store), threeXUIAppKey, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,status,created_at,updated_at)
+ VALUES('archived-endpoint','observation-legacy-app',?,'inbound-7','tcp',10443,10443,'10.0.0.41:10443','catalog','','ready',?,?)`, testSiteID(t, store), stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	heartbeat := NodeHeartbeat{Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationEndpointsObserved: true, ApplicationEndpoints: []ApplicationEndpointObservation{{AppKey: threeXUIAppKey, Name: "inbound-7", Protocol: "tcp", AppProtocol: "vless/tcp", Listen: "0.0.0.0", Port: 443, Enabled: true}}}
@@ -834,7 +816,11 @@ func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
 		}
 	}
 	if observedStatus != "ready" {
-		t.Fatalf("initial endpoint observation was not stored: %#v", services)
+		t.Fatalf("legacy observation changed the retained service: %#v", services)
+	}
+	var backend, source string
+	if err := store.db.QueryRow(`SELECT endpoint,source FROM services WHERE id='archived-endpoint'`).Scan(&backend, &source); err != nil || backend != "10.0.0.41:10443" || source != "catalog" {
+		t.Fatalf("legacy heartbeat rewrote the owned backend: %v", err)
 	}
 	heartbeat.ApplicationEndpoints = nil
 	heartbeat.ApplicationEndpointsObserved = false
@@ -859,8 +845,8 @@ func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, service := range services {
-		if service.Name == "inbound-7" && service.Status != "stopped" {
-			t.Fatalf("complete empty observation did not stop the disappeared endpoint: %#v", service)
+		if service.Name == "inbound-7" && service.Status != "ready" {
+			t.Fatalf("retired complete observation stopped the retained endpoint: %#v", service)
 		}
 	}
 }

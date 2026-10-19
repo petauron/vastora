@@ -17,7 +17,6 @@ import (
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
-	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/platform"
@@ -717,13 +716,6 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
-	if err := landing.ValidateEgressAddresses(heartbeat.LandingEgressAddresses); err != nil {
-		return err
-	}
-	if heartbeat.LandingEgressAddresses == nil {
-		heartbeat.LandingEgressAddresses = []landing.EgressAddress{}
-	}
-	egressAddressesJSON, _ := json.Marshal(heartbeat.LandingEgressAddresses)
 	rolesJSON, _ := json.Marshal(heartbeat.Roles)
 	capabilitiesJSON, _ := json.Marshal(heartbeat.Capabilities)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -732,7 +724,6 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	defer tx.Rollback()
 	now := s.now().UTC()
-	publicationCleanups := []publicationCleanup{}
 	var previousRuntimeGeneration int
 	var storedPublicKey []byte
 	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation, x25519_public_key FROM agents WHERE id = ? AND status='active' AND credential_revoked_at='' AND credential_hash=?`, id, tokenHash(credential)).Scan(&previousRuntimeGeneration, &storedPublicKey); err != nil {
@@ -755,9 +746,6 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET x25519_public_key = CASE WHEN length(x25519_public_key) = 0 THEN ? ELSE x25519_public_key END, version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_recovery = ?, runtime_generation = ?, remote_update_supported = ?, tailscale_ownership = ?, last_seen_at = ?, public_egress_address = CASE WHEN ? THEN ? ELSE public_egress_address END, public_egress_bind_address = CASE WHEN ? THEN ? ELSE public_egress_bind_address END, public_egress_mode = CASE WHEN ? THEN ? ELSE public_egress_mode END, public_egress_observed_at = CASE WHEN ? THEN ? ELSE public_egress_observed_at END WHERE id = ?`, heartbeat.PublicKey, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.RuntimeRecovery, heartbeat.ApplicationRuntimeGeneration, heartbeat.RemoteUpdateSupported, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), replacePublicEgress, publicEgress.Address, replacePublicEgress, publicEgress.BindAddress, replacePublicEgress, publicEgress.Mode, replacePublicEgress, publicEgressObservedAt, id); err != nil {
 		return fmt.Errorf("center: record agent heartbeat: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE agents SET landing_egress_addresses_json=? WHERE id=?`, egressAddressesJSON, id); err != nil {
-		return err
 	}
 	if err := saveRuntimeRecoveryApplications(ctx, tx, id, heartbeat.RuntimeRecoveryApplications); err != nil {
 		return err
@@ -791,21 +779,10 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		}
 	}
 	executionBlocked = executionBlocked || reinstalling
-	if !executionBlocked && heartbeat.ApplicationEndpointsObserved {
-		if err := s.reconcileApplicationEndpoints(ctx, tx, id, heartbeat.ApplicationEndpoints, now, &publicationCleanups); err != nil {
-			return err
-		}
-	}
-	if reinstalling && heartbeat.MeridianRuntime != nil {
-		if err := s.recordReinstallRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
-			return err
-		}
-	}
-	if !executionBlocked && heartbeat.MeridianRuntime != nil {
-		if err := s.recordMeridianRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
-			return err
-		}
-	}
+	// ApplicationEndpoints was exclusively the old 3x-ui/embedded Glivela
+	// observer. Generic package services are reconciled from their owned
+	// installation receipt, not heartbeat. Ignore delayed legacy observations
+	// so they cannot recreate or stop a service after its ownership handover.
 	if !executionBlocked && heartbeat.ApplicationRuntimeGeneration > previousRuntimeGeneration {
 		if err := s.queueApplicationRuntimeMigration(ctx, tx, id, heartbeat.ApplicationRuntimeGeneration, now); err != nil {
 			return err
@@ -836,38 +813,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		}
 	}
 	if heartbeat.Capabilities.Docker {
-		if err := recordAgentPrivatePeer(ctx, tx, id, heartbeat.LandingClientRuntime, now); err != nil {
-			return err
-		}
-		if !executionBlocked {
-			if heartbeat.LandingClientRuntime != nil {
-				if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
-					return err
-				}
-			}
-			if err := s.reconcileClientLandingSourcesForNode(ctx, tx, id); err != nil {
-				return err
-			}
-			if err := s.reconcileLandingSubscriptionOrigin(ctx, tx, id, now); err != nil {
-				return err
-			}
-		}
-		if err := recordLandingHealth(ctx, tx, id, heartbeat.LandingHealth, now); err != nil {
-			return err
-		}
 		if !executionBlocked {
 			if err := s.queueMismatchedNodeListenerReconcile(ctx, tx, id, heartbeat.NodeListenerHealthy, heartbeat.NodeListenerRevision, heartbeat.NodeListenerConfigHash, now); err != nil {
 				return err
 			}
 		}
-	}
-	if !executionBlocked {
-		if err := s.queueScheduledThreeXUIBackup(ctx, tx, id, now); err != nil {
-			return err
-		}
-	}
-	if err := recordLandingServerHealth(ctx, tx, id, heartbeat.LandingServerHealth, now); err != nil {
-		return err
 	}
 	if heartbeat.Startup && !reinstalling {
 		if err := expireAgentProcessTaskLeases(ctx, tx, id, now); err != nil {
@@ -883,15 +833,6 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	for _, target := range recoveredPublications {
 		s.schedulePublicationVerification(target.id, target.revision)
-	}
-	if heartbeat.Startup {
-		// Recovery has its own durable action_required state and minute retry.
-		// It must not turn an already-recorded management heartbeat into an
-		// error or stall enrollment while a different service needs repair.
-		s.startBackground(func() { _ = s.startRealityGuardHardening(s.backgroundCtx) })
-	}
-	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
-		return fmt.Errorf("center: record publication cleanup state: %w", err)
 	}
 	return nil
 }
@@ -1224,8 +1165,8 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 				switch message {
 				case errNodeRemovalShared.Error():
 					view.Reason = "shared_service"
-				case errNodeRemovalControllerOffline.Error():
-					view.Reason = "controller_unavailable"
+				case errNodeRemovalRetainedData.Error():
+					view.Reason = "application_data_retained"
 				default:
 					view.Reason = "cleanup_failed"
 				}

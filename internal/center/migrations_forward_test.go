@@ -75,7 +75,7 @@ func TestVersion11MigrationSelectsOneRunningThreeXUIControllerPerSite(t *testing
 		t.Fatalf("migrated 3x-ui roles = %#v", roles)
 	}
 	var workerPanelStatus string
-	if err := migrated.db.QueryRowContext(ctx, `SELECT status FROM services WHERE id = 'failed-worker-panel'`).Scan(&workerPanelStatus); err != nil || workerPanelStatus != "stopped" {
+	if err := migrated.db.QueryRowContext(ctx, `SELECT status FROM services WHERE id = 'failed-worker-panel'`).Scan(&workerPanelStatus); err != nil || workerPanelStatus != "ready" {
 		t.Fatalf("legacy worker panel status=%q err=%v", workerPanelStatus, err)
 	}
 	if _, err := migrated.db.ExecContext(ctx, `UPDATE applications SET role = 'master', status = 'pending' WHERE id = 'three-x-ui-failed'`); err == nil {

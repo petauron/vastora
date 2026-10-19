@@ -3,7 +3,6 @@ package center
 import (
 	"context"
 	"errors"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -35,8 +34,9 @@ func TestAgentReinstallAccessActivatesOnlyReviewedBinding(t *testing.T) {
 	if !plan.NetworkReview.ProfileActive || !plan.NetworkReview.ApprovalCurrent || !reflect.DeepEqual(before.NetworkReview.Approval, plan.NetworkReview.Approval) || !reflect.DeepEqual(before.NetworkReview.Previous, plan.NetworkReview.Previous) || plan.Revision == before.Revision {
 		t.Fatalf("network review lost original evidence: %+v", plan.NetworkReview)
 	}
-	if plan.Applications[0].Preparation.Access == nil || plan.Applications[0].Preparation.Access.State != "applied" || plan.Recovery.State != "review_required" {
-		t.Fatalf("missing receipt: %+v", plan.Applications[0].Preparation)
+	history := readHistoricalReinstallPreparation(t, s, node, input)
+	if history.Access == nil || history.Access.State != "applied" || plan.Recovery.State != "review_required" || plan.Applications[0].Preparation != nil {
+		t.Fatal("historical receipt lost or retired proxy controls exposed")
 	}
 	profile, err := networkProfile(ctx, s.db, node.ID)
 	if err != nil || profile == nil || profile.ServiceAddress != result.ServiceAddress {
@@ -93,16 +93,7 @@ func TestAgentReinstallAccessActivatesOnlyReviewedBinding(t *testing.T) {
 func TestAgentReinstallAccessWithoutSharedEntry(t *testing.T) {
 	s, node, input := reinstallRuntimeFixture(t)
 	ctx := context.Background()
-	if _, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatalf("claim: %v", err)
-	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
-	}
+	seedSuccessfulHistoricalRuntime(t, s, node, input)
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -210,7 +201,11 @@ func TestAgentReinstallAccessChangedBindingRequiresReviewWithoutReapply(t *testi
 				t.Fatal(err)
 			}
 			plan, err := s.AgentReinstallPlan(ctx, node.ID)
-			if err != nil || plan.Applications[0].Preparation.Access.State != "needs_review" {
+			if err != nil {
+				t.Fatal(err)
+			}
+			history := readHistoricalReinstallPreparation(t, s, node, input)
+			if history.Access == nil || history.Access.State != "needs_review" || plan.Applications[0].Preparation != nil {
 				t.Fatalf("changed binding not shown: %v", err)
 			}
 			if _, err = s.ActivateAgentReinstallAccess(ctx, node.ID, "reinstall-review-admin", input); err == nil {

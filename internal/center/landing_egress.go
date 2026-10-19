@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
+
 	"slices"
 	"time"
 
@@ -92,17 +92,4 @@ func (s *Store) SetLandingEgress(ctx context.Context, nodeID string, input Landi
 		return err
 	}
 	return tx.Commit()
-}
-
-func (s *Server) handleLandingEgress(writer http.ResponseWriter, request *http.Request) {
-	var input LandingEgressInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.store.SetLandingEgress(request.Context(), request.PathValue("id"), input); err != nil {
-		writeError(writer, http.StatusConflict, err)
-		return
-	}
-	s.handleLanding(writer, request)
 }

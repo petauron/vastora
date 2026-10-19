@@ -17,8 +17,6 @@ import (
 
 	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/controlplane"
-	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 )
@@ -66,48 +64,8 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err != nil {
 		return nil, fmt.Errorf("agent: discover network addresses: %w", err)
 	}
-	egressAddresses, err := discoverLandingEgressAddresses()
-	if err != nil {
-		return nil, fmt.Errorf("agent: discover landing egress addresses: %w", err)
-	}
-	var endpoints []ApplicationEndpointObservation
 	var observeErr error
-	if !c.Capabilities.LandingOnly {
-		endpoints, observeErr = observeProxyRuntime(ctx, store)
-	}
-	endpointsObserved := observeErr == nil || errors.Is(observeErr, errApplicationNotInstalled)
-	if errors.Is(observeErr, errApplicationNotInstalled) || errors.Is(observeErr, errMeridianRuntimeNotConfigured) {
-		observeErr = nil
-	} else if observeErr != nil {
-		observeErr = fmt.Errorf("agent: observe Glivela runtime: %w", observeErr)
-	}
-	var meridianRuntime *meridianruntime.Result
-	if !c.Capabilities.LandingOnly {
-		if _, installErr := store.AppliedInstallation(ctx, meridianKey); installErr == nil {
-			if _, stateErr := store.loadMeridianRuntimeState(ctx); stateErr == nil {
-				observer, ok := c.Executor.(interface {
-					ObserveMeridianRuntime(context.Context) (meridianruntime.Result, error)
-				})
-				if !ok {
-					observeErr = errors.Join(observeErr, errors.New("agent: Glivela runtime observer is unavailable"))
-				} else if observed, runtimeErr := observer.ObserveMeridianRuntime(ctx); runtimeErr != nil {
-					observeErr = errors.Join(observeErr, fmt.Errorf("agent: observe Glivela usage: %w", runtimeErr))
-				} else {
-					meridianRuntime = &observed
-				}
-			} else if !errors.Is(stateErr, errApplicationNotInstalled) {
-				observeErr = errors.Join(observeErr, fmt.Errorf("agent: inspect Glivela runtime state: %w", stateErr))
-			}
-		} else if !errors.Is(installErr, errApplicationNotInstalled) {
-			observeErr = errors.Join(observeErr, installErr)
-		}
-	}
-	var landingClientRuntime *landing.ClientRuntime
-	if !c.Capabilities.LandingOnly {
-		landingClientRuntime = store.observeLandingClientRuntime(ctx)
-	}
 	var response struct {
-		LandingLatencyTargets    []landing.LatencyTarget         `json:"landingLatencyTargets"`
 		CenterURL                string                          `json:"centerUrl"`
 		TailscaleIsolation       *TailscaleIsolationDesiredState `json:"tailscaleIsolation,omitempty"`
 		PublicAddressLookupURL   string                          `json:"publicAddressLookupUrl"`
@@ -131,17 +89,12 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		tailscaleOwnership = ""
 	}
 	payload := map[string]any{
-		"landingServerHealth":    store.observeNativeLandingHealth(ctx),
-		"landingEgressAddresses": egressAddresses,
-		"publicKey":              publicKey,
-		"version":                Version, "appliedInstallations": len(states), "roles": c.Roles,
-		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
-		"meridianRuntime":              meridianRuntime,
+		"publicKey": publicKey,
+		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
+		"capabilities": c.Capabilities, "networkCandidates": candidates, "gatewayHealthy": gatewayHealthy,
 		"gatewayRevision":              gatewayRevision,
 		"gatewayConfigHash":            gatewayConfigHash,
 		"nodeListenerHealthy":          nodeListenerHealthy,
-		"landingHealth":                store.landingHealth(),
-		"landingClientRuntime":         landingClientRuntime,
 		"privateNetworkPeer":           store.observePrivateNetworkPeer(ctx, candidates, c.TailscaleOwnership),
 		"nodeListenerRevision":         nodeListenerRevision,
 		"nodeListenerConfigHash":       nodeListenerConfigHash,
@@ -163,7 +116,6 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err := c.applyDesiredCenterURL(ctx, store, connection, response.CenterURL); err != nil {
 		return observeErr, err
 	}
-	store.setLandingLatencyTargets(response.LandingLatencyTargets)
 	if response.TailscaleIsolation != nil && c.TailscaleIsolation != nil {
 		if err := c.TailscaleIsolation(ctx, *response.TailscaleIsolation); err != nil {
 			return observeErr, fmt.Errorf("agent: apply Tailscale isolation: %w", err)
@@ -412,11 +364,7 @@ func observeMeridianState(artifact glivela.DesiredArtifact) ([]ApplicationEndpoi
 }
 
 func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.Duration, report func(error)) {
-	go store.runLandingAccounts(ctx, report)
-	go store.runLandingSubscriptions(ctx, report)
-	if interval < time.Second {
-		interval = 15 * time.Second
-	}
+	interval = heartbeatInterval(interval)
 	send := func() {
 		requestContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
@@ -429,34 +377,21 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 		}
 	}
 	send()
-	lastSent := time.Now()
-	timer := time.NewTimer(min(interval, landing.CheckInterval))
-	defer timer.Stop()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
-			state, _ := store.loadMeridianRuntimeState(ctx)
-			cadence := meridianHeartbeatInterval(interval, state)
-			if time.Since(lastSent) >= cadence {
-				send()
-				lastSent = time.Now()
-			}
-			// Re-evaluate a newly applied peer plan promptly without resetting
-			// the actual send deadline on every wake-up. Slow heartbeats do not
-			// renew the monitor's kernel lease or manufacture fresh evidence.
-			timer.Reset(min(max(cadence-time.Since(lastSent), time.Millisecond), landing.CheckInterval))
+		case <-ticker.C:
+			send()
 		}
 	}
 }
 
-func meridianHeartbeatInterval(configured time.Duration, state meridianRuntimeState) time.Duration {
+func heartbeatInterval(configured time.Duration) time.Duration {
 	if configured < time.Second {
 		configured = 15 * time.Second
-	}
-	if state.Applied != nil && len(state.AppliedPeers) != 0 {
-		return min(configured, landing.CheckInterval)
 	}
 	return configured
 }

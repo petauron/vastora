@@ -49,23 +49,9 @@ func (s *Store) RetryTaskReconciliation(ctx context.Context, taskID string) (Tas
 		if appKey != threeXUIAppKey || state != "failed" || reconciliationRequired != 1 {
 			return TaskReconciliationRetry{}, errors.New("center: task does not require reconciliation")
 		}
-		if err := s.retryLandingParentFence(ctx, tx, taskID); err != nil {
-			return TaskReconciliationRetry{}, err
-		}
-		result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'pending', reconciliation_required = 0, reconciliation_requested = 1, lease_expires_at = '', error = '', updated_at = ? WHERE id = ? AND state = 'failed' AND reconciliation_required = 1`, now, taskID)
-		if err != nil {
-			return TaskReconciliationRetry{}, fmt.Errorf("center: retry application operation reconciliation: %w", err)
-		}
-		if changed, _ := result.RowsAffected(); changed != 1 {
-			return TaskReconciliationRetry{}, errors.New("center: task changed while retrying reconciliation")
-		}
-		if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, "queued", "manual reconciliation retry queued"); err != nil {
-			return TaskReconciliationRetry{}, err
-		}
-		if err := tx.Commit(); err != nil {
-			return TaskReconciliationRetry{}, err
-		}
-		return TaskReconciliationRetry{TaskID: taskID, Kind: "application.command", Queued: true}, nil
+		// The check above limits this retired branch to the old 3x-ui app.
+		// Keep its uncertain evidence; never recreate a proxy task after handover.
+		return TaskReconciliationRetry{}, errors.New("center: retired 3x-ui command cannot be replayed; preserve its receipt for explicit legacy disposition")
 	}
 
 	var agentID, applicationID, appKey, state string

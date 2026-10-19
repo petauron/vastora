@@ -21,7 +21,6 @@ import (
 
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/controlplane"
-	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/tailscalehost"
@@ -33,6 +32,8 @@ func runAgent(arguments []string) error {
 		return errors.New("agent command is required")
 	}
 	switch arguments[0] {
+	case "stage-native-package":
+		return runStageNativePackage(arguments[1:])
 	case "security-watchdog":
 		if len(arguments) != 1 {
 			return errors.New("security-watchdog takes no arguments")
@@ -573,9 +574,8 @@ func runAgent(arguments []string) error {
 		client.Decommissioner = systemHostDecommissioner{dataDir: *dataDir, executable: executable}
 		if runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			client.Updater = systemHostUpdater{dataDir: *dataDir, executable: executable}
-			client.LandingServer = agent.NativeLandingServer{}
 		}
-		if !capabilities.LandingOnly {
+		if !capabilities.LandingOnly || runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}, Store: store}
 		}
 		client.Capabilities.IPQuality = capabilities.Docker && runtime.GOOS == "linux"
@@ -585,11 +585,8 @@ func runAgent(arguments []string) error {
 		client.Capabilities.BandwidthDiagnostics = !capabilities.LandingOnly && runtime.GOOS == "linux" && iperfErr == nil
 		client.Capabilities.NativeEgress = (capabilities.Docker || capabilities.LandingOnly) && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.LandingEgressIP = runtime.GOOS == "linux" && os.Geteuid() == 0
-		client.Capabilities.MeridianLinkBandwidth = capabilities.Docker && runtime.GOOS == "linux"
-		client.Capabilities.MeridianLinkRevision = nodediagnostics.LinkBandwidthRevision
 		client.Capabilities.SenulunInspection = capabilities.Docker && runtime.GOOS == "linux"
 		client.Capabilities.SenulunRotation = client.Capabilities.SenulunInspection
-		client.Capabilities.MeridianAcceptance = client.Capabilities.Docker
 		client.Capabilities.SenulunReporting = client.Capabilities.SenulunInspection
 		client.Capabilities.SenulunRestore = capabilities.Docker && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.HostProfile = !capabilities.LandingOnly && runtime.GOOS == "linux"
@@ -620,17 +617,6 @@ func runAgent(arguments []string) error {
 		// Reconnection is observation only. A failed heartbeat must not trigger
 		// offline application restoration or replay a management operation.
 		go func() {
-			if err := store.ResumeNativeLanding(context.Background()); err != nil {
-				controlLogger.Error("Native landing boot recovery blocked", "event", "landing.server.recovery", "error", controlplane.SafeError(err.Error()))
-			}
-			if !capabilities.LandingOnly {
-				if err := store.ResumeXrayWorker(context.Background(), ""); err != nil {
-					controlLogger.Error("Xray worker recovery blocked", "event", "xray.worker.recovery", "error", controlplane.SafeError(err.Error()))
-				}
-			}
-			if err := store.ResumeLandingRuntime(context.Background()); err != nil {
-				controlLogger.Error("Landing monitor recovery blocked", "event", "landing.monitor.recovery", "error", controlplane.SafeError(err.Error()))
-			}
 			for {
 				if err := client.StartupHeartbeat(context.Background(), store); err == nil {
 					break
@@ -639,9 +625,6 @@ func runAgent(arguments []string) error {
 				}
 				time.Sleep(time.Second)
 			}
-			go client.RunLandingLatencyChecks(context.Background(), store, func(err error) {
-				controlLogger.Error("Landing latency report failed", "event", "landing.latency", "error", controlplane.SafeError(err.Error()))
-			})
 			go client.RunHeartbeats(context.Background(), store, *heartbeatInterval, func(err error) {
 				controlLogger.Error("Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
 			})

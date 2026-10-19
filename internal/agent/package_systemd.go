@@ -297,6 +297,11 @@ func compileNativeProcessUnit(applicationID, appName string, spec *catalog.Syste
 		}
 	}
 	unit.WriteString("NoNewPrivileges=yes\nPrivateTmp=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\nProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectControlGroups=yes\nRestrictSUIDSGID=yes\nUMask=0077\nRestart=on-failure\nRestartSec=5s\n")
+	if spec.BindService {
+		unit.WriteString("CapabilityBoundingSet=CAP_NET_BIND_SERVICE\nAmbientCapabilities=CAP_NET_BIND_SERVICE\n")
+	} else if user := strings.SplitN(spec.User, ":", 2)[0]; user != "root" && user != "0" {
+		unit.WriteString("CapabilityBoundingSet=\nAmbientCapabilities=\n")
+	}
 	var credentialNames []string
 	for name := range credentials {
 		credentialNames = append(credentialNames, name)

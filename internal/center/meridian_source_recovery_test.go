@@ -197,39 +197,51 @@ func TestMeridianSourceRecoveryRejectsUnreviewedOrRacingEvidence(t *testing.T) {
 	}
 }
 
-func TestMeridianSourceRecoveryHTTPRequiresAdminAndCSRF(t *testing.T) {
-	f := openMeridianRecoveryFixture(t)
-	handler := NewServer(f.store, "", false).Handler()
+func TestRetiredMeridianSourceRecoveryHTTPCannotRestartBusinessWork(t *testing.T) {
+	store := openMeridianSharedEndpointSnapshotFixture(t)
+	session, csrf, err := store.CreateFirstAdmin(context.Background(), "admin", "example-password-for-test-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM application_commands`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServer(store, "", false).Handler()
 	path := "/api/v1/meridian/endpoints/" + sharedSnapshotEndpointID + "/source-recovery"
 	for _, test := range []struct {
 		method        string
 		session, csrf bool
 		want          int
 	}{
-		{http.MethodGet, false, false, http.StatusUnauthorized},
-		{http.MethodPost, false, false, http.StatusUnauthorized},
-		{http.MethodPost, true, false, http.StatusUnauthorized},
-		{http.MethodGet, true, false, http.StatusOK},
-		{http.MethodPost, true, true, http.StatusAccepted},
+		{http.MethodGet, false, false, http.StatusNotFound},
+		{http.MethodPost, false, false, http.StatusNotFound},
+		{http.MethodPost, true, false, http.StatusNotFound},
+		{http.MethodGet, true, false, http.StatusNotFound},
+		{http.MethodPost, true, true, http.StatusNotFound},
 	} {
-		raw, _ := json.Marshal(f.input)
+		raw := []byte(`{}`)
 		r := httptest.NewRequest(test.method, path, bytes.NewReader(raw))
 		r.Header.Set("Content-Type", "application/json")
 		if test.session {
-			r.AddCookie(&http.Cookie{Name: "vastora_session", Value: f.session})
+			r.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
 		}
 		if test.csrf {
-			r.AddCookie(&http.Cookie{Name: "vastora_csrf", Value: f.csrf})
-			r.Header.Set("X-CSRF-Token", f.csrf)
+			r.AddCookie(&http.Cookie{Name: "vastora_csrf", Value: csrf})
+			r.Header.Set("X-CSRF-Token", csrf)
 		}
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		if w.Code != test.want {
 			t.Fatalf("%s auth=%t csrf=%t status=%d: %s", test.method, test.session, test.csrf, w.Code, w.Body.String())
 		}
-		if test.method == http.MethodGet && test.session && (w.Header().Get("Cache-Control") != "no-store" || strings.Contains(w.Body.String(), "nodekey:")) {
+		if strings.Contains(w.Body.String(), "nodekey:") || strings.Contains(w.Body.String(), sharedSnapshotTokenB) {
 			t.Fatal("unsafe recovery preview")
 		}
+	}
+	var after int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM application_commands`).Scan(&after); err != nil || after != before {
+		t.Fatalf("retired API changed archived work: before=%d after=%d err=%v", before, after, err)
 	}
 }
 

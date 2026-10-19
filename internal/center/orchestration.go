@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/petauron/catalog/catalog"
-	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/senulun"
@@ -28,6 +27,7 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	SourceReceiptSHA256  string                              `json:"sourceReceiptSha256,omitempty"`
 	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
 	Resources            json.RawMessage                     `json:"resources,omitempty"`
 	SenulunRestored      *senulun.RestoreResult              `json:"pulseRestored,omitempty"`
@@ -44,6 +44,9 @@ type ApplicationTaskResult struct {
 }
 
 func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request DeploymentRequest, manifest catalog.AppManifest, now time.Time) (string, error) {
+	if request.ReplaceApplicationID != "" {
+		return s.prepareNativeReplacement(ctx, tx, request, manifest, now)
+	}
 	var siteID string
 	var capabilitiesJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT site_id, capabilities_json FROM agents WHERE id = ?`, request.AgentID).Scan(&siteID, &capabilitiesJSON); err != nil {
@@ -79,56 +82,19 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 	} else if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', site_id = ?, runtime = CASE WHEN ?='uninstall' THEN runtime ELSE ? END, role = CASE WHEN ? = 'install' THEN ? ELSE role END, updated_at = ? WHERE id = ?`, siteID, request.Operation, packageRuntimeName(manifest), request.Operation, request.Role, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return "", fmt.Errorf("center: update application: %w", err)
 	}
-	if request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role == threeXUIRoleMaster {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM three_x_ui_nodes WHERE worker_application_id = ?`, applicationID); err != nil {
-			return "", fmt.Errorf("center: reset 3x-ui topology role: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO three_x_ui_control_plane(id, controller_application_id, selection_reason, selected_at)
-			VALUES(1, ?, 'install:first-global-controller', ?)
-			ON CONFLICT(id) DO UPDATE SET controller_application_id = excluded.controller_application_id,
-			selection_reason = excluded.selection_reason, selected_at = excluded.selected_at`, applicationID, now.Format(time.RFC3339Nano)); err != nil {
-			return "", fmt.Errorf("center: select global 3x-ui subscription controller: %w", err)
-		}
-	}
-	if request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role == threeXUIRoleWorker {
-		masterApplicationID, _, err := runningGlobalThreeXUIController(ctx, tx)
-		if err != nil {
-			return "", errors.New("center: the global 3x-ui subscription controller is unavailable")
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO three_x_ui_nodes(worker_application_id, master_application_id, status, last_error, created_at, updated_at)
-			VALUES(?, ?, 'pending', '', ?, ?)
-			ON CONFLICT(worker_application_id) DO UPDATE SET master_application_id = excluded.master_application_id, remote_node_id = NULL, status = 'pending', last_error = '', updated_at = excluded.updated_at`,
-			applicationID, masterApplicationID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
-			return "", fmt.Errorf("center: reserve 3x-ui VLESS node: %w", err)
-		}
-	}
 	return applicationID, nil
 }
 
 // Retire control-plane access after either a confirmed uninstall or explicit
 // offline-node removal. This makes no claim that remote resources were removed.
 func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time, cleanups *[]publicationCleanup) error {
-	var uninstallAppKey string
-	if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&uninstallAppKey); err != nil {
+	var applicationExists int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM applications WHERE id=?`, applicationID).Scan(&applicationExists); err != nil {
 		return err
 	}
 	values, err := s.applicationPublicationCleanups(ctx, tx, applicationID)
 	if err != nil {
 		return err
-	}
-	if uninstallAppKey == meridianAppKey {
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET enabled=0,runtime_healthy=0,status='revoked',last_error='',updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?) AND status<>'revoked'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_credentials SET enabled=0,updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?)`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM meridian_deployments WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?)`, applicationID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=0,status='retired',last_error='',updated_at=? WHERE application_id=? AND status<>'retired'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return err
-		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'stopped', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return err
@@ -150,6 +116,9 @@ func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, app
 }
 
 func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, executedRuntimeGeneration int, result ApplicationTaskResult, now time.Time, cleanups *[]publicationCleanup) error {
+	if err := completeNativeReplacement(ctx, tx, deploymentID, applicationID, result, now); err != nil {
+		return err
+	}
 	var receiptAppKey string
 	if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&receiptAppKey); err != nil {
 		return err
@@ -160,8 +129,8 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	if operation == "uninstall" {
 		return s.retireApplicationManagement(ctx, tx, applicationID, now, cleanups)
 	}
-	var siteID, appKey, role string
-	if err := tx.QueryRowContext(ctx, `SELECT site_id, app_key, role FROM applications WHERE id = ?`, applicationID).Scan(&siteID, &appKey, &role); err != nil {
+	var siteID string
+	if err := tx.QueryRowContext(ctx, `SELECT site_id FROM applications WHERE id = ?`, applicationID).Scan(&siteID); err != nil {
 		return fmt.Errorf("center: read application site: %w", err)
 	}
 	var manifestJSON []byte
@@ -179,20 +148,14 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status='running',image=?,runtime_generation=?,runtime=?,updated_at=? WHERE id=?`, installedImage, executedRuntimeGeneration, packageRuntimeName(manifest), now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return err
 	}
-	if appKey == threeXUIAppKey && role == threeXUIRoleWorker {
-		if _, err := tx.ExecContext(ctx, `UPDATE services SET endpoint = ? || ':' || container_port, updated_at = ? WHERE application_id = ? AND status <> 'stopped'`, dockerruntime.LegacyXrayAlias, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return fmt.Errorf("center: switch worker services to Vastora Xray: %w", err)
-		}
-	}
 	managementServices := map[string]bool{}
+	forwardingModes := map[string]string{}
 	for _, service := range manifest.Services {
 		managementServices[service.Name] = service.Management
+		forwardingModes[service.Name] = service.ProxyProtocol
 	}
 	reportedServices := make(map[string]bool, len(result.Services))
 	for _, reported := range result.Services {
-		if role == threeXUIRoleWorker {
-			continue
-		}
 		reportedServices[reported.Name] = true
 		if net.ParseIP(reported.Address) == nil || reported.HostPort < 1 || reported.HostPort > 65535 || reported.ContainerPort < 1 || reported.ContainerPort > 65535 {
 			return errors.New("center: Agent reported an invalid service endpoint")
@@ -205,13 +168,13 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 			if err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, management, status, created_at, updated_at)
-				VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'catalog', '', ?, 'ready', ?, ?)`, serviceID, applicationID, siteID, reported.Name, reported.Protocol, reported.ContainerPort, reported.HostPort, endpoint, managementServices[reported.Name], now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, proxy_protocol, container_port, host_port, endpoint, source, app_protocol, management, status, created_at, updated_at)
+				VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalog', '', ?, 'ready', ?, ?)`, serviceID, applicationID, siteID, reported.Name, reported.Protocol, forwardingModes[reported.Name], reported.ContainerPort, reported.HostPort, endpoint, managementServices[reported.Name], now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 				return fmt.Errorf("center: create service: %w", err)
 			}
 		} else if err != nil {
 			return err
-		} else if _, err := tx.ExecContext(ctx, `UPDATE services SET protocol = ?, container_port = ?, host_port = ?, endpoint = ?, source = 'catalog', app_protocol = '', management = ?, status = 'ready', last_error = '', updated_at = ? WHERE id = ?`, reported.Protocol, reported.ContainerPort, reported.HostPort, endpoint, managementServices[reported.Name], now.Format(time.RFC3339Nano), serviceID); err != nil {
+		} else if _, err := tx.ExecContext(ctx, `UPDATE services SET protocol = ?, proxy_protocol = ?, container_port = ?, host_port = ?, endpoint = ?, source = 'catalog', app_protocol = '', management = ?, status = 'ready', last_error = '', updated_at = ? WHERE id = ?`, reported.Protocol, forwardingModes[reported.Name], reported.ContainerPort, reported.HostPort, endpoint, managementServices[reported.Name], now.Format(time.RFC3339Nano), serviceID); err != nil {
 			return fmt.Errorf("center: update service: %w", err)
 		}
 	}
@@ -254,42 +217,8 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		}
 		*cleanups = append(*cleanups, values...)
 	}
-	if appKey == meridianAppKey {
-		if _, err := s.ensureMeridianSubscriptionServiceInTx(ctx, tx, applicationID, now); err != nil {
-			return err
-		}
-		if operation == "upgrade" {
-			var endpointID string
-			if err := tx.QueryRowContext(ctx, `SELECT id FROM meridian_endpoints WHERE application_id=? AND status<>'retired'`, applicationID).Scan(&endpointID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			} else if err == nil {
-				if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
-					return err
-				}
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE application_id=? AND status<>'retired'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-				return err
-			}
-		}
-	}
-	reconcilePublications := true
-	if appKey == meridianAppKey {
-		var cutoverProjection bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM meridian_endpoints endpoint JOIN meridian_cutover cutover ON cutover.id=1
-			WHERE endpoint.application_id=? AND cutover.state IN ('project','verify')
-		)`, applicationID).Scan(&cutoverProjection); err != nil {
-			return err
-		}
-		reconcilePublications = !cutoverProjection
-	}
-	if reconcilePublications {
-		if err := s.reconcileApplicationPublications(ctx, tx, applicationID, now); err != nil {
-			return err
-		}
-	}
-	if appKey == meridianAppKey {
-		return s.reconcileMeridianCutoverInTx(ctx, tx, now.Format(time.RFC3339Nano))
+	if err := s.reconcileApplicationPublications(ctx, tx, applicationID, now); err != nil {
+		return err
 	}
 	return nil
 }
@@ -605,7 +534,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 
 func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT s.id, s.application_id, s.site_id, s.name, s.display_name, s.region_code, s.protocol, s.container_port, s.host_port, s.endpoint, s.source, s.app_protocol, s.management, s.observed_listen, s.status, s.last_error, s.created_at, s.updated_at, a.last_seen_at,
-		COALESCE(guard.status, ''), COALESCE(guard.target_host, ''), COALESCE(guard.target_ip, ''), COALESCE(guard.server_name, ''), COALESCE(guard.target_asn, 0), COALESCE(guard.last_error, ''), COALESCE(protocols.vless_enabled,1),COALESCE(protocols.hy2_enabled,0)
+		COALESCE(guard.status, ''), COALESCE(guard.target_host, ''), COALESCE(guard.target_ip, ''), COALESCE(guard.server_name, ''), COALESCE(guard.target_asn, 0), COALESCE(guard.last_error, ''), COALESCE(protocols.vless_enabled,1),COALESCE(protocols.hy2_enabled,0),s.proxy_protocol
 		FROM services s JOIN applications app ON app.id = s.application_id JOIN agents a ON a.id = app.node_id
 		LEFT JOIN three_x_ui_node_protocols protocols ON protocols.service_id=s.id
 		LEFT JOIN three_x_ui_reality_guards guard ON guard.service_id = s.id ORDER BY s.name, s.id`)
@@ -621,7 +550,7 @@ func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
 		var guardTargetASN int64
 		var vlessEnabled, hy2Enabled bool
 		var management int
-		if err := rows.Scan(&value.ID, &value.ApplicationID, &value.SiteID, &value.Name, &value.DisplayName, &value.RegionCode, &value.Protocol, &value.ContainerPort, &value.HostPort, &value.Endpoint, &value.Source, &value.AppProtocol, &management, &value.ObservedListen, &value.Status, &value.LastError, &created, &updated, &lastSeen, &value.GuardStatus, &guardTargetHost, &guardTargetIP, &guardServerName, &guardTargetASN, &guardError, &vlessEnabled, &hy2Enabled); err != nil {
+		if err := rows.Scan(&value.ID, &value.ApplicationID, &value.SiteID, &value.Name, &value.DisplayName, &value.RegionCode, &value.Protocol, &value.ContainerPort, &value.HostPort, &value.Endpoint, &value.Source, &value.AppProtocol, &management, &value.ObservedListen, &value.Status, &value.LastError, &created, &updated, &lastSeen, &value.GuardStatus, &guardTargetHost, &guardTargetIP, &guardServerName, &guardTargetASN, &guardError, &vlessEnabled, &hy2Enabled, &value.ProxyProtocol); err != nil {
 			return nil, err
 		}
 		if value.AppProtocol == "vless/tcp/reality" {

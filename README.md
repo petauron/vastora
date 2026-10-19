@@ -24,6 +24,10 @@ when the Center is unavailable.
   Ed25519 signed catalog verification, and a bilingual React catalog console.
 - Organization → Site → Node topology, typed Network Candidate/Profile state,
   private application Services, and independent multi-entry Publications.
+- Backup-reviewed [managed service handover](docs/service-handover.md) preserves
+  existing service/publication identities and public addresses when switching
+  to an owned replacement backend. Binding changes remain verification-pending;
+  they are not proof of application health or a completed production migration.
 - Leased, retryable, attempt-fenced Agent tasks with append-only audit events.
 - LAN, Headscale, direct-public, shared-443, and Cloudflare Tunnel publication
   paths; each host uses one Agent-managed Caddy with a private Unix socket,

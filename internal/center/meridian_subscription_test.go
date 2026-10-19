@@ -18,7 +18,7 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
+func TestRetiredCenterSubscriptionPreservesPrivateArchiveWithoutServingIt(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -97,13 +97,18 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/sub/"+token, nil)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || response.Header().Get("Subscription-Userinfo") != "upload=0; download=100; total=1000" {
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), protocolID) || strings.Contains(response.Body.String(), token) {
 		t.Fatalf("subscription status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}
-	if response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Referrer-Policy") != "no-referrer" || !strings.Contains(response.Header().Get("X-Robots-Tag"), "noindex") {
-		t.Fatalf("subscription secret-safety headers=%v", response.Header())
+	archived, err := store.MeridianSubscription(ctx, token)
+	if err != nil || archived.Usage.UsedBytes != 100 || archived.Account.Plan.TotalBytes != 1000 {
+		t.Fatalf("retired HTTP route damaged private subscription archive: %#v err=%v", archived, err)
 	}
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(response.Body.String()))
+	encoded, err := glivela.RenderLinks(archived.Entries, archived.Account.ID, glivela.FixedMode, archived.Routes, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(encoded)))
 	if err != nil || !strings.Contains(string(decoded), "vless://"+protocolID+"@entry.example.test:443") {
 		t.Fatalf("subscription body=%q err=%v", decoded, err)
 	}
@@ -118,8 +123,12 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	mihomoRequest := httptest.NewRequest(http.MethodGet, "/sub/"+token+"?target=clash", nil)
 	mihomoResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(mihomoResponse, mihomoRequest)
-	if mihomoResponse.Code != http.StatusOK || !strings.Contains(mihomoResponse.Body.String(), "type: vless") || !strings.Contains(mihomoResponse.Body.String(), protocolID) {
+	if mihomoResponse.Code != http.StatusNotFound || strings.Contains(mihomoResponse.Body.String(), protocolID) {
 		t.Fatalf("Mihomo status=%d body=%s", mihomoResponse.Code, mihomoResponse.Body.String())
+	}
+	mihomo, err := glivela.RenderMihomo(archived.Entries, archived.Account.ID, glivela.FixedMode, archived.Routes)
+	if err != nil || !strings.Contains(string(mihomo), "type: vless") || !strings.Contains(string(mihomo), protocolID) {
+		t.Fatal("private archived identity cannot be interpreted by the application renderer", err)
 	}
 
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, landingSelectionKey, `{"revision":0,"nodeIds":null}`); err != nil {
@@ -127,7 +136,7 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	}
 	independent := httptest.NewRecorder()
 	server.Handler().ServeHTTP(independent, httptest.NewRequest(http.MethodGet, "/sub/"+token, nil))
-	if independent.Code != http.StatusOK {
+	if independent.Code != http.StatusNotFound {
 		t.Fatalf("native subscription depended on global landing metadata: status=%d body=%s", independent.Code, independent.Body.String())
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET total_bytes=120,used_bytes=105 WHERE id=?`, endpointID); err != nil {
@@ -215,7 +224,7 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	}
 	snapshot := httptest.NewRecorder()
 	server.Handler().ServeHTTP(snapshot, httptest.NewRequest(http.MethodGet, "/sub/"+token, nil))
-	if snapshot.Code != http.StatusOK {
+	if snapshot.Code != http.StatusNotFound {
 		t.Fatalf("imported cutover snapshot status=%d body=%s", snapshot.Code, snapshot.Body.String())
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='complete' WHERE id=1;
@@ -225,7 +234,7 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	}
 	recovered := httptest.NewRecorder()
 	server.Handler().ServeHTTP(recovered, httptest.NewRequest(http.MethodGet, "/sub/"+token, nil))
-	if recovered.Code != http.StatusOK || recovered.Body.String() != response.Body.String() {
+	if recovered.Code != http.StatusNotFound || strings.Contains(recovered.Body.String(), protocolID) {
 		t.Fatalf("pending runtime did not preserve last applied subscription: status=%d body=%s", recovered.Code, recovered.Body.String())
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_accounts SET enabled=0,status='disabled' WHERE id=?`, accountID); err != nil {
@@ -242,8 +251,8 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("missing token status=%d", missing.Code)
 	}
-	if missing.Header().Get("Cache-Control") != "no-store" || missing.Header().Get("Referrer-Policy") != "no-referrer" {
-		t.Fatalf("missing subscription token response was cacheable: headers=%v", missing.Header())
+	if strings.Contains(missing.Body.String(), token) || strings.Contains(missing.Body.String(), protocolID) {
+		t.Fatal("retired subscription route disclosed private archive")
 	}
 }
 
@@ -551,9 +560,17 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	server := NewServer(store, t.TempDir(), false)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sub/"+otherToken, nil))
-	decoded, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(response.Body.String()))
-	if response.Code != http.StatusOK || decodeErr != nil || !strings.Contains(string(decoded), "vless://"+otherProtocolID+"@endpoint-a.example.test:443") {
-		t.Fatalf("shared runtime rebuild withdrew unaffected subscription: status=%d body=%q err=%v", response.Code, decoded, decodeErr)
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), otherProtocolID) {
+		t.Fatal("retired HTTP route disclosed the unaffected private account")
+	}
+	archived, err := store.MeridianSubscription(ctx, otherToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, renderErr := glivela.RenderLinks(archived.Entries, archived.Account.ID, glivela.FixedMode, archived.Routes, true)
+	decoded, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(encoded)))
+	if renderErr != nil || decodeErr != nil || !strings.Contains(string(decoded), "vless://"+otherProtocolID+"@endpoint-a.example.test:443") {
+		t.Fatalf("unaffected private archive changed: body=%q render=%v decode=%v", decoded, renderErr, decodeErr)
 	}
 	if _, err := store.MeridianSubscription(ctx, "shared-token"); !errors.Is(err, errMeridianSubscriptionNotFound) {
 		t.Fatalf("applied snapshot bypassed exhausted account quota: %v", err)
@@ -689,14 +706,15 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task, claimErr := store.claimApplicationCommand(ctx, claimTx, node.ID); task != nil || !errors.Is(claimErr, errApplicationCommandDiscarded) {
+	if task, claimErr := store.claimApplicationCommand(ctx, claimTx, node.ID); task != nil || claimErr != nil {
 		claimTx.Rollback()
 		t.Fatalf("superseded queued command was not discarded: task=%#v err=%v", task, claimErr)
 	}
 	if err := claimTx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	var endpointStatus, commandState, event string
+	var endpointStatus, commandState string
+	var events int
 	var desiredRevision int
 	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision,status FROM meridian_endpoints WHERE id='superseded-endpoint'`).Scan(&desiredRevision, &endpointStatus); err != nil {
 		t.Fatal(err)
@@ -704,43 +722,45 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT state FROM application_commands WHERE id='superseded-queued-command'`).Scan(&commandState); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.db.QueryRowContext(ctx, `SELECT event FROM task_events WHERE task_id='superseded-queued-command' ORDER BY created_at DESC LIMIT 1`).Scan(&event); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_events WHERE task_id='superseded-queued-command'`).Scan(&events); err != nil {
 		t.Fatal(err)
 	}
-	if desiredRevision != 2 || endpointStatus != "pending" || commandState != "succeeded" || event != "succeeded" {
-		t.Fatalf("superseded queued command changed newest desired state: revision=%d endpoint=%s command=%s event=%s", desiredRevision, endpointStatus, commandState, event)
+	if desiredRevision != 2 || endpointStatus != "pending" || commandState != "pending" || events != 0 {
+		t.Fatalf("retired queued command changed retained state: revision=%d endpoint=%s command=%s events=%d", desiredRevision, endpointStatus, commandState, events)
 	}
 
 	completionSHA := glivela.Identity("superseded-completion-config")
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=3 WHERE id='superseded-endpoint'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,site_id,display_name,agent_id,gateway_node_id,kind,input_json,state,attempt,created_at,updated_at)
-		VALUES('superseded-completion-command','superseded-application',?,'Superseded entry',?,?,?,?,'running',1,?,?)`, siteID, node.ID, node.ID, meridianruntime.ApplyKind, []byte(`{"endpointId":"superseded-endpoint"}`), now, now); err != nil {
+	// Seed the separate pre-upgrade in-flight scenario on the same archived
+	// row. The migrated schema correctly forbids two active commands per Agent;
+	// no current claim or successful completion is manufactured here.
+	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='running',attempt=1 WHERE id='superseded-queued-command'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_deployments SET desired_revision=2,desired_sha256=?,command_id='superseded-completion-command',status='applying',last_error='',updated_at=? WHERE endpoint_id='superseded-endpoint'`, completionSHA, now); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_deployments SET desired_revision=2,desired_sha256=?,command_id='superseded-queued-command',status='applying',last_error='',updated_at=? WHERE endpoint_id='superseded-endpoint'`, completionSHA, now); err != nil {
 		t.Fatal(err)
 	}
 	result := ApplicationTaskResult{MeridianRuntime: &meridianruntime.Result{Receipt: glivela.AppliedReceipt{Revision: 2, ConfigSHA256: completionSHA, RuntimeReady: true}, Stats: json.RawMessage(`{}`)}}
-	result.Resources = mockIntegratedResources(t, store, "superseded-completion-command")
+	result.Resources = mockIntegratedResources(t, store, "superseded-queued-command")
 	raw, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, "superseded-completion-command", 1, true, "", raw, false); err != nil {
-		t.Fatal(err)
+	if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, "superseded-queued-command", 1, true, "", raw, false); err == nil {
+		t.Fatal("retired completion was allowed to project a claimed success")
 	}
 	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision,status FROM meridian_endpoints WHERE id='superseded-endpoint'`).Scan(&desiredRevision, &endpointStatus); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.db.QueryRowContext(ctx, `SELECT state FROM application_commands WHERE id='superseded-completion-command'`).Scan(&commandState); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM application_commands WHERE id='superseded-queued-command'`).Scan(&commandState); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.db.QueryRowContext(ctx, `SELECT event FROM task_events WHERE task_id='superseded-completion-command' ORDER BY created_at DESC LIMIT 1`).Scan(&event); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_events WHERE task_id='superseded-queued-command'`).Scan(&events); err != nil {
 		t.Fatal(err)
 	}
-	if desiredRevision != 3 || endpointStatus != "pending" || commandState != "succeeded" || event != "succeeded" {
-		t.Fatalf("superseded completion changed newest desired state: revision=%d endpoint=%s command=%s event=%s", desiredRevision, endpointStatus, commandState, event)
+	if desiredRevision != 3 || endpointStatus != "pending" || commandState != "running" || events != 0 {
+		t.Fatalf("retired completion changed retained state: revision=%d endpoint=%s command=%s events=%d", desiredRevision, endpointStatus, commandState, events)
 	}
 }

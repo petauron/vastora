@@ -2,7 +2,6 @@ package center
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -217,12 +216,21 @@ func TestMeridianSharedEndpointMutationsPreserveOtherAccountSubscription(t *test
 			server := NewServer(store, t.TempDir(), false)
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sub/"+sharedSnapshotTokenB, nil))
-			decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(response.Body.String()))
-			if response.Code != http.StatusOK || err != nil || !strings.Contains(string(decoded), "vless://"+sharedSnapshotUUIDB+"@entry.example.test:443") {
-				t.Fatalf("unrelated subscription failed during rebuild: status=%d body=%q err=%v", response.Code, decoded, err)
+			if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), sharedSnapshotUUIDB) {
+				t.Fatal("retired public subscription exposed private archive data")
 			}
-			if got := response.Header().Get("Subscription-Userinfo"); got != "upload=0; download=50; total=1000" {
-				t.Fatalf("unrelated account quota changed: %q", got)
+			// Read/render only the retained encrypted recovery snapshot. Actual
+			// public HTTPS continuity is tested by the independent Glivela owner.
+			decoded, err := glivela.RenderLinks(snapshot.Entries, sharedSnapshotAccountB, glivela.FixedMode, snapshot.Routes, false)
+			if err != nil || !strings.Contains(string(decoded), "vless://"+sharedSnapshotUUIDB+"@entry.example.test:443") {
+				t.Fatalf("retained subscription identity lost: %v", err)
+			}
+			archive, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if archive.Usage.UsedBytes != 50 || archive.Account.Plan.TotalBytes != 1000 {
+				t.Fatal("unrelated account quota changed in the recovery snapshot")
 			}
 		})
 	}

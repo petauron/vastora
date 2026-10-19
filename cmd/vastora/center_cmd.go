@@ -212,20 +212,8 @@ func runCenter(arguments []string) error {
 		go store.RunAgentRemovals(maintenanceContext, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center node removal: %v\n", err)
 		})
-		go store.RunRouteHealthDiagnostics(maintenanceContext, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center route health diagnostics: %v\n", err)
-		})
 		go store.RunCertificateRenewal(maintenanceContext, 12*time.Hour, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center private HTTPS renewal: %v\n", err)
-		})
-		go store.RunRealityNameReconciliation(maintenanceContext, time.Minute, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center REALITY name reconciliation: %v\n", err)
-		})
-		go store.RunRealityGuardRecovery(maintenanceContext, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center REALITY guard revalidation: %v\n", err)
-		})
-		go store.RunThreeXUIInboundPlanResets(maintenanceContext, time.Minute, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center REALITY traffic plan reset: %v\n", err)
 		})
 		centerServer := center.NewServer(store, *webDir, *tlsCert != "").
 			WithOfficialCatalogTrust(*officialCatalogOrigin, catalogRoot).

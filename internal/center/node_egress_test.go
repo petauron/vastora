@@ -47,23 +47,15 @@ func TestNodeEgressRejectsUnadoptedRuntimeWithoutChangingEndpoint(t *testing.T) 
 	}
 }
 
-func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
+func TestArchivedNodeEgressRejectsLateSuccessAndFailureWithoutChangingIdentity(t *testing.T) {
 	for _, success := range []bool{false, true} {
 		s, id := nodeEgressFixture(t)
 		ctx := context.Background()
-		before, err := s.NodeEgress(ctx, id)
-		if err != nil || !before.Available || before.Policy != glivela.EgressAuto || before.Revision != 0 {
-			t.Fatalf("initial=%#v err=%v", before, err)
-		}
 		command, err := s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: glivela.EgressIPv6Only})
 		if err != nil {
 			t.Fatal(err)
 		}
-		view, readErr := s.ApplicationCommand(ctx, command)
-		if readErr != nil || view.Kind != meridianruntime.ApplyKind || view.State != "pending" {
-			t.Fatalf("queued command not readable: %#v %v", view, readErr)
-		}
-		if _, err = s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: glivela.EgressAuto}); err == nil {
+		if _, err := s.SetNodeEgress(ctx, id, NodeEgressInput{Policy: glivela.EgressAuto}); err == nil {
 			t.Fatal("concurrent policy accepted")
 		}
 		tx, err := s.db.BeginTx(ctx, nil)
@@ -71,61 +63,25 @@ func TestNodeEgressQueuesOriginalIdentityAndRequiresEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		p, err := s.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, id)
+		_ = tx.Rollback()
 		if err != nil {
-			tx.Rollback()
 			t.Fatal(err)
 		}
-		tx.Rollback()
-		if p.task.NativeEgress != glivela.EgressIPv6Only || p.task.ImageReference != meridianruntime.EgressImage || len(p.task.EgressClients) != 1 {
-			t.Fatalf("policy projection missing: %#v", p.task.NativeEgress)
+		if p.task.NativeEgress != glivela.EgressIPv6Only || len(p.task.EgressClients) != 1 {
+			t.Fatal("archived egress identity missing")
 		}
 		c := p.task.EgressClients[0]
 		if c.Reality.AdvertiseHost != "entry.example.test" || c.Reality.AdvertisePort != 443 || c.Reality.PrivateKey != "" || c.Material.Credential.Kind != glivela.NativeCredential {
-			t.Fatal("probe changed identity or targeted a landing")
+			t.Fatal("archived identity changed or exposed private key")
 		}
-		if _, err := c.Config(1080); err != nil {
+		if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, command); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, command); err != nil {
-			t.Fatal(err)
-		}
-		result := meridianHealthResult(p, s.now(), true)
+		result := meridianHealthResult(p, s.now(), success)
 		if success {
 			result.Egress = &meridianruntime.EgressObservation{Policy: p.task.NativeEgress, ConfigSHA256: p.task.Desired.ConfigSHA256, Exits: []string{"2001:4860:4860::8888"}, CheckedAt: s.now()}
 		}
-		completeMeridianHealthFixture(t, s, p, command, result)
-		terminal, readErr := s.ApplicationCommand(ctx, command)
-		if readErr != nil || terminal.State == "pending" || terminal.State == "running" {
-			t.Fatalf("terminal command not readable: %#v %v", terminal, readErr)
-		}
-		after, err := s.NodeEgress(ctx, id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if success {
-			if after.AppliedPolicy != glivela.EgressIPv6Only || after.Verified == nil || after.State != "ready" {
-				t.Fatalf("not verified: %#v", after)
-			}
-			// Quota closure must still render without a remaining enabled client.
-			if _, err = s.db.Exec(`UPDATE meridian_accounts SET enabled=0`); err != nil {
-				t.Fatal(err)
-			}
-			tx, err = s.db.BeginTx(ctx, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1 WHERE id=?`, sharedSnapshotEndpointID); err != nil {
-				tx.Rollback()
-				t.Fatal(err)
-			}
-			next, err := s.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, "")
-			tx.Rollback()
-			if err != nil || len(next.task.EgressClients) != 0 || next.task.NativeEgress != glivela.EgressIPv6Only {
-				t.Fatalf("quota mutation lost policy: %v", err)
-			}
-		} else if after.State != "failed" || after.Verified != nil || after.AppliedPolicy != glivela.EgressAuto {
-			t.Fatalf("unverified marked applied: %#v", after)
-		}
+		assertRetiredMeridianResultPreservesState(t, s, p, command, result)
 	}
 }
 

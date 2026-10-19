@@ -5,8 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"strings"
+
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
@@ -354,24 +353,4 @@ func (s *Store) UpdateAgentReinstallLandingSource(ctx context.Context, agentID, 
 		s.taskChanges.notify("agent:" + target.NodeID)
 	}
 	return *updated, nil
-}
-
-func (s *Server) handleAgentReinstallLandingSource(w http.ResponseWriter, r *http.Request) {
-	var input AgentReinstallApplicationInput
-	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	admin, err := s.requestAdminID(r)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.UpdateAgentReinstallLandingSource(r.Context(), r.PathValue("id"), admin, input, strings.HasSuffix(r.URL.Path, "/authorize-landing"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, result)
 }

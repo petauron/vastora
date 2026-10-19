@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/meridianruntime"
-	"net/http"
+
 	"strings"
 	"testing"
 	"time"
@@ -63,7 +63,7 @@ func TestAgentReinstallAcceptanceRejectsUnreviewedExitAndStaleAuthority(t *testi
 	}
 }
 
-func TestAgentReinstallAcceptanceQueuesAndProjectsAuthenticatedResult(t *testing.T) {
+func TestRetiredAgentReinstallAcceptanceCannotProjectOrReleaseRecovery(t *testing.T) {
 	s, node, input := reinstallEntryCheckFixture(t, "1.1.1.1")
 	ctx := context.Background()
 	if _, err := s.ActivateAgentReinstallAccess(ctx, node.ID, "reinstall-review-admin", input); err != nil {
@@ -73,14 +73,14 @@ func TestAgentReinstallAcceptanceQueuesAndProjectsAuthenticatedResult(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifier, err := s.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64", testAgentPublicKey(t))
+	verifier, err := s.EnrollAgent(ctx, enrollment.Token, Version, "linux", "amd64", testAgentPublicKey(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`UPDATE agents SET capabilities_json='{"docker":true,"meridianAcceptance":true}',last_seen_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), verifier.ID); err != nil {
+	if _, err := s.db.Exec(`UPDATE agents SET capabilities_json='{"docker":true,"meridianAcceptance":true}',last_seen_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), verifier.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.RegisterExecutionSession(ctx, verifier.ID, verifier.Credential, "monitor-registration-evidence-session", controlplane.ExecutionProtocol); err != nil {
+	if err := s.RegisterExecutionSession(ctx, verifier.ID, verifier.Credential, "monitor-registration-evidence-session", controlplane.ExecutionProtocol); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
@@ -88,126 +88,72 @@ func TestAgentReinstallAcceptanceQueuesAndProjectsAuthenticatedResult(t *testing
 		t.Fatal(err)
 	}
 	input.PlanRevision = plan.Revision
-	if _, err = s.verifyAgentReinstallEntry(ctx, node.ID, "reinstall-review-admin", input, func(context.Context, AgentReinstallEntryCheckResult) string { return "passed" }); err != nil {
+	if _, err := s.verifyAgentReinstallEntry(ctx, node.ID, "reinstall-review-admin", input, func(context.Context, AgentReinstallEntryCheckResult) string { return "passed" }); err != nil {
 		t.Fatal(err)
 	}
-	before, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.requireReinstallCompletion(ctx, before, node.ID, "reinstall-review-admin", input.OperationID, input.PlanRevision); err == nil {
-		t.Fatal("completion accepted without real client proof")
-	}
-	before.Rollback()
 	checks, err := s.QueueAgentReinstallClientChecks(ctx, node.ID, verifier.ID, "reinstall-review-admin", "request-one", input)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || len(checks) != 1 {
+		t.Fatalf("historical check intent: %v", err)
 	}
-	if len(checks) != 1 {
-		t.Fatalf("checks: %+v", checks)
+	repeated, err := s.QueueAgentReinstallClientChecks(ctx, node.ID, verifier.ID, "reinstall-review-admin", "request-one", input)
+	if err != nil || len(repeated) != 1 || repeated[0].CommandID != checks[0].CommandID {
+		t.Fatal("historical check identity changed")
 	}
-	again, err := s.QueueAgentReinstallClientChecks(ctx, node.ID, verifier.ID, "reinstall-review-admin", "request-one", input)
-	if err != nil || len(again) != 1 || again[0].CommandID != checks[0].CommandID {
-		t.Fatalf("not idempotent: %v", err)
-	}
-	if _, err = s.QueueAgentReinstallClientChecks(ctx, node.ID, verifier.ID, "reinstall-review-admin", "request-two", input); err == nil {
-		t.Fatal("overlapping verification accepted")
+	if _, err := s.QueueAgentReinstallClientChecks(ctx, node.ID, verifier.ID, "reinstall-review-admin", "request-two", input); err == nil {
+		t.Fatal("overlapping old check was queued")
 	}
 	task, err := s.claimExecutionTask(ctx, verifier.ID, verifier.Credential, "monitor-registration-evidence-session", 0)
-	if err != nil || task == nil || task.MeridianAcceptance == nil {
-		t.Fatalf("claim: %+v %v", task, err)
-	}
-	if task.MeridianAcceptance.Client.Material.ProtocolID != restoreNativeID || task.MeridianAcceptance.Client.Reality.PrivateKey != "" {
-		t.Fatal("saved client identity changed or server key exposed")
-	}
-	digest, err := task.MeridianAcceptance.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := json.Marshal(map[string]any{"meridianAcceptance": meridianruntime.AcceptanceResult{TaskDigest: digest}})
-	response := submitMonitorInspection(t, s, verifier, task, raw, true)
-	if response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
-	}
-	var state, metadata, result string
-	if err = s.db.QueryRow(`SELECT c.state,CAST(c.input_json AS TEXT),CAST(a.result_json AS TEXT) FROM application_commands c JOIN agent_reinstall_client_checks a ON a.command_id=c.id WHERE c.id=?`, task.ID).Scan(&state, &metadata, &result); err != nil {
-		t.Fatal(err)
-	}
-	if state != "succeeded" || strings.Contains(metadata, restoreNativeID) || !strings.Contains(result, "checkedAt") {
-		t.Fatal("invalid or secret-bearing receipt")
-	}
-	if blocked, err := agentReinstallBlocked(ctx, s.db, node.ID); err != nil || !blocked {
-		t.Fatal("single check released recovery fence")
-	}
-	views, err := s.AgentReinstallClientChecks(ctx, node.ID)
-	if err != nil || len(views) != 1 || views[0].State != "verified" || views[0].AccountName != "Account" {
-		t.Fatalf("read view: %+v %v", views, err)
+	if err != nil || task != nil {
+		t.Fatalf("retired client check dispatched: %v %v", task, err)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
-	evidence, err := s.requireReinstallCompletion(ctx, tx, node.ID, "reinstall-review-admin", input.OperationID, input.PlanRevision)
-	if err != nil || len(evidence.Clients[input.ApplicationID]) != 1 || len(evidence.Runtimes) != 1 {
-		t.Fatalf("completion gate: %+v %v", evidence.Clients, err)
+	targets, err := s.reinstallAcceptanceTasks(ctx, tx, node.ID, verifier.ID, "reinstall-review-admin", input)
+	_ = tx.Rollback()
+	if err != nil || len(targets) != 1 {
+		t.Fatalf("historical target identity: %v", err)
 	}
-	var observation []byte
-	if err = tx.QueryRow(`SELECT runtime_observation FROM agent_reinstall_app_preparations WHERE application_id=?`, input.ApplicationID).Scan(&observation); err != nil {
+	if targets[0].Client.Material.ProtocolID != restoreNativeID || targets[0].Client.Reality.PrivateKey != "" {
+		t.Fatal("saved client identity changed or server key exposed")
+	}
+	digest, err := targets[0].Digest()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tx.Exec(`UPDATE agent_reinstall_app_preparations SET runtime_observation=X'1234' WHERE application_id=?`, input.ApplicationID); err != nil {
+	// Model an attempt issued before upgrade, never issue a new legacy command.
+	if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, checks[0].CommandID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.requireReinstallCompletion(ctx, tx, node.ID, "reinstall-review-admin", input.OperationID, input.PlanRevision); err == nil {
-		t.Fatal("corrupt runtime observation accepted")
+	valid, _ := json.Marshal(map[string]any{"meridianAcceptance": meridianruntime.AcceptanceResult{TaskDigest: digest}})
+	malformed, _ := json.Marshal(map[string]any{"meridianAcceptance": meridianruntime.AcceptanceResult{TaskDigest: "changed"}})
+	for _, raw := range []json.RawMessage{valid, malformed, json.RawMessage(`{}`)} {
+		for _, success := range []bool{false, true} {
+			assertRetiredApplicationResultPreservesState(t, s, verifier.ID, checks[0].CommandID, success, raw)
+		}
 	}
-	if _, err = tx.Exec(`UPDATE agent_reinstall_app_preparations SET runtime_observation=? WHERE application_id=?`, observation, input.ApplicationID); err != nil {
+	var metadata string
+	if err := s.db.QueryRow(`SELECT CAST(input_json AS TEXT) FROM application_commands WHERE id=?`, checks[0].CommandID).Scan(&metadata); err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := s.readReinstallClientCheck(ctx, tx, verifier.ID, task.ID)
-	if err != nil || receipt.State != "verified" {
-		t.Fatalf("authenticated evidence: %+v %v", receipt, err)
+	if strings.Contains(metadata, restoreNativeID) || strings.Contains(metadata, "original-private-key") {
+		t.Fatal("recovery metadata contains credentials")
 	}
-	if _, err = tx.Exec(`UPDATE task_executions SET sealed_result=X'1234' WHERE task_id=?`, task.ID); err != nil {
-		t.Fatal(err)
-	}
-	receipt, err = s.readReinstallClientCheck(ctx, tx, verifier.ID, task.ID)
-	if err != nil || receipt.State != "needs_review" {
-		t.Fatal("corrupt evidence accepted")
-	}
-	if _, err = s.requireReinstallCompletion(ctx, tx, node.ID, "reinstall-review-admin", input.OperationID, input.PlanRevision); err == nil {
-		t.Fatal("completion accepted corrupt client proof")
-	}
-
-	tx.Rollback()
-	completeInput := AgentReinstallCompleteInput{OperationID: input.OperationID, PlanRevision: input.PlanRevision}
-	if _, err = s.db.Exec(`CREATE TRIGGER fail_recovery_projection BEFORE UPDATE OF status ON services WHEN NEW.status='ready' BEGIN SELECT RAISE(ABORT,'synthetic projection failure'); END`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.CompleteAgentReinstall(ctx, node.ID, "reinstall-review-admin", completeInput); err == nil {
-		t.Fatal("injected projection failure accepted")
+	views, err := s.AgentReinstallClientChecks(ctx, node.ID)
+	if err != nil || len(views) != 1 || views[0].State == "verified" {
+		t.Fatalf("late receipt became fresh acceptance: %v", err)
 	}
 	if blocked, err := agentReinstallBlocked(ctx, s.db, node.ID); err != nil || !blocked {
-		t.Fatal("failed projection released fence")
+		t.Fatal("legacy proof released recovery fence")
 	}
-	if _, err = s.db.Exec(`DROP TRIGGER fail_recovery_projection`); err != nil {
+	tx, err = s.db.BeginTx(ctx, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	completed, err := s.CompleteAgentReinstall(ctx, node.ID, "reinstall-review-admin", completeInput)
-	if err != nil || completed.OperationID != input.OperationID {
-		t.Fatalf("finalize: %+v %v", completed, err)
+	_, completionErr := s.requireReinstallCompletion(ctx, tx, node.ID, "reinstall-review-admin", input.OperationID, input.PlanRevision)
+	_ = tx.Rollback()
+	if completionErr == nil {
+		t.Fatal("legacy client proof finalized application-owned restoration")
 	}
-	if blocked, err := agentReinstallBlocked(ctx, s.db, node.ID); err != nil || blocked {
-		t.Fatal("completed recovery remains fenced")
-	}
-	var ready bool
-	if err = s.db.QueryRow(`SELECT e.runtime_healthy=1 AND e.status='ready' AND e.applied_revision=e.desired_revision AND d.applied_sha256=evidence.runtime_sha AND service.status='ready' FROM meridian_endpoints e JOIN meridian_deployments d ON d.endpoint_id=e.id JOIN services service ON service.id=e.service_id JOIN (SELECT ? AS runtime_sha) evidence WHERE e.id='restore-endpoint'`, completed.RuntimeDigests[input.ApplicationID]).Scan(&ready); err != nil || !ready {
-		t.Fatalf("business projection missing: %v", err)
-	}
-	againCompleted, err := s.CompleteAgentReinstall(ctx, node.ID, "reinstall-review-admin", completeInput)
-	if err != nil || !againCompleted.CompletedAt.Equal(completed.CompletedAt) {
-		t.Fatal("lost response repeated finalization")
-	}
-
 }

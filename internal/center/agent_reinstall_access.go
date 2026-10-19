@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
+
 	"reflect"
 	"time"
 
@@ -206,24 +206,4 @@ func (s *Store) ActivateAgentReinstallAccess(ctx context.Context, agentID, admin
 	}
 	result = AgentReinstallAccess{State: "applied", ServiceAddress: profile.ServiceAddress, PublicAddress: profile.PublicAddress, ActivatedAt: now}
 	return result, tx.Commit()
-}
-
-func (s *Server) handleAgentReinstallAccess(writer http.ResponseWriter, request *http.Request) {
-	var input AgentReinstallApplicationInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	adminID, err := s.requestAdminID(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.ActivateAgentReinstallAccess(request.Context(), request.PathValue("id"), adminID, input)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, result)
 }

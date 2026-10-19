@@ -194,22 +194,6 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 	}
 	digest := sha256.Sum256(encoded)
 	plan.Revision = hex.EncodeToString(digest[:])
-	for i := range plan.Applications {
-		plan.Applications[i].Preparation, err = s.readReinstallPreparation(ctx, tx, plan.AgentID, plan.Applications[i].ApplicationID)
-		if err != nil {
-			return plan, err
-		}
-		if preparation := plan.Applications[i].Preparation; preparation != nil {
-			preparation.DNS, err = s.readReinstallDNS(ctx, tx, agentID, preparation.DeploymentID)
-			if err != nil {
-				return plan, err
-			}
-			preparation.EntryCheck, err = s.readReinstallEntryCheck(ctx, tx, preparation.DeploymentID, plan.Revision)
-			if err != nil {
-				return plan, err
-			}
-		}
-	}
 	plan.Recovery, err = readAgentReinstallOperation(ctx, tx, plan.AgentID)
 	if err == nil && plan.Recovery != nil {
 		plan.Remaining = reinstallRemaining(plan)
@@ -277,9 +261,6 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 				app.Requirements = append(app.Requirements, "verify_saved_artifact_and_credentials")
 				policy, reconstructible := recovery.OfficialRecoveryPolicy(app.AppKey, app.Version)
 				switch {
-				case app.AppKey == meridianAppKey:
-					app.Recovery = "rebuild_configuration"
-					app.Requirements = append(app.Requirements, "validate_saved_meridian_intent_and_credentials")
 				case app.AppKey == senulunAgentAppKey && managedMonitorEvidence:
 					app.Recovery = "reenroll_monitor"
 					app.Requirements = append(app.Requirements, "replace_managed_monitor_enrollment")

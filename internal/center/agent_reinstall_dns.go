@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"net/http"
+
 	"reflect"
 	"strings"
 	"time"
@@ -118,36 +118,6 @@ func (s *Store) savedReinstallDNS(ctx context.Context, tx *sql.Tx, preparationID
 		return nil, nil, err
 	}
 	return &value, targets, nil
-}
-
-func (s *Store) readReinstallDNS(ctx context.Context, tx *sql.Tx, agentID, preparationID string) (*AgentReinstallDNS, error) {
-	saved, expected, err := s.savedReinstallDNS(ctx, tx, preparationID)
-	if err != nil {
-		return nil, err
-	}
-	targets, err := s.reinstallDNSTargets(ctx, tx, agentID, preparationID)
-	if saved != nil {
-		// Bind durable DNS evidence to its owned records and approved addresses.
-		// Unrelated task history must not invalidate an unchanged external result.
-		saved.Current = err == nil && reflect.DeepEqual(expected, targets)
-		age := s.now().UTC().Sub(saved.CheckedAt)
-		saved.CanContinue = saved.CanContinue && saved.Current && age >= 0 && age <= 30*time.Minute
-		return saved, nil
-	}
-	if errors.Is(err, errExecutionAuthorization) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(targets) == 0 {
-		return nil, nil
-	}
-	value := AgentReinstallDNS{State: "pending", Current: true, Entries: []AgentReinstallDNSEntry{}}
-	for _, target := range targets {
-		value.Entries = append(value.Entries, target.Entry)
-	}
-	return &value, nil
 }
 
 func (s *Store) authorizeReinstallDNS(ctx context.Context, tx *sql.Tx, agentID, adminID string, input AgentReinstallDNSInput) (string, []reinstallDNSTarget, error) {
@@ -375,24 +345,4 @@ func inspectReinstallDNSRecord(ctx context.Context, client cloudflareClient, tar
 		}
 	}
 	return state
-}
-
-func (s *Server) handleAgentReinstallDNS(writer http.ResponseWriter, request *http.Request) {
-	var input AgentReinstallDNSInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	adminID, err := s.requestAdminID(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.runReinstallDNS(request.Context(), request.PathValue("id"), adminID, input, strings.HasSuffix(request.URL.Path, "/inspect-dns"))
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, result)
 }

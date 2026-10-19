@@ -51,33 +51,9 @@ func reinstallRemaining(plan AgentReinstallPlan) []AgentReinstallRemaining {
 			}
 			continue
 		}
-		if app.AppKey != meridianAppKey || app.Recovery != "rebuild_configuration" {
-			add("application_review", app.ApplicationID)
-			continue
-		}
-		p := app.Preparation
-		// Show the next actionable step per application, not every dependent
-		// symptom. Refreshing the plan advances this step using server receipts.
-		switch {
-		case p == nil || p.State != "succeeded":
-			add("application_prepare", app.ApplicationID)
-		case p.Landing != nil && p.Landing.State != "authorized":
-			add("landing_authorization", app.ApplicationID)
-		case p.Runtime == nil || p.Runtime.State != "succeeded":
-			add("application_runtime", app.ApplicationID)
-		case app.SharedEntry && (p.Listener == nil || p.Listener.State != "succeeded"):
-			add("entry_restore", app.ApplicationID)
-		case p.Access == nil || p.Access.State != "applied":
-			add("access_activate", app.ApplicationID)
-		case !reinstallCompletionDNSVerified(p.DNS, p.EntryCheck):
-			add("entry_dns", app.ApplicationID)
-		case app.SharedEntry && (p.EntryCheck == nil || !p.EntryCheck.Current || p.EntryCheck.State != "passed"):
-			add("entry_verify", app.ApplicationID)
-		default:
-			// DNS/TLS reachability and transport observations do not establish
-			// authenticated native or fixed-route client success.
-			add("client_acceptance", app.ApplicationID)
-		}
+		// Unknown/application-owned recovery cannot be inferred from legacy
+		// process, DNS or proxy receipts. Keep the generic review requirement.
+		add("application_review", app.ApplicationID)
 	}
 	// Finalization independently revalidates all evidence in its transaction.
 	add("completion_review", "")

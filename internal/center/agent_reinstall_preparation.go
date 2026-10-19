@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/http"
+
 	"slices"
 	"strings"
 	"time"
@@ -277,84 +277,4 @@ func (s *Store) validateReinstallPreparation(ctx context.Context, tx *sql.Tx, ag
 		return true, errExecutionAuthorization
 	}
 	return true, nil
-}
-
-func (s *Store) claimAgentReinstallTask(ctx context.Context, agentID, credential, requiredTaskID string, commitTask func(*sql.Tx, *AgentTask) error) (*AgentTask, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
-		return nil, err
-	} else if paused {
-		return nil, errExecutionBlocked
-	}
-	var generation int
-	var version string
-	err = tx.QueryRowContext(ctx, `SELECT runtime_generation,version FROM agents WHERE id=? AND status='active' AND credential_revoked_at='' AND credential_hash=?`, agentID, tokenHash(credential)).Scan(&generation, &version)
-	if err != nil {
-		return nil, errExecutionAuthorization
-	}
-	if agentVersionBehindTarget(version, Version) {
-		return nil, errExecutionBlocked
-	}
-	if blocked, err := unresolvedExecutionBlocksAgentWork(ctx, tx, agentID, version); err != nil {
-		return nil, err
-	} else if blocked {
-		return nil, errExecutionBlocked
-	}
-	id, err := pendingAgentReinstallTask(ctx, tx, agentID, requiredTaskID)
-	if err != nil {
-		return nil, err
-	}
-	if strings.HasPrefix(id, "node-listener-") {
-		return s.claimReinstallListener(ctx, tx, agentID, id, commitTask)
-	}
-	if strings.HasPrefix(id, "reinstall-runtime-") {
-		return s.claimReinstallRuntime(ctx, tx, agentID, id, commitTask)
-	}
-	pending, err := readPendingApplicationDeployment(ctx, tx, agentID, id)
-	if err != nil {
-		return nil, err
-	}
-	return s.claimApplicationDeployment(ctx, tx, agentID, generation, pending, commitTask)
-}
-
-func (s *Server) handleAgentReinstallPreparation(writer http.ResponseWriter, request *http.Request) {
-	var input AgentReinstallApplicationInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	adminID, err := s.requestAdminID(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.QueueAgentReinstallPreparation(request.Context(), request.PathValue("id"), adminID, input)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, result)
-}
-
-func pendingAgentReinstallTask(ctx context.Context, tx *sql.Tx, agentID, requiredTaskID string) (string, error) {
-	var id string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM (
- SELECT d.id,d.created_at FROM agent_reinstall_app_preparations p JOIN deployments d ON d.id=p.deployment_id JOIN agent_reinstall_operations op ON op.id=p.operation_id
- WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND d.attempt=0
- UNION ALL SELECT c.id,c.created_at FROM agent_reinstall_app_preparations p JOIN application_commands c ON c.id=p.runtime_command_id JOIN agent_reinstall_operations op ON op.id=p.operation_id
- WHERE c.agent_id=? AND op.agent_id=c.agent_id AND op.state='review_required' AND c.state='pending' AND c.attempt=0
- UNION ALL SELECT p.listener_task_id,n.updated_at FROM agent_reinstall_app_preparations p JOIN agent_reinstall_operations op ON op.id=p.operation_id JOIN node_listener_states n ON n.node_id=op.agent_id
- WHERE op.agent_id=? AND op.state='review_required' AND p.listener_state='pending' AND n.status='pending' AND n.desired_revision=p.listener_revision AND n.attempt=p.listener_attempt-1
- UNION ALL SELECT d.id,d.created_at FROM agent_reinstall_monitor_restorations m JOIN deployments d ON d.id=m.deployment_id JOIN agent_reinstall_monitor_rotations r ON r.command_id=m.rotation_command_id JOIN agent_reinstall_operations op ON op.id=r.operation_id
- WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND d.attempt=0
- ) WHERE (?='' OR id=?) ORDER BY created_at,id LIMIT 1`, agentID, agentID, agentID, agentID, requiredTaskID, requiredTaskID).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", errExecutionBlocked
-	}
-	return id, err
 }

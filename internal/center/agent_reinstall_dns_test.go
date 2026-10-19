@@ -89,6 +89,24 @@ func reinstallDNSFixture(t *testing.T) (*Store, AgentCredential, AgentReinstallD
 	return s, node, AgentReinstallDNSInput{OperationID: input.OperationID, PlanRevision: plan.Revision, ApplicationID: input.ApplicationID}, mock
 }
 
+func readHistoricalDNSReceipt(t *testing.T, s *Store, applicationID string) *AgentReinstallDNS {
+	t.Helper()
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	var id string
+	if err := tx.QueryRow(`SELECT deployment_id FROM agent_reinstall_app_preparations WHERE application_id=?`, applicationID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	value, _, err := s.savedReinstallDNS(context.Background(), tx, id)
+	if err != nil || value == nil {
+		t.Fatalf("historical DNS receipt unavailable: %v", err)
+	}
+	return value
+}
+
 func TestAgentReinstallDNSUpdatesOnlyOwnedRecordAndPreservesFence(t *testing.T) {
 	s, node, input, api := reinstallDNSFixture(t)
 	ctx := context.Background()
@@ -97,7 +115,10 @@ func TestAgentReinstallDNSUpdatesOnlyOwnedRecordAndPreservesFence(t *testing.T) 
 		t.Fatalf("migration: %+v %v %d/%d", result, err, api.reads, api.writes)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil || plan.Recovery.State != "review_required" || plan.Applications[0].Preparation.DNS.ID != result.ID || !plan.Applications[0].Preparation.DNS.Current {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Recovery.State != "review_required" || plan.Applications[0].Preparation != nil || readHistoricalDNSReceipt(t, s, input.ApplicationID).ID != result.ID {
 		t.Fatalf("plan: %+v %v", plan, err)
 	}
 	if _, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
@@ -247,7 +268,10 @@ func TestAgentReinstallDNSChangesDuringIOStayUnconfirmed(t *testing.T) {
 				t.Fatal("wrote after authority changed")
 			}
 			plan, err := s.AgentReinstallPlan(context.Background(), node.ID)
-			if err != nil || plan.Applications[0].Preparation.DNS.Current {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Applications[0].Preparation != nil || readHistoricalDNSReceipt(t, s, input.ApplicationID).ID != result.ID {
 				t.Fatalf("lost stale receipt: %v", err)
 			}
 		})
@@ -277,8 +301,22 @@ func TestAgentReinstallDNSManualRecordsNeverInvokeProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	input.PlanRevision = plan.Revision
-	if dns := plan.Applications[0].Preparation.DNS; dns == nil || dns.Entries[0].State != "manual" || dns.Entries[0].Address != "198.51.100.8" {
-		t.Fatalf("missing manual instructions: %+v", dns)
+	if plan.Applications[0].Preparation != nil {
+		t.Fatal("generic plan exposed retired DNS controls")
+	}
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var preparationID string
+	if err := tx.QueryRow(`SELECT deployment_id FROM agent_reinstall_app_preparations WHERE application_id=?`, input.ApplicationID).Scan(&preparationID); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	targets, err := s.reinstallDNSTargets(context.Background(), tx, node.ID, preparationID)
+	_ = tx.Rollback()
+	if err != nil || len(targets) != 1 || targets[0].Entry.State != "manual" || targets[0].Entry.Address != "198.51.100.8" {
+		t.Fatalf("manual target history changed: %v", err)
 	}
 	if _, err = s.MigrateAgentReinstallDNS(context.Background(), node.ID, "reinstall-review-admin", input); err == nil {
 		t.Fatal("attempted manual migration")
@@ -307,7 +345,10 @@ func TestAgentReinstallDNSResultCommitFailureCanBeInspectedWithoutReplay(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved := plan.Applications[0].Preparation.DNS
+	if plan.Applications[0].Preparation != nil {
+		t.Fatal("generic plan exposed retired DNS controls")
+	}
+	saved := readHistoricalDNSReceipt(t, s, input.ApplicationID)
 	if saved == nil || saved.State != "needs_review" || saved.CanContinue {
 		t.Fatalf("lost uncertain intent: %+v", saved)
 	}
@@ -335,8 +376,8 @@ func TestAgentReinstallDNSRetainsEvidenceAcrossUnrelatedPlanChange(t *testing.T)
 	if plan.Revision == input.PlanRevision {
 		t.Fatal("fixture did not change plan")
 	}
-	if !plan.Applications[0].Preparation.DNS.Current {
-		t.Fatal("unchanged DNS evidence was invalidated")
+	if plan.Applications[0].Preparation != nil || readHistoricalDNSReceipt(t, s, input.ApplicationID).ID != saved.ID {
+		t.Fatal("retained DNS evidence changed or old controls revived")
 	}
 	input.ExpectedAttempt = saved.Attempt
 	if _, err = s.InspectAgentReinstallDNS(ctx, node.ID, "reinstall-review-admin", input); err == nil {
@@ -354,8 +395,8 @@ func TestAgentReinstallDNSRetainsEvidenceAcrossUnrelatedPlanChange(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Applications[0].Preparation.DNS.Current {
-		t.Fatal("changed record reused old evidence")
+	if plan.Applications[0].Preparation != nil || readHistoricalDNSReceipt(t, s, input.ApplicationID).ID != saved.ID {
+		t.Fatal("changed target rewrote the retained DNS history or revived old controls")
 	}
 	input.PlanRevision = plan.Revision
 	if _, err = s.InspectAgentReinstallDNS(ctx, node.ID, "reinstall-review-admin", input); err == nil {

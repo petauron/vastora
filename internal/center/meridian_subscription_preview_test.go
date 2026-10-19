@@ -118,7 +118,7 @@ func TestSubscriptionPreviewDoesNotReviveExpiredRouteEvidence(t *testing.T) {
 	}
 }
 
-func TestSubscriptionPreviewRequiresSessionAndPreservesUnavailablePublicResponse(t *testing.T) {
+func TestRetiredSubscriptionPreviewDoesNotExposeArchivedCredentials(t *testing.T) {
 	store := openMeridianSharedEndpointSnapshotFixture(t)
 	ctx := context.Background()
 	session, _, err := store.CreateFirstAdmin(ctx, "admin", "example-password-for-test-only")
@@ -136,15 +136,11 @@ func TestSubscriptionPreviewRequiresSessionAndPreservesUnavailablePublicResponse
 		}
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
-		want := http.StatusUnauthorized
-		if authenticated {
-			want = http.StatusOK
-		}
-		if response.Code != want {
+		if response.Code != http.StatusNotFound {
 			t.Fatalf("auth=%v status=%d", authenticated, response.Code)
 		}
-		if authenticated && (response.Header().Get("Cache-Control") != "no-store" || !strings.Contains(response.Body.String(), "account_disabled")) {
-			t.Fatal("missing cache restriction or disabled reason")
+		if strings.Contains(response.Body.String(), sharedSnapshotTokenB) || strings.Contains(response.Body.String(), sharedSnapshotUUIDB) {
+			t.Fatal("retired API exposed archived credentials")
 		}
 	}
 	public := httptest.NewRecorder()
