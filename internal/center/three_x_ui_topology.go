@@ -529,7 +529,6 @@ func (s *Store) completeThreeXUINodeCommand(ctx context.Context, commit projecti
 			if err := s.db.QueryRowContext(s.backgroundCtx, `SELECT COUNT(*) FROM three_x_ui_migrations WHERE state IN ('backing_up', 'restoring', 'switching')`).Scan(&activeMigrations); err != nil || activeMigrations != 0 {
 				return
 			}
-			_ = s.startRealityGuardHardening(s.backgroundCtx)
 		})
 	}
 	return nil
