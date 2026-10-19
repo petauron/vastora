@@ -22,7 +22,10 @@ export function NodeSecurityControls({ nodeId, language }: { nodeId: string; lan
   const [businessChecked, setBusinessChecked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [expiredDeadline, setExpiredDeadline] = useState<string | null>(null);
   const result = view?.result;
+  const confirmationDeadline = result?.state === "pending_confirmation" ? result.deadline : undefined;
+  const confirmationExpired = Boolean(confirmationDeadline && confirmationDeadline === expiredDeadline);
   const waiting = view?.state === "pending" || view?.state === "running";
   const active = busy || waiting;
   const policy: SecurityPolicy = { publicInterfaces: split(interfaces), managementSources: split(sources), sshPorts: split(ports).map(Number), publicRules: split(services).map((raw) => { const [port, protocol] = raw.split("/"); return { port: Number(port), protocol } as SecurityRule; }) };
@@ -38,8 +41,34 @@ export function NodeSecurityControls({ nodeId, language }: { nodeId: string; lan
     const timer = setInterval(() => { void api.nodeSecurity(nodeId, controller.signal).then(setView).catch((cause) => { if (!controller.signal.aborted) setError(userError(language, cause)); }); }, 1500);
     return () => { controller.abort(); clearInterval(timer); };
   }, [nodeId, language, waiting]);
+  useEffect(() => {
+    if (!confirmationDeadline) return;
+    const controller = new AbortController();
+    let timer = 0;
+    const expire = () => {
+      const remaining = Date.parse(confirmationDeadline) - Date.now();
+      if (remaining > 0) {
+        // Browser/Node timers overflow above the signed 32-bit delay limit.
+        timer = window.setTimeout(expire, Math.min(remaining, 2_147_483_647));
+        return;
+      }
+      setExpiredDeadline(confirmationDeadline);
+      setBusinessChecked(false);
+      // Expiry invalidates confirmation, not proof that host rollback finished.
+      // Read Center's durable projection only; never queue a firewall operation.
+      void api.nodeSecurity(nodeId, controller.signal).then((next) => {
+        if (!controller.signal.aborted) setView(next);
+      }).catch((cause) => { if (!controller.signal.aborted) setError(userError(language, cause)); });
+    };
+    timer = window.setTimeout(expire, 0);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [nodeId, language, confirmationDeadline]);
   const queue = async (action: SecurityTask["action"], address?: string) => {
     if (active) return;
+    if (action === "confirm" && (!confirmationDeadline || !(Date.now() < Date.parse(confirmationDeadline)))) {
+      if (confirmationDeadline) setExpiredDeadline(confirmationDeadline);
+      return;
+    }
     setBusy(true); setError("");
     try { setView(await api.configureNodeSecurity(nodeId, { action, policy: action === "preview" || action === "apply" ? policy : emptyPolicy, revision: result?.revision, address })); }
     catch (cause) {
@@ -48,7 +77,7 @@ export function NodeSecurityControls({ nodeId, language }: { nodeId: string; lan
       try { setView(await api.nodeSecurity(nodeId)); } catch { /* Keep the original error. */ }
     } finally { setBusy(false); setReviewed(false); setBusinessChecked(false); }
   };
-  const state = result?.state ?? "unconfigured";
+  const state = confirmationExpired ? "action_required" : result?.state ?? "unconfigured";
   const labels: Record<string, string> = {
     unconfigured: copy(language, "尚未配置", "Not configured"), preview: copy(language, "仅预览，未应用", "Preview only; not applied"),
     pending_confirmation: copy(language, "待验证，超时将自动回滚", "Awaiting verification; automatic rollback armed"), verified: copy(language, "最近防护验证通过", "Last protection verification passed"),
@@ -60,6 +89,7 @@ export function NodeSecurityControls({ nodeId, language }: { nodeId: string; lan
     <FieldDescription>{copy(language, "逐台显式启用。仅保护批准的公网网卡与 SSH；不重置 Docker、私网或落地防火墙。请先准备独立恢复通道。", "Opt in per node. Protects approved public interfaces and SSH without resetting Docker, private networking or landing firewalls. Prepare an independent recovery path first.")}</FieldDescription>
     <FieldDescription>{copy(language, "首期仅支持普通 TCP/UDP 代理请求及对应回包，不保证 FullCone、P2P 打洞或不同来源的 UDP 回包；不会自动开放代理 UDP 入站端口。", "MVP scope: ordinary TCP/UDP proxy requests and their replies, not FullCone, P2P hole punching or different-source UDP replies. Proxy UDP ingress ports are not opened automatically.")}</FieldDescription>
     <FieldDescription role="status">{active ? copy(language, "正在等待节点执行…", "Waiting for the node…") : labels[state]}</FieldDescription>
+    {confirmationExpired ? <FieldDescription role="status">{copy(language, "确认期限已过，不能再确认此修订。请重新读取节点实际状态；尚不能据此确认自动回滚已完成。", "The confirmation deadline passed. Inspect the actual host state; expiry alone does not prove automatic rollback completed.")}</FieldDescription> : null}
     {result?.deadline ? <FieldDescription>{copy(language, "验证/回滚截止时间：", "Verification/rollback deadline: ")}{new Date(result.deadline).toLocaleString()}</FieldDescription> : null}
     {!result?.revision || state === "rolled_back" || state === "preview" && !result?.supported ? <Button type="button" variant="outline" disabled={active} onClick={() => void queue("prepare")}>{copy(language, "准备缺少的系统依赖（不启用防护）", "Prepare missing system packages (protection stays off)")}</Button> : null}
     {state === "unconfigured" || state === "preview" || state === "rolled_back" ? <FieldGroup>
