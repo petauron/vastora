@@ -786,7 +786,7 @@ func TestThreeXUIDeploymentsAndDataPlaneCommandsAreMutuallyExclusive(t *testing.
 	}
 }
 
-func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
+func TestRetiredEndpointObservationPreservesLastSnapshot(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -795,6 +795,10 @@ func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
 		VALUES('observation-legacy-app','Existing proxy',?,?,?,'','running','docker','master',?,?)`, node.ID, testSiteID(t, store), threeXUIAppKey, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,status,created_at,updated_at)
+ VALUES('archived-endpoint','observation-legacy-app',?,'inbound-7','tcp',10443,10443,'10.0.0.41:10443','catalog','','ready',?,?)`, testSiteID(t, store), stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	heartbeat := NodeHeartbeat{Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationEndpointsObserved: true, ApplicationEndpoints: []ApplicationEndpointObservation{{AppKey: threeXUIAppKey, Name: "inbound-7", Protocol: "tcp", AppProtocol: "vless/tcp", Listen: "0.0.0.0", Port: 443, Enabled: true}}}
@@ -812,7 +816,11 @@ func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
 		}
 	}
 	if observedStatus != "ready" {
-		t.Fatalf("initial endpoint observation was not stored: %#v", services)
+		t.Fatalf("legacy observation changed the retained service: %#v", services)
+	}
+	var backend, source string
+	if err := store.db.QueryRow(`SELECT endpoint,source FROM services WHERE id='archived-endpoint'`).Scan(&backend, &source); err != nil || backend != "10.0.0.41:10443" || source != "catalog" {
+		t.Fatalf("legacy heartbeat rewrote the owned backend: %v", err)
 	}
 	heartbeat.ApplicationEndpoints = nil
 	heartbeat.ApplicationEndpointsObserved = false
@@ -837,8 +845,8 @@ func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, service := range services {
-		if service.Name == "inbound-7" && service.Status != "stopped" {
-			t.Fatalf("complete empty observation did not stop the disappeared endpoint: %#v", service)
+		if service.Name == "inbound-7" && service.Status != "ready" {
+			t.Fatalf("retired complete observation stopped the retained endpoint: %#v", service)
 		}
 	}
 }

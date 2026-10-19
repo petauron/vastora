@@ -724,7 +724,6 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	defer tx.Rollback()
 	now := s.now().UTC()
-	publicationCleanups := []publicationCleanup{}
 	var previousRuntimeGeneration int
 	var storedPublicKey []byte
 	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation, x25519_public_key FROM agents WHERE id = ? AND status='active' AND credential_revoked_at='' AND credential_hash=?`, id, tokenHash(credential)).Scan(&previousRuntimeGeneration, &storedPublicKey); err != nil {
@@ -780,11 +779,10 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		}
 	}
 	executionBlocked = executionBlocked || reinstalling
-	if !executionBlocked && heartbeat.ApplicationEndpointsObserved {
-		if err := s.reconcileApplicationEndpoints(ctx, tx, id, heartbeat.ApplicationEndpoints, now, &publicationCleanups); err != nil {
-			return err
-		}
-	}
+	// ApplicationEndpoints was exclusively the old 3x-ui/embedded Glivela
+	// observer. Generic package services are reconciled from their owned
+	// installation receipt, not heartbeat. Ignore delayed legacy observations
+	// so they cannot recreate or stop a service after its ownership handover.
 	if !executionBlocked && heartbeat.ApplicationRuntimeGeneration > previousRuntimeGeneration {
 		if err := s.queueApplicationRuntimeMigration(ctx, tx, id, heartbeat.ApplicationRuntimeGeneration, now); err != nil {
 			return err
@@ -835,9 +833,6 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	for _, target := range recoveredPublications {
 		s.schedulePublicationVerification(target.id, target.revision)
-	}
-	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
-		return fmt.Errorf("center: record publication cleanup state: %w", err)
 	}
 	return nil
 }

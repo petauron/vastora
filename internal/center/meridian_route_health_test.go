@@ -121,12 +121,14 @@ func mockIntegratedResources(t *testing.T, store *Store, commandID string) json.
 func assertRetiredMeridianResultPreservesState(t *testing.T, store *Store, projection meridianRuntimeProjection, commandID string, result meridianruntime.Result) {
 	t.Helper()
 	const snapshotSQL = `SELECT json_object(
- 'endpoints',(SELECT json_group_array(json_array(id,application_id,service_id,desired_revision,applied_revision,runtime_healthy,status,source_peer_json,private_key_secret_id,advertise_host,advertise_port)) FROM (SELECT * FROM meridian_endpoints ORDER BY id)),
+ 'endpoints',(SELECT json_group_array(json_array(id,application_id,service_id,desired_revision,applied_revision,runtime_healthy,status,hex(source_peer_json),private_key_secret_id,advertise_host,advertise_port)) FROM (SELECT * FROM meridian_endpoints ORDER BY id)),
  'accounts',(SELECT json_group_array(json_array(id,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,enabled,total_bytes,last_reset_at,next_reset_at)) FROM (SELECT * FROM meridian_accounts ORDER BY id)),
  'credentials',(SELECT json_group_array(json_array(id,account_id,endpoint_id,protocol_secret_id,enabled)) FROM (SELECT * FROM meridian_credentials ORDER BY id)),
- 'usage',(SELECT json_group_array(json_array(credential_id,observed_bytes,baseline_bytes,observed_at)) FROM (SELECT * FROM meridian_usage_watermarks ORDER BY credential_id)),
+ 'usage',(SELECT json_group_array(json_array(credential_id,observed_bytes,baseline_bytes,raw_up_bytes,raw_down_bytes,observed_at)) FROM (SELECT * FROM meridian_usage_watermarks ORDER BY credential_id)),
+ 'lineUsage',(SELECT json_group_array(json_array(credential_id,upload_bytes,download_bytes,started_at,observed_at)) FROM (SELECT * FROM meridian_line_usage ORDER BY credential_id)),
+ 'subscriptions',(SELECT json_group_array(json_array(account_id,secret_id,content_sha256,account_revision,created_at,updated_at)) FROM (SELECT * FROM meridian_subscription_snapshots ORDER BY account_id)),
  'routes',(SELECT json_group_array(json_array(id,desired_revision,applied_revision,runtime_healthy,health_expires_unix_ms,status)) FROM (SELECT * FROM meridian_route_grants ORDER BY id)),
- 'commands',(SELECT json_group_array(json_array(id,state,attempt,input_json,error)) FROM (SELECT * FROM application_commands ORDER BY id)),
+ 'commands',(SELECT json_group_array(json_array(id,state,attempt,hex(input_json),error)) FROM (SELECT * FROM application_commands ORDER BY id)),
  'secrets',(SELECT json_group_array(json_array(id,hex(sealed))) FROM (SELECT * FROM secrets ORDER BY id)),
  'events',(SELECT json_group_array(json_array(id,task_id,event,message)) FROM (SELECT * FROM task_events ORDER BY id)))`
 	read := func() string {
