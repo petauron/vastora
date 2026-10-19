@@ -77,31 +77,6 @@ func (s *Store) requireReinstallCompletion(ctx context.Context, tx *sql.Tx, targ
 			if !verified {
 				return evidence, errors.New("center: fresh reports from the original monitoring identity are required")
 			}
-		case app.AppKey == meridianAppKey && app.Recovery == "rebuild_configuration":
-			p := app.Preparation
-			if p == nil || p.State != "succeeded" || p.Runtime == nil || p.Runtime.State != "succeeded" || p.Access == nil || p.Access.State != "applied" || p.Landing != nil && p.Landing.State != "authorized" {
-				return evidence, errors.New("center: restored application runtime and reviewed access are required")
-			}
-			if !reinstallCompletionDNSVerified(p.DNS, p.EntryCheck) {
-				return evidence, errors.New("center: current entry DNS verification is required")
-			}
-			if app.SharedEntry && (p.Listener == nil || p.Listener.State != "succeeded" || p.EntryCheck == nil || !p.EntryCheck.Current || p.EntryCheck.State != "passed") {
-				return evidence, errors.New("center: current shared entry verification is required")
-			}
-			_, task, err := s.reinstallAccessTarget(ctx, tx, target, p.DeploymentID)
-			if err != nil {
-				return evidence, err
-			}
-			runtime, err := s.reinstallRuntimeProof(ctx, tx, target, p.Runtime.CommandID, *task.MeridianRuntime)
-			if err != nil {
-				return evidence, err
-			}
-			evidence.Runtimes[app.ApplicationID] = runtime
-			ids, err := s.requireReinstallClientCoverage(ctx, tx, target, admin, AgentReinstallApplicationInput{OperationID: operation, PlanRevision: revision, ApplicationID: app.ApplicationID})
-			if err != nil {
-				return evidence, err
-			}
-			evidence.Clients[app.ApplicationID] = ids
 		default:
 			return evidence, errors.New("center: an application has no verified recovery procedure")
 		}

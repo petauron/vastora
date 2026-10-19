@@ -6,8 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"time"
-
-	"github.com/petauron/glivela"
 )
 
 type AgentReinstallCompleteInput struct {
@@ -50,17 +48,10 @@ func (s *Store) CompleteAgentReinstall(ctx context.Context, target, admin string
 	if err != nil {
 		return receipt, err
 	}
-	type readyRuntime struct {
-		endpoint, command string
-		projection        meridianRuntimeProjection
-		quota             bool
-	}
-	runtimes := []readyRuntime{}
-	receipt = AgentReinstallCompletion{OperationID: input.OperationID, PlanRevision: input.PlanRevision, IdentityFingerprint: evidence.Plan.IdentityFingerprint, CompletedAt: s.now().UTC(), ClientCommands: evidence.Clients, RuntimeDigests: map[string]string{}}
+	receipt = AgentReinstallCompletion{OperationID: input.OperationID, PlanRevision: input.PlanRevision, IdentityFingerprint: evidence.Plan.IdentityFingerprint, CompletedAt: s.now().UTC()}
 	stamp := receipt.CompletedAt.Format(time.RFC3339Nano)
-	// Meridian activates its reviewed profile before client verification. Nodes
-	// without Meridian still need the same approved network restored atomically
-	// with completion, after the full evidence gate has succeeded.
+	// Restore only the approved generic network after the evidence gate.
+	// Application data and route health are never projected by this operation.
 	if !evidence.Plan.NetworkReview.ProfileActive {
 		profile := evidence.Plan.NetworkReview.Approval.Profile
 		profile.ConfirmedAt = receipt.CompletedAt
@@ -68,48 +59,6 @@ func (s *Store) CompleteAgentReinstall(ctx context.Context, target, admin string
 		if err = saveNetworkProfile(ctx, tx, target, profile); err != nil {
 			return receipt, err
 		}
-	}
-	for _, app := range evidence.Plan.Applications {
-		result, exists := evidence.Runtimes[app.ApplicationID]
-		if !exists {
-			continue
-		}
-		p := app.Preparation
-		var endpoint string
-		if err = tx.QueryRowContext(ctx, `SELECT runtime_endpoint_id FROM agent_reinstall_app_preparations WHERE deployment_id=?`, p.DeploymentID).Scan(&endpoint); err != nil {
-			return receipt, err
-		}
-		_, task, err := s.reinstallAccessTarget(ctx, tx, target, p.DeploymentID)
-		if err != nil {
-			return receipt, err
-		}
-		restore := &meridianRuntimeRestoreTarget{Address: p.Access.ServiceAddress, Image: task.MeridianRuntime.ImageReference, Revision: task.MeridianRuntime.Desired.Revision, RestoreLandings: p.Landing != nil}
-		projection, err := s.buildMeridianRuntimeProjection(ctx, tx, endpoint, target, restore)
-		if err != nil {
-			return receipt, err
-		}
-		if projection.task.Desired.ConfigSHA256 != task.MeridianRuntime.Desired.ConfigSHA256 {
-			return receipt, errExecutionAuthorization
-		}
-		// Apply real counters once using existing watermarks. If they change quota
-		// intent, stop rather than mark a now-obsolete verified configuration ready.
-		counters, err := glivela.ParseXrayUserCounters(projection.materials, result.Stats)
-		if err != nil {
-			return receipt, err
-		}
-		if err = s.observeMeridianUsageInTx(ctx, tx, endpoint, counters, stamp); err != nil {
-			return receipt, err
-		}
-		after, err := s.buildMeridianRuntimeProjection(ctx, tx, endpoint, target, restore)
-		if err != nil || after.task.Desired.ConfigSHA256 != projection.task.Desired.ConfigSHA256 {
-			return receipt, errors.New("center: usage changed restored access requirements; review runtime before completion")
-		}
-		quota, err := meridianEndpointQuotaEnabledInTx(ctx, tx, endpoint)
-		if err != nil {
-			return receipt, err
-		}
-		runtimes = append(runtimes, readyRuntime{endpoint: endpoint, command: p.Runtime.CommandID, projection: projection, quota: quota})
-		receipt.RuntimeDigests[app.ApplicationID] = projection.task.Desired.ConfigSHA256
 	}
 	encoded, err := json.Marshal(receipt)
 	if err != nil {
@@ -122,19 +71,7 @@ func (s *Store) CompleteAgentReinstall(ctx context.Context, target, admin string
 	if count, _ := changed.RowsAffected(); count != 1 {
 		return receipt, errExecutionAuthorization
 	}
-	// The fence is lifted inside this transaction only. Any failed projection
-	// rolls back both completion and every business-state update.
-	for _, ready := range runtimes {
-		task := ready.projection.task
-		if _, err = tx.ExecContext(ctx, `INSERT INTO meridian_deployments(endpoint_id,desired_revision,desired_sha256,command_id,status,updated_at) VALUES(?,?,?,?,'applying',?) ON CONFLICT(endpoint_id) DO UPDATE SET desired_revision=excluded.desired_revision,desired_sha256=excluded.desired_sha256,command_id=excluded.command_id,status='applying',updated_at=excluded.updated_at`, ready.endpoint, task.Desired.Revision, task.Desired.ConfigSHA256, ready.command, stamp); err != nil {
-			return receipt, err
-		}
-		result := evidence.Runtimes[task.ApplicationID]
-		if err = s.projectVerifiedMeridianRuntime(ctx, tx, ready.endpoint, ready.command, ready.projection, &result, ready.quota, receipt.CompletedAt); err != nil {
-			return receipt, err
-		}
-	}
-	if err = s.recordTaskEvent(ctx, tx, input.OperationID, target, "agent.reinstall", 1, "succeeded", "Recovery completed after authenticated original-client and monitoring verification"); err != nil {
+	if err = s.recordTaskEvent(ctx, tx, input.OperationID, target, "agent.reinstall", 1, "succeeded", "Management recovery completed after identity, network and required application evidence checks"); err != nil {
 		return receipt, err
 	}
 	if err = tx.Commit(); err != nil {

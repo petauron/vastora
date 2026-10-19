@@ -427,6 +427,7 @@ func readPendingApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, 
 	var p pendingApplicationDeployment
 	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, CASE WHEN d.source_receipt_sha256<>'' THEN '' ELSE a.role END, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation, d.package_revision, d.manifest_sha256, d.authorized_capabilities_json,d.source_receipt_sha256
 		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending'
+		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_app_preparations p WHERE p.deployment_id=d.id)
 		AND NOT (d.app_key = 'vastora-official/pulse-agent' AND d.operation = 'install' AND d.secret_id IS NULL)`
 	queryArgs := []any{agentID}
 	if requiredTaskID != "" {
@@ -443,15 +444,14 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	manifest, config := pending.manifest, pending.config
 	secretID, registryCredentialID := pending.secretID, pending.registryCredentialID
 	attempt, reconciliationRequested, requiredRuntimeGeneration := pending.attempt, pending.reconciliationRequested, pending.requiredRuntimeGeneration
-	preparation, err := s.validateReinstallPreparation(ctx, tx, agentID, task.ID)
-	if err != nil {
+	if err := rejectRetiredApplicationPreparation(ctx, tx, agentID, task.ID); err != nil {
 		return nil, err
 	}
 	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, task.ID, false)
 	if err != nil {
 		return nil, err
 	}
-	preparation = preparation || restoredMonitor != nil
+	preparation := restoredMonitor != nil
 	task.Config = json.RawMessage(config)
 	if err := json.Unmarshal(manifest, &task.Manifest); err != nil {
 		return nil, fmt.Errorf("center: decode pending task: %w", err)
@@ -562,7 +562,7 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 		return nil, fmt.Errorf("center: mark application deploying: %w", err)
 	}
 	if preparation {
-		if err := s.recordReinstallPreparationProgress(ctx, tx, task.ID); err != nil {
+		if err := s.recordReinstallMonitorRestoreProgress(ctx, tx, task.ID); err != nil {
 			return nil, err
 		}
 	}
@@ -772,15 +772,14 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 	if executedRuntimeGeneration < 0 || executedRuntimeGeneration < requiredRuntimeGeneration || agentRuntimeGeneration < executedRuntimeGeneration {
 		return "", nil, errors.New("center: Agent task result does not prove the required application runtime generation")
 	}
-	preparation, err := s.validateReinstallPreparation(ctx, tx, agentID, taskID)
-	if err != nil {
+	if err := rejectRetiredApplicationPreparation(ctx, tx, agentID, taskID); err != nil {
 		return "", nil, err
 	}
 	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, taskID, false)
 	if err != nil {
 		return "", nil, err
 	}
-	preparation = preparation || restoredMonitor != nil
+	preparation := restoredMonitor != nil
 	if preparation && reconciliationRequired {
 		return "", nil, errors.New("center: package preparation requires explicit outcome review")
 	}
@@ -891,7 +890,7 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 		return "", nil, errors.New("center: task is not active")
 	}
 	if preparation {
-		if err := s.recordReinstallPreparationProgress(ctx, tx, taskID); err != nil {
+		if err := s.recordReinstallMonitorRestoreProgress(ctx, tx, taskID); err != nil {
 			return "", nil, err
 		}
 	}

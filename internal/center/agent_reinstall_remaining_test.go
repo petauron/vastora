@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestAgentReinstallRemainingDoesNotTreatEntryAsClientAcceptance(t *testing.T) {
+func TestAgentReinstallRemainingDoesNotTreatLegacyProxyReceiptsAsRestoration(t *testing.T) {
 	plan := AgentReinstallPlan{
 		IdentityFingerprint: "replacement",
 		Recovery:            &AgentReinstallOperation{State: "review_required", PrivateIsolation: "withdrawn", ReplacementFingerprint: "replacement"},
@@ -19,11 +19,11 @@ func TestAgentReinstallRemainingDoesNotTreatEntryAsClientAcceptance(t *testing.T
 		change func(*AgentReinstallPlan)
 		want   string
 	}{
-		{"reachable", func(p *AgentReinstallPlan) {}, "client_acceptance"},
-		{"expired entry", func(p *AgentReinstallPlan) { p.Applications[0].Preparation.EntryCheck.Current = false }, "entry_verify"},
+		{"reachable", func(p *AgentReinstallPlan) {}, "application_review"},
+		{"expired entry", func(p *AgentReinstallPlan) { p.Applications[0].Preparation.EntryCheck.Current = false }, "application_review"},
 		{"stale DNS", func(p *AgentReinstallPlan) {
 			p.Applications[0].Preparation.DNS = &AgentReinstallDNS{State: "succeeded"}
-		}, "entry_dns"},
+		}, "application_review"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			// Restore the independent mutable receipts for each case.
@@ -69,7 +69,7 @@ func TestAgentReinstallRemainingDistinguishesMissingMonitorAndBackups(t *testing
 }
 
 func TestAgentReinstallRemainingReadPreservesRevisionAndFence(t *testing.T) {
-	s, node, _ := reinstallEntryCheckFixture(t)
+	s, node, _ := replacementNetworkFixture(t)
 	ctx := context.Background()
 	first, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
