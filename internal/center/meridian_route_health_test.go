@@ -118,7 +118,7 @@ func mockIntegratedResources(t *testing.T, store *Store, commandID string) json.
 // The new Glivela controller owns fresh runtime/route acceptance (its
 // observation, subscription and quota tests exercise those semantics). Center
 // must not interpret late legacy receipts or replay their traffic counters.
-func assertRetiredMeridianResultPreservesState(t *testing.T, store *Store, projection meridianRuntimeProjection, commandID string, result meridianruntime.Result) {
+func assertRetiredApplicationResultPreservesState(t *testing.T, store *Store, agentID, commandID string, succeeded bool, raw json.RawMessage) {
 	t.Helper()
 	const snapshotSQL = `SELECT json_object(
  'endpoints',(SELECT json_group_array(json_array(id,application_id,service_id,desired_revision,applied_revision,runtime_healthy,status,hex(source_peer_json),private_key_secret_id,advertise_host,advertise_port)) FROM (SELECT * FROM meridian_endpoints ORDER BY id)),
@@ -128,7 +128,8 @@ func assertRetiredMeridianResultPreservesState(t *testing.T, store *Store, proje
  'lineUsage',(SELECT json_group_array(json_array(credential_id,upload_bytes,download_bytes,started_at,observed_at)) FROM (SELECT * FROM meridian_line_usage ORDER BY credential_id)),
  'subscriptions',(SELECT json_group_array(json_array(account_id,secret_id,content_sha256,account_revision,created_at,updated_at)) FROM (SELECT * FROM meridian_subscription_snapshots ORDER BY account_id)),
  'routes',(SELECT json_group_array(json_array(id,desired_revision,applied_revision,runtime_healthy,health_expires_unix_ms,status)) FROM (SELECT * FROM meridian_route_grants ORDER BY id)),
- 'commands',(SELECT json_group_array(json_array(id,state,attempt,hex(input_json),error)) FROM (SELECT * FROM application_commands ORDER BY id)),
+ 'commands',(SELECT json_group_array(json_array(id,state,attempt,hex(input_json),hex(result_json),result_secret_id,reconciliation_required,reconciliation_requested,error)) FROM (SELECT * FROM application_commands ORDER BY id)),
+ 'checks',(SELECT json_group_array(json_array(command_id,hex(input_json),hex(result_json))) FROM (SELECT * FROM agent_reinstall_client_checks ORDER BY command_id)),
  'secrets',(SELECT json_group_array(json_array(id,hex(sealed))) FROM (SELECT * FROM secrets ORDER BY id)),
  'events',(SELECT json_group_array(json_array(id,task_id,event,message)) FROM (SELECT * FROM task_events ORDER BY id)))`
 	read := func() string {
@@ -140,16 +141,21 @@ func assertRetiredMeridianResultPreservesState(t *testing.T, store *Store, proje
 		return value
 	}
 	before := read()
-	raw, err := json.Marshal(ApplicationTaskResult{MeridianRuntime: &result})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.completeApplicationCommand(context.Background(), commitProjectionOnlyForTest, projection.agentID, commandID, 1, true, "", raw, false); err == nil {
+	if err := store.completeApplicationCommand(context.Background(), commitProjectionOnlyForTest, agentID, commandID, 1, succeeded, "", raw, false); err == nil {
 		t.Fatal("retired runtime receipt was interpreted")
 	}
 	if read() != before {
 		t.Fatal("retired receipt changed preserved identity, subscription, configuration, traffic or history")
 	}
+}
+
+func assertRetiredMeridianResultPreservesState(t *testing.T, store *Store, projection meridianRuntimeProjection, commandID string, result meridianruntime.Result) {
+	t.Helper()
+	raw, err := json.Marshal(ApplicationTaskResult{MeridianRuntime: &result})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRetiredApplicationResultPreservesState(t, store, projection.agentID, commandID, true, raw)
 }
 
 func TestRetiredMeridianRuntimeCannotRenewHealthOrApplyRevision(t *testing.T) {

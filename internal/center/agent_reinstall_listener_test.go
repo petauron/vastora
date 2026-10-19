@@ -295,16 +295,7 @@ func TestAgentReinstallListenerFinalSealingAndOldWorkSettlementCannotReplaceTask
 func TestAgentReinstallListenerMissingPublicApprovalStopsBeforeQueue(t *testing.T) {
 	s, node, input := reinstallRuntimeFixture(t)
 	ctx := context.Background()
-	if _, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatal(err)
-	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
-	}
+	seedSuccessfulHistoricalRuntime(t, s, node, input)
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
 		t.Fatal(err)
