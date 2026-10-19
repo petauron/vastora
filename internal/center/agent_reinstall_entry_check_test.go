@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"testing"
@@ -40,6 +41,20 @@ func reinstallEntryCheckFixture(t *testing.T, publicExit ...string) (*Store, Age
 	return s, node, input
 }
 
+// A stored Current flag is historical, not fresh authority for today's owner.
+func readHistoricalEntryCheck(t *testing.T, s *Store, applicationID string) AgentReinstallEntryCheck {
+	t.Helper()
+	var raw []byte
+	if err := s.db.QueryRow(`SELECT c.result_json FROM agent_reinstall_entry_checks c JOIN agent_reinstall_app_preparations p ON p.deployment_id=c.preparation_id WHERE p.application_id=? ORDER BY c.started_at DESC,c.rowid DESC LIMIT 1`, applicationID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var value AgentReinstallEntryCheck
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
 func TestAgentReinstallEntryCheckRecordsEvidenceWithoutCompletingRecovery(t *testing.T) {
 	s, node, input := reinstallEntryCheckFixture(t)
 	ctx := context.Background()
@@ -62,8 +77,8 @@ func TestAgentReinstallEntryCheckRecordsEvidenceWithoutCompletingRecovery(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved := plan.Applications[0].Preparation.EntryCheck
-	if saved == nil || saved.ID != result.ID || !saved.Current || plan.Recovery.State != "review_required" {
+	saved := readHistoricalEntryCheck(t, s, input.ApplicationID)
+	if saved.ID != result.ID || !saved.CheckedAt.Equal(result.CheckedAt) || plan.Recovery.State != "review_required" || plan.Applications[0].Preparation != nil {
 		t.Fatalf("receipt: %+v", saved)
 	}
 	var profiles int
@@ -97,7 +112,10 @@ func TestAgentReinstallEntryCheckRecordsEvidenceWithoutCompletingRecovery(t *tes
 	defer s.Close()
 	s.now = clock
 	plan, err = s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil || plan.Applications[0].Preparation.EntryCheck.ID != next.ID || !plan.Applications[0].Preparation.EntryCheck.Current {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readHistoricalEntryCheck(t, s, input.ApplicationID).ID != next.ID || plan.Applications[0].Preparation != nil {
 		t.Fatalf("restart lost evidence: %v", err)
 	}
 }
@@ -142,7 +160,7 @@ func TestAgentReinstallEntryCheckFencesChangedReview(t *testing.T) {
 					change()
 				}
 				probes := 0
-				_, err := s.verifyAgentReinstallEntry(context.Background(), node.ID, "reinstall-review-admin", input, func(context.Context, AgentReinstallEntryCheckResult) string {
+				verified, err := s.verifyAgentReinstallEntry(context.Background(), node.ID, "reinstall-review-admin", input, func(context.Context, AgentReinstallEntryCheckResult) string {
 					probes++
 					if at == "during" {
 						change()
@@ -158,9 +176,18 @@ func TestAgentReinstallEntryCheckFencesChangedReview(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					saved := plan.Applications[0].Preparation.EntryCheck
-					if saved == nil || saved.Current {
-						t.Fatalf("changed evidence current: %+v", saved)
+					saved := readHistoricalEntryCheck(t, s, input.ApplicationID)
+					if saved.ID != verified.ID || plan.Applications[0].Preparation != nil {
+						t.Fatal("changed intent rewrote history or exposed retired checks")
+					}
+					tx, beginErr := s.db.BeginTx(context.Background(), nil)
+					if beginErr != nil {
+						t.Fatal(beginErr)
+					}
+					_, _, authorityErr := s.reinstallEntryCheckTargets(context.Background(), tx, node.ID, "reinstall-review-admin", input)
+					_ = tx.Rollback()
+					if authorityErr == nil {
+						t.Fatal("changed evidence retained request authority")
 					}
 				} else {
 					if err == nil || at == "before" && probes != 0 {
@@ -205,7 +232,11 @@ func TestAgentReinstallEntryCheckRejectsUnreviewedAndExpiredEvidence(t *testing.
 	now := s.now()
 	s.now = func() time.Time { return now.Add(31 * time.Minute) }
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil || plan.Applications[0].Preparation.EntryCheck.Current {
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := readHistoricalEntryCheck(t, s, input.ApplicationID)
+	if plan.Applications[0].Preparation != nil || !history.CheckedAt.Add(30*time.Minute).Before(s.now()) {
 		t.Fatalf("expired check current: %v", err)
 	}
 }

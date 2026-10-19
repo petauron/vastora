@@ -79,6 +79,22 @@ func seedArchivedReinstallPreparation(t *testing.T, s *Store, node AgentCredenti
 	return id
 }
 
+// Read persisted legacy evidence explicitly in archive tests. The current
+// generic recovery plan must not advertise the retired proxy actions again.
+func readHistoricalReinstallPreparation(t *testing.T, s *Store, node AgentCredential, input AgentReinstallApplicationInput) *AgentReinstallPreparation {
+	t.Helper()
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := s.readReinstallPreparation(context.Background(), tx, node.ID, input.ApplicationID)
+	_ = tx.Rollback()
+	if err != nil || value == nil {
+		t.Fatalf("retained preparation evidence unavailable: %v", err)
+	}
+	return value
+}
+
 func TestRetiredAgentReinstallPreparationKeepsBusinessFenced(t *testing.T) {
 	s, node, input := reinstallPreparationFixture(t)
 	ctx := context.Background()
