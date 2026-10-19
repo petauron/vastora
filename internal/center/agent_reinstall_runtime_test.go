@@ -15,6 +15,7 @@ import (
 	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/platform"
 )
 
 const restoreNativeID = "11111111-1111-4111-8111-111111111111"
@@ -28,16 +29,9 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...str
 	t.Helper()
 	s, node, input := reinstallPreparationNetworkFixture(t, public, publicExit...)
 	ctx := context.Background()
-	if _, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input); err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatal(err)
-	}
-	if response := preparationResult(t, s, node, task, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
-	}
+	// These reader/authority cases inspect a previously persisted preparation.
+	// Do not execute a retired installation to manufacture their fixture.
+	seedCompletedHistoricalPreparation(t, s, node, input)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +86,71 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...str
 	return s, node, input
 }
 
+func seedCompletedHistoricalPreparation(t *testing.T, s *Store, node AgentCredential, input AgentReinstallApplicationInput) {
+	t.Helper()
+	id := seedArchivedReinstallPreparation(t, s, node, input, "succeeded")
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	plan := AgentReinstallPlan{AgentID: node.ID}
+	sourceRevision, err := readReinstallApplications(ctx, tx, &plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := s.agentReinstallNetworkReview(ctx, tx, node.ID)
+	if err != nil || review == nil || !review.ApprovalCurrent || review.Approval == nil {
+		t.Fatalf("historical approval fixture: %v", err)
+	}
+	var task AgentTask
+	var manifest []byte
+	if err := tx.QueryRow(`SELECT d.app_key,d.manifest_json,a.role FROM deployments d JOIN applications a ON a.id=d.application_id WHERE d.id='retained-meridian-deployment'`).Scan(&task.AppKey, &manifest, &task.ApplicationRole); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(manifest, &task.Manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := readReinstallPackageAuthorization(ctx, tx, "retained-meridian-deployment", &task); err != nil {
+		t.Fatal(err)
+	}
+	task.Kind = "application.apply"
+	task.ID = id
+	task.Attempt = 1
+	task.Revision = applicationTaskRevision
+	task.ApplicationID = input.ApplicationID
+	task.Operation = "install"
+	task.Config = json.RawMessage(`{}`)
+	task.Secrets = json.RawMessage(`{}`)
+	task.ServiceAddress = review.Approval.Profile.ServiceAddress
+	task.RequiredRuntimeGeneration = platform.ApplicationRuntimeGeneration
+	encoded, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval, err := json.Marshal(review.Approval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var key []byte
+	if err := tx.QueryRow(`SELECT x25519_public_key FROM agents WHERE id=?`, node.ID).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyReinstallPackageAuthorization(ctx, tx, "retained-meridian-deployment", id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`UPDATE deployments SET attempt=1,service_address=?,runtime_generation=? WHERE id=?`, task.ServiceAddress, task.RequiredRuntimeGeneration, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`UPDATE agent_reinstall_app_preparations SET source_revision=?,replacement_key=?,approval_json=?,task_json=? WHERE deployment_id=?`, sourceRevision, key, approval, encoded, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func submitRestoredRuntime(t *testing.T, s *Store, node AgentCredential, task *AgentTask, valid, succeeded bool) *httptest.ResponseRecorder {
 	t.Helper()
 	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
@@ -101,6 +160,38 @@ func submitRestoredRuntime(t *testing.T, s *Store, node AgentCredential, task *A
 		result.Receipt.ConfigSHA256 = strings.Repeat("f", 64)
 	}
 	return submitReinstallRuntimeResult(t, s, node, task, result, succeeded)
+}
+
+// Historical reader fixtures must not claim an obsolete command through the
+// live Agent protocol. This constructs anonymous pre-upgrade state only; it is
+// not execution evidence or acceptance of an installed Glivela runtime.
+func seedSuccessfulHistoricalRuntime(t *testing.T, s *Store, node AgentCredential, input AgentReinstallApplicationInput) {
+	t.Helper()
+	ctx := context.Background()
+	receipt, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	task, err := s.reinstallRuntimeTask(ctx, tx, node.ID, receipt.CommandID, false)
+	if err != nil || task == nil || task.MeridianRuntime == nil {
+		t.Fatalf("historical runtime fixture: %v", err)
+	}
+	if _, err := tx.Exec(`UPDATE application_commands SET state='succeeded',attempt=1,result_json='{"transportReady":true}' WHERE id=?`, receipt.CommandID); err != nil {
+		t.Fatal(err)
+	}
+	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+	result.LegacyRetired = true
+	if err := s.recordReinstallRuntimeObservation(ctx, tx, node.ID, result, s.now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func submitReinstallRuntimeResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, result meridianruntime.Result, succeeded bool) *httptest.ResponseRecorder {

@@ -17,23 +17,14 @@ func reinstallListenerFixture(t *testing.T, publicExit ...string) (*Store, Agent
 	t.Helper()
 	s, node, input := reinstallRuntimeNetworkFixture(t, true, publicExit...)
 	ctx := context.Background()
-	if _, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatalf("runtime claim: %v", err)
-	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
-	}
+	seedSuccessfulHistoricalRuntime(t, s, node, input)
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err = s.db.Exec(`INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,status,created_at,updated_at)
+	if _, err := s.db.Exec(`INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,status,created_at,updated_at)
  VALUES('restored-entry','restore-service','public_shared_443','application_node',?,'entry.example.test','www.example.com','manual','degraded',?,?)`, node.ID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	// The replacement must not inherit an old applied revision or attempt.
-	if _, err = s.db.Exec(`INSERT INTO node_listener_states(node_id,desired_revision,applied_revision,desired_json,status,attempt,updated_at) VALUES(?,4,4,'{}','ready',2,?)`, node.ID, now); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO node_listener_states(node_id,desired_revision,applied_revision,desired_json,status,attempt,updated_at) VALUES(?,4,4,'{}','ready',2,?)`, node.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
