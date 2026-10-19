@@ -115,80 +115,56 @@ func mockIntegratedResources(t *testing.T, store *Store, commandID string) json.
 	return raw
 }
 
-func TestMeridianRuntimeSuccessNeedsPeerEvidenceAndHeartbeatRenewsWithoutRevisionChange(t *testing.T) {
-	store, projection, commandID, grantID := openMeridianHealthCompletionFixture(t)
-	ctx := context.Background()
-	if _, err := store.db.ExecContext(ctx, `UPDATE services SET app_protocol='vless/tcp/reality' WHERE id='snapshot-shared-service'`); err != nil {
-		t.Fatal(err)
-	}
-	completeMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), false))
-	var protocol string
-	if err := store.db.QueryRowContext(ctx, `SELECT app_protocol FROM services WHERE id='snapshot-shared-service'`).Scan(&protocol); err != nil {
-		t.Fatal(err)
-	}
-	if protocol != meridianEntryProtocol {
-		t.Fatalf("Glivela runtime receipt left legacy service protocol: %q", protocol)
-	}
-	check := func(wantHealthy int, wantStatus string) {
+// The new Glivela controller owns fresh runtime/route acceptance (its
+// observation, subscription and quota tests exercise those semantics). Center
+// must not interpret late legacy receipts or replay their traffic counters.
+func assertRetiredMeridianResultPreservesState(t *testing.T, store *Store, projection meridianRuntimeProjection, commandID string, result meridianruntime.Result) {
+	t.Helper()
+	const snapshotSQL = `SELECT json_object(
+ 'endpoints',(SELECT json_group_array(json_array(id,application_id,service_id,desired_revision,applied_revision,runtime_healthy,status,source_peer_json,private_key_secret_id,advertise_host,advertise_port)) FROM (SELECT * FROM meridian_endpoints ORDER BY id)),
+ 'accounts',(SELECT json_group_array(json_array(id,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,enabled,total_bytes,last_reset_at,next_reset_at)) FROM (SELECT * FROM meridian_accounts ORDER BY id)),
+ 'credentials',(SELECT json_group_array(json_array(id,account_id,endpoint_id,protocol_secret_id,enabled)) FROM (SELECT * FROM meridian_credentials ORDER BY id)),
+ 'usage',(SELECT json_group_array(json_array(credential_id,observed_bytes,baseline_bytes,observed_at)) FROM (SELECT * FROM meridian_usage_watermarks ORDER BY credential_id)),
+ 'routes',(SELECT json_group_array(json_array(id,desired_revision,applied_revision,runtime_healthy,health_expires_unix_ms,status)) FROM (SELECT * FROM meridian_route_grants ORDER BY id)),
+ 'commands',(SELECT json_group_array(json_array(id,state,attempt,input_json,error)) FROM (SELECT * FROM application_commands ORDER BY id)),
+ 'secrets',(SELECT json_group_array(json_array(id,hex(sealed))) FROM (SELECT * FROM secrets ORDER BY id)),
+ 'events',(SELECT json_group_array(json_array(id,task_id,event,message)) FROM (SELECT * FROM task_events ORDER BY id)))`
+	read := func() string {
 		t.Helper()
-		var healthy int
-		var status string
-		var expiry int64
-		if err := store.db.QueryRowContext(ctx, `SELECT runtime_healthy,status,health_expires_unix_ms FROM meridian_route_grants WHERE id=?`, grantID).Scan(&healthy, &status, &expiry); err != nil {
+		var value string
+		if err := store.db.QueryRow(snapshotSQL).Scan(&value); err != nil {
 			t.Fatal(err)
 		}
-		if healthy != wantHealthy || status != wantStatus || (wantHealthy == 1) != (expiry > store.now().UnixMilli()) {
-			t.Fatalf("route health=%d status=%s expiry=%d", healthy, status, expiry)
-		}
-		var desired, applied uint64
-		var endpointHealthy int
-		if err := store.db.QueryRowContext(ctx, `SELECT desired_revision,applied_revision,runtime_healthy FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID).Scan(&desired, &applied, &endpointHealthy); err != nil {
-			t.Fatal(err)
-		}
-		if desired != projection.task.Desired.Revision || applied != desired || endpointHealthy != 1 {
-			t.Fatal("remote egress health must not change the applied native runtime or churn revisions")
-		}
-		if native, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB); err != nil || len(native.Entries) != 1 {
-			t.Fatalf("unrelated native subscription interrupted: entries=%d err=%v", len(native.Entries), err)
-		}
+		return value
 	}
-	check(0, "blocked")
-	for _, healthy := range []bool{true, false, true} {
-		tx, err := store.db.BeginTx(ctx, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := store.recordMeridianRuntimeObservation(ctx, tx, projection.agentID, meridianHealthResult(projection, store.now(), healthy), store.now()); err != nil {
-			_ = tx.Rollback()
-			t.Fatal(err)
-		}
-		if err := tx.Commit(); err != nil {
-			t.Fatal(err)
-		}
-		if healthy {
-			check(1, "ready")
-		} else {
-			check(0, "blocked")
-		}
+	before := read()
+	raw, err := json.Marshal(ApplicationTaskResult{MeridianRuntime: &result})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.completeApplicationCommand(context.Background(), commitProjectionOnlyForTest, projection.agentID, commandID, 1, true, "", raw, false); err == nil {
+		t.Fatal("retired runtime receipt was interpreted")
+	}
+	if read() != before {
+		t.Fatal("retired receipt changed preserved identity, subscription, configuration, traffic or history")
+	}
+}
+
+func TestRetiredMeridianRuntimeCannotRenewHealthOrApplyRevision(t *testing.T) {
+	store, projection, commandID, _ := openMeridianHealthCompletionFixture(t)
+	for _, healthy := range []bool{false, true} {
+		assertRetiredMeridianResultPreservesState(t, store, projection, commandID, meridianHealthResult(projection, store.now(), healthy))
 	}
 }
 
 func TestMeridianCompletionRejectsMissingTransportProof(t *testing.T) {
-	store, projection, commandID, grantID := openMeridianHealthCompletionFixture(t)
+	store, projection, commandID, _ := openMeridianHealthCompletionFixture(t)
 	result := meridianHealthResult(projection, store.now(), true)
 	result.Peers = nil
-	completeMeridianHealthFixture(t, store, projection, commandID, result)
-	var state string
-	var healthy, expiry int64
-	if err := store.db.QueryRow(`SELECT state FROM application_commands WHERE id=?`, commandID).Scan(&state); err != nil || state != "failed" {
-		t.Fatalf("incomplete proof accepted: state=%s err=%v", state, err)
-	}
-	if err := store.db.QueryRow(`SELECT runtime_healthy,health_expires_unix_ms FROM meridian_route_grants WHERE id=?`, grantID).Scan(&healthy, &expiry); err != nil || healthy != 0 || expiry != 0 {
-		t.Fatalf("incomplete proof became healthy: health=%d expiry=%d err=%v", healthy, expiry, err)
-	}
+	assertRetiredMeridianResultPreservesState(t, store, projection, commandID, result)
 }
 
-func TestMeridianCompletionCrossingQuotaQueuesNewDesiredRevision(t *testing.T) {
+func TestRetiredMeridianCompletionCannotReplayQuotaCounters(t *testing.T) {
 	store, projection, commandID, _ := openMeridianHealthCompletionFixture(t)
 	result := meridianHealthResult(projection, store.now(), true)
 	for _, material := range projection.materials {
@@ -196,36 +172,8 @@ func TestMeridianCompletionCrossingQuotaQueuesNewDesiredRevision(t *testing.T) {
 			result.Stats, _ = json.Marshal(map[string]any{"stat": []any{map[string]any{"name": "user>>>" + material.Credential.User + ">>>traffic>>>uplink", "value": 1000}}})
 		}
 	}
-	completeMeridianHealthFixture(t, store, projection, commandID, result)
-	ctx := context.Background()
-	var desired, applied uint64
-	var healthy int
-	var status string
-	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision,applied_revision,runtime_healthy,status FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID).Scan(&desired, &applied, &healthy, &status); err != nil {
-		t.Fatal(err)
-	}
-	if desired != projection.task.Desired.Revision+1 || applied != projection.task.Desired.Revision || healthy != 0 || status != "pending" {
-		t.Fatalf("quota completion stranded old artifact: desired=%d applied=%d health=%d status=%s", desired, applied, healthy, status)
-	}
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	next, err := store.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, material := range next.materials {
-		if material.Credential.AccountID == sharedSnapshotAccountA && material.Credential.Enabled {
-			t.Fatal("quota crossing did not disable the account in the next full artifact")
-		}
-	}
-	if err := tx.Rollback(); err != nil {
-		t.Fatal(err)
-	}
-	if other, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB); err != nil || len(other.Entries) != 1 {
-		t.Fatalf("quota crossing removed another account: entries=%d err=%v", len(other.Entries), err)
+	for range 2 {
+		assertRetiredMeridianResultPreservesState(t, store, projection, commandID, result)
 	}
 }
 

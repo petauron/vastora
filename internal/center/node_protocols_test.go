@@ -21,12 +21,12 @@ func nodeProtocolFixture(t *testing.T) (*Store, AgentCredential) {
 	return store, node
 }
 
-func TestNodeProtocolsDefaultAndImmutablePhases(t *testing.T) {
+func TestArchivedNodeProtocolPhaseCannotExecuteOrRewriteReceipt(t *testing.T) {
 	store, node := nodeProtocolFixture(t)
 	ctx := context.Background()
 	view, err := store.NodeProtocols(ctx, "local")
 	if err != nil || !view.VLESS || view.HY2 || view.State != "succeeded" {
-		t.Fatalf("bad default: %+v %v", view, err)
+		t.Fatalf("bad archived default: %+v %v", view, err)
 	}
 	if _, err := store.ConfigureNodeProtocols(ctx, "local", nodeprotocol.Selection{}); err == nil {
 		t.Fatal("empty selection accepted")
@@ -35,38 +35,31 @@ func TestNodeProtocolsDefaultAndImmutablePhases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seen := map[string]bool{}
-	for index, phase := range []string{"prepare", "apply", "verify"} {
-		task := claimLocalRemoval(t, store, node.ID)
-		if task == nil || task.ProtocolCommand == nil || task.ProtocolCommand.Phase != phase || seen[task.ID] {
-			t.Fatalf("phase reused a receipt identity: %+v", task)
-		}
-		seen[task.ID] = true
-		var before []byte
-		if err := store.db.QueryRow(`SELECT input_json FROM application_commands WHERE id=?`, task.ID).Scan(&before); err != nil {
-			t.Fatal(err)
-		}
-		raw, _ := json.Marshal(map[string]any{"protocolCommand": nodeprotocol.Result{Phase: phase}})
-		if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
-			t.Fatal(err)
-		}
-		var after []byte
-		if err := store.db.QueryRow(`SELECT input_json FROM application_commands WHERE id=?`, task.ID).Scan(&after); err != nil {
-			t.Fatal(err)
-		}
-		if string(before) != string(after) {
-			t.Fatal("completion mutated an immutable receipt")
-		}
-		current, err := store.ApplicationCommand(ctx, root.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if index < 2 && (current.State != "pending" || current.ID == task.ID) {
-			t.Fatal("root reported completion before the next phase")
-		}
-		if index == 2 && current.State != "succeeded" {
-			t.Fatal("root did not follow verified completion")
-		}
+	var before []byte
+	if err := store.db.QueryRow(`SELECT input_json FROM application_commands WHERE id=?`, root.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, claimErr := store.claimApplicationCommand(ctx, tx, node.ID)
+	_ = tx.Rollback()
+	if claimErr != nil || task != nil {
+		t.Fatalf("retired protocol command claimed: %v %v", task, claimErr)
+	}
+	raw, _ := json.Marshal(map[string]any{"protocolCommand": nodeprotocol.Result{Phase: "verify"}})
+	if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, root.ID, 1, true, "", raw, false); err == nil {
+		t.Fatal("retired phase completion accepted")
+	}
+	var after []byte
+	var state string
+	var attempt int
+	if err := store.db.QueryRow(`SELECT input_json,state,attempt FROM application_commands WHERE id=?`, root.ID).Scan(&after, &state, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) || state != "pending" || attempt != 0 {
+		t.Fatal("retired receipt was rewritten or advanced")
 	}
 }
 
