@@ -185,8 +185,10 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		}
 	}
 	managementServices := map[string]bool{}
+	forwardingModes := map[string]string{}
 	for _, service := range manifest.Services {
 		managementServices[service.Name] = service.Management
+		forwardingModes[service.Name] = service.ProxyProtocol
 	}
 	reportedServices := make(map[string]bool, len(result.Services))
 	for _, reported := range result.Services {
@@ -205,13 +207,13 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 			if err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, management, status, created_at, updated_at)
-				VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'catalog', '', ?, 'ready', ?, ?)`, serviceID, applicationID, siteID, reported.Name, reported.Protocol, reported.ContainerPort, reported.HostPort, endpoint, managementServices[reported.Name], now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, proxy_protocol, container_port, host_port, endpoint, source, app_protocol, management, status, created_at, updated_at)
+				VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalog', '', ?, 'ready', ?, ?)`, serviceID, applicationID, siteID, reported.Name, reported.Protocol, forwardingModes[reported.Name], reported.ContainerPort, reported.HostPort, endpoint, managementServices[reported.Name], now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 				return fmt.Errorf("center: create service: %w", err)
 			}
 		} else if err != nil {
 			return err
-		} else if _, err := tx.ExecContext(ctx, `UPDATE services SET protocol = ?, container_port = ?, host_port = ?, endpoint = ?, source = 'catalog', app_protocol = '', management = ?, status = 'ready', last_error = '', updated_at = ? WHERE id = ?`, reported.Protocol, reported.ContainerPort, reported.HostPort, endpoint, managementServices[reported.Name], now.Format(time.RFC3339Nano), serviceID); err != nil {
+		} else if _, err := tx.ExecContext(ctx, `UPDATE services SET protocol = ?, proxy_protocol = ?, container_port = ?, host_port = ?, endpoint = ?, source = 'catalog', app_protocol = '', management = ?, status = 'ready', last_error = '', updated_at = ? WHERE id = ?`, reported.Protocol, forwardingModes[reported.Name], reported.ContainerPort, reported.HostPort, endpoint, managementServices[reported.Name], now.Format(time.RFC3339Nano), serviceID); err != nil {
 			return fmt.Errorf("center: update service: %w", err)
 		}
 	}
@@ -605,7 +607,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 
 func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT s.id, s.application_id, s.site_id, s.name, s.display_name, s.region_code, s.protocol, s.container_port, s.host_port, s.endpoint, s.source, s.app_protocol, s.management, s.observed_listen, s.status, s.last_error, s.created_at, s.updated_at, a.last_seen_at,
-		COALESCE(guard.status, ''), COALESCE(guard.target_host, ''), COALESCE(guard.target_ip, ''), COALESCE(guard.server_name, ''), COALESCE(guard.target_asn, 0), COALESCE(guard.last_error, ''), COALESCE(protocols.vless_enabled,1),COALESCE(protocols.hy2_enabled,0)
+		COALESCE(guard.status, ''), COALESCE(guard.target_host, ''), COALESCE(guard.target_ip, ''), COALESCE(guard.server_name, ''), COALESCE(guard.target_asn, 0), COALESCE(guard.last_error, ''), COALESCE(protocols.vless_enabled,1),COALESCE(protocols.hy2_enabled,0),s.proxy_protocol
 		FROM services s JOIN applications app ON app.id = s.application_id JOIN agents a ON a.id = app.node_id
 		LEFT JOIN three_x_ui_node_protocols protocols ON protocols.service_id=s.id
 		LEFT JOIN three_x_ui_reality_guards guard ON guard.service_id = s.id ORDER BY s.name, s.id`)
@@ -621,7 +623,7 @@ func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
 		var guardTargetASN int64
 		var vlessEnabled, hy2Enabled bool
 		var management int
-		if err := rows.Scan(&value.ID, &value.ApplicationID, &value.SiteID, &value.Name, &value.DisplayName, &value.RegionCode, &value.Protocol, &value.ContainerPort, &value.HostPort, &value.Endpoint, &value.Source, &value.AppProtocol, &management, &value.ObservedListen, &value.Status, &value.LastError, &created, &updated, &lastSeen, &value.GuardStatus, &guardTargetHost, &guardTargetIP, &guardServerName, &guardTargetASN, &guardError, &vlessEnabled, &hy2Enabled); err != nil {
+		if err := rows.Scan(&value.ID, &value.ApplicationID, &value.SiteID, &value.Name, &value.DisplayName, &value.RegionCode, &value.Protocol, &value.ContainerPort, &value.HostPort, &value.Endpoint, &value.Source, &value.AppProtocol, &management, &value.ObservedListen, &value.Status, &value.LastError, &created, &updated, &lastSeen, &value.GuardStatus, &guardTargetHost, &guardTargetIP, &guardServerName, &guardTargetASN, &guardError, &vlessEnabled, &hy2Enabled, &value.ProxyProtocol); err != nil {
 			return nil, err
 		}
 		if value.AppProtocol == "vless/tcp/reality" {

@@ -87,6 +87,8 @@ github.com/petauron/catalog v0.3.2-0.20261018120742-8a4d6d4386ee h1:oe+G3+oTB1Tf
 github.com/petauron/catalog v0.3.2-0.20261018120742-8a4d6d4386ee/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
 github.com/petauron/catalog v0.3.2-0.20261018121923-91b49469c1d1 h1:HUb9jqqx3W2+40vncbHG1miRGUJ8iGKMDaJQd3I210o=
 github.com/petauron/catalog v0.3.2-0.20261018121923-91b49469c1d1/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
+github.com/petauron/catalog v0.4.0 h1:rHVa3n5NPK7MvCHzKuV1uOD0jM2jrbtqA7GEUwq/BxE=
+github.com/petauron/catalog v0.4.0/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
 github.com/petauron/glivela v0.1.0-alpha.21.0.20261017182649-fb8298167478 h1:3NWhkammGDCtPIJVGklOybBsR3fbbNeNQUJEy2ZibRA=
 github.com/petauron/glivela v0.1.0-alpha.21.0.20261017182649-fb8298167478/go.mod h1:FQftrZdVkgelHse92MsZq85pAYTE6qZpAnT9jBIo4lY=
 github.com/petauron/glivela v0.1.0-alpha.24.0.20261018115648-011a0efc9777 h1:FkOv3jO5qDoJbyBLiKOVea+d71OTfcJKoYVAIIs585A=

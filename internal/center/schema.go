@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 114
+const centerSchemaVersion = 115
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -531,6 +531,7 @@ CREATE TABLE agent_reinstall_access_activations (
 			last_error TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
+			proxy_protocol TEXT NOT NULL DEFAULT '' CHECK(proxy_protocol IN ('','v2')),
 			UNIQUE(application_id, name)
 		)`,
 		`CREATE TABLE three_x_ui_inbound_plans (
