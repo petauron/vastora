@@ -34,6 +34,7 @@ export type AppData = {
   sources: CatalogSource[];
   catalogSourcesError?: string;
   desktopDataUnavailable?: boolean;
+  nodeAuxiliaryDataUnavailable?: boolean;
   apps: AppView[];
   registryCredentials: RegistryCredential[];
   agents: AgentView[];
