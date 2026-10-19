@@ -412,9 +412,7 @@ func observeMeridianState(artifact glivela.DesiredArtifact) ([]ApplicationEndpoi
 }
 
 func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.Duration, report func(error)) {
-	if interval < time.Second {
-		interval = 15 * time.Second
-	}
+	interval = heartbeatInterval(interval)
 	send := func() {
 		requestContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
@@ -427,34 +425,21 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 		}
 	}
 	send()
-	lastSent := time.Now()
-	timer := time.NewTimer(min(interval, landing.CheckInterval))
-	defer timer.Stop()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
-			state, _ := store.loadMeridianRuntimeState(ctx)
-			cadence := meridianHeartbeatInterval(interval, state)
-			if time.Since(lastSent) >= cadence {
-				send()
-				lastSent = time.Now()
-			}
-			// Re-evaluate a newly applied peer plan promptly without resetting
-			// the actual send deadline on every wake-up. Slow heartbeats do not
-			// renew the monitor's kernel lease or manufacture fresh evidence.
-			timer.Reset(min(max(cadence-time.Since(lastSent), time.Millisecond), landing.CheckInterval))
+		case <-ticker.C:
+			send()
 		}
 	}
 }
 
-func meridianHeartbeatInterval(configured time.Duration, state meridianRuntimeState) time.Duration {
+func heartbeatInterval(configured time.Duration) time.Duration {
 	if configured < time.Second {
 		configured = 15 * time.Second
-	}
-	if state.Applied != nil && len(state.AppliedPeers) != 0 {
-		return min(configured, landing.CheckInterval)
 	}
 	return configured
 }
