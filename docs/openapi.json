@@ -18148,6 +18148,9 @@
           "user": {
             "type": "string"
           },
+          "bindService": {
+            "type": "boolean"
+          },
           "health": {
             "anyOf": [
               {
@@ -18186,6 +18189,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "namespace": {
+            "type": "string"
+          },
           "users": {
             "type": "array",
             "items": {
