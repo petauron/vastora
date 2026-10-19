@@ -733,29 +733,31 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=3 WHERE id='superseded-endpoint'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,site_id,display_name,agent_id,gateway_node_id,kind,input_json,state,attempt,created_at,updated_at)
-		VALUES('superseded-completion-command','superseded-application',?,'Superseded entry',?,?,?,?,'running',1,?,?)`, siteID, node.ID, node.ID, meridianruntime.ApplyKind, []byte(`{"endpointId":"superseded-endpoint"}`), now, now); err != nil {
+	// Seed the separate pre-upgrade in-flight scenario on the same archived
+	// row. The migrated schema correctly forbids two active commands per Agent;
+	// no current claim or successful completion is manufactured here.
+	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='running',attempt=1 WHERE id='superseded-queued-command'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_deployments SET desired_revision=2,desired_sha256=?,command_id='superseded-completion-command',status='applying',last_error='',updated_at=? WHERE endpoint_id='superseded-endpoint'`, completionSHA, now); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_deployments SET desired_revision=2,desired_sha256=?,command_id='superseded-queued-command',status='applying',last_error='',updated_at=? WHERE endpoint_id='superseded-endpoint'`, completionSHA, now); err != nil {
 		t.Fatal(err)
 	}
 	result := ApplicationTaskResult{MeridianRuntime: &meridianruntime.Result{Receipt: glivela.AppliedReceipt{Revision: 2, ConfigSHA256: completionSHA, RuntimeReady: true}, Stats: json.RawMessage(`{}`)}}
-	result.Resources = mockIntegratedResources(t, store, "superseded-completion-command")
+	result.Resources = mockIntegratedResources(t, store, "superseded-queued-command")
 	raw, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, "superseded-completion-command", 1, true, "", raw, false); err == nil {
+	if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, "superseded-queued-command", 1, true, "", raw, false); err == nil {
 		t.Fatal("retired completion was allowed to project a claimed success")
 	}
 	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision,status FROM meridian_endpoints WHERE id='superseded-endpoint'`).Scan(&desiredRevision, &endpointStatus); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.db.QueryRowContext(ctx, `SELECT state FROM application_commands WHERE id='superseded-completion-command'`).Scan(&commandState); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM application_commands WHERE id='superseded-queued-command'`).Scan(&commandState); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_events WHERE task_id='superseded-completion-command'`).Scan(&events); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_events WHERE task_id='superseded-queued-command'`).Scan(&events); err != nil {
 		t.Fatal(err)
 	}
 	if desiredRevision != 3 || endpointStatus != "pending" || commandState != "running" || events != 0 {
