@@ -490,6 +490,9 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 		return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 	}
 	if task.Kind == "agent.update" {
+		if !s.agentUpdateAllowed(agentID) {
+			return controlplane.ExecutionAuthorization{}, errExecutionBlocked
+		}
 		var currentVersion string
 		if err := tx.QueryRowContext(ctx, `SELECT version FROM agents WHERE id=?`, agentID).Scan(&currentVersion); err != nil {
 			return controlplane.ExecutionAuthorization{}, err
