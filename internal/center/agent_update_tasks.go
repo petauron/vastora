@@ -20,6 +20,8 @@ type AgentUpdateView struct {
 }
 
 type AgentUpdateRolloutStatus struct {
+	Scoped        bool   `json:"scoped"`
+	Excluded      int    `json:"excluded"`
 	TargetVersion string `json:"targetVersion"`
 	Total         int    `json:"total"`
 	Updated       int    `json:"updated"`
@@ -127,6 +129,9 @@ type AgentUpdateRecoveryInput struct {
 
 func (s *Store) queueAgentUpdate(ctx context.Context, agentID, targetVersion string, recovery *AgentUpdateRecoveryInput) (AgentUpdateView, error) {
 	agentID = strings.TrimSpace(agentID)
+	if !s.agentUpdateAllowed(agentID) {
+		return AgentUpdateView{}, errors.New("center: Agent is outside the configured update scope")
+	}
 	targetVersion = strings.TrimPrefix(strings.TrimSpace(targetVersion), "v")
 	if agentID == "" || targetVersion == "" || !semver.IsValid("v"+targetVersion) {
 		return AgentUpdateView{}, errors.New("center: Agent and target version are required")
@@ -315,6 +320,9 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 		if previousState == "failed" && !agentUpdateFailureSuperseded(currentVersion, previousTarget) && !previousAbandoned {
 			continue
 		}
+		if !s.agentUpdateAllowed(agentID) {
+			continue
+		}
 		if previousState == "pending" && !agentVersionBehindTarget(previousTarget, targetVersion) {
 			continue
 		}
@@ -353,7 +361,7 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 
 func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion string) (AgentUpdateRolloutStatus, error) {
 	targetVersion = strings.TrimPrefix(strings.TrimSpace(targetVersion), "v")
-	status := AgentUpdateRolloutStatus{TargetVersion: targetVersion}
+	status := AgentUpdateRolloutStatus{TargetVersion: targetVersion, Scoped: s.agentUpdateScope != nil}
 	if targetVersion == "" || !semver.IsValid("v"+targetVersion) {
 		return status, errors.New("center: Agent rollout target version is invalid")
 	}
@@ -396,6 +404,10 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 	}
 	connectedAfter := s.now().UTC().Add(-agentConnectedMaxAge)
 	for _, agent := range agents {
+		if !s.agentUpdateAllowed(agent.id) {
+			status.Excluded++
+			continue
+		}
 		executionBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, s.db, agent.id, agent.currentVersion)
 		if err != nil {
 			return status, err
@@ -479,6 +491,9 @@ func (s *Store) queueAgentUpdateTx(ctx context.Context, tx *sql.Tx, agentID, tar
 }
 
 func (s *Store) claimAgentUpdate(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
+	if !s.agentUpdateAllowed(agentID) {
+		return nil, nil
+	}
 	var id, targetVersion string
 	var attempt int64
 	err := tx.QueryRowContext(ctx, `SELECT id, target_version, attempt FROM agent_updates WHERE agent_id = ? AND state = 'pending' ORDER BY created_at, rowid LIMIT 1`, agentID).Scan(&id, &targetVersion, &attempt)

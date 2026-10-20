@@ -25,6 +25,7 @@ import (
 )
 
 type Store struct {
+	agentUpdateScope               map[string]bool
 	db                             *sql.DB
 	dataDir                        string
 	key                            []byte
@@ -125,6 +126,10 @@ func (s *Store) UseHostNetworkAddresses(encoded string) error {
 }
 
 func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
+	updateScope, scopeErr := readAgentUpdateScope(dataDir)
+	if scopeErr != nil {
+		return nil, scopeErr
+	}
 	headscaleAllowedEndpoints := make([]string, 0, len(headscaleAllowedURLs))
 	seenHeadscaleEndpoints := make(map[string]struct{}, len(headscaleAllowedURLs))
 	for _, value := range headscaleAllowedURLs {
@@ -202,7 +207,8 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		return nil, err
 	}
 	store := &Store{
-		db: db, dataDir: dataDir, key: key,
+		agentUpdateScope: updateScope,
+		db:               db, dataDir: dataDir, key: key,
 		backgroundCtx:               backgroundCtx,
 		backgroundCancel:            backgroundCancel,
 		headscaleAllowedEndpoints:   headscaleAllowedEndpoints,
