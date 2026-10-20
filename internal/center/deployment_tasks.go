@@ -467,6 +467,11 @@ func readPendingApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, 
 	var p pendingApplicationDeployment
 	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, CASE WHEN d.source_receipt_sha256<>'' THEN '' ELSE a.role END, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation, d.package_revision, d.manifest_sha256, d.authorized_capabilities_json,d.source_receipt_sha256
 		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending'
+		AND NOT EXISTS (
+		 SELECT 1 FROM glivela_pilot_checkpoint pilot
+		 JOIN meridian_endpoints endpoint ON endpoint.id=pilot.endpoint_id
+		 WHERE endpoint.application_id=d.application_id
+		)
 		AND NOT (d.app_key = 'vastora-official/pulse-agent' AND d.operation = 'install' AND d.secret_id IS NULL)`
 	queryArgs := []any{agentID}
 	if requiredTaskID != "" {

@@ -20,6 +20,7 @@ import (
 )
 
 type meridianRuntimeProjection struct {
+	plan                  glivela.XrayPlan
 	backendAddress        string
 	backendPort           int
 	task                  meridianruntime.Task
@@ -134,6 +135,7 @@ func (s *Store) queueNextMeridianRuntime(ctx context.Context, tx *sql.Tx, agentI
 	err := tx.QueryRowContext(ctx, `SELECT endpoint.id
 		FROM meridian_endpoints endpoint JOIN applications application ON application.id=endpoint.application_id
 		WHERE application.node_id=? AND application.app_key=? AND application.status='running'
+		AND NOT EXISTS (SELECT 1 FROM glivela_pilot_checkpoint pilot WHERE pilot.endpoint_id=endpoint.id)
 		AND NOT EXISTS (
 		 SELECT 1 FROM application_commands command
 		 WHERE command.agent_id=? AND (command.state IN ('pending','running') OR command.reconciliation_required=1)
@@ -180,6 +182,11 @@ func (s *Store) queueNextMeridianRuntime(ctx context.Context, tx *sql.Tx, agentI
 // committed here; a concurrent state change therefore fails closed instead of
 // delivering a mixed revision to the Agent.
 func (s *Store) queueMeridianRuntime(ctx context.Context, tx *sql.Tx, endpointID string, replacePendingState bool) (string, error) {
+	if owned, err := glivelaPilotOwnsEndpoint(ctx, tx, endpointID); err != nil {
+		return "", err
+	} else if owned {
+		return "", errGlivelaPilotOwnsRuntime
+	}
 	projection, err := s.buildMeridianRuntimeTask(ctx, tx, endpointID, "")
 	if err != nil {
 		return "", err
@@ -309,10 +316,20 @@ type meridianRuntimeRestoreTarget struct {
 }
 
 func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpointID, expectedAgentID string) (meridianRuntimeProjection, error) {
+	if owned, err := glivelaPilotOwnsEndpoint(ctx, tx, endpointID); err != nil {
+		return meridianRuntimeProjection{}, err
+	} else if owned {
+		return meridianRuntimeProjection{}, errGlivelaPilotOwnsRuntime
+	}
 	return s.buildMeridianRuntimeProjection(ctx, tx, endpointID, expectedAgentID, nil)
 }
 
 func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, endpointID, expectedAgentID string, restore *meridianRuntimeRestoreTarget) (meridianRuntimeProjection, error) {
+	if owned, err := glivelaPilotOwnsEndpoint(ctx, tx, endpointID); err != nil {
+		return meridianRuntimeProjection{}, err
+	} else if owned {
+		return meridianRuntimeProjection{}, errGlivelaPilotOwnsRuntime
+	}
 	var projection meridianRuntimeProjection
 	var endpoint glivela.RealityEndpoint
 	var hysteriaEndpoint glivela.HysteriaEndpoint
@@ -419,10 +436,11 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 	if err := applyNativeEgressProjection(ctx, tx, &projection, endpoint, hysteriaEndpoint, vlessEnabled, hy2Enabled, materials); err != nil {
 		return projection, err
 	}
-	artifact, err := glivela.BuildDesiredArtifact(glivela.XrayPlan{
+	projection.plan = glivela.XrayPlan{
 		NativeEgress: projection.task.NativeEgress,
 		Revision:     uint64(revision), RealityEndpoints: realityEndpoints, HysteriaEndpoints: hysteriaEndpoints, Credentials: materials, Grants: routes.grants, Peers: routes.peers,
-	})
+	}
+	artifact, err := glivela.BuildDesiredArtifact(projection.plan)
 	if err != nil || expectedSHA != "" && artifact.ConfigSHA256 != expectedSHA {
 		return projection, errors.New("center: Glivela desired state changed after it was queued")
 	}
@@ -723,6 +741,13 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 	if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
 		return errors.New("center: stored Glivela runtime command is invalid")
 	}
+	if owned, err := glivelaPilotOwnsEndpoint(ctx, tx, command.EndpointID); err != nil {
+		return err
+	} else if owned {
+		// A delayed pre-cutover result is neither a native receipt nor authority
+		// to overwrite its ledger/health. Preserve the task for reconciliation.
+		return errGlivelaPilotOwnsRuntime
+	}
 	if handled, err := s.completeSupersededMeridianRuntimeCommand(ctx, commit, tx, taskID, agentID, command.EndpointID, succeeded, taskError, rawResult); handled || err != nil {
 		return err
 	}
@@ -1001,6 +1026,19 @@ func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, endpoi
 }
 
 func (s *Store) recordMeridianRuntimeObservation(ctx context.Context, tx *sql.Tx, agentID string, result meridianruntime.Result, now time.Time) error {
+	var pilotAgent bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM glivela_pilot_checkpoint pilot
+		JOIN meridian_endpoints endpoint ON endpoint.id=pilot.endpoint_id
+		JOIN applications application ON application.id=endpoint.application_id
+		WHERE application.node_id=?)`, agentID).Scan(&pilotAgent); err != nil {
+		return err
+	}
+	if pilotAgent {
+		// Only the authenticated Glivela receipt can advance this entry's ledger.
+		// Late legacy heartbeats cannot restore runtime authority or double count.
+		return nil
+	}
 	var endpointID string
 	var desiredRevision, appliedRevision int64
 	err := tx.QueryRowContext(ctx, `SELECT endpoint.id,endpoint.desired_revision,endpoint.applied_revision FROM meridian_endpoints endpoint

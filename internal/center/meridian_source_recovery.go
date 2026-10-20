@@ -85,6 +85,9 @@ func (s *Store) RecoverMeridianSource(ctx context.Context, endpointID, adminID s
 		return err
 	}
 	defer tx.Rollback()
+	if err := requireLegacyMeridianOwner(ctx, tx, endpointID); err != nil {
+		return err
+	}
 	var admin bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admins WHERE id=?)`, adminID).Scan(&admin); err != nil {
 		return err

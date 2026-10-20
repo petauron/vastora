@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 116
+const centerSchemaVersion = 117
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -31,6 +31,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	statements := []string{
+		glivelaPilotCheckpointSchema,
 		`CREATE TABLE official_catalog_trust (
 			channel TEXT PRIMARY KEY,
 			revision INTEGER NOT NULL CHECK(revision >= 0),
