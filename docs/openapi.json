@@ -3307,62 +3307,6 @@
         }
       }
     },
-    "/api/v1/meridian/endpoints/{id}/glivela-pilot": {
-      "post": {
-        "tags": ["Applications"],
-        "summary": "Activate one scoped Glivela entry pilot",
-        "description": "Commit final legacy counters and the runtime ownership fence atomically. Requires a verified backup, drained and stopped legacy runtime, an exact configuration match, and counters no more than 30 seconds old. Existing subscriptions and the legacy ledger remain authoritative.",
-        "operationId": "activateGlivelaPilot_post",
-        "x-vastora-audience": "browser-admin",
-        "security": [{"AdminSession": [], "AdminCSRF": []}],
-        "parameters": [
-          {"name": "id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}}
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["legacyConfigSha256", "configSha256", "certificateId", "revision", "backupSha256", "sampledAt", "drainedAndStopped", "counters"],
-                "properties": {
-                  "legacyConfigSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-                  "configSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-                  "certificateId": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-                  "revision": {"type": "integer", "minimum": 1},
-                  "backupSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-                  "sampledAt": {"type": "string", "format": "date-time"},
-                  "drainedAndStopped": {"type": "boolean", "const": true},
-                  "expectedExits": {"type": "object", "additionalProperties": {"type": "string"}},
-                  "counters": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": ["credentialId", "upBytes", "downBytes"],
-                      "properties": {
-                        "credentialId": {"type": "string", "minLength": 1},
-                        "upBytes": {"type": "integer", "minimum": 0},
-                        "downBytes": {"type": "integer", "minimum": 0}
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {"description": "Ownership activated; awaiting authenticated native receipt.", "content": {"application/json": {"schema": {}}}},
-          "400": {"$ref": "#/components/responses/Error"},
-          "401": {"$ref": "#/components/responses/Error"},
-          "409": {"$ref": "#/components/responses/Error"},
-          "500": {"$ref": "#/components/responses/Error"}
-        }
-      }
-    },
     "/api/v1/meridian/endpoints/{id}/recover": {
       "post": {
         "tags": [
@@ -3433,6 +3377,153 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/meridian/endpoints/{id}/glivela-pilot": {
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Activate Glivela Pilot",
+        "operationId": "activateGlivelaPilot_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "legacyConfigSha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "configSha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "certificateId": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "backupSha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "sampledAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "drainedAndStopped": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "counters": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "credentialId",
+                        "upBytes",
+                        "downBytes"
+                      ],
+                      "properties": {
+                        "credentialId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "upBytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "downBytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    }
+                  },
+                  "expectedExits": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "legacyConfigSha256",
+                  "configSha256",
+                  "certificateId",
+                  "revision",
+                  "backupSha256",
+                  "sampledAt",
+                  "drainedAndStopped",
+                  "counters"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Atomically commit final legacy counters and fence a single entry runtime. Requires a verified backup, drained and stopped legacy runtime, exact configuration identity and counters at most 30 seconds old. Retains existing subscriptions, ledger and history."
       }
     },
     "/api/v1/meridian/endpoints/{id}/source-recovery": {

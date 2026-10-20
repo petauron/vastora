@@ -433,6 +433,29 @@ for (const route of routes) {
       schema: { type: "string", const: "no-store" },
     },
   };
+  if (route.handler === "handleActivateGlivelaPilot") {
+    operation.description = "Atomically commit final legacy counters and fence a single entry runtime. Requires a verified backup, drained and stopped legacy runtime, exact configuration identity and counters at most 30 seconds old. Retains existing subscriptions, ledger and history.";
+    const schema = operation.requestBody.content["application/json"].schema;
+    schema.required = ["legacyConfigSha256", "configSha256", "certificateId", "revision", "backupSha256", "sampledAt", "drainedAndStopped", "counters"];
+    for (const name of ["legacyConfigSha256", "configSha256", "certificateId", "backupSha256"]) {
+      schema.properties[name] = { type: "string", pattern: "^[a-f0-9]{64}$" };
+    }
+    schema.properties.revision = { type: "integer", minimum: 1 };
+    schema.properties.drainedAndStopped = { type: "boolean", const: true };
+    schema.properties.counters = {
+      type: "array", minItems: 1,
+      items: {
+        type: "object", additionalProperties: false,
+        required: ["credentialId", "upBytes", "downBytes"],
+        properties: {
+          credentialId: { type: "string", minLength: 1 },
+          upBytes: { type: "integer", minimum: 0 },
+          downBytes: { type: "integer", minimum: 0 },
+        },
+      },
+    };
+    operation.responses["202"].headers = noStoreHeaders;
+  }
   if (route.handler === "handleMeridianSubscriptionPreview") {
     operation.responses[status].headers = noStoreHeaders;
     operation.responses[status].content["application/json"].schema = schemaForGoType("MeridianSubscriptionPreview");
