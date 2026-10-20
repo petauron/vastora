@@ -878,6 +878,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if err != nil {
 		return err
 	}
+	if err := s.observeGlivelaPilotInTx(ctx, tx, id); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}

@@ -506,6 +506,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TABLE glivela_pilot_checkpoint`,
 		`DROP TRIGGER deployments_block_during_package_maintenance`,
 		`DROP TRIGGER deployment_updates_block_during_package_maintenance`,
 		`DROP TRIGGER commands_block_during_package_maintenance`,

@@ -46,6 +46,9 @@ type ApplicationTaskResult struct {
 
 func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request DeploymentRequest, manifest catalog.AppManifest, now time.Time) (string, error) {
 	if request.ReplaceApplicationID != "" {
+		if err := requireLegacyMeridianApplicationOwner(ctx, tx, request.ReplaceApplicationID); err != nil {
+			return "", err
+		}
 		return s.prepareNativeReplacement(ctx, tx, request, manifest, now)
 	}
 	var siteID string
@@ -60,6 +63,11 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 	}
 	var applicationID string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE node_id = ? AND app_key = ?`, request.AgentID, request.AppKey).Scan(&applicationID)
+	if err == nil {
+		if ownerErr := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); ownerErr != nil {
+			return "", ownerErr
+		}
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		if request.Operation != "install" {
 			return "", errors.New("center: existing application was not found")
@@ -112,6 +120,9 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 // Retire control-plane access after either a confirmed uninstall or explicit
 // offline-node removal. This makes no claim that remote resources were removed.
 func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time, cleanups *[]publicationCleanup) error {
+	if err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); err != nil {
+		return err
+	}
 	var uninstallAppKey string
 	if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&uninstallAppKey); err != nil {
 		return err
@@ -154,6 +165,9 @@ func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, app
 }
 
 func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, executedRuntimeGeneration int, result ApplicationTaskResult, now time.Time, cleanups *[]publicationCleanup) error {
+	if err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); err != nil {
+		return err
+	}
 	if err := completeNativeReplacement(ctx, tx, deploymentID, applicationID, result, now); err != nil {
 		return err
 	}

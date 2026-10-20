@@ -6,6 +6,25 @@ import (
 	"net/http"
 )
 
+func (s *Server) handleActivateGlivelaPilot(writer http.ResponseWriter, request *http.Request) {
+	adminID, err := s.requestAdminID(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	var input GlivelaPilotActivation
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.store.ActivateGlivelaPilot(request.Context(), request.PathValue("id"), adminID, input); err != nil {
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusAccepted, map[string]string{"state": "awaiting-native-receipt"})
+}
+
 func (s *Server) handleMeridianSourceRecovery(writer http.ResponseWriter, request *http.Request) {
 	view, err := s.store.MeridianSourceRecovery(request.Context(), request.PathValue("id"))
 	if err != nil {

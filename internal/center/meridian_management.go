@@ -271,6 +271,9 @@ func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID
 		return err
 	}
 	defer tx.Rollback()
+	if err := requireLegacyMeridianOwner(ctx, tx, endpointID); err != nil {
+		return err
+	}
 	var admin bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admins WHERE id=?)`, adminID).Scan(&admin); err != nil {
 		return err
@@ -803,6 +806,16 @@ func (s *Store) UpdateMeridianAccount(ctx context.Context, accountID string, inp
 	if err := ensureMeridianManagementWritable(ctx, tx); err != nil {
 		return MeridianAccountView{}, err
 	}
+	var pilotMember bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_credentials c
+		JOIN glivela_pilot_checkpoint p ON p.endpoint_id=c.endpoint_id WHERE c.account_id=?)`, accountID).Scan(&pilotMember); err != nil {
+		return MeridianAccountView{}, err
+	}
+	if pilotMember {
+		// A shared account is still a single ledger. Do not commit a policy
+		// change that only the non-pilot runtimes can enforce.
+		return MeridianAccountView{}, errGlivelaPilotOwnsRuntime
+	}
 	nowTime := s.now().UTC()
 	now := nowTime.Format(time.RFC3339Nano)
 	var previousResetDays int
@@ -870,6 +883,9 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 	}
 	defer tx.Rollback()
 	if err := ensureMeridianManagementWritable(ctx, tx); err != nil {
+		return MeridianRouteGrantView{}, err
+	}
+	if err := requireLegacyMeridianOwner(ctx, tx, input.EndpointID); err != nil {
 		return MeridianRouteGrantView{}, err
 	}
 	var applicationID, baseCredentialID, accountStatus string
@@ -987,6 +1003,9 @@ func (s *Store) RevokeMeridianRouteGrant(ctx context.Context, grantID string) er
 	if status == "revoked" || status == "revoking" {
 		return errors.New("center: Glivela route grant is already being removed")
 	}
+	if err := requireLegacyMeridianOwner(ctx, tx, endpointID); err != nil {
+		return err
+	}
 	if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
 		return err
 	}
@@ -1041,6 +1060,9 @@ func (s *Store) addExistingAccountsToMeridianEndpoint(ctx context.Context, tx *s
 }
 
 func (s *Store) insertMeridianCredential(ctx context.Context, tx *sql.Tx, accountID, endpointID, applicationID string, kind glivela.CredentialKind, egressNodeID string, enabled bool, now string) (string, error) {
+	if err := requireLegacyMeridianOwner(ctx, tx, endpointID); err != nil {
+		return "", err
+	}
 	credentialID, err := randomToken(18)
 	if err != nil {
 		return "", err

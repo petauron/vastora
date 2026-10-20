@@ -206,6 +206,14 @@ func (s *Store) ConfigureNodeProtocols(ctx context.Context, serviceID string, se
 }
 
 func (s *Store) configureMeridianNodeProtocols(ctx context.Context, serviceID string, selection nodeprotocol.Selection) (ApplicationCommandView, error) {
+	var pilotOwned bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM glivela_pilot_checkpoint p
+		JOIN meridian_endpoints e ON e.id=p.endpoint_id WHERE e.service_id=?)`, serviceID).Scan(&pilotOwned); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if pilotOwned {
+		return ApplicationCommandView{}, errGlivelaPilotOwnsRuntime
+	}
 	if !selection.VLESS {
 		return ApplicationCommandView{}, errors.New("center: Glivela requires VLESS as the public TCP 443 anchor")
 	}
@@ -267,6 +275,9 @@ func (s *Store) configureMeridianNodeProtocols(ctx context.Context, serviceID st
 	}
 	if status == "pending" || status == "applying" {
 		return ApplicationCommandView{}, errors.New("center: Glivela node already has an active runtime change")
+	}
+	if err := requireLegacyMeridianOwner(ctx, tx, endpointID); err != nil {
+		return ApplicationCommandView{}, err
 	}
 	if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
 		return ApplicationCommandView{}, err
