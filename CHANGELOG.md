@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.334](https://github.com/petauron/vastora/compare/v0.1.0-alpha.333...v0.1.0-alpha.334) (2026-10-20)
+
+
+### Features
+
+* **meridian:** scope runtime handover while retaining subscriptions and ledger ([#980](https://github.com/petauron/vastora/issues/980)) ([a7cfa89](https://github.com/petauron/vastora/commit/a7cfa89e8c35bd34ead6771cee9ab6cb80f7f5c0))
+
 ## [0.1.0-alpha.333](https://github.com/petauron/vastora/compare/v0.1.0-alpha.332...v0.1.0-alpha.333) (2026-10-20)
 
 
