@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.333](https://github.com/petauron/vastora/compare/v0.1.0-alpha.332...v0.1.0-alpha.333) (2026-10-20)
+
+
+### Bug Fixes
+
+* **center:** fence Agent upgrades to a persistent pilot scope ([#978](https://github.com/petauron/vastora/issues/978)) ([a8e7bd2](https://github.com/petauron/vastora/commit/a8e7bd2d9c4f8dbb7904cac877826e93a19d075e))
+
 ## [0.1.0-alpha.332](https://github.com/petauron/vastora/compare/v0.1.0-alpha.331...v0.1.0-alpha.332) (2026-10-19)
 
 
