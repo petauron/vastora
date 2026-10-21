@@ -15,7 +15,7 @@ require (
 	github.com/petauron/catalog v0.4.1-0.20261019081100-736a82671387
 	github.com/petauron/glivela v0.1.0-alpha.24.0.20261018115648-011a0efc9777
 	github.com/pressly/goose/v3 v3.28.0
-	github.com/projectdiscovery/cdncheck v1.3.1
+	github.com/projectdiscovery/cdncheck v1.3.2
 	github.com/sethvargo/go-retry v0.5.0
 	github.com/sigstore/sigstore v1.10.11
 	github.com/theupdateframework/go-tuf/v2 v2.4.2
