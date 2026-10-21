@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.340](https://github.com/petauron/vastora/compare/v0.1.0-alpha.339...v0.1.0-alpha.340) (2026-10-21)
+
+
+### Bug Fixes
+
+* refresh pilot receipts inside subscription transactions ([#994](https://github.com/petauron/vastora/issues/994)) ([dd368e2](https://github.com/petauron/vastora/commit/dd368e2ee96fd4ebe4d672abefd618328eea1188))
+
 ## [0.1.0-alpha.339](https://github.com/petauron/vastora/compare/v0.1.0-alpha.338...v0.1.0-alpha.339) (2026-10-21)
 
 
