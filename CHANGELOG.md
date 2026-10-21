@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.336](https://github.com/petauron/vastora/compare/v0.1.0-alpha.335...v0.1.0-alpha.336) (2026-10-21)
+
+
+### Bug Fixes
+
+* **web:** expose scoped Glivela entry takeover ([#985](https://github.com/petauron/vastora/issues/985)) ([d07f203](https://github.com/petauron/vastora/commit/d07f203a5d72effdc1461cfc455b8c22acb58d94))
+
 ## [0.1.0-alpha.335](https://github.com/petauron/vastora/compare/v0.1.0-alpha.334...v0.1.0-alpha.335) (2026-10-21)
 
 
