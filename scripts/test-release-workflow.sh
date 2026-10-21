@@ -64,19 +64,27 @@ require_in "$publish_job" '            --draft=false'
 require_in "$release_pr_job" '    needs: [prepare, publish]'
 require_in "$release_pr_job" "    if: always() && needs.prepare.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')"
 require_in "$release_pr_job" '          skip-github-release: true'
-require_in "$release_pr_job" '        run: scripts/validate-release-metadata.sh "$BASE_SHA"'
+require_in "$release_pr_job" '        run: scripts/validate-release-metadata.sh "$BASE_SHA" .release-pr'
+require_in "$release_pr_job" '          path: .release-pr'
+require_in "$release_pr_job" '        run: echo "sha=$(git -C .release-pr rev-parse HEAD)" >> "$GITHUB_OUTPUT"'
 require_in "$release_pr_job" '      actions: write'
 require_in "$release_pr_job" '          persist-credentials: false'
 
 dispatch_step="$(printf '%s\n' "$release_pr_job" | sed -n '/^      - name: Dispatch required checks for the version PR$/,$p')"
 require_in "$dispatch_step" "        if: steps.release_pr_action.outputs.prs_created == 'true'"
 require_in "$dispatch_step" '          RELEASE_BRANCH: ${{ steps.release_pr.outputs.head_branch }}'
-require_in "$dispatch_step" '          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_BRANCH"'
-require_in "$dispatch_step" '          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_BRANCH"'
+require_in "$dispatch_step" '          RELEASE_HEAD_SHA: ${{ steps.release_pr_head.outputs.sha }}'
+require_in "$dispatch_step" '        run: sh scripts/ensure-version-pr-checks.sh "$RELEASE_BRANCH" "$RELEASE_HEAD_SHA"'
+checks_helper="$(cat "$project_dir/scripts/ensure-version-pr-checks.sh")"
+require_in "$checks_helper" 'for workflow in ci.yml codeql.yml; do'
+require_in "$checks_helper" 'gh workflow run "$workflow" --repo "$repository" --ref "$branch"'
+require_in "$checks_helper" '.head_sha == $sha and .head_branch == $branch'
+require_in "$checks_helper" 'if [ -n "$run_id" ]; then'
+require_in "$checks_helper" 'Approve workflows to run'
 for required_workflow in ci.yml codeql.yml; do
   require_in "$(cat "$project_dir/.github/workflows/$required_workflow")" '  workflow_dispatch:'
 done
-if printf '%s\n' "$release_pr_job" | grep -Eq 'checks: write|/check-runs|CHECK_CONCLUSION'; then
+if printf '%s\n' "$release_pr_job" "$checks_helper" | grep -Eq 'checks: write|/check-runs|CHECK_CONCLUSION|/(approve|rerun|cancel)(["[:space:]]|$)'; then
   echo 'Release PRs must dispatch real workflows, not manufacture required check results.' >&2
   exit 1
 fi
