@@ -87,6 +87,9 @@ func (s *Store) MeridianSubscription(ctx context.Context, token string) (meridia
 	if err != nil || subtle.ConstantTimeCompare(stored, []byte(token)) != 1 {
 		return meridianSubscription{}, errMeridianSubscriptionNotFound
 	}
+	if err := s.refreshGlivelaPilotSubscriptionInTx(ctx, tx, accountID); err != nil {
+		return meridianSubscription{}, err
+	}
 	result, err := s.resolveMeridianSubscriptionInTx(ctx, tx, accountID, true)
 	if err != nil {
 		return meridianSubscription{}, err
