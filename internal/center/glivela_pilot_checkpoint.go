@@ -111,8 +111,36 @@ func (s *Store) recordGlivelaPilotReceiptInTx(ctx context.Context, tx *sql.Tx, r
 		}
 	}
 	stamp := now.Format(time.RFC3339Nano)
+	if previous.Quota != nil {
+		var total, used int64
+		var reset int
+		var zone string
+		if err := tx.QueryRowContext(ctx, `SELECT e.total_bytes,e.used_bytes,e.reset_day,site.timezone FROM meridian_endpoints e JOIN services service ON service.id=e.service_id JOIN sites site ON site.id=service.site_id WHERE e.id=?`, endpointID).Scan(&total, &used, &reset, &zone); err != nil {
+			return err
+		}
+		if total != previous.Quota.TotalBytes || used != previous.Quota.UsedBytes || reset != previous.Quota.ResetDay || zone != previous.Quota.Timezone {
+			return errors.New("center: staged quota changed outside its receipt transaction")
+		}
+	}
 	if err := s.observeMeridianUsageInTx(ctx, tx, endpointID, next.Totals, stamp); err != nil {
 		return err
+	}
+	if next.Quota != nil {
+		q := next.Quota
+		last, following := "", ""
+		if !q.LastResetAt.IsZero() {
+			last = q.LastResetAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !q.NextResetAt.IsZero() {
+			following = q.NextResetAt.UTC().Format(time.RFC3339Nano)
+		}
+		updated, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET used_bytes=?,last_reset_at=?,next_reset_at=?,quota_applied_enabled=? WHERE id=? AND total_bytes=? AND reset_day=?`, q.UsedBytes, last, following, q.TotalBytes == 0 || q.UsedBytes < q.TotalBytes, endpointID, q.TotalBytes, q.ResetDay)
+		if err != nil {
+			return err
+		}
+		if count, err := updated.RowsAffected(); err != nil || count != 1 {
+			return errors.New("center: staged quota policy changed outside its owner")
+		}
 	}
 	encoded, err := json.Marshal(next)
 	if err != nil {
@@ -148,8 +176,14 @@ func (s *Store) observeGlivelaPilotInTx(ctx context.Context, tx *sql.Tx, agentID
 	if statePath == "" {
 		statePath = "/run/glivela-pilot/nodes.json"
 	}
-	receipt, sourceErr := meridianruntime.ReadPilotReceipt(statePath,
-		checkpoint.EntryID, checkpoint.CertificateID, checkpoint.ConfigSHA256, checkpoint.Revision, s.now().UTC())
+	var receipt meridianruntime.PilotReceipt
+	var sourceErr error
+	if checkpoint.Quota != nil {
+		receipt, sourceErr = meridianruntime.ReadQuotaPilotReceipt(statePath, checkpoint, s.now().UTC())
+	} else {
+		receipt, sourceErr = meridianruntime.ReadPilotReceipt(statePath,
+			checkpoint.EntryID, checkpoint.CertificateID, checkpoint.ConfigSHA256, checkpoint.Revision, s.now().UTC())
+	}
 	if sourceErr == nil {
 		// Any ledger/checkpoint conflict is a real transaction error, not a
 		// missing health sample. Do not commit partial accounting.

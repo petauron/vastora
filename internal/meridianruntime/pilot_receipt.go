@@ -14,6 +14,7 @@ import (
 // legacy runtime. The transport must authenticate its source before calling
 // AdvancePilotCounters. It deliberately contains no configuration or secrets.
 type PilotReceipt struct {
+	Quota        *PilotQuota
 	EntryID      string
 	ConfigSHA256 string
 	StartedAt    time.Time
@@ -35,6 +36,7 @@ type PilotHealth struct {
 // Callers must persist this checkpoint and ledger deltas in one transaction;
 // persisting only either half would permit loss or replay after a crash.
 type PilotCounters struct {
+	Quota         *PilotQuota
 	EntryID       string
 	ConfigSHA256  string
 	CertificateID string
@@ -125,6 +127,50 @@ func AdvancePilotCounters(previous PilotCounters, receipt PilotReceipt, now time
 	}
 	next.Raw = slices.Clone(receipt.Counters)
 	next.StartedAt, next.SampledAt = receipt.StartedAt, receipt.SampledAt
+	if previous.Quota != nil {
+		q := receipt.Quota
+		p := previous.Quota
+		if q == nil || q.BaseSHA256 != p.BaseSHA256 || q.TotalBytes != p.TotalBytes || q.ResetDay != p.ResetDay || q.Timezone != p.Timezone || !q.CutoverAt.Equal(p.CutoverAt) || q.UsedBytes < 0 || q.LastResetAt.Before(p.LastResetAt) || q.NextResetAt.Before(p.NextResetAt) || q.LastResetAt.After(now) {
+			return PilotCounters{}, invalid
+		}
+		if q.LastResetAt.Equal(p.LastResetAt) {
+			var delta int64
+			for _, total := range next.Totals {
+				prior := totals[total.CredentialID]
+				up, down := total.UpBytes-prior.UpBytes, total.DownBytes-prior.DownBytes
+				if up > math.MaxInt64-down || up+down > math.MaxInt64-delta {
+					return PilotCounters{}, invalid
+				}
+				delta += up + down
+			}
+			if receipt.SampledAt.Before(q.LastResetAt) {
+				delta = 0
+			}
+			if delta > math.MaxInt64-p.UsedBytes || q.UsedBytes != p.UsedBytes+delta {
+				return PilotCounters{}, invalid
+			}
+		} else {
+			if q.ResetDay == 0 || p.NextResetAt.IsZero() || q.LastResetAt.Before(p.NextResetAt) || !validPilotQuotaCycle(*q, now) {
+				return PilotCounters{}, invalid
+			}
+			var available int64
+			for _, total := range next.Totals {
+				prior := totals[total.CredentialID]
+				up, down := total.UpBytes-prior.UpBytes, total.DownBytes-prior.DownBytes
+				if up > math.MaxInt64-down || up+down > math.MaxInt64-available {
+					return PilotCounters{}, invalid
+				}
+				available += up + down
+			}
+			if q.UsedBytes > available {
+				return PilotCounters{}, invalid
+			}
+		}
+		copyQuota := *q
+		next.Quota = &copyQuota
+	} else if receipt.Quota != nil {
+		return PilotCounters{}, invalid
+	}
 	return next, nil
 }
 
