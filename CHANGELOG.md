@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.339](https://github.com/petauron/vastora/compare/v0.1.0-alpha.338...v0.1.0-alpha.339) (2026-10-21)
+
+
+### Bug Fixes
+
+* consume scoped Glivela receipts before health leases expire ([48b4efc](https://github.com/petauron/vastora/commit/48b4efc31a0ad41b67a67c49bfd7d2c6fa3d403b))
+
 ## [0.1.0-alpha.338](https://github.com/petauron/vastora/compare/v0.1.0-alpha.337...v0.1.0-alpha.338) (2026-10-21)
 
 
