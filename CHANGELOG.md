@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.335](https://github.com/petauron/vastora/compare/v0.1.0-alpha.334...v0.1.0-alpha.335) (2026-10-21)
+
+
+### Bug Fixes
+
+* **security:** upgrade Go to 1.26.10 ([#984](https://github.com/petauron/vastora/issues/984)) ([d5a42cf](https://github.com/petauron/vastora/commit/d5a42cf0288ee668f1294c5abfe09bf8e2968dbf))
+* **web:** preserve multiline installation secrets ([4a01457](https://github.com/petauron/vastora/commit/4a0145722e6594694df656fbf31e829e6ffe9ef5))
+
 ## [0.1.0-alpha.334](https://github.com/petauron/vastora/compare/v0.1.0-alpha.333...v0.1.0-alpha.334) (2026-10-20)
 
 
