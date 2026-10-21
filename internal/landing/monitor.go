@@ -23,20 +23,23 @@ type BusinessResult struct {
 }
 
 type MonitorStatus struct {
-	Revision      uint64    `json:"revision"`
-	State         string    `json:"state"`
-	LinkState     string    `json:"linkState"`
-	Reason        string    `json:"reason"`
-	TCP           bool      `json:"tcp"`
-	UDP           bool      `json:"udp"`
-	ExitIP        string    `json:"exitIp,omitempty"`
-	CheckedAt     time.Time `json:"checkedAt"`
-	StartedAt     time.Time `json:"startedAt"`
-	DurationMS    int64     `json:"durationMs"`
-	Stage         string    `json:"stage"`
-	HTTPStatus    int       `json:"httpStatus,omitempty"`
-	LastHealthyAt time.Time `json:"lastHealthyAt,omitempty"`
-	AllowedUntil  time.Time `json:"allowedUntil,omitempty"`
+	Revision             uint64    `json:"revision"`
+	State                string    `json:"state"`
+	LinkState            string    `json:"linkState"`
+	Reason               string    `json:"reason"`
+	TCP                  bool      `json:"tcp"`
+	UDP                  bool      `json:"udp"`
+	ExitIP               string    `json:"exitIp,omitempty"`
+	CheckedAt            time.Time `json:"checkedAt"`
+	StartedAt            time.Time `json:"startedAt"`
+	DurationMS           int64     `json:"durationMs"`
+	Stage                string    `json:"stage"`
+	HTTPStatus           int       `json:"httpStatus,omitempty"`
+	LastHealthyAt        time.Time `json:"lastHealthyAt,omitempty"`
+	AllowedUntil         time.Time `json:"allowedUntil,omitempty"`
+	SecurityCheckedAt    time.Time `json:"securityCheckedAt,omitempty"`
+	ConsecutiveFailures  int       `json:"consecutiveFailures,omitempty"`
+	ConsecutiveSuccesses int       `json:"consecutiveSuccesses,omitempty"`
 }
 
 // Monitor is only for a route which has already been applied. Initial enable

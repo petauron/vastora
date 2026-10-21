@@ -33,13 +33,16 @@ func PilotPeerDeadlines(checkpoint PilotCounters, receipt PilotReceipt, now time
 		}
 		status := report.Status
 		exit, err := netip.ParseAddr(status.ExitIP)
-		if status.State == "healthy" && status.Stage == "complete" && status.Reason == "direct_and_business_ready" &&
+		ready := status.State == "healthy" && status.Stage == "complete" && status.Reason == "direct_and_business_ready" && status.ConsecutiveFailures == 0
+		grace := status.State == "degraded" && status.Reason == "network_failure_grace" && status.ConsecutiveFailures > 0 && status.ConsecutiveFailures < 3 && status.ConsecutiveSuccesses == 0
+		if (ready || grace) &&
 			status.LinkState == "direct" && status.TCP && !status.UDP &&
 			status.ExitIP == checkpoint.ExpectedExits[expected.EgressID] && err == nil && landing.PublicIP(exit) &&
 			!status.StartedAt.IsZero() && !status.CheckedAt.Before(status.StartedAt) &&
 			!status.CheckedAt.After(health.SampledAt) && now.Sub(status.CheckedAt) <= landing.AllowLifetime &&
-			!status.LastHealthyAt.Before(status.StartedAt) && !status.LastHealthyAt.After(status.CheckedAt) &&
-			status.AllowedUntil.After(now) && !status.AllowedUntil.After(status.StartedAt.Add(landing.AllowLifetime)) {
+			!status.LastHealthyAt.IsZero() && !status.LastHealthyAt.After(status.CheckedAt) && now.Sub(status.LastHealthyAt) < 45*time.Second &&
+			!status.SecurityCheckedAt.Before(status.StartedAt) && !status.SecurityCheckedAt.After(status.CheckedAt) &&
+			status.AllowedUntil.After(now) && !status.AllowedUntil.After(status.SecurityCheckedAt.Add(30*time.Second)) && !status.AllowedUntil.After(status.LastHealthyAt.Add(45*time.Second)) {
 			deadlines[expected.EgressID] = status.AllowedUntil.UnixMilli()
 		}
 	}
