@@ -142,6 +142,7 @@ const siteRegionCodes: Record<string, string> = {
   "香港": "HK", "hong kong": "HK",
   "美国": "US", "美西": "US", "美东": "US", "united states": "US", "usa": "US",
   "德国": "DE", "germany": "DE",
+  "日本": "JP", "japan": "JP",
 };
 
 function siteRegionCode(site: AppData["sites"][number]) {
