@@ -47,6 +47,11 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 	if _, err := store.db.Exec(`INSERT INTO glivela_pilot_checkpoint VALUES(1,?,?,?)`, sharedSnapshotEndpointID, raw, now.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
+	seedSecondTakeoverEntry(t, store)
+	if _, err := store.db.Exec(`INSERT INTO glivela_pilot_checkpoint(endpoint_id,checkpoint_json,updated_at) VALUES('second-endpoint','{}','original');
+		UPDATE meridian_endpoints SET runtime_healthy=1 WHERE id='second-endpoint'`); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +135,10 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 	if readUsage() != 310 {
 		t.Fatal("independent refresh double-counted traffic")
 	}
+	var secondHealthy bool
+	if err := store.db.QueryRow(`SELECT runtime_healthy FROM meridian_endpoints WHERE id='second-endpoint'`).Scan(&secondHealthy); err != nil || secondHealthy {
+		t.Fatal("missing second receipt was not independently blocked", err)
+	}
 	// A subscription must read the latest pinned receipt without waiting for
 	// either polling loop, and retain the same sole, idempotent ledger.
 	if _, err := store.db.Exec(`UPDATE meridian_endpoints SET runtime_healthy=0 WHERE id=?`, sharedSnapshotEndpointID); err != nil {
@@ -146,7 +155,7 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 		t.Fatal("subscription refresh double-counted traffic")
 	}
 	var saved string
-	if err := store.db.QueryRow(`SELECT checkpoint_json FROM glivela_pilot_checkpoint`).Scan(&saved); err != nil {
+	if err := store.db.QueryRow(`SELECT checkpoint_json FROM glivela_pilot_checkpoint WHERE endpoint_id=?`, sharedSnapshotEndpointID).Scan(&saved); err != nil {
 		t.Fatal(err)
 	}
 	// Failure after updating the ledger must roll back both halves.
@@ -159,7 +168,7 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 		t.Fatal("checkpoint write failure ignored")
 	}
 	var retained string
-	if err := store.db.QueryRow(`SELECT checkpoint_json FROM glivela_pilot_checkpoint`).Scan(&retained); err != nil {
+	if err := store.db.QueryRow(`SELECT checkpoint_json FROM glivela_pilot_checkpoint WHERE endpoint_id=?`, sharedSnapshotEndpointID).Scan(&retained); err != nil {
 		t.Fatal(err)
 	}
 	if readUsage() != 310 || retained != saved {

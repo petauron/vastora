@@ -17,6 +17,10 @@ import (
 
 func TestGlivelaPilotActivationFinalCountersAndFenceAreAtomic(t *testing.T) {
 	store := openMeridianSharedEndpointSnapshotFixture(t)
+	seedSecondTakeoverEntry(t, store)
+	if _, err := store.db.Exec(`INSERT INTO glivela_pilot_checkpoint(endpoint_id,checkpoint_json,updated_at) VALUES('second-endpoint','{"retained":true}','original')`); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	if _, err := store.db.Exec(`INSERT INTO admins(id,username,password_hash,created_at) VALUES('pilot-admin','pilot-admin','test','');
 		UPDATE meridian_accounts SET total_bytes=0;
@@ -117,7 +121,7 @@ func TestGlivelaPilotActivationFinalCountersAndFenceAreAtomic(t *testing.T) {
 		t.Fatal("duplicate activation accepted")
 	}
 	var raw []byte
-	if err := store.db.QueryRow(`SELECT checkpoint_json FROM glivela_pilot_checkpoint`).Scan(&raw); err != nil {
+	if err := store.db.QueryRow(`SELECT checkpoint_json FROM glivela_pilot_checkpoint WHERE endpoint_id=?`, sharedSnapshotEndpointID).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	var checkpoint meridianruntime.PilotCounters
@@ -139,5 +143,9 @@ func TestGlivelaPilotActivationFinalCountersAndFenceAreAtomic(t *testing.T) {
 	}
 	if used() != before+int64(20*len(input.Counters)) {
 		t.Fatal("native receipt lost or duplicated final legacy usage")
+	}
+	var retained, stamp string
+	if err := store.db.QueryRow(`SELECT checkpoint_json,updated_at FROM glivela_pilot_checkpoint WHERE endpoint_id='second-endpoint'`).Scan(&retained, &stamp); err != nil || retained != `{"retained":true}` || stamp != "original" {
+		t.Fatal("another entry checkpoint changed during activation or accounting", err)
 	}
 }

@@ -83,11 +83,11 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 	defer tx.Rollback()
 	var admin, exists bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admins WHERE id=?),
-		EXISTS(SELECT 1 FROM glivela_pilot_checkpoint)`, adminID).Scan(&admin, &exists); err != nil {
+		EXISTS(SELECT 1 FROM glivela_pilot_checkpoint WHERE endpoint_id=?)`, adminID, endpointID).Scan(&admin, &exists); err != nil {
 		return err
 	}
 	if !admin || exists {
-		return errors.New("center: administrator and unclaimed single-node pilot required")
+		return errors.New("center: administrator and unclaimed entry required")
 	}
 	projection, err := s.buildMeridianRuntimeProjection(ctx, tx, endpointID, "", nil)
 	if err != nil {
@@ -178,7 +178,7 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO glivela_pilot_checkpoint(id,endpoint_id,checkpoint_json,updated_at) VALUES(1,?,?,?)`,
+	if _, err := tx.ExecContext(ctx, `INSERT INTO glivela_pilot_checkpoint(endpoint_id,checkpoint_json,updated_at) VALUES(?,?,?)`,
 		endpointID, raw, stamp); err != nil {
 		return err
 	}
