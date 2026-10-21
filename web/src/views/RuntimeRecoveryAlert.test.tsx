@@ -120,3 +120,15 @@ it.each(["gateway", "application"] as const)("explains the manual recovery bound
   expect(container.textContent).toContain("operator");
   expect(container.querySelector("button")).toBeNull();
 });
+
+
+it.each(["日本", "Japan", "日本-东京"])("renders the Japan flag for location %s", (name) => {
+  const data = emptyAppData({ version: "test", agentInstallerAvailable: false, agentConnectionMode: "lan", agentConnectUrl: "https://center.example" });
+  data.agents = [{ ...agentFixture(), runtimeRecovery: undefined, runtimeRecoveryApplications: undefined }];
+  data.sites = [{ id: "site-a", organizationId: "org-a", name, code: "jp", description: "", timezone: "Asia/Tokyo", domainSuffix: "site.example", status: "active", gatewayNodes: [], gatewayStatus: "ready", createdAt: "", updatedAt: "" }];
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  act(() => root?.render(<ThemeProvider><NodesView data={data} language="zh-CN" mutate={async () => {}} onNavigate={() => {}} /></ThemeProvider>));
+  expect(container.querySelector('table [role="img"][aria-label="日本"]')?.textContent).toBe("🇯🇵");
+});
