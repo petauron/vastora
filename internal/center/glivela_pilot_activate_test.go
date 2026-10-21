@@ -32,6 +32,12 @@ func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	disabledID := sharedSnapshotAccountB + "-native"
+	if finite {
+		if _, err := store.db.Exec(`UPDATE meridian_credentials SET enabled=0 WHERE id=?`, disabledID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := store.db.Exec(`INSERT INTO admins(id,username,password_hash,created_at) VALUES('pilot-admin','pilot-admin','test','');
 		UPDATE meridian_accounts SET total_bytes=0;
 		UPDATE meridian_endpoints SET target_ip='1.1.1.1';
@@ -72,7 +78,13 @@ func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 		if err := store.db.QueryRow(`SELECT used_bytes FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID).Scan(&initial); err != nil {
 			t.Fatal(err)
 		}
-		seed = meridianruntime.PilotQuota{TotalBytes: initial + int64(10*len(projection.materials)) + 5, UsedBytes: initial + int64(10*len(projection.materials)), ResetDay: 1, CutoverAt: input.SampledAt}
+		active := 0
+		for _, material := range projection.materials {
+			if material.Credential.Enabled {
+				active++
+			}
+		}
+		seed = meridianruntime.PilotQuota{TotalBytes: initial + int64(10*active) + 5, UsedBytes: initial + int64(10*active), ResetDay: 1, CutoverAt: input.SampledAt}
 		if err := store.db.QueryRow(`SELECT site.timezone FROM meridian_endpoints e JOIN services service ON service.id=e.service_id JOIN sites site ON site.id=service.site_id WHERE e.id=?`, sharedSnapshotEndpointID).Scan(&seed.Timezone); err != nil {
 			t.Fatal(err)
 		}
@@ -115,6 +127,9 @@ func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 		}
 	}
 	for _, c := range projection.materials {
+		if !c.Credential.Enabled {
+			continue
+		}
 		input.Counters = append(input.Counters, glivela.CounterSnapshot{CredentialID: c.Credential.ID, UpBytes: 3, DownBytes: 7})
 	}
 	used := func() int64 {
@@ -137,6 +152,22 @@ func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 		t.Fatal("changed retained plan accepted")
 	}
 	writeDesired(plan, input.CertificateID)
+	if finite {
+		if _, err := store.db.Exec(`UPDATE meridian_usage_watermarks SET raw_up_bytes=1 WHERE credential_id=?`, disabledID); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.ActivateGlivelaPilot(ctx, sharedSnapshotEndpointID, "pilot-admin", input); err == nil {
+			t.Fatal("unsettled disabled history accepted")
+		}
+		if _, err := store.db.Exec(`UPDATE meridian_usage_watermarks SET raw_up_bytes=0 WHERE credential_id=?`, disabledID); err != nil {
+			t.Fatal(err)
+		}
+		forged := input
+		forged.Counters = append(append([]glivela.CounterSnapshot(nil), input.Counters...), glivela.CounterSnapshot{CredentialID: disabledID})
+		if err := store.ActivateGlivelaPilot(ctx, sharedSnapshotEndpointID, "pilot-admin", forged); err == nil {
+			t.Fatal("caller supplied disabled counter accepted")
+		}
+	}
 	if _, err := store.db.Exec(`CREATE TRIGGER reject_pilot_activation BEFORE INSERT ON glivela_pilot_checkpoint BEGIN SELECT RAISE(ABORT,'injected activation failure'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -174,6 +205,7 @@ func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 		receipt.Counters = append(receipt.Counters, glivela.CounterSnapshot{CredentialID: c.CredentialID, UpBytes: 4, DownBytes: 6})
 	}
 	if finite {
+		receipt.Counters = append(receipt.Counters, glivela.CounterSnapshot{CredentialID: disabledID})
 		if checkpoint.Quota == nil {
 			t.Fatal("finite quota was not retained")
 		}
@@ -230,6 +262,12 @@ func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 		}
 	}
 	var retained, stamp string
+	if finite {
+		var enabled, observed, up, down int64
+		if err := store.db.QueryRow(`SELECT c.enabled,w.observed_bytes,w.raw_up_bytes,w.raw_down_bytes FROM meridian_credentials c JOIN meridian_usage_watermarks w ON w.credential_id=c.id WHERE c.id=?`, disabledID).Scan(&enabled, &observed, &up, &down); err != nil || enabled != 0 || observed != 50 || up != 0 || down != 0 {
+			t.Fatal("disabled identity or lifetime history changed", err)
+		}
+	}
 	if err := store.db.QueryRow(`SELECT checkpoint_json,updated_at FROM glivela_pilot_checkpoint WHERE endpoint_id='second-endpoint'`).Scan(&retained, &stamp); err != nil || retained != `{"retained":true}` || stamp != "original" {
 		t.Fatal("another entry checkpoint changed during activation or accounting", err)
 	}

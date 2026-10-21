@@ -125,7 +125,7 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_endpoints
 		WHERE id=? AND (desired_revision<>applied_revision OR applied_revision=0))
 		OR EXISTS(SELECT 1 FROM meridian_credentials c JOIN meridian_accounts a ON a.id=c.account_id
-		WHERE c.endpoint_id=? AND (c.enabled<>1 OR a.enabled<>1 OR a.status<>'active' OR a.total_bytes<>0 OR a.expiry_time<>0 OR a.reset_days<>0))`,
+		WHERE c.endpoint_id=? AND (a.enabled<>1 OR a.status<>'active' OR a.total_bytes<>0 OR a.expiry_time<>0 OR a.reset_days<>0))`,
 		endpointID, endpointID).Scan(&unsupported); err != nil {
 		return err
 	}
@@ -133,7 +133,23 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 		return errors.New("center: pilot requires unchanged applied runtime and unlimited active policy")
 	}
 	expected := map[string]bool{}
+	var retained []glivela.CounterSnapshot
 	for _, material := range projection.materials {
+		if !material.Credential.Enabled {
+			// The exact applied plan and pinned native plan retain this disabled
+			// identity. Only a settled zero raw watermark can be carried without
+			// a final runtime observation. Lifetime observed/baseline data stays
+			// untouched; never accept caller-invented counters for this identity.
+			var up, down int64
+			if err := tx.QueryRowContext(ctx, `SELECT raw_up_bytes,raw_down_bytes FROM meridian_usage_watermarks WHERE credential_id=?`, material.Credential.ID).Scan(&up, &down); err != nil {
+				return err
+			}
+			if up != 0 || down != 0 {
+				return errors.New("center: disabled credential accounting is not settled")
+			}
+			retained = append(retained, glivela.CounterSnapshot{CredentialID: material.Credential.ID})
+			continue
+		}
 		expected[material.Credential.ID] = true
 	}
 	if len(input.Counters) != len(expected) || len(expected) == 0 {
@@ -174,6 +190,7 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 		CertificateID: input.CertificateID, Revision: input.Revision, CutoverAt: now,
 		Totals: input.Counters, Source: projection.task.Source, Peers: projection.task.Peers, ExpectedExits: input.ExpectedExits,
 	}
+	checkpoint.Totals = append(append([]glivela.CounterSnapshot(nil), input.Counters...), retained...)
 	var quota meridianruntime.PilotQuota
 	var lastReset, nextReset string
 	if err := tx.QueryRowContext(ctx, `SELECT e.total_bytes,e.used_bytes,e.reset_day,e.last_reset_at,e.next_reset_at,site.timezone
