@@ -44,6 +44,7 @@ import {
   FieldSet,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { SecretConfigInput } from "@/components/SecretConfigInput";
 import { SelectControl } from "@/components/SelectControl";
 import {
   Sheet,
@@ -623,7 +624,19 @@ function ConfigField({
   return (
     <Field>
       <FieldLabel htmlFor={`config-${field.key}`}>{label}</FieldLabel>
-      <Input
+      {field.secret && field.type !== "integer" ? <SecretConfigInput
+        id={`config-${field.key}`}
+        language={language}
+        value={config[field.key] === undefined ? "" : String(config[field.key])}
+        required={mustProvide || (operation === "install" && field.required)}
+        placeholder={operation !== "install" && !mustProvide ? copy(language, "留空以保持原值", "Leave blank to keep the current value") : undefined}
+        onChange={(value) => setConfig((current) => {
+          const next = { ...current };
+          if (value === "") delete next[field.key];
+          else next[field.key] = value;
+          return next;
+        })}
+      /> : <Input
         id={`config-${field.key}`}
         min={field.type === "integer" ? 1 : undefined}
         onChange={(event) =>
@@ -656,7 +669,7 @@ function ConfigField({
               : "text"
         }
         value={config[field.key] === undefined ? "" : String(config[field.key])}
-      />
+      />}
       <FieldDescription>{description}</FieldDescription>
     </Field>
   );
