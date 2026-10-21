@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.342](https://github.com/petauron/vastora/compare/v0.1.0-alpha.341...v0.1.0-alpha.342) (2026-10-21)
+
+
+### Bug Fixes
+
+* preserve per-entry checkpoints during sequential Glivela takeover ([#998](https://github.com/petauron/vastora/issues/998)) ([d483f31](https://github.com/petauron/vastora/commit/d483f311d1a7b50eceea8c653001cac524e60d55))
+* retain quota cycles in staged Glivela takeover ([f8ae5db](https://github.com/petauron/vastora/commit/f8ae5db04127b60e7612319c7ff32076a6618a97))
+
 ## [0.1.0-alpha.341](https://github.com/petauron/vastora/compare/v0.1.0-alpha.340...v0.1.0-alpha.341) (2026-10-21)
 
 
