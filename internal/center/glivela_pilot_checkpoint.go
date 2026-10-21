@@ -11,7 +11,7 @@ import (
 )
 
 const glivelaPilotCheckpointSchema = `CREATE TABLE glivela_pilot_checkpoint (
-	id INTEGER PRIMARY KEY CHECK(id=1),
+	id INTEGER PRIMARY KEY,
 	endpoint_id TEXT NOT NULL UNIQUE REFERENCES meridian_endpoints(id),
 	checkpoint_json BLOB NOT NULL CHECK(json_valid(checkpoint_json)),
 	updated_at TEXT NOT NULL
@@ -67,7 +67,8 @@ func (s *Store) recordGlivelaPilotReceipt(ctx context.Context, receipt meridianr
 func (s *Store) recordGlivelaPilotReceiptInTx(ctx context.Context, tx *sql.Tx, receipt meridianruntime.PilotReceipt) error {
 	var endpointID string
 	var raw []byte
-	if err := tx.QueryRowContext(ctx, `SELECT endpoint_id,checkpoint_json FROM glivela_pilot_checkpoint WHERE id=1`).Scan(&endpointID, &raw); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT p.endpoint_id,p.checkpoint_json FROM glivela_pilot_checkpoint p
+		JOIN meridian_endpoints e ON e.id=p.endpoint_id WHERE e.application_id=?`, receipt.EntryID).Scan(&endpointID, &raw); err != nil {
 		return err
 	}
 	var previous meridianruntime.PilotCounters
@@ -117,7 +118,7 @@ func (s *Store) recordGlivelaPilotReceiptInTx(ctx context.Context, tx *sql.Tx, r
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE glivela_pilot_checkpoint SET checkpoint_json=?,updated_at=? WHERE id=1`, encoded, stamp); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE glivela_pilot_checkpoint SET checkpoint_json=?,updated_at=? WHERE endpoint_id=?`, encoded, stamp, endpointID); err != nil {
 		return err
 	}
 	return nil
@@ -168,8 +169,8 @@ func (s *Store) observeGlivelaPilotInTx(ctx context.Context, tx *sql.Tx, agentID
 	return err
 }
 
-// RunGlivelaPilotReceipts consumes only the single activated pilot's pinned
-// private receipt. Agent heartbeat cadence must not delay short-lived health
+// RunGlivelaPilotReceipts consumes each activated entry's pinned private
+// receipt. Agent heartbeat cadence must not delay short-lived health
 // evidence. Accounting still advances through the same atomic transaction.
 func (s *Store) RunGlivelaPilotReceipts(ctx context.Context, report func(error)) {
 	ticker := time.NewTicker(2 * time.Second)
@@ -190,21 +191,41 @@ func (s *Store) RunGlivelaPilotReceipts(ctx context.Context, report func(error))
 }
 
 func (s *Store) refreshGlivelaPilotReceipt(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT a.node_id FROM glivela_pilot_checkpoint p
+		JOIN meridian_endpoints e ON e.id=p.endpoint_id
+		JOIN applications a ON a.id=e.application_id ORDER BY a.node_id`)
+	if err != nil {
+		return err
+	}
+	var agents []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		agents = append(agents, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, id := range agents {
+		if err := s.refreshGlivelaPilotAgentReceipt(ctx, id); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func (s *Store) refreshGlivelaPilotAgentReceipt(ctx context.Context, agentID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var agentID string
-	err = tx.QueryRowContext(ctx, `SELECT a.node_id FROM glivela_pilot_checkpoint p
-		JOIN meridian_endpoints e ON e.id=p.endpoint_id
-		JOIN applications a ON a.id=e.application_id WHERE p.id=1`).Scan(&agentID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
 	if err := s.observeGlivelaPilotInTx(ctx, tx, agentID); err != nil {
 		return err
 	}
@@ -215,18 +236,34 @@ func (s *Store) refreshGlivelaPilotReceipt(ctx context.Context) error {
 // account's activated pilot from the latest private receipt in the subscription
 // transaction, without extending its deadline or touching unrelated entries.
 func (s *Store) refreshGlivelaPilotSubscriptionInTx(ctx context.Context, tx *sql.Tx, accountID string) error {
-	var agentID string
-	err := tx.QueryRowContext(ctx, `SELECT a.node_id FROM glivela_pilot_checkpoint p
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT a.node_id FROM glivela_pilot_checkpoint p
 		JOIN meridian_endpoints e ON e.id=p.endpoint_id
-		JOIN applications a ON a.id=e.application_id WHERE p.id=1
-		AND EXISTS (SELECT 1 FROM meridian_credentials c WHERE c.endpoint_id=p.endpoint_id AND c.account_id=?)`, accountID).Scan(&agentID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
+		JOIN applications a ON a.id=e.application_id
+		WHERE EXISTS (SELECT 1 FROM meridian_credentials c WHERE c.endpoint_id=p.endpoint_id AND c.account_id=?)
+		ORDER BY a.node_id`, accountID)
 	if err != nil {
 		return err
 	}
-	return s.observeGlivelaPilotInTx(ctx, tx, agentID)
+	var agents []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		agents = append(agents, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range agents {
+		if err := s.observeGlivelaPilotInTx(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) recordGlivelaPilotHealthInTx(ctx context.Context, tx *sql.Tx, endpointID string,
