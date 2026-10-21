@@ -27,7 +27,7 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
   const [adopting, setAdopting] = useState(false);
   const { application, app, agent, services, deployment, activeChange, locked: serviceAccessLocked } = instance;
   const subscriptionService = services.find((service) => service.name === "subscription");
-  const pilotEndpoints = application.appKey === "vastora-official/glivela-entry" ? data.meridian.endpoints.filter((endpoint) => endpoint.nodeId === application.nodeId && !endpoint.legacyRetired) : [];
+  const pilotEndpoints = application.appKey === "vastora-official/glivela-entry" ? data.meridian.endpoints.filter((endpoint) => endpoint.nodeId === application.nodeId && endpoint.status !== "retired") : [];
   const subscriptionPublication = subscriptionService ? data.publications.find((value) => value.serviceId === subscriptionService.id && value.status !== "stopped" && (value.kind === "cloudflare_tunnel" || value.kind === "public_direct")) : undefined;
   const isThreeXUI = application.appKey === "vastora-official/3x-ui";
 	const isMeridian = application.appKey === "vastora-official/meridian";
