@@ -100,8 +100,13 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 	if err != nil {
 		return err
 	}
-	native, err := glivela.BuildDesiredArtifact(nativePlan)
-	if err != nil || input.ConfigSHA256 != native.ConfigSHA256 || input.Revision != native.Revision {
+	statePath := s.glivelaPilotStatePath
+	if statePath == "" {
+		statePath = "/run/glivela-pilot/nodes.json"
+	}
+	if input.Revision != nativePlan.Revision || meridianruntime.VerifyPilotDesired(statePath,
+		projection.task.ApplicationID, input.CertificateID, input.ConfigSHA256, nativePlan,
+		projection.task.Source, projection.task.Peers, input.ExpectedExits) != nil {
 		return errors.New("center: native pilot differs from retained entry configuration")
 	}
 	var busy, unsupported bool

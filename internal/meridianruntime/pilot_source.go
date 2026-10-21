@@ -13,6 +13,43 @@ import (
 	"github.com/petauron/glivela"
 )
 
+// readPrivatePilotState keeps both takeover and receipt reads on the same
+// bounded, private, non-symlink controller snapshot boundary.
+func readPrivatePilotState(path string) ([]byte, error) {
+	invalid := errors.New("meridianruntime: private controller state unavailable")
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return nil, invalid
+	}
+	for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
+		info, err := os.Lstat(parent)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, invalid
+		}
+		if parent == string(filepath.Separator) {
+			break
+		}
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 16<<20 {
+		return nil, invalid
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, invalid
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, invalid
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, (16<<20)+1))
+	if err != nil || len(raw) > 16<<20 {
+		clear(raw)
+		return nil, invalid
+	}
+	return raw, nil
+}
+
 // ReadPilotReceipt reads the controller's atomic, private node-state snapshot.
 // The deployment must mount its directory read-only from the independently
 // authenticated Glivela controller; never accept a path supplied by a node.
@@ -24,30 +61,8 @@ func ReadPilotReceipt(path, entryID, certificateID, digest string, revision uint
 		!glivela.ValidIdentity(certificateID) || !glivela.ValidIdentity(digest) || revision == 0 {
 		return PilotReceipt{}, invalid
 	}
-	for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
-		info, err := os.Lstat(parent)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return PilotReceipt{}, invalid
-		}
-		if parent == string(filepath.Separator) {
-			break
-		}
-	}
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 16<<20 {
-		return PilotReceipt{}, invalid
-	}
-	file, err := os.Open(path)
+	raw, err := readPrivatePilotState(path)
 	if err != nil {
-		return PilotReceipt{}, invalid
-	}
-	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil || !os.SameFile(info, opened) {
-		return PilotReceipt{}, invalid
-	}
-	raw, err := io.ReadAll(io.LimitReader(file, (16<<20)+1))
-	if err != nil || len(raw) > 16<<20 {
 		return PilotReceipt{}, invalid
 	}
 	defer clear(raw)

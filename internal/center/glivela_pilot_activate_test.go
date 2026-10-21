@@ -2,7 +2,11 @@ package center
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +46,32 @@ func TestGlivelaPilotActivationFinalCountersAndFenceAreAtomic(t *testing.T) {
 		CertificateID: strings.Repeat("b", 64), BackupSHA256: strings.Repeat("c", 64), Revision: 1,
 		SampledAt: store.now().UTC(), DrainedAndStopped: true,
 	}
+	// A newer Glivela may render different bytes for the same retained plan.
+	// Only its pinned private state can bind those bytes, never caller input.
+	native.Config = append(native.Config, '\n')
+	digest := sha256.Sum256(native.Config)
+	native.ConfigSHA256 = hex.EncodeToString(digest[:])
+	input.ConfigSHA256 = native.ConfigSHA256
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.glivelaPilotStatePath = filepath.Join(dir, "nodes.json")
+	writeDesired := func(p glivela.XrayPlan, certificate string) {
+		t.Helper()
+		raw, err := json.Marshal([]any{map[string]any{
+			"id": projection.task.ApplicationID, "certificateId": certificate,
+			"desired": map[string]any{"revision": native.Revision, "config": native.Config,
+				"configSha256": native.ConfigSHA256, "entry": p,
+				"entryNetwork": map[string]any{"source": projection.task.Source, "peers": projection.task.Peers}},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(store.glivelaPilotStatePath, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, c := range projection.materials {
 		input.Counters = append(input.Counters, glivela.CounterSnapshot{CredentialID: c.Credential.ID, UpBytes: 3, DownBytes: 7})
 	}
@@ -54,6 +84,17 @@ func TestGlivelaPilotActivationFinalCountersAndFenceAreAtomic(t *testing.T) {
 		return value
 	}
 	before := used()
+	writeDesired(plan, strings.Repeat("d", 64))
+	if err := store.ActivateGlivelaPilot(ctx, sharedSnapshotEndpointID, "pilot-admin", input); err == nil {
+		t.Fatal("foreign controller identity accepted")
+	}
+	changed := plan
+	changed.Revision++
+	writeDesired(changed, input.CertificateID)
+	if err := store.ActivateGlivelaPilot(ctx, sharedSnapshotEndpointID, "pilot-admin", input); err == nil {
+		t.Fatal("changed retained plan accepted")
+	}
+	writeDesired(plan, input.CertificateID)
 	if _, err := store.db.Exec(`CREATE TRIGGER reject_pilot_activation BEFORE INSERT ON glivela_pilot_checkpoint BEGIN SELECT RAISE(ABORT,'injected activation failure'); END`); err != nil {
 		t.Fatal(err)
 	}

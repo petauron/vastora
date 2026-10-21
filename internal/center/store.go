@@ -25,6 +25,7 @@ import (
 )
 
 type Store struct {
+	glivelaPilotStatePath          string
 	agentUpdateScope               map[string]bool
 	db                             *sql.DB
 	dataDir                        string
