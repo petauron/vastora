@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.337](https://github.com/petauron/vastora/compare/v0.1.0-alpha.336...v0.1.0-alpha.337) (2026-10-21)
+
+
+### Bug Fixes
+
+* **web:** display Japan flag in node locations ([#987](https://github.com/petauron/vastora/issues/987)) ([518faa9](https://github.com/petauron/vastora/commit/518faa9d0e1b83605fa49b5a94a1e23fe48c4cbf))
+* **web:** retain active entries in Glivela takeover selector ([#988](https://github.com/petauron/vastora/issues/988)) ([8d8c536](https://github.com/petauron/vastora/commit/8d8c536012b04718887cc7d5b3e0b956fedfde46))
+
 ## [0.1.0-alpha.336](https://github.com/petauron/vastora/compare/v0.1.0-alpha.335...v0.1.0-alpha.336) (2026-10-21)
 
 
