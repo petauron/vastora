@@ -125,8 +125,8 @@ func (s *Store) recordGlivelaPilotReceiptInTx(ctx context.Context, tx *sql.Tx, r
 
 // The controller directory is mounted read-only at this fixed private path.
 // A node never supplies a file path or its accounting identity. Polling is
-// scoped to its already authenticated Agent heartbeat, but the observation
-// itself comes from Glivela's separately authenticated node exchange.
+// scoped to the activated checkpoint; the observation itself comes from
+// Glivela's separately authenticated node exchange, not the Agent heartbeat.
 func (s *Store) observeGlivelaPilotInTx(ctx context.Context, tx *sql.Tx, agentID string) error {
 	var endpointID string
 	var raw []byte
@@ -143,7 +143,11 @@ func (s *Store) observeGlivelaPilotInTx(ctx context.Context, tx *sql.Tx, agentID
 	if json.Unmarshal(raw, &checkpoint) != nil {
 		return errors.New("center: invalid Glivela pilot checkpoint")
 	}
-	receipt, sourceErr := meridianruntime.ReadPilotReceipt("/run/glivela-pilot/nodes.json",
+	statePath := s.glivelaPilotStatePath
+	if statePath == "" {
+		statePath = "/run/glivela-pilot/nodes.json"
+	}
+	receipt, sourceErr := meridianruntime.ReadPilotReceipt(statePath,
 		checkpoint.EntryID, checkpoint.CertificateID, checkpoint.ConfigSHA256, checkpoint.Revision, s.now().UTC())
 	if sourceErr == nil {
 		// Any ledger/checkpoint conflict is a real transaction error, not a
@@ -162,6 +166,49 @@ func (s *Store) observeGlivelaPilotInTx(ctx context.Context, tx *sql.Tx, agentID
 	_, err = tx.ExecContext(ctx, `UPDATE meridian_route_grants SET runtime_healthy=0,health_expires_unix_ms=0,
 		last_error=?,updated_at=? WHERE endpoint_id=? AND status NOT IN ('revoked','revoking')`, message, stamp, endpointID)
 	return err
+}
+
+// RunGlivelaPilotReceipts consumes only the single activated pilot's pinned
+// private receipt. Agent heartbeat cadence must not delay short-lived health
+// evidence. Accounting still advances through the same atomic transaction.
+func (s *Store) RunGlivelaPilotReceipts(ctx context.Context, report func(error)) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			step, cancel := context.WithTimeout(ctx, 2*time.Second)
+			err := s.refreshGlivelaPilotReceipt(step)
+			cancel()
+			if err != nil && ctx.Err() == nil && report != nil {
+				report(err)
+			}
+		}
+	}
+}
+
+func (s *Store) refreshGlivelaPilotReceipt(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var agentID string
+	err = tx.QueryRowContext(ctx, `SELECT a.node_id FROM glivela_pilot_checkpoint p
+		JOIN meridian_endpoints e ON e.id=p.endpoint_id
+		JOIN applications a ON a.id=e.application_id WHERE p.id=1`).Scan(&agentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := s.observeGlivelaPilotInTx(ctx, tx, agentID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) recordGlivelaPilotHealthInTx(ctx context.Context, tx *sql.Tx, endpointID string,

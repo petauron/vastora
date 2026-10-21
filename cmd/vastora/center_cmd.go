@@ -215,6 +215,9 @@ func runCenter(arguments []string) error {
 		go store.RunRouteHealthDiagnostics(maintenanceContext, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center route health diagnostics: %v\n", err)
 		})
+		go store.RunGlivelaPilotReceipts(maintenanceContext, func(err error) {
+			fmt.Fprintln(os.Stderr, "Center Glivela pilot receipt not confirmed; existing lease checks retained")
+		})
 		go store.RunCertificateRenewal(maintenanceContext, 12*time.Hour, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center private HTTPS renewal: %v\n", err)
 		})
