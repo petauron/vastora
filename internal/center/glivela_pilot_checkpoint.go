@@ -211,6 +211,24 @@ func (s *Store) refreshGlivelaPilotReceipt(ctx context.Context) error {
 	return tx.Commit()
 }
 
+// A periodic refresh can lag a short-lived lease. Resolve the authenticated
+// account's activated pilot from the latest private receipt in the subscription
+// transaction, without extending its deadline or touching unrelated entries.
+func (s *Store) refreshGlivelaPilotSubscriptionInTx(ctx context.Context, tx *sql.Tx, accountID string) error {
+	var agentID string
+	err := tx.QueryRowContext(ctx, `SELECT a.node_id FROM glivela_pilot_checkpoint p
+		JOIN meridian_endpoints e ON e.id=p.endpoint_id
+		JOIN applications a ON a.id=e.application_id WHERE p.id=1
+		AND EXISTS (SELECT 1 FROM meridian_credentials c WHERE c.endpoint_id=p.endpoint_id AND c.account_id=?)`, accountID).Scan(&agentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.observeGlivelaPilotInTx(ctx, tx, agentID)
+}
+
 func (s *Store) recordGlivelaPilotHealthInTx(ctx context.Context, tx *sql.Tx, endpointID string,
 	checkpoint meridianruntime.PilotCounters, receipt meridianruntime.PilotReceipt) error {
 	now := s.now().UTC()

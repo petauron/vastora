@@ -130,6 +130,21 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 	if readUsage() != 310 {
 		t.Fatal("independent refresh double-counted traffic")
 	}
+	// A subscription must read the latest pinned receipt without waiting for
+	// either polling loop, and retain the same sole, idempotent ledger.
+	if _, err := store.db.Exec(`UPDATE meridian_endpoints SET runtime_healthy=0 WHERE id=?`, sharedSnapshotEndpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB); err != nil {
+		t.Fatal("subscription did not refresh pilot receipt", err)
+	}
+	var ready bool
+	if err := store.db.QueryRow(`SELECT runtime_healthy FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID).Scan(&ready); err != nil || !ready {
+		t.Fatal("subscription retained stale pilot state", err)
+	}
+	if readUsage() != 310 {
+		t.Fatal("subscription refresh double-counted traffic")
+	}
 	var saved string
 	if err := store.db.QueryRow(`SELECT checkpoint_json FROM glivela_pilot_checkpoint`).Scan(&saved); err != nil {
 		t.Fatal(err)

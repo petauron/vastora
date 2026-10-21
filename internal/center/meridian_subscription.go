@@ -133,6 +133,9 @@ func (s *Store) resolveMeridianSubscriptionInTx(ctx context.Context, tx *sql.Tx,
 	if result.Reason != "" {
 		return result, errMeridianSubscriptionNotFound
 	}
+	if err := s.refreshGlivelaPilotSubscriptionInTx(ctx, tx, result.Account.ID); err != nil {
+		return result, err
+	}
 	usage, err := s.meridianAccountUsage(ctx, tx, result.Account.ID)
 	if err != nil {
 		if errors.Is(err, errMeridianSubscriptionNotFound) {
