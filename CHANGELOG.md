@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.343](https://github.com/petauron/vastora/compare/v0.1.0-alpha.342...v0.1.0-alpha.343) (2026-10-21)
+
+
+### Bug Fixes
+
+* deduplicate version PR checks and surface required approval ([72a532c](https://github.com/petauron/vastora/commit/72a532c6c84d1afbcac5feb7acfb86579d562c6e))
+* retain settled disabled credentials during entry handover ([849cc4b](https://github.com/petauron/vastora/commit/849cc4b08363809ee135a511f04a3797f6443fe7))
+
 ## [0.1.0-alpha.342](https://github.com/petauron/vastora/compare/v0.1.0-alpha.341...v0.1.0-alpha.342) (2026-10-21)
 
 
