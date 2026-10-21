@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.338](https://github.com/petauron/vastora/compare/v0.1.0-alpha.337...v0.1.0-alpha.338) (2026-10-21)
+
+
+### Bug Fixes
+
+* validate pilot takeover against Glivela controller state ([#990](https://github.com/petauron/vastora/issues/990)) ([bf3bc5f](https://github.com/petauron/vastora/commit/bf3bc5fed3f7961ec92b8e5314e07691529a2ede))
+
 ## [0.1.0-alpha.337](https://github.com/petauron/vastora/compare/v0.1.0-alpha.336...v0.1.0-alpha.337) (2026-10-21)
 
 
