@@ -13730,6 +13730,16 @@
                                     "allowedUntil": {
                                       "type": "string",
                                       "format": "date-time"
+                                    },
+                                    "securityCheckedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "consecutiveFailures": {
+                                      "type": "integer"
+                                    },
+                                    "consecutiveSuccesses": {
+                                      "type": "integer"
                                     }
                                   }
                                 }
