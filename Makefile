@@ -58,6 +58,7 @@ deployment-check:
 	sh -n scripts/test-center-update.sh
 	sh -n scripts/test-release-metadata.sh
 	sh -n scripts/test-release-workflow.sh
+	sh -n scripts/ensure-version-pr-checks.sh
 	sh -n scripts/test-ci-workflows.sh
 	sh -n scripts/test-publish-installer-r2.sh
 	sh -n scripts/test-github-installer-release-assets.sh

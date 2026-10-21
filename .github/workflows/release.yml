@@ -405,22 +405,27 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.release_pr.outputs.head_branch }}
+          path: .release-pr
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Record the checked version PR head
+        id: release_pr_head
+        if: steps.release_pr_action.outputs.prs_created == 'true'
+        run: echo "sha=$(git -C .release-pr rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Validate release pull request metadata
         if: steps.release_pr_action.outputs.prs_created == 'true'
         env:
           BASE_SHA: ${{ steps.release_pr.outputs.base_sha }}
-        run: scripts/validate-release-metadata.sh "$BASE_SHA"
+        run: scripts/validate-release-metadata.sh "$BASE_SHA" .release-pr
 
-      # Token-created PRs must run the actual required workflows; metadata
-      # validation must not stand in for CI or CodeQL checks.
+      # Reuse exact-head PR checks, including approval-required runs. Dispatch
+      # only missing workflows; metadata validation never substitutes for CI.
       - name: Dispatch required checks for the version PR
         if: steps.release_pr_action.outputs.prs_created == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_BRANCH: ${{ steps.release_pr.outputs.head_branch }}
-        run: |
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_BRANCH"
-          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_BRANCH"
+          RELEASE_HEAD_SHA: ${{ steps.release_pr_head.outputs.sha }}
+        run: sh scripts/ensure-version-pr-checks.sh "$RELEASE_BRANCH" "$RELEASE_HEAD_SHA"

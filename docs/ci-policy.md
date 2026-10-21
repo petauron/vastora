@@ -44,6 +44,34 @@ Alpha release housekeeping stays in the separate reconciliation workflow.
 Branch protection is unchanged. No checks are replaced with synthetic success.
 Program releases, signed catalog publication and production upgrades stay separate.
 
+## Generated version PR approval and scheduling
+
+The release job validates generated metadata first, records the checked-out PR
+head SHA, and looks up CI and CodeQL runs for that exact head and managed branch.
+The PR checkout is isolated in `.release-pr`; metadata validation and scheduling
+execute only the scripts from the protected release baseline, not PR-supplied code.
+It prefers the automatic PR runs, including `action_required` runs, because they
+also supply GitHub's code-scanning PR context. Existing queued, running, successful
+or failed runs do not cause another dispatch. A failure is not hidden by selecting
+an older successful run or by automatically rerunning it.
+
+GitHub requires a maintainer to select **Approve workflows to run** for
+`GITHUB_TOKEN`-created PRs. The release job summary links the version PR and both
+existing runs as soon as they are registered, instead of running a second full
+suite while approval is still pending. Human approval is retained; no PAT, extra
+secret, automatic approval or change to repository protections is introduced.
+See [GitHub's token-triggered workflow policy](https://docs.github.com/en/actions/concepts/security/github_token).
+
+Only if a required workflow has no exact-head PR or dispatch run after a bounded
+registration grace period (up to four seconds per workflow) does the existing
+serialized release job dispatch that workflow. API errors fail closed; the helper
+checks the same-repository bot PR identity and expected head again before dispatch.
+A moving head stops scheduling rather than borrowing another commit's checks.
+This step reports scheduling/approval state only, not CI success or permission to
+merge. All real CI/CodeQL and code-scanning gates remain mandatory. It never
+approves, cancels or reruns existing workflows, and does not alter a running
+release, publication, signing or production deployment.
+
 ## Integration build reuse
 
 - Cache only the small native Dante build output (compressed binary, checksum
