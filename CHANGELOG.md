@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.341](https://github.com/petauron/vastora/compare/v0.1.0-alpha.340...v0.1.0-alpha.341) (2026-10-21)
+
+
+### Bug Fixes
+
+* validate bounded Glivela pilot health grace receipts ([#996](https://github.com/petauron/vastora/issues/996)) ([cc07976](https://github.com/petauron/vastora/commit/cc07976bc63dd66450747956fee45c2632bf528a))
+
 ## [0.1.0-alpha.340](https://github.com/petauron/vastora/compare/v0.1.0-alpha.339...v0.1.0-alpha.340) (2026-10-21)
 
 
