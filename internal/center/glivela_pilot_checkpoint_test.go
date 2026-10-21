@@ -3,6 +3,8 @@ package center
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +18,7 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 	store := openMeridianSharedEndpointSnapshotFixture(t)
 	ctx := context.Background()
 	now := store.now().UTC()
-	p := meridianruntime.PilotCounters{EntryID: "snapshot-shared-app", ConfigSHA256: strings.Repeat("a", 64), CutoverAt: now.Add(-10 * time.Second)}
+	p := meridianruntime.PilotCounters{EntryID: "snapshot-shared-app", ConfigSHA256: strings.Repeat("a", 64), CertificateID: strings.Repeat("b", 64), Revision: 1, CutoverAt: now.Add(-10 * time.Second)}
 	rows, err := store.db.Query(`SELECT id FROM meridian_credentials WHERE endpoint_id=? ORDER BY id`, sharedSnapshotEndpointID)
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +98,37 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 	}
 	if readUsage() != 310 {
 		t.Fatal("duplicate report changed accounting")
+	}
+	// The independent consumer needs no Agent heartbeat and must retain the
+	// existing idempotent ledger transaction, not introduce a second writer.
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.glivelaPilotStatePath = filepath.Join(dir, "nodes.json")
+	counters := map[string]any{}
+	for _, c := range r.Counters {
+		counters[c.CredentialID] = map[string]string{"upload": "3", "download": "7"}
+	}
+	source, err := json.Marshal([]any{map[string]any{
+		"id": p.EntryID, "certificateId": p.CertificateID, "reportedAt": now,
+		"desired": map[string]any{"revision": p.Revision, "configSha256": p.ConfigSHA256},
+		"receipt": map[string]any{"revision": p.Revision, "configSha256": p.ConfigSHA256, "runtimeReady": true,
+			"traffic": map[string]any{"startedAt": r.StartedAt, "sampledAt": r.SampledAt, "counters": counters}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.glivelaPilotStatePath, source, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := store.refreshGlivelaPilotReceipt(ctx); err != nil {
+			t.Fatal("independent receipt refresh failed", err)
+		}
+	}
+	if readUsage() != 310 {
+		t.Fatal("independent refresh double-counted traffic")
 	}
 	var saved string
 	if err := store.db.QueryRow(`SELECT checkpoint_json FROM glivela_pilot_checkpoint`).Scan(&saved); err != nil {
