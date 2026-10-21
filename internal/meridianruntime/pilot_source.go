@@ -66,6 +66,11 @@ func ReadPilotReceipt(path, entryID, certificateID, digest string, revision uint
 		return PilotReceipt{}, invalid
 	}
 	defer clear(raw)
+	return readPilotReceiptBytes(raw, entryID, certificateID, digest, revision, now)
+}
+
+func readPilotReceiptBytes(raw []byte, entryID, certificateID, digest string, revision uint64, now time.Time) (PilotReceipt, error) {
+	invalid := errors.New("meridianruntime: scoped controller receipt unavailable or inconsistent")
 	var nodes []struct {
 		ID            string `json:"id"`
 		CertificateID string `json:"certificateId"`

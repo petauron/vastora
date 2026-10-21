@@ -45,6 +45,7 @@ func (s *Store) resetDueMeridianEndpoints(ctx context.Context, tx *sql.Tx) error
 		FROM meridian_endpoints endpoint JOIN services service ON service.id=endpoint.service_id
 		JOIN sites site ON site.id=service.site_id
 		WHERE endpoint.reset_day>0 AND endpoint.next_reset_at<>'' AND julianday(endpoint.next_reset_at)<=julianday(?)
+		AND NOT EXISTS(SELECT 1 FROM glivela_pilot_checkpoint checkpoint WHERE checkpoint.endpoint_id=endpoint.id)
 		AND endpoint.status<>'retired' ORDER BY endpoint.id`, nowText)
 	if err != nil {
 		return err

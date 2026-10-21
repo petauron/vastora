@@ -123,7 +123,7 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 	// This scoped transition keeps the existing unlimited account policy. It
 	// must not silently omit quota/expiry enforcement for a different plan.
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_endpoints
-		WHERE id=? AND (total_bytes<>0 OR reset_day<>0 OR desired_revision<>applied_revision OR applied_revision=0))
+		WHERE id=? AND (desired_revision<>applied_revision OR applied_revision=0))
 		OR EXISTS(SELECT 1 FROM meridian_credentials c JOIN meridian_accounts a ON a.id=c.account_id
 		WHERE c.endpoint_id=? AND (c.enabled<>1 OR a.enabled<>1 OR a.status<>'active' OR a.total_bytes<>0 OR a.expiry_time<>0 OR a.reset_days<>0))`,
 		endpointID, endpointID).Scan(&unsupported); err != nil {
@@ -173,6 +173,38 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 		EntryID: projection.task.ApplicationID, ConfigSHA256: input.ConfigSHA256,
 		CertificateID: input.CertificateID, Revision: input.Revision, CutoverAt: now,
 		Totals: input.Counters, Source: projection.task.Source, Peers: projection.task.Peers, ExpectedExits: input.ExpectedExits,
+	}
+	var quota meridianruntime.PilotQuota
+	var lastReset, nextReset string
+	if err := tx.QueryRowContext(ctx, `SELECT e.total_bytes,e.used_bytes,e.reset_day,e.last_reset_at,e.next_reset_at,site.timezone
+		FROM meridian_endpoints e JOIN services service ON service.id=e.service_id JOIN sites site ON site.id=service.site_id WHERE e.id=?`, endpointID).Scan(&quota.TotalBytes, &quota.UsedBytes, &quota.ResetDay, &lastReset, &nextReset, &quota.Timezone); err != nil {
+		return err
+	}
+	if quota.TotalBytes != 0 || quota.ResetDay != 0 {
+		// A blocked old projection does not contain the pre-quota enabled
+		// inventory needed for later recovery. Do not infer or re-enable it.
+		if quota.TotalBytes > 0 && quota.UsedBytes >= quota.TotalBytes {
+			return errors.New("center: staged handover requires the retained active pre-quota plan")
+		}
+		quota.CutoverAt = input.SampledAt
+		if lastReset != "" {
+			quota.LastResetAt, err = time.Parse(time.RFC3339Nano, lastReset)
+			if err != nil {
+				return err
+			}
+		}
+		if nextReset != "" {
+			quota.NextResetAt, err = time.Parse(time.RFC3339Nano, nextReset)
+			if err != nil {
+				return err
+			}
+		}
+		verified, err := meridianruntime.ReadPilotQuotaSeed(statePath, checkpoint.EntryID, checkpoint.CertificateID, checkpoint.ConfigSHA256, checkpoint.Revision, quota)
+		if err != nil {
+			return err
+		}
+		checkpoint.Quota = &verified
+		checkpoint.CutoverAt = input.SampledAt
 	}
 	raw, err := json.Marshal(checkpoint)
 	if err != nil {
