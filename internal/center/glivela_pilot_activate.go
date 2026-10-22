@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/netip"
 	"time"
 
@@ -40,11 +39,9 @@ func pilotNativePlan(ctx context.Context, tx *sql.Tx, endpointID string, plan gl
 	if err != nil || !landing.PublicIP(address) {
 		return glivela.XrayPlan{}, errors.New("center: reviewed public REALITY target required")
 	}
-	for i := range plan.RealityEndpoints {
-		// Preserve SNI, keys, users, listener and subscription address. The
-		// native runtime requires the already-reviewed target IP to be pinned.
-		plan.RealityEndpoints[i].Target = net.JoinHostPort(targetIP, "443")
-	}
+	// Preserve the retained target, just like SNI, keys, users and listener.
+	// The reviewed public address remains a prerequisite, not a replacement
+	// for the domain. Glivela validates the resolved destination when dialing.
 	if _, err := glivela.BuildDesiredArtifact(plan); err != nil {
 		return glivela.XrayPlan{}, err
 	}
