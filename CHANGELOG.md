@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.348](https://github.com/petauron/vastora/compare/v0.1.0-alpha.347...v0.1.0-alpha.348) (2026-10-22)
+
+
+### Bug Fixes
+
+* **agent:** retire retained legacy execution without removing data ([#1012](https://github.com/petauron/vastora/issues/1012)) ([d32cb1b](https://github.com/petauron/vastora/commit/d32cb1b2c079685f7ac84f0d27df4e8be8c9b1a2))
+* **center:** verify fresh dual-stack publication exits ([#1014](https://github.com/petauron/vastora/issues/1014)) ([dbf8a57](https://github.com/petauron/vastora/commit/dbf8a574288fc656628309bbf6286b47104e977a))
+
 ## [0.1.0-alpha.347](https://github.com/petauron/vastora/compare/v0.1.0-alpha.346...v0.1.0-alpha.347) (2026-10-22)
 
 
