@@ -199,6 +199,16 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		// Preserve the normal authenticated failure/receipt lifecycle below.
 	} else if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) && !nativeLifecycle {
 		err = errors.New("agent: task is not authorized for a landing-only node")
+	} else if task.Kind == "application.command" && task.MeridianRuntime != nil && task.MeridianRuntime.ResumeApplied {
+		monitor, ok := c.Executor.(interface {
+			ResumeAppliedMeridianMonitor(context.Context, meridianruntime.Task) (meridianruntime.Result, error)
+		})
+		if !ok || !c.Capabilities.Docker {
+			err = errors.New("agent: applied proxy monitor recovery is unavailable")
+		} else {
+			value, resumeErr := monitor.ResumeAppliedMeridianMonitor(ctx, *task.MeridianRuntime)
+			result.MeridianRuntime, err = &value, resumeErr
+		}
 	} else if task.Kind == "landing.server.apply" || task.Kind == "landing.proxy.apply" || task.XrayRecovery != nil ||
 		task.MeridianRuntime != nil || task.MeridianLegacyRetire != nil || task.MeridianLegacyExport != nil || task.MeridianAcceptance != nil ||
 		task.ApplicationCommand != nil || task.SubscriptionCommand != nil || task.ClientCommand != nil || task.NodeCommand != nil || task.ControllerCommand != nil || task.ProtocolCommand != nil {

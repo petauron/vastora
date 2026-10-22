@@ -98,6 +98,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, buildErr)
 		}
 		projection.task.ReplacePendingState = command.ReplacePendingState
+		projection.task.ResumeApplied = command.ResumeApplied
 		if projection.task.Validate() != nil {
 			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, errors.New("center: stored Glivela recovery command is invalid"))
 		}

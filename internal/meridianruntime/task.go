@@ -21,10 +21,11 @@ const (
 type Command struct {
 	EndpointID          string `json:"endpointId"`
 	ReplacePendingState bool   `json:"replacePendingState,omitempty"`
+	ResumeApplied       bool   `json:"resumeApplied,omitempty"`
 }
 
 func (c Command) Validate() error {
-	if strings.TrimSpace(c.EndpointID) == "" || len(c.EndpointID) > glivela.MaxIdentifierLength {
+	if strings.TrimSpace(c.EndpointID) == "" || len(c.EndpointID) > glivela.MaxIdentifierLength || c.ResumeApplied && c.ReplacePendingState {
 		return errors.New("meridian runtime: invalid endpoint command")
 	}
 	return nil
@@ -38,11 +39,15 @@ type Task struct {
 	Desired             glivela.DesiredArtifact `json:"desired"`
 	RetireLegacy        bool                    `json:"retireLegacy"`
 	ReplacePendingState bool                    `json:"replacePendingState,omitempty"`
+	ResumeApplied       bool                    `json:"resumeApplied,omitempty"`
 	Peers               []Peer                  `json:"peers,omitempty"`
 	Source              *landing.PeerIdentity   `json:"source,omitempty"`
 }
 
 func (t Task) Validate() error {
+	if t.ResumeApplied && (t.ReplacePendingState || t.RetireLegacy) {
+		return errors.New("meridian runtime: monitor recovery cannot replace or retire a runtime")
+	}
 	if strings.TrimSpace(t.ApplicationID) == "" || len(t.ApplicationID) > glivela.MaxIdentifierLength || strings.TrimSpace(t.ImageReference) == "" || len(t.ImageReference) > 1024 || t.ReplacePendingState && t.RetireLegacy {
 		return errors.New("meridian runtime: invalid task identity")
 	}
