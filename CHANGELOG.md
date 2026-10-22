@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.349](https://github.com/petauron/vastora/compare/v0.1.0-alpha.348...v0.1.0-alpha.349) (2026-10-22)
+
+
+### Bug Fixes
+
+* retire accepted legacy landing execution without deleting data ([27037e6](https://github.com/petauron/vastora/commit/27037e64d3f293dc7a55c604289094cb3b356f46))
+
 ## [0.1.0-alpha.348](https://github.com/petauron/vastora/compare/v0.1.0-alpha.347...v0.1.0-alpha.348) (2026-10-22)
 
 
