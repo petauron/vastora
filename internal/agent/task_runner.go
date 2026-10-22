@@ -202,12 +202,16 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	} else if task.Kind == "application.command" && task.MeridianRuntime != nil && task.MeridianRuntime.ResumeApplied {
 		monitor, ok := c.Executor.(interface {
 			ResumeAppliedMeridianMonitor(context.Context, meridianruntime.Task) (meridianruntime.Result, error)
+			CompleteCommandResources(string, string) (*InstanceResources, error)
 		})
 		if !ok || !c.Capabilities.Docker {
 			err = errors.New("agent: applied proxy monitor recovery is unavailable")
 		} else {
 			value, resumeErr := monitor.ResumeAppliedMeridianMonitor(ctx, *task.MeridianRuntime)
 			result.MeridianRuntime, err = &value, resumeErr
+			if err == nil {
+				result.Resources, err = monitor.CompleteCommandResources(task.MeridianRuntime.ApplicationID, task.ID)
+			}
 		}
 	} else if task.Kind == "landing.server.apply" || task.Kind == "landing.proxy.apply" || task.XrayRecovery != nil ||
 		task.MeridianRuntime != nil || task.MeridianLegacyRetire != nil || task.MeridianLegacyExport != nil || task.MeridianAcceptance != nil ||
