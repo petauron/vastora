@@ -84,6 +84,7 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 		t.Fatal("legacy protocol change was not fenced before certificate acquisition", err)
 	}
 	r := meridianruntime.PilotReceipt{EntryID: p.EntryID, ConfigSHA256: p.ConfigSHA256, StartedAt: now.Add(-5 * time.Second), SampledAt: now.Add(-time.Second), Ready: true}
+	r.PublicationSuspended = true // New traffic is still accounted exactly once while publication is paused.
 	for _, c := range p.Totals {
 		r.Counters = append(r.Counters, glivela.CounterSnapshot{CredentialID: c.CredentialID, UpBytes: 3, DownBytes: 7})
 	}
@@ -155,6 +156,37 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 		t.Fatal("subscription refresh double-counted traffic")
 	}
 	var saved string
+	// Publication suspension must hide the entry without discarding or replaying
+	// its authenticated traffic receipt. Resuming uses a fresh controller state.
+	var suspended []map[string]any
+	if err := json.Unmarshal(source, &suspended); err != nil {
+		t.Fatal(err)
+	}
+	suspended[0]["publicationSuspended"] = true
+	paused, err := json.Marshal(suspended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.glivelaPilotStatePath, paused, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := store.refreshGlivelaPilotReceipt(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.db.QueryRow(`SELECT runtime_healthy FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID).Scan(&ready); err != nil || ready {
+		t.Fatal("suspended entry still published", err)
+	}
+	if readUsage() != 310 {
+		t.Fatal("suspension changed accounting")
+	}
+	if err := os.WriteFile(store.glivelaPilotStatePath, source, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.refreshGlivelaPilotReceipt(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.db.QueryRow(`SELECT checkpoint_json FROM glivela_pilot_checkpoint WHERE endpoint_id=?`, sharedSnapshotEndpointID).Scan(&saved); err != nil {
 		t.Fatal(err)
 	}

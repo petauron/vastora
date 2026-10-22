@@ -46,6 +46,13 @@ func TestPilotSourcePinnedPrivateReceipt(t *testing.T) {
 	if err != nil || len(receipt.Counters) != 1 || receipt.Counters[0].UpBytes != 3 || receipt.Counters[0].DownBytes != 7 {
 		t.Fatal("valid pinned source rejected", err)
 	}
+	node["publicationSuspended"] = true
+	write(node)
+	receipt, err = read()
+	if err != nil || !receipt.PublicationSuspended || !receipt.Ready || len(receipt.Counters) != 1 || receipt.Counters[0].UpBytes != 3 || receipt.Counters[0].DownBytes != 7 {
+		t.Fatal("suspension must retain verified accounting", err)
+	}
+	delete(node, "publicationSuspended")
 	write(node, node)
 	if _, err := read(); err == nil {
 		t.Fatal("duplicate node accepted")

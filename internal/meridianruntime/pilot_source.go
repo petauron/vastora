@@ -72,9 +72,10 @@ func ReadPilotReceipt(path, entryID, certificateID, digest string, revision uint
 func readPilotReceiptBytes(raw []byte, entryID, certificateID, digest string, revision uint64, now time.Time) (PilotReceipt, error) {
 	invalid := errors.New("meridianruntime: scoped controller receipt unavailable or inconsistent")
 	var nodes []struct {
-		ID            string `json:"id"`
-		CertificateID string `json:"certificateId"`
-		Desired       struct {
+		ID                   string `json:"id"`
+		CertificateID        string `json:"certificateId"`
+		PublicationSuspended bool   `json:"publicationSuspended"`
+		Desired              struct {
 			Revision uint64 `json:"revision"`
 			Digest   string `json:"configSha256"`
 		} `json:"desired"`
@@ -116,7 +117,8 @@ func readPilotReceiptBytes(raw []byte, entryID, certificateID, digest string, re
 		}
 		found = true
 		result = PilotReceipt{EntryID: entryID, ConfigSHA256: digest, Ready: true,
-			StartedAt: traffic.StartedAt, SampledAt: traffic.SampledAt, Health: node.Receipt.Health}
+			PublicationSuspended: node.PublicationSuspended,
+			StartedAt:            traffic.StartedAt, SampledAt: traffic.SampledAt, Health: node.Receipt.Health}
 		for id, counter := range traffic.Counters {
 			if !glivela.ValidIdentifier(id) || counter.Upload < 0 || counter.Download < 0 {
 				return PilotReceipt{}, invalid
