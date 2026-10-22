@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.344](https://github.com/petauron/vastora/compare/v0.1.0-alpha.343...v0.1.0-alpha.344) (2026-10-22)
+
+
+### Bug Fixes
+
+* recover unchanged entry monitoring after interrupted takeover ([2f5d92c](https://github.com/petauron/vastora/commit/2f5d92cad2cff116e92218bc0ee2faa5c064da43))
+
 ## [0.1.0-alpha.343](https://github.com/petauron/vastora/compare/v0.1.0-alpha.342...v0.1.0-alpha.343) (2026-10-21)
 
 
