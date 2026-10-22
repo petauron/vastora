@@ -20,8 +20,10 @@ type PilotReceipt struct {
 	StartedAt    time.Time
 	SampledAt    time.Time
 	Ready        bool
-	Counters     []glivela.CounterSnapshot
-	Health       *PilotHealth
+	// PublicationSuspended withholds subscription publication, not accounting.
+	PublicationSuspended bool
+	Counters             []glivela.CounterSnapshot
+	Health               *PilotHealth
 }
 
 type PilotHealth struct {

@@ -343,14 +343,22 @@ func (s *Store) recordGlivelaPilotHealthInTx(ctx context.Context, tx *sql.Tx, en
 		if deadline > now.UnixMilli() {
 			healthy, status, message = 1, "ready", ""
 		}
+		if receipt.PublicationSuspended {
+			healthy, deadline, status, message = 0, 0, "blocked", "Glivela publication temporarily suspended"
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET runtime_healthy=?,health_expires_unix_ms=?,
 			status=?,last_error=?,updated_at=? WHERE id=? AND endpoint_id=?`,
 			healthy, deadline, status, message, stamp, r.id, endpointID); err != nil {
 			return err
 		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=1,status='ready',last_error='',updated_at=?
-		WHERE id=? AND status<>'retired' AND desired_revision=applied_revision AND applied_revision>0`, stamp, endpointID)
+	healthy, status, message := 1, "ready", ""
+	if receipt.PublicationSuspended {
+		// The applied runtime remains ready; only publication is withheld.
+		healthy, message = 0, "Glivela publication temporarily suspended"
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=?,status=?,last_error=?,updated_at=?
+		WHERE id=? AND status<>'retired' AND desired_revision=applied_revision AND applied_revision>0`, healthy, status, message, stamp, endpointID)
 	if err != nil {
 		return err
 	}
