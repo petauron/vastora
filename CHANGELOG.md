@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.345](https://github.com/petauron/vastora/compare/v0.1.0-alpha.344...v0.1.0-alpha.345) (2026-10-22)
+
+
+### Bug Fixes
+
+* resume only verified applied proxy monitors ([1fb07cf](https://github.com/petauron/vastora/commit/1fb07cf6cc4bdbc1d96dec053646924681933b66))
+
 ## [0.1.0-alpha.344](https://github.com/petauron/vastora/compare/v0.1.0-alpha.343...v0.1.0-alpha.344) (2026-10-22)
 
 
