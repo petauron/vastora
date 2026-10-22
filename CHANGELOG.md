@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.350](https://github.com/petauron/vastora/compare/v0.1.0-alpha.349...v0.1.0-alpha.350) (2026-10-22)
+
+
+### Bug Fixes
+
+* preserve accounting while Glivela publication is suspended ([d883fd8](https://github.com/petauron/vastora/commit/d883fd89db51cd75910fbad271a580606859d9cc))
+
 ## [0.1.0-alpha.349](https://github.com/petauron/vastora/compare/v0.1.0-alpha.348...v0.1.0-alpha.349) (2026-10-22)
 
 
