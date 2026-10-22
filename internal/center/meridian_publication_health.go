@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/deployapi"
@@ -13,8 +14,9 @@ import (
 )
 
 type meridianPublicationProof struct {
-	Request  deployapi.MeridianProbeRequest
-	Revision int64
+	Request       deployapi.MeridianProbeRequest
+	Revision      int64
+	AlternateExit string
 }
 
 // Snapshot the same saved identity used to render the subscription. A plain
@@ -49,10 +51,41 @@ func (s *Store) meridianPublicationProof(ctx context.Context, tx *sql.Tx, servic
 		if material.Credential.Enabled && material.Credential.Kind == glivela.NativeCredential {
 			proof.Request.Client = meridianruntime.AcceptanceClient{Protocol: glivela.VLESSReality, Reality: &reality, Material: material}
 			proof.Request.ExpectedExit, err = s.reinstallAcceptanceExit(ctx, tx, nodeID, false)
+			if err == nil {
+				proof.AlternateExit, err = s.publicationAlternateExit(ctx, tx, nodeID, proof.Request.ExpectedExit)
+			}
 			return proof, err
 		}
 	}
 	return proof, errors.New("center: an enabled native credential is required for proxy verification")
+}
+
+// Only the unique opposite-family address in fresh authenticated inventory is
+// eligible. Never guess among multiple exits or borrow another node's address.
+func (s *Store) publicationAlternateExit(ctx context.Context, tx *sql.Tx, nodeID, primary string) (string, error) {
+	var seen string
+	if err := tx.QueryRowContext(ctx, `SELECT last_seen_at FROM agents WHERE id=?`, nodeID).Scan(&seen); err != nil {
+		return "", err
+	}
+	stamp, err := time.Parse(time.RFC3339Nano, seen)
+	if err != nil || stamp.After(s.now()) || s.now().Sub(stamp) > 2*time.Minute {
+		return "", nil
+	}
+	targets, err := listIPQualityTargets(ctx, tx, nodeID)
+	if err != nil {
+		return "", err
+	}
+	alternate := ""
+	for _, target := range targets {
+		if target.Family == ipQualityFamily(primary) {
+			continue
+		}
+		if alternate != "" {
+			return "", nil
+		}
+		alternate = target.Address
+	}
+	return alternate, nil
 }
 
 func (s *Store) verifyMeridianPublication(ctx context.Context, publication PublicationView, revision int64) (PublicationView, error) {
@@ -68,7 +101,13 @@ func (s *Store) verifyMeridianPublication(ctx context.Context, publication Publi
 	if err != nil {
 		return s.recordPublicationVerification(ctx, publication.ID, revision, "current runtime, credential or exit evidence is not ready for proxy verification")
 	}
-	if err := s.meridianProber.VerifyMeridianEntry(ctx, proof.Request); err != nil {
+	probeErr := s.meridianProber.VerifyMeridianEntry(ctx, proof.Request)
+	if probeErr != nil && proof.AlternateExit != "" && ctx.Err() == nil {
+		request := proof.Request
+		request.ExpectedExit = proof.AlternateExit
+		probeErr = s.meridianProber.VerifyMeridianEntry(ctx, request)
+	}
+	if probeErr != nil {
 		return s.recordPublicationVerification(ctx, publication.ID, revision, "authenticated proxy HTTPS and expected exit verification did not pass")
 	}
 	encoded, err := json.Marshal(proof)
