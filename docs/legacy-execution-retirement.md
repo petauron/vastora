@@ -1,5 +1,8 @@
 # Retained legacy execution retirement
 
+This page covers migrated entries. Native Dante landings use the separate
+[landing execution retirement](landing-execution-retirement.md) procedure.
+
 This local maintenance operation retires execution only. It is not application
 uninstall, container removal, subscription retirement or database cleanup.
 Keep the controller, shared gateway and application-owned native services running.

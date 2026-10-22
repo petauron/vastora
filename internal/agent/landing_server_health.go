@@ -12,7 +12,7 @@ func (s *Store) observeNativeLandingHealth(ctx context.Context) *landing.ServerH
 	s.landingMutationMu.Lock()
 	defer s.landingMutationMu.Unlock()
 	journal, err := readLandingHostJournal()
-	if err != nil || journal == nil || journal.Removed {
+	if err != nil || journal == nil || journal.Removed || journal.ExecutionRetired {
 		return nil
 	}
 	health := &landing.ServerHealth{Revision: journal.Revision, CheckedAt: time.Now().UTC()}
