@@ -292,7 +292,7 @@ func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID
 	}
 	// An unchanged, unclaimed runtime can lose its monitor after an Agent
 	// restart. Re-observe that exact revision without replacing configuration.
-	resumeApplied := endpointStatus == "ready" && appliedRevision > 0 && desiredRevision == appliedRevision
+	resumeApplied := (endpointStatus == "ready" || endpointStatus == "failed") && appliedRevision > 0 && desiredRevision == appliedRevision
 	if applicationStatus != "running" || (!resumeApplied && (endpointStatus != "failed" || desiredRevision <= appliedRevision)) {
 		return errors.New("center: Glivela endpoint has neither an applied runtime nor a failed unapplied revision to recover")
 	}
@@ -359,8 +359,18 @@ func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID
 			return errors.New("center: applied runtime recovery must not retire legacy resources")
 		}
 	}
-	if _, err := s.queueMeridianRuntime(ctx, tx, endpointID, !resumeApplied); err != nil {
+	id, err := s.queueMeridianRuntime(ctx, tx, endpointID, !resumeApplied)
+	if err != nil {
 		return err
+	}
+	if resumeApplied {
+		input, err := json.Marshal(meridianruntime.Command{EndpointID: endpointID, ResumeApplied: true})
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET input_json=? WHERE id=?`, input, id); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
