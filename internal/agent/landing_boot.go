@@ -98,7 +98,7 @@ func (s *Store) ResumeNativeLanding(ctx context.Context) error {
 
 func resumeNativeLanding(ctx context.Context, nodeID string) error {
 	journal, err := readLandingHostJournal()
-	if err != nil || journal == nil || journal.Removed {
+	if err != nil || journal == nil || journal.Removed || journal.ExecutionRetired {
 		return err
 	}
 	if journal.NodeID != nodeID || journal.Policy == nil || journal.Policy.Revision != journal.Revision || journal.PreviousPolicy != nil || len(journal.PendingFiles) != 0 {

@@ -36,15 +36,16 @@ const (
 // No SOCKS secrets exist. Persist intent before touching files so interrupted
 // writes are recognized on retry without adopting unrelated host resources.
 type landingHostJournal struct {
-	NodeID         string                  `json:"nodeId"`
-	UID            uint32                  `json:"uid"`
-	Revision       uint64                  `json:"revision"`
-	Files          map[string]string       `json:"files"`
-	PendingFiles   map[string]string       `json:"pendingFiles,omitempty"`
-	Policy         *landing.ServerFirewall `json:"policy,omitempty"`
-	PreviousPolicy *landing.ServerFirewall `json:"previousPolicy,omitempty"`
-	Removed        bool                    `json:"removed"`
-	PlanDigest     string                  `json:"planDigest,omitempty"`
+	ExecutionRetired bool                    `json:"executionRetired,omitempty"`
+	NodeID           string                  `json:"nodeId"`
+	UID              uint32                  `json:"uid"`
+	Revision         uint64                  `json:"revision"`
+	Files            map[string]string       `json:"files"`
+	PendingFiles     map[string]string       `json:"pendingFiles,omitempty"`
+	Policy           *landing.ServerFirewall `json:"policy,omitempty"`
+	PreviousPolicy   *landing.ServerFirewall `json:"previousPolicy,omitempty"`
+	Removed          bool                    `json:"removed"`
+	PlanDigest       string                  `json:"planDigest,omitempty"`
 }
 
 func landingPaths() []string {
@@ -245,6 +246,9 @@ func stopLandingService(ctx context.Context) error {
 // the dedicated account and package: deleting shared packages or recycling its
 // UID could affect unrelated services. A tombstone fences older task retries.
 func RemoveLanding(ctx context.Context, nodeID string, revision uint64) error {
+	if err := requireNativeLandingExecution(); err != nil {
+		return err
+	}
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 || nodeID == "" || revision == 0 {
 		return errors.New("agent: landing removal requires a managed Linux root Agent")
 	}
@@ -307,6 +311,9 @@ func RemoveLanding(ctx context.Context, nodeID string, revision uint64) error {
 // ApplyLanding installs a native service; it never installs Docker, x-ui or
 // compilers. The caller has persisted the desired revision and serialized tasks.
 func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) (applyErr error) {
+	if err := requireNativeLandingExecution(); err != nil {
+		return err
+	}
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 || nodeID == "" {
 		return errors.New("agent: landing installation requires a managed Linux root Agent")
 	}
@@ -557,6 +564,9 @@ func landingListenerPresent(data []byte, address string, uid uint32) bool {
 // RestoreLandingFirewall is called by a root oneshot prerequisite. It does
 // not fetch configuration or contact Center and never starts the proxy itself.
 func RestoreLandingFirewall(ctx context.Context) error {
+	if err := requireNativeLandingExecution(); err != nil {
+		return err
+	}
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return errors.New("agent: landing firewall requires Linux root")
 	}
