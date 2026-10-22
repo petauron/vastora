@@ -290,8 +290,11 @@ func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID
 	} else if err != nil {
 		return err
 	}
-	if applicationStatus != "running" || endpointStatus != "failed" || desiredRevision <= appliedRevision {
-		return errors.New("center: Glivela endpoint does not have a failed unapplied revision")
+	// An unchanged, unclaimed runtime can lose its monitor after an Agent
+	// restart. Re-observe that exact revision without replacing configuration.
+	resumeApplied := endpointStatus == "ready" && appliedRevision > 0 && desiredRevision == appliedRevision
+	if applicationStatus != "running" || (!resumeApplied && (endpointStatus != "failed" || desiredRevision <= appliedRevision)) {
+		return errors.New("center: Glivela endpoint has neither an applied runtime nor a failed unapplied revision to recover")
 	}
 
 	var commandID string
@@ -304,6 +307,9 @@ func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID
 		return err
 	}
 	if reconciliationRequired == 1 {
+		if resumeApplied {
+			return errors.New("center: resolve the uncertain execution before resuming the applied runtime")
+		}
 		var executionID string
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM task_executions WHERE agent_id=? AND task_id=? AND attempt=?
 			AND state IN ('failed','unknown') AND disposition='' ORDER BY created_at DESC LIMIT 1`, nodeID, commandID, commandAttempt).Scan(&executionID); errors.Is(err, sql.ErrNoRows) {
@@ -344,7 +350,16 @@ func (s *Store) RecoverMeridianEndpoint(ctx context.Context, endpointID, adminID
 	if active != 0 {
 		return errors.New("center: wait for the node's active operation before Glivela recovery")
 	}
-	if _, err := s.queueMeridianRuntime(ctx, tx, endpointID, true); err != nil {
+	if resumeApplied {
+		projection, err := s.buildMeridianRuntimeTask(ctx, tx, endpointID, "")
+		if err != nil {
+			return err
+		}
+		if projection.task.RetireLegacy {
+			return errors.New("center: applied runtime recovery must not retire legacy resources")
+		}
+	}
+	if _, err := s.queueMeridianRuntime(ctx, tx, endpointID, !resumeApplied); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

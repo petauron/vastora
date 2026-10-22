@@ -47,10 +47,22 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set("X-CSRF-Token", csrfToken());
   }
   const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
-  const body = (await response.json().catch(() => ({}))) as T & { error?: string; code?: string; captchaRequired?: boolean };
+  if (response.status === 204) return undefined as T;
+  const body = (await response.json().catch((error: unknown) => {
+    // An interrupted successful response is not an empty inventory. Let the
+    // refresh fail so the current page and in-memory operator form survive.
+    if (response.ok) throw error;
+    return {};
+  })) as T & { error?: string; code?: string; captchaRequired?: boolean };
   if (!response.ok) {
-    throw new APIError(body.error ?? "Request failed", response.status, body.code, body.captchaRequired);
+    throw new APIError(body?.error ?? "Request failed", response.status, body?.code, body?.captchaRequired);
   }
+  return body;
+}
+
+async function inventory<K extends string, T>(path: string, key: K, signal?: AbortSignal): Promise<Record<K, T[]>> {
+  const body = await request<Record<K, T[]>>(path, { signal });
+  if (!body || !Array.isArray(body[key])) throw new Error("Incomplete inventory response; retry the refresh.");
   return body;
 }
 
@@ -148,12 +160,12 @@ export const api = {
   downloadDiagnostics: () => download("/api/v1/diagnostics", `vastora-diagnostics-${new Date().toISOString().slice(0, 10)}.json`),
   downloadBackup: (password: string) => download("/api/v1/backups", "vastora-center.vastora", { method: "POST", body: JSON.stringify({ password }) }),
   sources: (signal?: AbortSignal) => request<{ sources: CatalogSource[] }>("/api/v1/catalog/sources", { signal }),
-  apps: (signal?: AbortSignal) => request<{ apps: AppView[] }>("/api/v1/catalog/apps", { signal }),
+  apps: (signal?: AbortSignal) => inventory<"apps", AppView>("/api/v1/catalog/apps", "apps", signal),
 	registryCredentials: (signal?: AbortSignal) => request<{ credentials: RegistryCredential[] }>("/api/v1/registry-credentials", { signal }),
 	createRegistryCredential: (host: string, username: string, token: string) => request<RegistryCredential>("/api/v1/registry-credentials", { method: "POST", body: JSON.stringify({ host, username, token }) }),
 	rotateRegistryCredential: (id: string, username: string, token: string) => request<RegistryCredential>(`/api/v1/registry-credentials/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ username, token }) }),
 	deleteRegistryCredential: (id: string) => request<{ deleted: boolean }>(`/api/v1/registry-credentials/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" }),
-	agents: (signal?: AbortSignal) => request<{ agents: AgentView[] }>("/api/v1/agents", { signal }),
+	agents: (signal?: AbortSignal) => inventory<"agents", AgentView>("/api/v1/agents", "agents", signal),
 	createAgentEnrollment: (siteId: string, name: string, centerUrl: string, useHeadscale: boolean, gateway: boolean, tunnel: boolean, caCertificatePem = "", landingOnly = false) => request<AgentEnrollment & { statusId: string }>("/api/v1/agent-enrollments", { method: "POST", body: JSON.stringify({ siteId, name, centerUrl, useHeadscale, gateway, tunnel, caCertificatePem, landingOnly }) }),
   agentEnrollmentStatus: (statusId: string, signal?: AbortSignal) => request<AgentEnrollmentStatus>(`/api/v1/agent-enrollments/${encodeURIComponent(statusId)}/status`, { signal }),
 	agentReinstallPlan: (agentId: string) => request<AgentReinstallPlan>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-plan`),
@@ -177,8 +189,8 @@ export const api = {
   inspectAgentReinstallMonitor: (agentId: string, input: AgentReinstallMonitorInput) => request<AgentReinstallMonitorInspection>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-monitor/inspect`, { method: "POST", body: JSON.stringify(input) }),
   settleAgentReinstallLocalWork: (agentId: string, input: AgentReinstallLocalWorkInput) => request<AgentReinstallLocalDisposition>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-work/settle`, { method: "POST", body: JSON.stringify(input) }),
   continueAgentReinstallIsolation: (agentId: string, input: { operationId: string; expectedAttempt: number; confirmIsolation: boolean }) => request<AgentEnrollment>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-isolation/continue`, { method: "POST", body: JSON.stringify(input) }),
-  deployments: (signal?: AbortSignal) => request<{ deployments: Deployment[] }>("/api/v1/deployments", { signal }),
-	sites: (signal?: AbortSignal) => request<{ sites: Site[] }>("/api/v1/sites", { signal }),
+  deployments: (signal?: AbortSignal) => inventory<"deployments", Deployment>("/api/v1/deployments", "deployments", signal),
+	sites: (signal?: AbortSignal) => inventory<"sites", Site>("/api/v1/sites", "sites", signal),
 	organizations: (signal?: AbortSignal) => request<{ organizations: Organization[] }>("/api/v1/organizations", { signal }),
 	createSite: (input: SiteInput) => request<Site>("/api/v1/sites", { method: "POST", body: JSON.stringify(input) }),
 	updateSite: (site: Site, input: SiteInput) => request<Site>(`/api/v1/sites/${encodeURIComponent(site.id)}`, { method: "PUT", body: JSON.stringify(input) }),
@@ -189,7 +201,7 @@ export const api = {
 	revokeAgentCredential: (agentId: string) => request<{ revoked: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}/revoke`, { method: "POST", body: "{}" }),
 	removeOfflineAgent: (agentId: string, confirmation: string) => request<{ removing: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}/remove`, { method: "POST", body: JSON.stringify({ confirmation }) }),
 	deleteAgent: (agentId: string) => request<{ deleted: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "DELETE", body: "{}" }),
-	applications: (signal?: AbortSignal) => request<{ applications: Application[] }>("/api/v1/applications", { signal }),
+	applications: (signal?: AbortSignal) => inventory<"applications", Application>("/api/v1/applications", "applications", signal),
 	meridianTraffic: (signal?: AbortSignal) => request<MeridianTraffic>("/api/v1/meridian/traffic", { signal }),
 	meridian: (signal?: AbortSignal) => request<MeridianInventory>("/api/v1/meridian", { signal }),
 	startMeridianCutover: () => request<MeridianInventory["cutover"]>("/api/v1/meridian/cutover", { method: "POST", body: "{}" }),
@@ -208,7 +220,7 @@ export const api = {
 	rotateApplicationCredentials: (applicationId: string, target: "management" | "client", currentPassword: string, operationKey: string) => request<ApplicationCredentialRotation>(`/api/v1/applications/${encodeURIComponent(applicationId)}/credentials/rotate`, { method: "POST", headers: { "Idempotency-Key": operationKey }, body: JSON.stringify({ target, currentPassword, confirm: true }) }),
 	applicationCredentialRotation: (applicationId: string, rotationId: string, signal?: AbortSignal) => request<ApplicationCredentialRotation>(`/api/v1/applications/${encodeURIComponent(applicationId)}/credentials/rotations/${encodeURIComponent(rotationId)}`, { signal }),
 	reconcileThreeXUINode: (applicationId: string) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/3xui-node/reconcile`, { method: "POST", body: "{}" }),
-	threeXUIControllerMigrations: (signal?: AbortSignal) => request<{ migrations: ThreeXUIControllerMigration[] }>("/api/v1/three-x-ui-migrations", { signal }),
+	threeXUIControllerMigrations: (signal?: AbortSignal) => inventory<"migrations", ThreeXUIControllerMigration>("/api/v1/three-x-ui-migrations", "migrations", signal),
 	threeXUIControllerMigration: (id: string) => request<ThreeXUIControllerMigration>(`/api/v1/three-x-ui-migrations/${encodeURIComponent(id)}`),
 	retryThreeXUIControllerMigrationCleanup: (id: string) => request<ThreeXUIControllerMigration>(`/api/v1/three-x-ui-migrations/${encodeURIComponent(id)}/retry-cleanup`, { method: "POST", body: "{}" }),
 	migrateThreeXUIController: (applicationId: string, targetApplicationId: string, allowStaleBackup: boolean) => request<ThreeXUIControllerMigration>(`/api/v1/applications/${encodeURIComponent(applicationId)}/3xui-controller/migrate`, { method: "POST", body: JSON.stringify({ targetApplicationId, confirm: true, allowStaleBackup }) }),
@@ -230,9 +242,9 @@ export const api = {
 	retryTaskReconciliation: (id: string) => request<{ taskId: string; kind: string; queued: boolean }>(`/api/v1/tasks/${encodeURIComponent(id)}/retry-reconciliation`, { method: "POST", body: "{}" }),
 	revealApplicationCommand: (id: string, operationKey: string) => request<{ shareUri: string }>(`/api/v1/application-commands/${encodeURIComponent(id)}/reveal`, { method: "POST", headers: { "Idempotency-Key": operationKey }, body: "{}" }),
 	acknowledgeApplicationCommand: (id: string, operationKey: string) => request<{ acknowledged: boolean }>(`/api/v1/application-commands/${encodeURIComponent(id)}/ack`, { method: "POST", headers: { "Idempotency-Key": operationKey }, body: "{}" }),
-	services: (signal?: AbortSignal) => request<{ services: Service[] }>("/api/v1/services", { signal }),
+	services: (signal?: AbortSignal) => inventory<"services", Service>("/api/v1/services", "services", signal),
 	routes: () => request<{ routes: Route[] }>("/api/v1/routes"),
-	publications: (signal?: AbortSignal) => request<{ publications: Publication[] }>("/api/v1/publications", { signal }),
+	publications: (signal?: AbortSignal) => inventory<"publications", Publication>("/api/v1/publications", "publications", signal),
 	integrations: (signal?: AbortSignal) => request<{ integrations: Integration[] }>("/api/v1/integrations", { signal }),
 	actions: (limit = 50, signal?: AbortSignal) => request<{ actions: Action[] }>(`/api/v1/actions?limit=${encodeURIComponent(String(limit))}`, { signal }),
   createDeployment: (agentId: string, appKey: string, config: Record<string, string | boolean | number>, operation: Deployment["operation"] = "install", deleteData = false, role?: "master" | "worker", registryCredentialId?: string, operationKey?: string, authorizedCapabilities?: string[], packageIdentity?: { packageRevision: number; manifestSha256: string; backupsConfirmed?: boolean }) => request<Deployment>("/api/v1/deployments", { method: "POST", headers: operationKey ? { "Idempotency-Key": operationKey } : undefined, body: JSON.stringify({ agentId, appKey, config, operation, deleteData, role, registryCredentialId, authorizedCapabilities, ...packageIdentity }) }),

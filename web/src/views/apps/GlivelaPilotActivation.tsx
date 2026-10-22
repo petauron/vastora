@@ -22,6 +22,26 @@ export function GlivelaPilotActivation({ endpoint, language, mutate, disabled }:
   const [busy, setBusy] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState("");
+  const [resumeConfirmed, setResumeConfirmed] = useState(false);
+  const [resumeQueued, setResumeQueued] = useState(false);
+  const resume = async () => {
+    if (!resumeConfirmed || busy || accepted || disabled || resumeQueued) return;
+    setBusy(true);
+    setError("");
+    try {
+      await mutate(async () => {
+        const result = await api.recoverMeridianEndpoint(endpoint.id);
+        if (!result.queued) throw new Error("Recovery was not queued; inspect the current operation.");
+        setResumeQueued(true);
+        setEvidence("");
+        setConfirmed(false);
+      }, undefined, { reportError: false });
+    } catch (failure) {
+      setError(userError(language, failure));
+    } finally {
+      setBusy(false);
+    }
+  };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!confirmed || busy || accepted || disabled) return;
@@ -56,6 +76,12 @@ export function GlivelaPilotActivation({ endpoint, language, mutate, disabled }:
     <Alert><AlertTitle>{copy(language, "仅接管当前入口", "Take over only this entry")} · {endpoint.displayName}</AlertTitle><AlertDescription>
       {copy(language, "保留原订阅地址、身份、配置、唯一账本和历史。此按钮不停止服务或采集计数；先核验独立备份，再排空旧运行时并采集最终计数、停止旧服务，30 秒内提交。提交后禁止旧侧操作本入口。", "Keep the subscription URL, identity, configuration, sole ledger and history. This button does not stop services or collect counters. Verify an independent backup, drain and sample the old runtime, stop it, then submit within 30 seconds. Activation fences legacy writes to this entry.")}
     </AlertDescription></Alert>
+    {!accepted && endpoint.status === "ready" && endpoint.appliedRevision > 0 && endpoint.desiredRevision === endpoint.appliedRevision ? <FieldGroup>
+      <FieldDescription>{copy(language, "接管未提交且旧服务已恢复运行时，可重试当前配置的真实健康探测。先确认原执行已停止且新运行时未启动；此操作不接管、不清理资源，也不补写流量。", "If takeover was not committed and the old service is running again, resume real health checks for its current configuration. Confirm the previous execution stopped and the new runtime is inactive. This does not take over, clean resources, or reconcile traffic.")}</FieldDescription>
+      <Field orientation="horizontal"><Checkbox id="glivela-resume-confirm" checked={resumeConfirmed} onCheckedChange={(value) => setResumeConfirmed(value === true)} disabled={busy || disabled || resumeQueued} /><FieldLabel htmlFor="glivela-resume-confirm">{copy(language, "确认仍由 Center 管理，原执行已停止，新运行时未启动", "Confirm Center still owns this entry, the prior execution stopped, and the new runtime is inactive")}</FieldLabel></Field>
+      <Button type="button" variant="outline" disabled={!resumeConfirmed || busy || disabled || resumeQueued} onClick={() => void resume()}>{copy(language, "恢复当前入口健康探测", "Resume this entry's health checks")}</Button>
+    </FieldGroup> : null}
+    {resumeQueued ? <Alert role="status"><AlertTitle>{copy(language, "恢复任务已排队，尚未确认线路恢复", "Recovery queued; route recovery is not yet verified")}</AlertTitle><AlertDescription>{copy(language, "请在活动中核验任务，并复测订阅和双跳。再次接管前重新采集最终计数，不要复用旧证据。", "Verify the operation in Activity and retest subscriptions and double hops. Capture fresh final counters before another takeover; do not reuse old evidence.")}</AlertDescription></Alert> : null}
     {accepted ? <Alert role="status"><AlertTitle>{copy(language, "接管已激活，等待原生回执", "Takeover activated; awaiting native receipt")}</AlertTitle><AlertDescription>{copy(language, "这不代表代理已恢复。请启动已核验的新运行时，并验证订阅、线路和流量连续性；不要重新启动旧运行时或重复提交。", "This does not mean proxy recovery. Start the verified native runtime and verify subscription, routes and accounting continuity. Do not restart the old runtime or resubmit.")}</AlertDescription></Alert> : <FieldGroup>
       <Field data-invalid={Boolean(error)}><FieldLabel htmlFor="glivela-pilot-evidence">{copy(language, "接管证据 JSON", "Takeover evidence JSON")}</FieldLabel>
         <Textarea id="glivela-pilot-evidence" value={evidence} onChange={(event) => setEvidence(event.target.value)} required disabled={busy || disabled} aria-invalid={Boolean(error)} autoComplete="off" spellCheck={false} rows={8} maxLength={131072} />
