@@ -73,17 +73,29 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	}
 	var endpoints []ApplicationEndpointObservation
 	var observeErr error
-	if !c.Capabilities.LandingOnly {
+	var ownershipErr error
+	var legacyRetired bool
+	observeLegacy := !c.Capabilities.LandingOnly
+	if observer, ok := c.Executor.(interface {
+		LegacyMeridianObservationRetired(context.Context) (bool, error)
+	}); ok && observeLegacy {
+		legacyRetired, ownershipErr = observer.LegacyMeridianObservationRetired(ctx)
+		observeLegacy = !legacyRetired
+	}
+	if observeLegacy {
 		endpoints, observeErr = observeProxyRuntime(ctx, store)
 	}
-	endpointsObserved := observeErr == nil || errors.Is(observeErr, errApplicationNotInstalled)
+	endpointsObserved := !legacyRetired && (observeErr == nil || errors.Is(observeErr, errApplicationNotInstalled))
 	if errors.Is(observeErr, errApplicationNotInstalled) || errors.Is(observeErr, errMeridianRuntimeNotConfigured) {
 		observeErr = nil
 	} else if observeErr != nil {
 		observeErr = fmt.Errorf("agent: observe Glivela runtime: %w", observeErr)
 	}
+	if ownershipErr != nil {
+		observeErr = errors.Join(observeErr, fmt.Errorf("agent: inspect legacy observation ownership: %w", ownershipErr))
+	}
 	var meridianRuntime *meridianruntime.Result
-	if !c.Capabilities.LandingOnly {
+	if observeLegacy {
 		if _, installErr := store.AppliedInstallation(ctx, meridianKey); installErr == nil {
 			if _, stateErr := store.loadMeridianRuntimeState(ctx); stateErr == nil {
 				observer, ok := c.Executor.(interface {
@@ -104,7 +116,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		}
 	}
 	var landingClientRuntime *landing.ClientRuntime
-	if !c.Capabilities.LandingOnly {
+	if observeLegacy {
 		landingClientRuntime = store.observeLandingClientRuntime(ctx)
 	}
 	var response struct {

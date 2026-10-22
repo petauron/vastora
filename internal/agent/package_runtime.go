@@ -246,6 +246,9 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if receipt != nil && (receipt.ApplicationID != task.ApplicationID || receipt.AppKey != task.AppKey) {
 		return result, errors.New("agent: package ownership conflict")
 	}
+	if receipt != nil && receipt.IntegrationState == "execution-retired" {
+		return result, errors.New("agent: legacy execution registration is retired; retained data is not an executable installation")
+	}
 	if receipt != nil && receipt.State != "ready" && receipt.State != "retained" {
 		result.Resources = receipt
 		if !reviewedPackageRecovery(task, receipt) {

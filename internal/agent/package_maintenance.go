@@ -96,6 +96,9 @@ func maintainPackage(ctx context.Context, executor PackageExecutor, backend pack
 		}
 	}
 	receipt, err := executor.ReadResources(task.ApplicationID)
+	if err == nil && receipt.IntegrationState == "execution-retired" && action != "logs" {
+		return result, errors.New("agent: retired execution cannot resume for maintenance")
+	}
 	if err != nil {
 		return result, err
 	}

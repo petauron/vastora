@@ -17,6 +17,9 @@ func (e ApplicationExecutor) ResumeAppliedMeridianMonitor(ctx context.Context, t
 	}
 	e.Store.landingMutationMu.Lock()
 	defer e.Store.landingMutationMu.Unlock()
+	if retired, err := e.Store.executionRetired(task.ApplicationID); err != nil || retired {
+		return meridianruntime.Result{}, errors.Join(errors.New("agent: retired execution cannot resume legacy monitoring"), err)
+	}
 	state, err := e.Store.loadMeridianRuntimeState(ctx)
 	if err != nil || state.Pending != nil || state.HandoverPending || len(state.RetiringGates) != 0 ||
 		state.ApplicationID != task.ApplicationID || state.Applied == nil ||

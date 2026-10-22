@@ -184,6 +184,13 @@ func (s *Store) RestorableInstallations(ctx context.Context) ([]AppliedInstallat
 		if err != nil {
 			return nil, err
 		}
+		retired, err := s.executionRetired(installation.ApplicationID)
+		if err != nil {
+			return nil, err
+		}
+		if retired {
+			continue
+		}
 		installations = append(installations, installation)
 	}
 	return installations, nil
