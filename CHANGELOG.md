@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.347](https://github.com/petauron/vastora/compare/v0.1.0-alpha.346...v0.1.0-alpha.347) (2026-10-22)
+
+
+### Bug Fixes
+
+* preserve retained REALITY target during Glivela takeover ([a90843a](https://github.com/petauron/vastora/commit/a90843af2d6967b7affb49f3d39f72797d87cd18))
+
 ## [0.1.0-alpha.346](https://github.com/petauron/vastora/compare/v0.1.0-alpha.345...v0.1.0-alpha.346) (2026-10-22)
 
 
