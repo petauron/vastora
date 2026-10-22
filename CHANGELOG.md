@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.346](https://github.com/petauron/vastora/compare/v0.1.0-alpha.345...v0.1.0-alpha.346) (2026-10-22)
+
+
+### Bug Fixes
+
+* include verified resources in monitor recovery receipts ([81f6b26](https://github.com/petauron/vastora/commit/81f6b26e7298403834bda04ca81fb9c9002bf14f))
+
 ## [0.1.0-alpha.345](https://github.com/petauron/vastora/compare/v0.1.0-alpha.344...v0.1.0-alpha.345) (2026-10-22)
 
 
