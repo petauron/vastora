@@ -33,6 +33,8 @@ func runAgent(arguments []string) error {
 		return errors.New("agent command is required")
 	}
 	switch arguments[0] {
+	case "retire-legacy-execution":
+		return runRetireLegacyExecution(arguments[1:])
 	case "stage-native-package":
 		return runStageNativePackage(arguments[1:])
 	case "security-watchdog":
