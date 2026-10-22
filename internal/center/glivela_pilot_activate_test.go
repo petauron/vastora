@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,39 @@ import (
 
 func TestGlivelaPilotActivationFinalCountersAndFenceAreAtomic(t *testing.T) {
 	checkGlivelaPilotActivation(t, false)
+}
+
+func TestGlivelaPilotExportPreservesRetainedPlan(t *testing.T) {
+	store := openMeridianSharedEndpointSnapshotFixture(t)
+	ctx := context.Background()
+	if _, err := store.db.Exec(`UPDATE applications SET image='example.test/xray:current' WHERE id='snapshot-shared-app'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE meridian_endpoints SET target_ip='1.1.1.1' WHERE id=?`, sharedSnapshotEndpointID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := store.buildMeridianRuntimeProjection(ctx, tx, sharedSnapshotEndpointID, "", nil)
+	tx.Rollback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, _, _, err := store.ExportGlivelaPilotPlan(ctx, sharedSnapshotEndpointID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.RealityEndpoints) == 0 || !reflect.DeepEqual(plan, projection.plan) {
+		t.Fatal("takeover changed the retained target or other plan fields")
+	}
+	if _, err := store.db.Exec(`UPDATE meridian_endpoints SET target_ip='127.0.0.1' WHERE id=?`, sharedSnapshotEndpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := store.ExportGlivelaPilotPlan(ctx, sharedSnapshotEndpointID); err == nil {
+		t.Fatal("lost reviewed public target validation")
+	}
 }
 
 func TestGlivelaPilotQuotaActivationAndResetPreserveLifetimeLedger(t *testing.T) {
