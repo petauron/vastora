@@ -116,7 +116,7 @@ func readPilotReceiptBytes(raw []byte, entryID, certificateID, digest string, re
 			return PilotReceipt{}, invalid
 		}
 		found = true
-		result = PilotReceipt{EntryID: entryID, ConfigSHA256: digest, Ready: true,
+		result = PilotReceipt{EntryID: entryID, ConfigSHA256: digest, Ready: true, RuntimeRevision: revision,
 			PublicationSuspended: node.PublicationSuspended,
 			StartedAt:            traffic.StartedAt, SampledAt: traffic.SampledAt, Health: node.Receipt.Health}
 		for id, counter := range traffic.Counters {

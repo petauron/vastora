@@ -14,6 +14,13 @@ import (
 func PilotPeerDeadlines(checkpoint PilotCounters, receipt PilotReceipt, now time.Time) (map[string]int64, error) {
 	deadlines := map[string]int64{}
 	health := receipt.Health
+	revision := checkpoint.Revision
+	if receipt.RuntimeRevision != 0 {
+		if receipt.RuntimeRevision < revision {
+			return nil, errors.New("meridianruntime: runtime revision regressed")
+		}
+		revision = receipt.RuntimeRevision
+	}
 	if health == nil {
 		return deadlines, nil
 	}
@@ -28,7 +35,7 @@ func PilotPeerDeadlines(checkpoint PilotCounters, receipt PilotReceipt, now time
 	for _, expected := range checkpoint.Peers {
 		report, ok := health.Peers[expected.EgressID]
 		if !ok || expected.Validate() != nil || report.Identity != expected.Identity ||
-			report.Status.Revision != checkpoint.Revision {
+			report.Status.Revision != revision {
 			return nil, errors.New("meridianruntime: pilot route observation does not match pinned peer")
 		}
 		status := report.Status

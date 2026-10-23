@@ -64,9 +64,10 @@ type quotaNode struct {
 	Desired       quotaDesired `json:"desired"`
 	Quota         *struct {
 		PilotQuota
-		Base      json.RawMessage `json:"base"`
-		Raw       *quotaTraffic   `json:"raw"`
-		Forwarded *quotaTraffic   `json:"forwarded"`
+		Base            json.RawMessage `json:"base"`
+		TransportOrigin json.RawMessage `json:"transportOrigin,omitempty"`
+		Raw             *quotaTraffic   `json:"raw"`
+		Forwarded       *quotaTraffic   `json:"forwarded"`
 	} `json:"entryQuota"`
 }
 
@@ -235,6 +236,9 @@ func ReadQuotaPilotReceipt(path string, previous PilotCounters, now time.Time) (
 	}
 	q, expected := node.Quota, previous.Quota
 	base, err := quotaBaseDigest(q.Base)
+	if len(q.TransportOrigin) != 0 {
+		base, err = transportOriginDigest(node)
+	}
 	if err != nil || base != expected.BaseSHA256 || q.TotalBytes != expected.TotalBytes || q.ResetDay != expected.ResetDay || q.Timezone != expected.Timezone || !q.CutoverAt.Equal(expected.CutoverAt) || !q.CutoverAt.Equal(previous.CutoverAt) {
 		return PilotReceipt{}, invalid
 	}

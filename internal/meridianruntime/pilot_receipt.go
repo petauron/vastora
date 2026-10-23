@@ -14,12 +14,14 @@ import (
 // legacy runtime. The transport must authenticate its source before calling
 // AdvancePilotCounters. It deliberately contains no configuration or secrets.
 type PilotReceipt struct {
-	Quota        *PilotQuota
-	EntryID      string
-	ConfigSHA256 string
-	StartedAt    time.Time
-	SampledAt    time.Time
-	Ready        bool
+	// Verified current runtime revision; accounting remains pinned separately.
+	RuntimeRevision uint64
+	Quota           *PilotQuota
+	EntryID         string
+	ConfigSHA256    string
+	StartedAt       time.Time
+	SampledAt       time.Time
+	Ready           bool
 	// PublicationSuspended withholds subscription publication, not accounting.
 	PublicationSuspended bool
 	Counters             []glivela.CounterSnapshot

@@ -31,6 +31,17 @@ func TestPilotRouteHealthRequiresFreshPinnedBusinessProof(t *testing.T) {
 		t.Fatal("valid business evidence rejected", deadlines, err)
 	}
 	first := task.Peers[0].EgressID
+	receipt.RuntimeRevision = checkpoint.Revision + 1
+	if _, err := PilotPeerDeadlines(checkpoint, receipt, now); err == nil {
+		t.Fatal("old health accepted for changed runtime")
+	}
+	for id, p := range health.Peers {
+		p.Status.Revision = receipt.RuntimeRevision
+		health.Peers[id] = p
+	}
+	if deadlines, err := PilotPeerDeadlines(checkpoint, receipt, now); err != nil || len(deadlines) != len(task.Peers) {
+		t.Fatal("verified transport revision health rejected", err)
+	}
 	peer := health.Peers[first]
 	peer.Status.State, peer.Status.Reason, peer.Status.Stage = "degraded", "network_failure_grace", "route_connect_or_tls"
 	peer.Status.ConsecutiveFailures = 2
