@@ -181,8 +181,7 @@ func (s *Store) observeGlivelaPilotInTx(ctx context.Context, tx *sql.Tx, agentID
 	if checkpoint.Quota != nil {
 		receipt, sourceErr = meridianruntime.ReadQuotaPilotReceipt(statePath, checkpoint, s.now().UTC())
 	} else {
-		receipt, sourceErr = meridianruntime.ReadPilotReceipt(statePath,
-			checkpoint.EntryID, checkpoint.CertificateID, checkpoint.ConfigSHA256, checkpoint.Revision, s.now().UTC())
+		receipt, sourceErr = meridianruntime.ReadUnlimitedPilotReceipt(statePath, checkpoint, s.now().UTC())
 	}
 	if sourceErr == nil {
 		// Any ledger/checkpoint conflict is a real transaction error, not a
