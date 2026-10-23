@@ -7,7 +7,7 @@ toolchain go1.26.10
 require (
 	github.com/containerd/errdefs v1.0.0
 	github.com/distribution/reference v0.6.0
-	github.com/getkin/kin-openapi v0.149.0
+	github.com/getkin/kin-openapi v0.151.0
 	github.com/google/uuid v1.6.0
 	github.com/miekg/dns v1.1.73
 	github.com/moby/moby/api v1.56.1
