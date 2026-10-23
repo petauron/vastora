@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.351](https://github.com/petauron/vastora/compare/v0.1.0-alpha.350...v0.1.0-alpha.351) (2026-10-23)
+
+
+### Bug Fixes
+
+* **center:** preserve ledger receipts across private transport changes ([#1019](https://github.com/petauron/vastora/issues/1019)) ([86d1c23](https://github.com/petauron/vastora/commit/86d1c23a2c8345b3ba4d4d7b86d364aa91a1da54))
+
 ## [0.1.0-alpha.350](https://github.com/petauron/vastora/compare/v0.1.0-alpha.349...v0.1.0-alpha.350) (2026-10-22)
 
 
