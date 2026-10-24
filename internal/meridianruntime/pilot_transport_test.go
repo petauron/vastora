@@ -75,6 +75,27 @@ func TestTransportReceiptPreservesLedgerAndRejectsOtherChanges(t *testing.T) {
 				t.Fatal("duplicate receipt counted twice", err)
 			}
 			peer := current["entry"].(map[string]any)["peers"].([]any)[0].(map[string]any)
+
+			peer["transport"] = map[string]any{"protocol": "ss2022", "key": "AAAAAAAAAAAAAAAAAAAAAA==", "publicAddress": "8.8.8.8"}
+			publicReceipt, err := read()
+			if err != nil {
+				t.Fatal("public transport receipt rejected", err)
+			}
+			publicCounters, err := AdvancePilotCounters(next, publicReceipt, now)
+			if err != nil || publicCounters.Totals[0].UpBytes != 307 {
+				t.Fatal("public transport changed cumulative ledger", err)
+			}
+			for _, address := range []any{"100.64.0.2", "127.0.0.1", "192.168.1.1", "0.0.0.0", "8.8.8.8/32", "example.test", "2001:4860:4860::8888", "", 123} {
+				peer["transport"].(map[string]any)["publicAddress"] = address
+				if _, err := read(); err == nil {
+					t.Fatal("invalid public transport accepted", address)
+				}
+			}
+			peer["transport"] = map[string]any{"protocol": "ss2022", "key": "AAAAAAAAAAAAAAAAAAAAAA==", "unknown": "8.8.8.8"}
+			if _, err := read(); err == nil {
+				t.Fatal("unknown transport field accepted")
+			}
+			peer["transport"] = map[string]any{"protocol": "ss2022", "key": "AAAAAAAAAAAAAAAAAAAAAA==", "publicAddress": "8.8.8.8"}
 			peer["address"] = "100.64.0.3"
 			if _, err := read(); err == nil {
 				t.Fatal("address change accepted")
