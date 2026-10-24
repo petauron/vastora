@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.358](https://github.com/petauron/vastora/compare/v0.1.0-alpha.357...v0.1.0-alpha.358) (2026-10-24)
+
+
+### Bug Fixes
+
+* allow owned native Glivela package upgrades ([#1039](https://github.com/petauron/vastora/issues/1039)) ([ad92807](https://github.com/petauron/vastora/commit/ad92807f235919a1717e9b4ba1ca12c663b9a54a))
+
 ## [0.1.0-alpha.357](https://github.com/petauron/vastora/compare/v0.1.0-alpha.356...v0.1.0-alpha.357) (2026-10-24)
 
 
