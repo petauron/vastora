@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.353](https://github.com/petauron/vastora/compare/v0.1.0-alpha.352...v0.1.0-alpha.353) (2026-10-24)
+
+
+### Bug Fixes
+
+* preserve public SS2022 subscription and accounting receipts ([#1026](https://github.com/petauron/vastora/issues/1026)) ([df6229b](https://github.com/petauron/vastora/commit/df6229b3eff2bde4463aec314328cb001b7e49a9))
+
 ## [0.1.0-alpha.352](https://github.com/petauron/vastora/compare/v0.1.0-alpha.351...v0.1.0-alpha.352) (2026-10-24)
 
 
