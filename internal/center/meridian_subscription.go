@@ -271,7 +271,7 @@ func (s *Store) meridianSubscriptionCredentials(ctx context.Context, tx *sql.Tx,
 		FROM meridian_credentials credential
 		JOIN meridian_endpoints endpoint ON endpoint.id=credential.endpoint_id
 		JOIN services service ON service.id=endpoint.service_id
-		LEFT JOIN publications publication ON publication.service_id=endpoint.service_id AND publication.kind='public_shared_443'
+		LEFT JOIN publications publication ON publication.service_id=endpoint.service_id AND (publication.kind='public_shared_443' OR (publication.kind='public_direct' AND EXISTS(SELECT 1 FROM glivela_pilot_checkpoint native_owner JOIN applications native_app ON native_app.id=endpoint.application_id WHERE native_owner.endpoint_id=endpoint.id AND native_app.app_key='vastora-official/glivela-entry' AND native_app.runtime='systemd')))
 			AND ((?=1 AND publication.status<>'stopped') OR (publication.status='ready' AND publication.desired_revision=publication.applied_revision))
 			AND publication.hostname=endpoint.advertise_host
 			AND EXISTS(SELECT 1 FROM json_each(endpoint.server_names_json) WHERE value=publication.sni_hostname)
@@ -429,7 +429,7 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
  ELSE 'configuration_pending' END AS subscription_exclusion_reason
 		FROM meridian_route_grants grant_row JOIN meridian_endpoints endpoint ON endpoint.id=grant_row.endpoint_id
 		JOIN services service ON service.id=endpoint.service_id
-		LEFT JOIN publications publication ON publication.service_id=endpoint.service_id AND publication.kind='public_shared_443'
+		LEFT JOIN publications publication ON publication.service_id=endpoint.service_id AND (publication.kind='public_shared_443' OR (publication.kind='public_direct' AND EXISTS(SELECT 1 FROM glivela_pilot_checkpoint native_owner JOIN applications native_app ON native_app.id=endpoint.application_id WHERE native_owner.endpoint_id=endpoint.id AND native_app.app_key='vastora-official/glivela-entry' AND native_app.runtime='systemd')))
 			AND ((?=1 AND publication.status<>'stopped') OR (publication.status='ready' AND publication.desired_revision=publication.applied_revision))
 			AND publication.hostname=endpoint.advertise_host
 			AND EXISTS(SELECT 1 FROM json_each(endpoint.server_names_json) WHERE value=publication.sni_hostname)

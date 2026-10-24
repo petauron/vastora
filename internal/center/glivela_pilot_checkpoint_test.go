@@ -2,9 +2,16 @@ package center
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"github.com/petauron/vastora/internal/networking"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -217,5 +224,84 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 	}
 	if readUsage() != 310 {
 		t.Fatal("conflicted receipt advanced ledger")
+	}
+}
+
+func TestGlivelaNativeRegistrationKeepsOriginalLedger(t *testing.T) {
+	s := openMeridianSharedEndpointSnapshotFixture(t)
+	ctx := context.Background()
+	now := s.now().UTC()
+	stamp := now.Format(time.RFC3339Nano)
+	node := enrollOrchestrationNode(t, s, "native-v6-entry", NodeCapabilities{}, []networking.Candidate{{Address: "2001:4860:4860::8888", Interface: "eth0", Kind: networking.KindPublic}, {Address: "100.64.0.90", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.90", HeadscaleAddress: "100.64.0.90", EnabledKinds: []string{networking.KindHeadscale}})
+	if _, err := s.ConfirmNetworkProfile(ctx, node.ID, networking.Profile{ServiceAddress: "100.64.0.90", HeadscaleAddress: "100.64.0.90", PublicAddress: "2001:4860:4860::8888", PublicBindAddress: "2001:4860:4860::8888", PublicMode: networking.PublicModeDirect, DirectPublic: true, EnabledKinds: []string{networking.KindPublic, networking.KindHeadscale}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO admins(id,username,password_hash,created_at) VALUES('native-admin','native-admin','test','')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.db.Exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,created_at,updated_at) VALUES('native-v6-app','native',?,?,'vastora-official/glivela-entry','running','systemd',?,?)`, node.ID, testSiteID(t, s), now.Add(-time.Minute).Format(time.RFC3339Nano), stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE meridian_accounts SET total_bytes=0 WHERE id=?`, sharedSnapshotAccountA); err != nil {
+		t.Fatal(err)
+	}
+	var adminID string
+	if err := s.db.QueryRow(`SELECT id FROM admins LIMIT 1`).Scan(&adminID); err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep := glivela.RealityEndpoint{ID: "native-v6-endpoint", EntryID: "native-v6-app", InboundTag: "native-v6", ListenAddress: "2001:4860:4860::8888", ListenPort: 10443, AdvertiseHost: "native.example.test", AdvertisePort: 10443, Target: "www.example.com:443", ServerNames: []string{"www.example.com"}, PrivateKey: base64.RawURLEncoding.EncodeToString(key.Bytes()), PublicKey: base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()), ShortIDs: []string{"abcd"}, Fingerprint: "chrome"}
+	protocolID := "33333333-3333-4333-8333-333333333333"
+	material := glivela.CredentialMaterial{Credential: glivela.Credential{ID: "native-v6-credential", AccountID: sharedSnapshotAccountA, EntryID: ep.EntryID, Kind: glivela.NativeCredential, User: "native-v6-user", Identity: glivela.Identity(protocolID), Enabled: true}, ProtocolID: protocolID}
+	plan := glivela.XrayPlan{Revision: 1, RealityEndpoints: []glivela.RealityEndpoint{ep}, Credentials: []glivela.CredentialMaterial{material}}
+	config := []byte(`{"inbounds":[]}`)
+	hash := sha256.Sum256(config)
+	digest := hex.EncodeToString(hash[:])
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "nodes.json")
+	s.glivelaPilotStatePath = path
+	write := func(sample time.Time) {
+		raw, err := json.Marshal([]any{map[string]any{"id": ep.EntryID, "certificateId": strings.Repeat("b", 64), "desired": map[string]any{"revision": 1, "config": config, "configSha256": digest, "entry": plan}, "reportedAt": sample, "receipt": map[string]any{"revision": 1, "configSha256": digest, "runtimeReady": true, "traffic": map[string]any{"startedAt": now.Add(-10 * time.Second), "sampledAt": sample, "counters": map[string]any{material.Credential.ID: map[string]string{"upload": strconv.Itoa(3), "download": strconv.Itoa(7)}}}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	input := GlivelaNativeRegistrationInput{ApplicationID: ep.EntryID, Name: "Native IPv6", RegionCode: "US"}
+	write(now.Add(-time.Minute))
+	if _, err = s.RegisterGlivelaNativeEntry(ctx, adminID, input); err == nil {
+		t.Fatal("stale receipt accepted")
+	}
+	write(now.Add(-time.Second))
+
+	id, err := s.RegisterGlivelaNativeEntry(ctx, adminID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != ep.ID {
+		t.Fatal("wrong endpoint")
+	}
+	if _, err = s.RegisterGlivelaNativeEntry(ctx, adminID, input); err == nil {
+		t.Fatal("duplicate registration accepted")
+	}
+	var observed int64
+	if err = s.db.QueryRow(`SELECT observed_bytes FROM meridian_usage_watermarks WHERE credential_id=?`, material.Credential.ID).Scan(&observed); err != nil || observed != 10 {
+		t.Fatalf("native bytes %d: %v", observed, err)
+	}
+	if err = s.db.QueryRow(`SELECT observed_bytes FROM meridian_usage_watermarks WHERE credential_id=?`, sharedSnapshotAccountA+"-native").Scan(&observed); err != nil || observed != 100 {
+		t.Fatalf("original bytes %d: %v", observed, err)
+	}
+	var status string
+	if err = s.db.QueryRow(`SELECT status FROM publications WHERE service_id=(SELECT service_id FROM meridian_endpoints WHERE id=?)`, ep.ID).Scan(&status); err != nil || status != "pending" {
+		t.Fatal("publication invented readiness", status, err)
 	}
 }
