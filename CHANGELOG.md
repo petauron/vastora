@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.355](https://github.com/petauron/vastora/compare/v0.1.0-alpha.354...v0.1.0-alpha.355) (2026-10-24)
+
+
+### Features
+
+* support authenticated native IPv6 proxy entries ([#1032](https://github.com/petauron/vastora/issues/1032)) ([8793441](https://github.com/petauron/vastora/commit/8793441c165175d6a5b7f7d5145668fd173ea45e))
+
 ## [0.1.0-alpha.354](https://github.com/petauron/vastora/compare/v0.1.0-alpha.353...v0.1.0-alpha.354) (2026-10-24)
 
 
