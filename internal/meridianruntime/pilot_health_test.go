@@ -30,6 +30,23 @@ func TestPilotRouteHealthRequiresFreshPinnedBusinessProof(t *testing.T) {
 	if err != nil || len(deadlines) != len(task.Peers) {
 		t.Fatal("valid business evidence rejected", deadlines, err)
 	}
+
+	for id, peer := range health.Peers {
+		peer.Status.LinkState, peer.Status.Reason = "authenticated", "public_ss2022_and_business_ready"
+		health.Peers[id] = peer
+	}
+	if deadlines, err := PilotPeerDeadlines(checkpoint, receipt, now); err != nil || len(deadlines) != len(task.Peers) {
+		t.Fatal("public business evidence rejected", err)
+	}
+	for id, peer := range health.Peers {
+		saved := peer
+		peer.Status.ExitIP = "8.8.4.4"
+		health.Peers[id] = peer
+		if deadlines, err := PilotPeerDeadlines(checkpoint, receipt, now); err != nil || deadlines[id] != 0 {
+			t.Fatal("changed public exit accepted", err)
+		}
+		health.Peers[id] = saved
+	}
 	first := task.Peers[0].EgressID
 	receipt.RuntimeRevision = checkpoint.Revision + 1
 	if _, err := PilotPeerDeadlines(checkpoint, receipt, now); err == nil {
