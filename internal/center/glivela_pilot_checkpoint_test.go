@@ -5,6 +5,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -21,6 +22,7 @@ import (
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodeprotocol"
+	"github.com/petauron/vastora/internal/platform"
 )
 
 func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
@@ -337,6 +339,40 @@ func TestGlivelaNativeRegistrationKeepsOriginalLedger(t *testing.T) {
 		tx.Rollback()
 		if !errors.Is(err, errGlivelaPilotOwnsRuntime) {
 			t.Fatal("legacy or different package upgrade escaped fence", err)
+		}
+	}
+
+	seedIndependentPackage(t, s, manifest)
+	_, manifestJSON, manifestDigest, err := canonicalPackage(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []string{"upgrade", "configure", "uninstall"} {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,package_revision,manifest_sha256,authorized_capabilities_json,manifest_json,config_json,service_address,operation,state,created_at,updated_at,application_id) VALUES('native-program-upgrade',?,'vastora-official/glivela-entry',?,1,?,'["native-services"]',?,'{}','100.64.0.90',?,'pending',?,?,?)`, node.ID, manifest.Version, manifestDigest, manifestJSON, operation, stamp, stamp, ep.EntryID); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		pending, err := readPendingApplicationDeployment(ctx, tx, node.ID, "")
+		if operation != "upgrade" {
+			tx.Rollback()
+			if !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("legacy %s queued: %v", operation, err)
+			}
+			continue
+		}
+		if err != nil {
+			tx.Rollback()
+			t.Fatal("native program upgrade disappeared from queue", err)
+		}
+		issued := false
+		task, err := s.claimApplicationDeployment(ctx, tx, node.ID, platform.ApplicationRuntimeGeneration, pending, func(_ *sql.Tx, task *AgentTask) error { issued = task != nil; return nil })
+		tx.Rollback()
+		if err != nil || !issued || task == nil || task.Operation != "upgrade" {
+			t.Fatalf("native package not claimable: %v", err)
 		}
 	}
 
