@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.359](https://github.com/petauron/vastora/compare/v0.1.0-alpha.358...v0.1.0-alpha.359) (2026-10-24)
+
+
+### Bug Fixes
+
+* deliver native Glivela upgrades through the task queue ([#1041](https://github.com/petauron/vastora/issues/1041)) ([10b2d42](https://github.com/petauron/vastora/commit/10b2d425ff1d5e6eabb8e996e58fbc7b9f2674c3))
+
 ## [0.1.0-alpha.358](https://github.com/petauron/vastora/compare/v0.1.0-alpha.357...v0.1.0-alpha.358) (2026-10-24)
 
 
