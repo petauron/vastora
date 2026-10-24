@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.354](https://github.com/petauron/vastora/compare/v0.1.0-alpha.353...v0.1.0-alpha.354) (2026-10-24)
+
+
+### Bug Fixes
+
+* **center:** reconcile trusted Headscale control-plane role ([b4f84fe](https://github.com/petauron/vastora/commit/b4f84fee07c21263b383c324ff5ab6fa0167543a)), closes [#1028](https://github.com/petauron/vastora/issues/1028)
+
 ## [0.1.0-alpha.353](https://github.com/petauron/vastora/compare/v0.1.0-alpha.352...v0.1.0-alpha.353) (2026-10-24)
 
 
