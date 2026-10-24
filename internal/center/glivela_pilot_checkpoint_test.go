@@ -239,7 +239,7 @@ func TestGlivelaNativeRegistrationKeepsOriginalLedger(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO admins(id,username,password_hash,created_at) VALUES('native-admin','native-admin','test','')`); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.db.Exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,created_at,updated_at) VALUES('native-v6-app','native',?,?,'vastora-official/glivela-entry','running','systemd',?,?)`, node.ID, testSiteID(t, s), now.Add(-time.Minute).Format(time.RFC3339Nano), stamp)
+	_, err := s.db.Exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,created_at,updated_at) VALUES('native-v6-app','native',?,?,'vastora-official/glivela-entry','running','host',?,?)`, node.ID, testSiteID(t, s), now.Add(-time.Minute).Format(time.RFC3339Nano), stamp)
 	if err != nil {
 		t.Fatal(err)
 	}

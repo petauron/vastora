@@ -111,7 +111,7 @@ func meridianSubscriptionEndpointsAppliedInTx(ctx context.Context, tx *sql.Tx, a
 		AND (endpoint.status<>'ready' OR endpoint.runtime_healthy<>1 OR endpoint.desired_revision<>endpoint.applied_revision
 		 OR service.status<>'ready' OR NOT EXISTS (
 			SELECT 1 FROM publications publication WHERE publication.service_id=endpoint.service_id
-			AND (publication.kind='public_shared_443' OR (publication.kind='public_direct' AND EXISTS(SELECT 1 FROM glivela_pilot_checkpoint native_owner JOIN applications native_app ON native_app.id=endpoint.application_id WHERE native_owner.endpoint_id=endpoint.id AND native_app.app_key='vastora-official/glivela-entry' AND native_app.runtime='systemd'))) AND publication.status='ready'
+			AND (publication.kind='public_shared_443' OR (publication.kind='public_direct' AND EXISTS(SELECT 1 FROM glivela_pilot_checkpoint native_owner JOIN applications native_app ON native_app.id=endpoint.application_id WHERE native_owner.endpoint_id=endpoint.id AND native_app.app_key='vastora-official/glivela-entry' AND native_app.runtime='host'))) AND publication.status='ready'
 			AND publication.desired_revision=publication.applied_revision AND publication.hostname=endpoint.advertise_host
 			AND EXISTS(SELECT 1 FROM json_each(endpoint.server_names_json) WHERE value=publication.sni_hostname)
 		 ))
@@ -135,7 +135,7 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 		AND endpoint.status<>'retired' AND service.status<>'stopped'
 		AND EXISTS (
 			SELECT 1 FROM publications publication WHERE publication.service_id=endpoint.service_id
-			AND (publication.kind='public_shared_443' OR (publication.kind='public_direct' AND EXISTS(SELECT 1 FROM glivela_pilot_checkpoint native_owner JOIN applications native_app ON native_app.id=endpoint.application_id WHERE native_owner.endpoint_id=endpoint.id AND native_app.app_key='vastora-official/glivela-entry' AND native_app.runtime='systemd'))) AND publication.status<>'stopped'
+			AND (publication.kind='public_shared_443' OR (publication.kind='public_direct' AND EXISTS(SELECT 1 FROM glivela_pilot_checkpoint native_owner JOIN applications native_app ON native_app.id=endpoint.application_id WHERE native_owner.endpoint_id=endpoint.id AND native_app.app_key='vastora-official/glivela-entry' AND native_app.runtime='host'))) AND publication.status<>'stopped'
 			AND publication.hostname=endpoint.advertise_host
 			AND EXISTS(SELECT 1 FROM json_each(endpoint.server_names_json) WHERE value=publication.sni_hostname)
 		)`, value.AccountID)
