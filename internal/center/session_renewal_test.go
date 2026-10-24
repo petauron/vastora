@@ -72,7 +72,7 @@ func TestSessionRenewalBoundariesAndRevocation(t *testing.T) {
 	if w := request(csrf, false); w.Code != 401 {
 		t.Fatal("absolute expiry accepted")
 	}
-	token, csrf, err = s.Authenticate(ctx, "admin", "correct-horse-battery-staple")
+	token, _, err = s.Authenticate(ctx, "admin", "correct-horse-battery-staple")
 	if err != nil {
 		t.Fatal(err)
 	}
