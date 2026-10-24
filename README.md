@@ -159,3 +159,16 @@ For controller-plus-pilot upgrades, configure the persistent
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+### Center login lifetime
+
+Authenticated Center requests renew a session when at most 12 hours remain,
+extending it to 24 hours from the request, capped at seven days from login.
+Background authenticated polling counts as activity; there is no separate
+keepalive or refresh credential. After expiry, sign in again. Logout and
+password-change revocation remain authoritative: renewal never recreates a
+removed session (password change retains the current session, as before).
+Existing sessions retain their original expiry when migrating to schema 119;
+new logins receive the seven-day maximum. The normal pre-migration database
+backup applies. No Agent or managed application upgrade is needed for this
+Center-only change.

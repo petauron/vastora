@@ -21,6 +21,8 @@ import (
 const (
 	adminPasswordMinLength = 10
 	sessionLifetime        = 24 * time.Hour
+	sessionMaximumLifetime = 7 * 24 * time.Hour
+	sessionRenewalWindow   = 12 * time.Hour
 	loginFailureWindow     = 15 * time.Minute
 	loginLockoutDuration   = 15 * time.Minute
 	loginFailureRetention  = 24 * time.Hour
@@ -361,7 +363,7 @@ func createSession(ctx context.Context, tx *sql.Tx, adminID string, now time.Tim
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash, csrf_token, admin_id, expires_at) VALUES(?, ?, ?, ?)`, tokenHash(sessionToken), csrfToken, adminID, now.Add(sessionLifetime).Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash, csrf_token, admin_id, expires_at, absolute_expires_at) VALUES(?, ?, ?, ?, ?)`, tokenHash(sessionToken), csrfToken, adminID, now.Add(sessionLifetime).Format(time.RFC3339Nano), now.Add(sessionMaximumLifetime).Format(time.RFC3339Nano)); err != nil {
 		return "", "", fmt.Errorf("center: create session: %w", err)
 	}
 	return sessionToken, csrfToken, nil

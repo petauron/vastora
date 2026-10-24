@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 118
+const centerSchemaVersion = 119
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -247,7 +247,8 @@ CREATE TABLE agent_reinstall_access_activations (
 			token_hash TEXT PRIMARY KEY,
 			csrf_token TEXT NOT NULL,
 			admin_id TEXT NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
-			expires_at TEXT NOT NULL
+			expires_at TEXT NOT NULL,
+			absolute_expires_at TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE login_failures (
 			scope TEXT NOT NULL CHECK(scope IN ('account', 'client')),
