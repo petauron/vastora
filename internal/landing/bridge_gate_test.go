@@ -177,37 +177,6 @@ func TestBridgeGateCommandsNeverContainGlobalOrSelfRefreshingRules(t *testing.T)
 	}
 }
 
-// Exercise rejection of historical timed permissions in isolated firewall tests.
-// Runtime startup acceptance never renews a lease.
-func (g *TrafficGate) renew(ctx context.Context, until time.Time) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	document, err := g.snapshot(ctx)
-	if err != nil {
-		return err
-	}
-	if found, err := g.validate(document); err != nil || !found {
-		return errors.Join(err, errors.New("landing: gate policy is unavailable"))
-	}
-	remaining := time.Until(until)
-	if remaining <= nftTimeout+time.Second || remaining > AllowLifetime {
-		return errors.New("landing: gate proof expired")
-	}
-	// libnftables JSON timeouts are seconds. Reserve the command deadline so
-	// a delayed apply cannot extend the original proof's validity.
-	seconds := int((remaining - nftTimeout) / time.Second)
-	element := nftObject{"family": "inet", "table": g.table, "name": "allowed", "elem": []any{nftObject{"elem": nftObject{"val": g.peer.Address, "timeout": seconds}}}}
-	applyErr := g.apply(ctx, []any{g.flushAllowed(), nftObject{"add": nftObject{"element": element}}})
-	document, err = g.snapshot(ctx)
-	if err != nil {
-		return errors.Join(applyErr, err)
-	}
-	if found, err := g.validate(document); err != nil || !found || !g.hasLiveLease(document, until) {
-		return errors.Join(applyErr, err, errors.New("landing: gate permission was not confirmed"))
-	}
-	return nil
-}
-
 func (g *TrafficGate) hasLiveLease(document nftDocument, until time.Time) bool {
 	elements := g.elements(document)
 	if len(elements) != 1 || !time.Now().Before(until) {
