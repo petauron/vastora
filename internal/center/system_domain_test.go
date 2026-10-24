@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -79,6 +80,41 @@ func TestSwitchSystemDomainMovesPrimaryEndpointsAndKeepsAliases(t *testing.T) {
 		if _, err := store.db.ExecContext(ctx, statement.query, statement.args...); err != nil {
 			t.Fatal(err)
 		}
+	}
+	certificate := testManagedCertificate(t, "headscale.vastora.old.example.com", "headscale.vastora.new.example.com")
+	pair, err := tls.X509KeyPair([]byte(certificate.CertificatePEM), []byte(certificate.PrivateKeyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	headscale := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/node" {
+			t.Errorf("unexpected Headscale request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"nodes":[{"id":"1","nodeKey":"center-node-key","ipAddresses":["100.64.0.1"],"tags":["tag:vastora-agent","tag:vastora-center"]}]}`))
+	}))
+	headscale.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12}
+	headscale.StartTLS()
+	defer headscale.Close()
+	store.headscaleHTTPClient = headscale.Client()
+	store.builtinHeadscaleDialAddress = headscale.Listener.Addr().String()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretID, err := store.putSecret(ctx, tx, []byte("test-headscale-api-key"), "integration:headscale")
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE network_integrations SET secret_id=? WHERE kind='headscale'`, secretID); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 	storeBuiltinHeadscaleDNSForTest(t, store, "system", nil)
 	installer := &fakeBuiltinHeadscaleInstaller{}
