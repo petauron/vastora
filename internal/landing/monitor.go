@@ -45,8 +45,8 @@ type MonitorStatus struct {
 // Monitor is only for a route which has already been applied. Initial enable
 // must check before changing the old direct configuration. A configuration task
 // closes the gate and terminates old connections synchronously before Run.
-// Runtime health failure is peer-scoped: closing that peer's gate blocks both
-// existing and new traffic without restarting the shared proxy process.
+// The check runs once after activation; no periodic probe or expiring gate
+// may interrupt an already accepted route.
 type Monitor struct {
 	Gate          *TrafficGate
 	Links         *LinkChecker
@@ -57,94 +57,48 @@ type Monitor struct {
 
 // Run owns Links for this monitor's lifetime, including validation and setup
 // failures. A checker passed here must not be shared with another monitor.
-func (m *Monitor) Run(ctx context.Context) error {
-	defer m.Links.Close()
-	if m.Gate == nil || m.Links == nil || m.CheckBusiness == nil {
-		return errors.New("landing: incomplete runtime monitor")
+func (m *Monitor) Run(ctx context.Context) (result error) {
+	if m.Links != nil {
+		defer m.Links.Close()
 	}
-	// No permission survives process restart. A kernel boot fence is separately
-	// required: a monitor cannot retroactively close a pre-start boot window.
+	defer func() {
+		if result != nil && m.Report != nil && m.Gate != nil {
+			m.Report(MonitorStatus{Revision: m.Gate.revision, State: "blocked", Stage: "startup", Reason: "startup_failed", CheckedAt: time.Now().UTC()})
+		}
+	}()
+	if m.Gate == nil || m.Links == nil || m.CheckBusiness == nil {
+		return errors.New("landing: incomplete startup check")
+	}
 	if err := m.Gate.Install(ctx); err != nil {
 		return err
 	}
-	defer func() { _ = m.close() }()
-	ticker := time.NewTicker(CheckInterval)
-	defer ticker.Stop()
-	var lastHealthy time.Time
-	lastProbeFailure := ""
-	for {
-		started := time.Now()
-		status := MonitorStatus{Revision: m.Gate.revision, State: "blocked", LinkState: "unknown", Stage: "private_link_before", Reason: "check_failed", StartedAt: started.UTC(), LastHealthyAt: lastHealthy}
-		before := m.Links.Check(ctx, m.Gate.peer)
-		status.LinkState, status.Reason = before.State, before.Reason
-		var business BusinessResult
-		var after LinkResult
-		var checkErr error
-		if before.State == "direct" {
-			status.Stage = "business_check"
-			businessCtx, cancel := context.WithTimeout(ctx, businessCheckTimeout(m.TCPOnly))
-			business, checkErr = m.CheckBusiness(businessCtx, m.Gate.peer, m.Gate.revision)
-			if businessCtx.Err() != nil && checkErr == nil {
-				checkErr = probeFailure("business_check", businessCtx.Err())
-			}
-			if checkErr != nil {
-				status.Stage, status.Reason, status.HTTPStatus = probeDiagnostic(checkErr)
-				if checkErr.Error() != lastProbeFailure {
-					logProbeFailure(ctx, m.Gate.revision, 0, before.CheckedAt, checkErr)
-				}
-				lastProbeFailure = checkErr.Error()
-			} else {
-				lastProbeFailure = ""
-			}
-			cancel()
-			status.TCP, status.UDP = business.TCP, business.UDP
-			if checkErr == nil {
-				status.HTTPStatus = 200
-				after = m.Links.Check(ctx, m.Gate.peer)
-				status.Stage, status.LinkState, status.Reason = "private_link_after", after.State, after.Reason
-			}
-		}
-		until, healthy := leaseDeadlineForTransport(m.Gate, before, business, after, time.Now(), m.TCPOnly)
-		if healthy && checkErr == nil && ctx.Err() == nil {
-			checkErr = m.Gate.renew(ctx, until)
-			if checkErr == nil {
-				status.State, status.Stage, status.Reason = "healthy", "complete", "direct_and_business_ready"
-				status.TCP, status.UDP, status.ExitIP = business.TCP, business.UDP, business.ExitIP
-				status.AllowedUntil = until.UTC()
-				lastHealthy = time.Now().UTC()
-				status.LastHealthyAt = lastHealthy
-			} else {
-				status.Stage, status.Reason = "gate", "renewal_failed"
-			}
-		}
-		if status.State != "healthy" {
-			// A failed renewal can have committed despite a lost response. Closing
-			// the peer-scoped gate blocks both existing and new traffic without
-			// interrupting unrelated sessions in the shared proxy process.
-			if err := m.close(); err != nil {
-				return err
-			}
-			if before.State == "direct" && checkErr == nil && after.State == "direct" {
-				status.Stage, status.Reason = "verification", "evidence_invalid_or_expired"
-			}
-		}
-		status.CheckedAt = time.Now().UTC()
-		status.DurationMS = time.Since(started).Milliseconds()
-		if m.Report != nil {
-			m.Report(status)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
+	started := time.Now()
+	checkLink := m.Links.Check
 
-func (m *Monitor) close() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*nftTimeout)
+	before := checkLink(ctx, m.Gate.peer)
+	if before.State != "direct" {
+		return errors.New("landing: startup peer identity unavailable")
+	}
+	businessCtx, cancel := context.WithTimeout(ctx, businessCheckTimeout(m.TCPOnly))
 	defer cancel()
-	return m.Gate.Block(ctx)
+	business, err := m.CheckBusiness(businessCtx, m.Gate.peer, m.Gate.revision)
+	if err != nil {
+		return err
+	}
+	after := checkLink(ctx, m.Gate.peer)
+	_, valid := leaseDeadlineForTransport(m.Gate, before, business, after, time.Now(), m.TCPOnly)
+	if !valid || ctx.Err() != nil {
+		return errors.New("landing: startup route proof invalid")
+	}
+	// Acceptance removes only this owned closed startup fence. There is no
+	// expiring permission and no background lease renewal or traffic shutdown.
+	if err := m.Gate.Remove(ctx); err != nil {
+		return err
+	}
+	if m.Report != nil {
+		m.Report(MonitorStatus{Revision: m.Gate.revision, State: "healthy", LinkState: after.State, Stage: "startup", Reason: "startup_ready", TCP: business.TCP, UDP: business.UDP, ExitIP: business.ExitIP, StartedAt: started.UTC(), CheckedAt: time.Now().UTC(), DurationMS: time.Since(started).Milliseconds()})
+	}
+	return nil
 }
 
 func leaseDeadline(gate *TrafficGate, before LinkResult, business BusinessResult, after LinkResult, now time.Time) (time.Time, bool) {
@@ -153,7 +107,7 @@ func leaseDeadline(gate *TrafficGate, before LinkResult, business BusinessResult
 
 func businessCheckTimeout(tcpOnly bool) time.Duration {
 	if tcpOnly {
-		return TCPCheckTimeout
+		return 20 * time.Second
 	}
 	return CheckTimeout
 }

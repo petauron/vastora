@@ -176,3 +176,21 @@ func TestBridgeGateCommandsNeverContainGlobalOrSelfRefreshingRules(t *testing.T)
 		}
 	}
 }
+
+func (g *TrafficGate) hasLiveLease(document nftDocument, until time.Time) bool {
+	elements := g.elements(document)
+	if len(elements) != 1 || !time.Now().Before(until) {
+		return false
+	}
+	wrapper, ok := elements[0].(map[string]any)
+	if !ok {
+		return false
+	}
+	element, ok := wrapper["elem"].(map[string]any)
+	if !ok || element["val"] != g.peer.Address {
+		return false
+	}
+	timeout, _ := element["timeout"].(float64)
+	expires, _ := element["expires"].(float64)
+	return timeout > 0 && timeout <= AllowLifetime.Seconds() && expires > 0 && expires <= timeout && expires <= time.Until(until).Seconds()
+}

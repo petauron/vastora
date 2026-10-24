@@ -37,7 +37,7 @@ func compositeCenterFixture(t *testing.T) (*Store, string, string, string) {
 	return store, sixID, four.ID, grantID
 }
 
-func TestCompositeHealthRequiresBothFamiliesAndUsesShortestLease(t *testing.T) {
+func TestCompositeStartupRequiresBothFamiliesWithoutLease(t *testing.T) {
 	store, six, four, _ := compositeCenterFixture(t)
 	combo, err := store.CreateMeridianRouteGrant(context.Background(), MeridianRouteGrantInput{AccountID: sharedSnapshotAccountA, EndpointID: sharedSnapshotEndpointID, EgressNodeID: six, IPv4EgressNodeID: four})
 	if err != nil {
@@ -60,7 +60,7 @@ func TestCompositeHealthRequiresBothFamiliesAndUsesShortestLease(t *testing.T) {
 			result.Peers[i].Status.ExitIP = "2001:4860:4860::8888"
 		}
 		if result.Peers[i].EgressID == four {
-			result.Peers[i].Status.AllowedUntil = now.Add(5 * time.Second)
+			result.Peers[i].Status.AllowedUntil = time.Time{}
 		}
 	}
 	if err := recordMeridianRouteHealth(ctx, tx, sharedSnapshotEndpointID, projection, result, now); err != nil {
@@ -71,7 +71,7 @@ func TestCompositeHealthRequiresBothFamiliesAndUsesShortestLease(t *testing.T) {
 	if err := tx.QueryRow(`SELECT runtime_healthy,health_expires_unix_ms FROM meridian_route_grants WHERE id=?`, combo.ID).Scan(&healthy, &expiry); err != nil {
 		t.Fatal(err)
 	}
-	if healthy != 1 || expiry != now.Add(5*time.Second).UnixMilli() {
+	if healthy != 1 || expiry != 0 {
 		t.Fatal("composite published without two families or beyond its shorter lease")
 	}
 	var diagnosticRaw []byte

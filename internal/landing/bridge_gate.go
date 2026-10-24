@@ -293,37 +293,6 @@ func (g *TrafficGate) block(ctx context.Context) error {
 	return nil // Includes a lost command response followed by confirmed closure.
 }
 
-// Renew is internal to Monitor: callers cannot open the gate based on a UI
-// flag, a historical ping, or a health result for an earlier revision.
-func (g *TrafficGate) renew(ctx context.Context, until time.Time) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	document, err := g.snapshot(ctx)
-	if err != nil {
-		return err
-	}
-	if found, err := g.validate(document); err != nil || !found {
-		return errors.Join(err, errors.New("landing: gate policy is unavailable"))
-	}
-	remaining := time.Until(until)
-	if remaining <= nftTimeout+time.Second || remaining > AllowLifetime {
-		return errors.New("landing: gate proof expired")
-	}
-	// libnftables JSON timeouts are seconds. Reserve the command deadline so
-	// a delayed apply cannot extend the original proof's validity.
-	seconds := int((remaining - nftTimeout) / time.Second)
-	element := nftObject{"family": "inet", "table": g.table, "name": "allowed", "elem": []any{nftObject{"elem": nftObject{"val": g.peer.Address, "timeout": seconds}}}}
-	applyErr := g.apply(ctx, []any{g.flushAllowed(), nftObject{"add": nftObject{"element": element}}})
-	document, err = g.snapshot(ctx)
-	if err != nil {
-		return errors.Join(applyErr, err)
-	}
-	if found, err := g.validate(document); err != nil || !found || !g.hasLiveLease(document, until) {
-		return errors.Join(applyErr, err, errors.New("landing: gate permission was not confirmed"))
-	}
-	return nil
-}
-
 func (g *TrafficGate) flushAllowed() any {
 	return nftObject{"flush": nftObject{"set": nftObject{"family": "inet", "table": g.table, "name": "allowed"}}}
 }
@@ -439,24 +408,6 @@ func (g *TrafficGate) elements(document nftDocument) []any {
 		}
 	}
 	return nil
-}
-
-func (g *TrafficGate) hasLiveLease(document nftDocument, until time.Time) bool {
-	elements := g.elements(document)
-	if len(elements) != 1 || !time.Now().Before(until) {
-		return false
-	}
-	wrapper, ok := elements[0].(map[string]any)
-	if !ok {
-		return false
-	}
-	element, ok := wrapper["elem"].(map[string]any)
-	if !ok || element["val"] != g.peer.Address {
-		return false
-	}
-	timeout, _ := element["timeout"].(float64)
-	expires, _ := element["expires"].(float64)
-	return timeout > 0 && timeout <= AllowLifetime.Seconds() && expires > 0 && expires <= timeout && expires <= time.Until(until).Seconds()
 }
 
 type boundedNFTOutput struct{ buffer bytes.Buffer }

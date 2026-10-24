@@ -562,8 +562,10 @@ func (e ApplicationExecutor) startMeridianLandingMonitor(ctx context.Context, st
 						e.Store.recordMeridianPeerObservation(state, meridianruntime.PeerObservation{EgressID: peer.EgressID, Identity: peer.Identity, Status: status})
 					},
 				}
-				_ = monitor.Run(monitorContext)
-				e.Store.recordMeridianPeerObservation(state, blockedMeridianPeer(peer, state.Applied.Revision, "monitor_stopped"))
+				if err := monitor.Run(monitorContext); err != nil {
+					e.Store.recordMeridianPeerObservation(state, blockedMeridianPeer(peer, state.Applied.Revision, "startup_failed"))
+				}
+				<-monitorContext.Done()
 			}()
 		}
 		monitors.Wait()

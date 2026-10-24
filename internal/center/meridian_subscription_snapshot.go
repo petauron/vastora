@@ -165,7 +165,7 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 		 AND ((endpoint.applied_revision=0 AND length(cutover.import_sha256)=64
 			AND cutover.state IN ('publish','project','verify','retire'))
 		  OR (grant_row.status='ready' AND grant_row.runtime_healthy=1
-			AND grant_row.desired_revision=grant_row.applied_revision AND grant_row.health_expires_unix_ms>?))
+			AND grant_row.desired_revision=grant_row.applied_revision))
 		 AND landing.status IN ('ready','pending','applying')
 		 AND agent.status='active' AND agent.credential_revoked_at='' AND agent.tailscale_ownership='managed' AND agent.last_seen_at>?
 		 THEN 1 ELSE 0 END,
@@ -177,7 +177,7 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 		JOIN meridian_cutover cutover ON cutover.id=1
 		LEFT JOIN landing_server_states landing ON landing.node_id=grant_row.egress_node_id
 		LEFT JOIN agents agent ON agent.id=grant_row.egress_node_id
-		WHERE grant_row.account_id=? ORDER BY grant_row.id`, s.now().UnixMilli(), s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano), value.AccountID)
+		WHERE grant_row.account_id=? ORDER BY grant_row.id`, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano), value.AccountID)
 	if err != nil {
 		return meridianAppliedSubscriptionSnapshot{}, err
 	}

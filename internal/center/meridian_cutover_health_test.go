@@ -37,7 +37,7 @@ func TestMeridianCutoverRequiresUnclaimedLandingIntentToConverge(t *testing.T) {
 	}
 }
 
-func TestMeridianCutoverVerificationRequiresUnexpiredLandingEvidence(t *testing.T) {
+func TestMeridianCutoverVerificationRequiresStartupAcceptance(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		delta time.Duration
@@ -50,7 +50,7 @@ func TestMeridianCutoverVerificationRequiresUnexpiredLandingEvidence(t *testing.
 		t.Run(test.name, func(t *testing.T) {
 			store, grantID, clock := openMeridianCutoverHealthFixture(t, "verify")
 			ctx := context.Background()
-			if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET health_expires_unix_ms=? WHERE id=?`, clock.Add(test.delta).UnixMilli(), grantID); err != nil {
+			if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET runtime_healthy=?,status=CASE WHEN ? THEN 'ready' ELSE 'blocked' END,health_expires_unix_ms=? WHERE id=?`, test.fresh, test.fresh, clock.Add(test.delta).UnixMilli(), grantID); err != nil {
 				t.Fatal(err)
 			}
 			view, err := store.MeridianCutover(ctx)
@@ -92,7 +92,7 @@ func TestMeridianCutoverVerificationRequiresUnexpiredLandingEvidence(t *testing.
 	}
 }
 
-func TestMeridianRetirementDoesNotCompleteAfterLandingEvidenceExpires(t *testing.T) {
+func TestMeridianRetirementRequiresStartupAcceptance(t *testing.T) {
 	for _, fresh := range []bool{false, true} {
 		name := "expired"
 		if fresh {
@@ -101,11 +101,7 @@ func TestMeridianRetirementDoesNotCompleteAfterLandingEvidenceExpires(t *testing
 		t.Run(name, func(t *testing.T) {
 			store, grantID, clock := openMeridianCutoverHealthFixture(t, "retire")
 			ctx := context.Background()
-			expires := clock.UnixMilli()
-			if fresh {
-				expires = clock.Add(landing.AllowLifetime).UnixMilli()
-			}
-			if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET health_expires_unix_ms=? WHERE id=?`, expires, grantID); err != nil {
+			if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET runtime_healthy=?,status=CASE WHEN ? THEN 'ready' ELSE 'blocked' END WHERE id=?`, fresh, fresh, grantID); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET legacy_retired=1 WHERE id=?`, sharedSnapshotEndpointID); err != nil {
@@ -139,15 +135,15 @@ func TestMeridianRetirementDoesNotCompleteAfterLandingEvidenceExpires(t *testing
 	}
 }
 
-func TestExplicitMeridianRetirementRetryCannotBypassExpiredLandingEvidence(t *testing.T) {
+func TestExplicitMeridianRetirementRetryCannotBypassMissingStartupAcceptance(t *testing.T) {
 	store, grantID, clock := openMeridianCutoverHealthFixture(t, "retire")
 	ctx := context.Background()
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET legacy_retired=1 WHERE id=?`, sharedSnapshotEndpointID); err != nil {
 		t.Fatal(err)
 	}
-	queue := func(expires int64) int {
+	queue := func(ready bool) int {
 		t.Helper()
-		if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET health_expires_unix_ms=? WHERE id=?`, expires, grantID); err != nil {
+		if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET runtime_healthy=?,status=CASE WHEN ? THEN 'ready' ELSE 'blocked' END WHERE id=?`, ready, ready, grantID); err != nil {
 			t.Fatal(err)
 		}
 		tx, err := store.db.BeginTx(ctx, nil)
@@ -167,10 +163,10 @@ func TestExplicitMeridianRetirementRetryCannotBypassExpiredLandingEvidence(t *te
 		}
 		return pending
 	}
-	if pending := queue(clock.UnixMilli()); pending != 0 {
+	if pending := queue(false); pending != 0 {
 		t.Fatalf("expired landing evidence queued %d controller retirements", pending)
 	}
-	if pending := queue(clock.Add(landing.AllowLifetime).UnixMilli()); pending != 1 {
+	if pending := queue(true); pending != 1 {
 		t.Fatalf("fresh landing evidence did not allow controller retirement: pending=%d", pending)
 	}
 }

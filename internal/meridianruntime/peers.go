@@ -130,8 +130,7 @@ func (r Result) PeerHealth(task Task, now time.Time) (map[string]bool, error) {
 		status := observation.Status
 		exit, err := netip.ParseAddr(status.ExitIP)
 		health[observation.EgressID] = status.State == "healthy" && status.LinkState == "direct" && status.TCP &&
-			!status.CheckedAt.IsZero() && !status.CheckedAt.After(now) && now.Sub(status.CheckedAt) <= landing.AllowLifetime &&
-			status.AllowedUntil.After(now) && !status.AllowedUntil.After(status.CheckedAt.Add(landing.AllowLifetime)) &&
+			!status.StartedAt.IsZero() && !status.CheckedAt.Before(status.StartedAt) && !status.CheckedAt.IsZero() && !status.CheckedAt.After(now) && status.Stage == "startup" && status.Reason == "startup_ready" && status.AllowedUntil.IsZero() &&
 			err == nil && landing.PublicIP(exit)
 	}
 	return health, nil

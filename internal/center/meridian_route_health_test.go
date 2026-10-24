@@ -55,7 +55,7 @@ func meridianHealthResult(projection meridianRuntimeProjection, now time.Time, h
 		status := landing.MonitorStatus{Revision: projection.task.Desired.Revision, State: "blocked", CheckedAt: now}
 		if healthy {
 			status.State, status.LinkState, status.TCP, status.ExitIP = "healthy", "direct", true, "1.1.1.1"
-			status.AllowedUntil = now.Add(10 * time.Second)
+			status.Stage, status.Reason, status.StartedAt = "startup", "startup_ready", now.Add(-time.Millisecond)
 		}
 		result.Peers = append(result.Peers, meridianruntime.PeerObservation{EgressID: peer.EgressID, Identity: peer.Identity, Status: status})
 	}
@@ -137,7 +137,7 @@ func TestMeridianRuntimeSuccessNeedsPeerEvidenceAndHeartbeatRenewsWithoutRevisio
 		if err := store.db.QueryRowContext(ctx, `SELECT runtime_healthy,status,health_expires_unix_ms FROM meridian_route_grants WHERE id=?`, grantID).Scan(&healthy, &status, &expiry); err != nil {
 			t.Fatal(err)
 		}
-		if healthy != wantHealthy || status != wantStatus || (wantHealthy == 1) != (expiry > store.now().UnixMilli()) {
+		if healthy != wantHealthy || status != wantStatus || expiry != 0 {
 			t.Fatalf("route health=%d status=%s expiry=%d", healthy, status, expiry)
 		}
 		var desired, applied uint64
