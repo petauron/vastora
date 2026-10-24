@@ -64,7 +64,15 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 	var applicationID string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE node_id = ? AND app_key = ?`, request.AgentID, request.AppKey).Scan(&applicationID)
 	if err == nil {
-		if ownerErr := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); ownerErr != nil {
+		var changes map[string]json.RawMessage
+		programOnly := len(request.Config) == 0 || json.Unmarshal(request.Config, &changes) == nil && len(changes) == 0
+		var ownerErr error
+		if programOnly {
+			ownerErr = requireApplicationDeploymentOwner(ctx, tx, applicationID, request.Operation, manifest)
+		} else {
+			ownerErr = requireLegacyMeridianApplicationOwner(ctx, tx, applicationID)
+		}
+		if ownerErr != nil {
 			return "", ownerErr
 		}
 	}
@@ -165,7 +173,15 @@ func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, app
 }
 
 func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, executedRuntimeGeneration int, result ApplicationTaskResult, now time.Time, cleanups *[]publicationCleanup) error {
-	if err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); err != nil {
+	var manifestJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id = ? AND application_id = ? AND operation = ?`, deploymentID, applicationID, operation).Scan(&manifestJSON); err != nil {
+		return err
+	}
+	var manifest catalog.AppManifest
+	if json.Unmarshal(manifestJSON, &manifest) != nil {
+		return errors.New("center: stored deployment manifest is invalid")
+	}
+	if err := requireApplicationDeploymentOwner(ctx, tx, applicationID, operation, manifest); err != nil {
 		return err
 	}
 	if err := completeNativeReplacement(ctx, tx, deploymentID, applicationID, result, now); err != nil {
@@ -184,14 +200,6 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	var siteID, appKey, role string
 	if err := tx.QueryRowContext(ctx, `SELECT site_id, app_key, role FROM applications WHERE id = ?`, applicationID).Scan(&siteID, &appKey, &role); err != nil {
 		return fmt.Errorf("center: read application site: %w", err)
-	}
-	var manifestJSON []byte
-	if err := tx.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id = ?`, deploymentID).Scan(&manifestJSON); err != nil {
-		return err
-	}
-	var manifest catalog.AppManifest
-	if json.Unmarshal(manifestJSON, &manifest) != nil {
-		return errors.New("center: stored deployment manifest is invalid")
 	}
 	installedImage := ""
 	if len(manifest.Images) != 0 {
@@ -703,4 +711,24 @@ func (s *Store) ListRoutes(ctx context.Context) ([]RouteView, error) {
 		result = append(result, value)
 	}
 	return result, rows.Err()
+}
+
+// The pilot owns business configuration and counters, not updates to the same
+// native package. Legacy mutation, replacement and retirement remain fenced.
+func requireApplicationDeploymentOwner(ctx context.Context, tx *sql.Tx, applicationID, operation string, manifest catalog.AppManifest) error {
+	err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID)
+	if err == nil || !errors.Is(err, errGlivelaPilotOwnsRuntime) {
+		return err
+	}
+	if operation != "upgrade" || manifest.Runtime == nil || manifest.Runtime.Kind != "systemd" || manifest.Runtime.Version != 2 {
+		return err
+	}
+	var key, runtime string
+	if queryErr := tx.QueryRowContext(ctx, `SELECT app_key,runtime FROM applications WHERE id=?`, applicationID).Scan(&key, &runtime); queryErr != nil {
+		return queryErr
+	}
+	if key != "vastora-official/glivela-entry" || manifest.ID != "glivela-entry" || runtime != "host" {
+		return err
+	}
+	return nil
 }

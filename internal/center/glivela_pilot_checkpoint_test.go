@@ -8,7 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/petauron/vastora/internal/networking"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,8 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 )
 
@@ -232,7 +234,7 @@ func TestGlivelaNativeRegistrationKeepsOriginalLedger(t *testing.T) {
 	ctx := context.Background()
 	now := s.now().UTC()
 	stamp := now.Format(time.RFC3339Nano)
-	node := enrollOrchestrationNode(t, s, "native-v6-entry", NodeCapabilities{}, []networking.Candidate{{Address: "2001:4860:4860::8888", Interface: "eth0", Kind: networking.KindPublic}, {Address: "100.64.0.90", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.90", HeadscaleAddress: "100.64.0.90", EnabledKinds: []string{networking.KindHeadscale}})
+	node := enrollOrchestrationNode(t, s, "native-v6-entry", NodeCapabilities{ExecutorVersions: map[string]int{"systemd": 2}, RuntimeCapabilities: []string{"native-services"}}, []networking.Candidate{{Address: "2001:4860:4860::8888", Interface: "eth0", Kind: networking.KindPublic}, {Address: "100.64.0.90", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.90", HeadscaleAddress: "100.64.0.90", EnabledKinds: []string{networking.KindHeadscale}})
 	if _, err := s.ConfirmNetworkProfile(ctx, node.ID, networking.Profile{ServiceAddress: "100.64.0.90", HeadscaleAddress: "100.64.0.90", PublicAddress: "2001:4860:4860::8888", PublicBindAddress: "2001:4860:4860::8888", PublicMode: networking.PublicModeDirect, DirectPublic: true, EnabledKinds: []string{networking.KindPublic, networking.KindHeadscale}}); err != nil {
 		t.Fatal(err)
 	}
@@ -278,6 +280,7 @@ func TestGlivelaNativeRegistrationKeepsOriginalLedger(t *testing.T) {
 	}
 	input := GlivelaNativeRegistrationInput{ApplicationID: ep.EntryID, Name: "Native IPv6", RegionCode: "US"}
 	write(now.Add(-time.Minute))
+
 	if _, err = s.RegisterGlivelaNativeEntry(ctx, adminID, input); err == nil {
 		t.Fatal("stale receipt accepted")
 	}
@@ -290,6 +293,53 @@ func TestGlivelaNativeRegistrationKeepsOriginalLedger(t *testing.T) {
 	if id != ep.ID {
 		t.Fatal("wrong endpoint")
 	}
+	manifest := independentTestPackage(t)
+	manifest.ID = "glivela-entry"
+	manifest.Images = nil
+	manifest.Artifacts = []catalog.Artifact{{Name: "bundle", OperatingSystem: "linux", Architecture: "amd64", URL: "https://example.com/bundle", SHA256: strings.Repeat("a", 64), Format: "raw"}}
+	manifest.Runtime = &catalog.RuntimeSpec{Kind: "systemd", Version: 2, RequiredCapabilities: []string{"native-services"}, NativeServices: &catalog.NativeServicesRuntime{Users: []string{"worker"}, Services: []catalog.NativeService{{Name: "worker", Start: "automatic", ManagedUser: "worker", Process: catalog.SystemdRuntime{Artifact: "bundle", Executable: "worker", Files: []catalog.ArtifactFile{{Path: "worker", Executable: true}}}}}}}
+	for _, tc := range []struct {
+		operation string
+		config    json.RawMessage
+		allowed   bool
+	}{
+		{"upgrade", nil, true}, {"upgrade", json.RawMessage(`{}`), true}, {"upgrade", json.RawMessage(`{"controller_url":"changed"}`), false}, {"configure", json.RawMessage(`{"controller_url":"changed"}`), false}, {"uninstall", nil, false},
+	} {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = s.prepareApplication(ctx, tx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/glivela-entry", Operation: tc.operation, Config: tc.config}, manifest, now)
+		if tc.allowed && err != nil || !tc.allowed && !errors.Is(err, errGlivelaPilotOwnsRuntime) {
+			t.Fatalf("native %s config=%s: %v", tc.operation, tc.config, err)
+		}
+		if tc.allowed {
+			if err := requireApplicationDeploymentOwner(ctx, tx, ep.EntryID, "upgrade", manifest); err != nil {
+				t.Fatal("completion ownership", err)
+			}
+			if err := requireLegacyMeridianApplicationOwner(ctx, tx, ep.EntryID); !errors.Is(err, errGlivelaPilotOwnsRuntime) {
+				t.Fatal("business fence removed", err)
+			}
+		}
+		tx.Rollback()
+	}
+
+	for _, invalid := range []catalog.AppManifest{
+		{ID: "meridian", Runtime: manifest.Runtime},
+		{ID: "glivela-entry", Runtime: &catalog.RuntimeSpec{Kind: "docker", Version: 1}},
+		{ID: "glivela-entry", Runtime: &catalog.RuntimeSpec{Kind: "systemd", Version: 1}},
+	} {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = requireApplicationDeploymentOwner(ctx, tx, ep.EntryID, "upgrade", invalid)
+		tx.Rollback()
+		if !errors.Is(err, errGlivelaPilotOwnsRuntime) {
+			t.Fatal("legacy or different package upgrade escaped fence", err)
+		}
+	}
+
 	if _, err = s.RegisterGlivelaNativeEntry(ctx, adminID, input); err == nil {
 		t.Fatal("duplicate registration accepted")
 	}
