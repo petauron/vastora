@@ -40,10 +40,12 @@ func PilotPeerDeadlines(checkpoint PilotCounters, receipt PilotReceipt, now time
 		}
 		status := report.Status
 		exit, err := netip.ParseAddr(status.ExitIP)
-		ready := status.State == "healthy" && status.Stage == "complete" && status.Reason == "direct_and_business_ready" && status.ConsecutiveFailures == 0
+		private := status.LinkState == "direct" && status.Reason == "direct_and_business_ready"
+		public := status.LinkState == "authenticated" && status.Reason == "public_ss2022_and_business_ready"
+		ready := status.State == "healthy" && status.Stage == "complete" && (private || public) && status.ConsecutiveFailures == 0
 		grace := status.State == "degraded" && status.Reason == "network_failure_grace" && status.ConsecutiveFailures > 0 && status.ConsecutiveFailures < 3 && status.ConsecutiveSuccesses == 0
 		if (ready || grace) &&
-			status.LinkState == "direct" && status.TCP && !status.UDP &&
+			(status.LinkState == "direct" || status.LinkState == "authenticated") && status.TCP && !status.UDP &&
 			status.ExitIP == checkpoint.ExpectedExits[expected.EgressID] && err == nil && landing.PublicIP(exit) &&
 			!status.StartedAt.IsZero() && !status.CheckedAt.Before(status.StartedAt) &&
 			!status.CheckedAt.After(health.SampledAt) && now.Sub(status.CheckedAt) <= landing.AllowLifetime &&
