@@ -3,7 +3,10 @@ package center
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +40,37 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)`, setupGatewayBindingSetting, `{"publicAddress":"203.0.113.70","bindAddress":"10.0.0.70"}`); err != nil {
 		t.Fatal(err)
 	}
+	tags := []string{"tag:vastora-agent", "tag:vastora-gateway"}
+	roleWrites := 0
+	headscale := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/node":
+			_ = json.NewEncoder(w).Encode(map[string]any{"nodes": []map[string]any{{"id": "7", "nodeKey": "center-node-key", "ipAddresses": []string{"100.64.0.70"}, "tags": tags}, {"id": "8", "nodeKey": "remote-node-key", "ipAddresses": []string{"100.64.0.71"}, "tags": []string{"tag:vastora-agent", "tag:vastora-gateway"}}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/node/7/tags":
+			var input struct {
+				Tags []string `json:"tags"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(input.Tags, []string{"tag:vastora-agent", "tag:vastora-gateway", "tag:vastora-center"}) {
+				t.Fatalf("role repair changed existing tags: %v", input.Tags)
+			}
+			tags = input.Tags
+			roleWrites++
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected role request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer headscale.Close()
+	store.headscaleHTTPClient = headscale.Client()
+	store.builtinHeadscaleDialAddress = headscale.Listener.Addr().String()
+	if _, err := store.db.ExecContext(ctx, `UPDATE network_integrations SET endpoint=? WHERE kind='headscale'`, headscale.URL); err != nil {
+		t.Fatal(err)
+	}
 	store.discoverNetworkCandidates = func(now time.Time) ([]networking.Candidate, error) {
 		return []networking.Candidate{{Address: "203.0.113.70", Interface: "eth0", Kind: networking.KindPublic, ObservedAt: now}, {Address: "100.64.0.70", Interface: "tailscale0", Kind: networking.KindHeadscale, ObservedAt: now}}, nil
 	}
@@ -45,6 +79,12 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 		{Address: "100.64.0.70", Interface: "tailscale0", Kind: networking.KindHeadscale},
 		{Address: "203.0.113.70", Interface: "eth0", Kind: networking.KindPublic},
 	}, networking.Profile{ServiceAddress: "100.64.0.70", LANAddress: "10.0.0.70", HeadscaleAddress: "100.64.0.70", PublicAddress: "203.0.113.70", EnabledKinds: []string{networking.KindLAN, networking.KindHeadscale, networking.KindPublic}, DirectPublic: true})
+	if err := store.reconcileHeadscaleDNS(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if roleWrites != 1 {
+		t.Fatalf("Center role repair must be idempotent: %d writes", roleWrites)
+	}
 	dns, err := os.ReadFile(store.dataDir + "/" + headscaleDNSFile)
 	if err != nil {
 		t.Fatal(err)
