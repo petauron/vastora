@@ -113,7 +113,7 @@ func routeHealthDiagnostic(result meridianruntime.Result, primary, secondary, st
 			if leg.LastHealthyAt.After(now) {
 				leg.LastHealthyAt = time.Time{}
 			}
-			if s.State == "healthy" && !s.CheckedAt.After(now) && s.AllowedUntil.After(now) {
+			if s.State == "healthy" && !s.CheckedAt.After(now) && s.Stage == "startup" {
 				leg.LastHealthyAt = s.CheckedAt
 			}
 			d.Legs = append(d.Legs, leg)
@@ -198,14 +198,7 @@ func (s *Store) MeridianRouteHealth(ctx context.Context, id string) (MeridianRou
 	if enabled == 0 {
 		view.Current.Status = "disabled"
 		view.Current.Reason = "disabled"
-	} else if status == "ready" && deadline <= view.CheckedAt.UnixMilli() {
-		if view.Current.Reason != "evidence_expired" {
-			// A read can observe expiry before the maintenance worker records
-			// it. Keep the actual heartbeat receipt clock unchanged.
-			view.Current.ObservedAt = view.CheckedAt
-		}
-		view.Current.Status = "blocked"
-		view.Current.Reason = "evidence_expired"
+
 	}
 	if enabled != 0 && status != "ready" && view.Current.Status == "ready" {
 		view.Current.Status = status
@@ -240,39 +233,6 @@ func (s *Store) maintainRouteHealthDiagnostics(ctx context.Context, prune bool) 
 	}
 	defer tx.Rollback()
 	now := s.now().UTC()
-	rows, err := tx.QueryContext(ctx, `SELECT id,health_diagnostics_json FROM meridian_route_grants WHERE status='ready' AND enabled=1 AND health_expires_unix_ms<=? AND json_extract(health_diagnostics_json,'$.status')='ready' LIMIT 200`, now.UnixMilli())
-	if err != nil {
-		return err
-	}
-	type expired struct {
-		id string
-		d  MeridianHealthDiagnostics
-	}
-	values := []expired{}
-	for rows.Next() {
-		var value expired
-		var raw []byte
-		if err := rows.Scan(&value.id, &raw); err != nil {
-			rows.Close()
-			return err
-		}
-		if err := json.Unmarshal(raw, &value.d); err != nil {
-			rows.Close()
-			return err
-		}
-		values = append(values, value)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	for _, value := range values {
-		value.d.Status, value.d.Reason, value.d.ObservedAt = "blocked", "evidence_expired", now
-		if err := recordRouteHealthDiagnostics(ctx, tx, value.id, value.d); err != nil {
-			return err
-		}
-	}
 	if prune {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM meridian_route_health_events WHERE recorded_at<?`, now.Add(-7*24*time.Hour).Format(time.RFC3339Nano)); err != nil {
 			return err
@@ -282,7 +242,7 @@ func (s *Store) maintainRouteHealthDiagnostics(ctx context.Context, prune bool) 
 }
 
 func (s *Store) RunRouteHealthDiagnostics(ctx context.Context, report func(error)) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	lastPrune := time.Time{}
 	for {

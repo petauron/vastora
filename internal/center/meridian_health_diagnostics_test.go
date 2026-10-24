@@ -26,8 +26,8 @@ func TestMeridianHealthDiagnosticsChangesOnlyAndRecovery(t *testing.T) {
 			p.StartedAt = now.Add(-time.Millisecond)
 			p.DurationMS = 1
 			if healthy {
-				p.Stage = "complete"
-				p.Reason = "direct_and_business_ready"
+				p.Stage = "startup"
+				p.Reason = "startup_ready"
 				p.HTTPStatus = 200
 			} else {
 				p.Stage = "tls_handshake"
@@ -130,7 +130,7 @@ func TestMeridianHealthDiagnosticsSanitizeAndFingerprintDoNotMutate(t *testing.T
 	}
 }
 
-func TestMeridianHealthDiagnosticsExpiryKeepsReceiptClockAndAuthority(t *testing.T) {
+func TestMeridianStartupDiagnosticsDoNotExpireOrInventReceipts(t *testing.T) {
 	s, projection, _, id := openMeridianHealthCompletionFixture(t)
 	ctx := context.Background()
 	now := s.now()
@@ -149,14 +149,14 @@ func TestMeridianHealthDiagnosticsExpiryKeepsReceiptClockAndAuthority(t *testing
 	received := now
 	now = now.Add(20 * time.Second)
 	read, err := s.MeridianRouteHealth(ctx, id)
-	if err != nil || read.Current.Reason != "evidence_expired" || !read.Current.ReceivedAt.Equal(received) || !read.Current.ObservedAt.Equal(now) || len(read.History) != 1 {
+	if err != nil || read.Current.Status != "ready" || !read.Current.ReceivedAt.Equal(received) || !read.Current.ObservedAt.Equal(received) || len(read.History) != 1 {
 		t.Fatalf("read-time expiry invented a receipt or wrote history: %#v %v", read, err)
 	}
 	if err := s.maintainRouteHealthDiagnostics(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	view, err := s.MeridianRouteHealth(ctx, id)
-	if err != nil || view.Current.Reason != "evidence_expired" || !view.Current.ReceivedAt.Equal(received) || !view.Current.ObservedAt.Equal(now) || len(view.History) != 2 {
+	if err != nil || view.Current.Status != "ready" || !view.Current.ReceivedAt.Equal(received) || !view.Current.ObservedAt.Equal(received) || len(view.History) != 1 {
 		t.Fatalf("expiry overwrote receipt clock or omitted event: %#v %v", view, err)
 	}
 	var state string
@@ -168,7 +168,7 @@ func TestMeridianHealthDiagnosticsExpiryKeepsReceiptClockAndAuthority(t *testing
 		t.Fatal(err)
 	}
 	view, _ = s.MeridianRouteHealth(ctx, id)
-	if len(view.History) != 2 {
+	if len(view.History) != 1 {
 		t.Fatal("expiry was recorded repeatedly")
 	}
 }

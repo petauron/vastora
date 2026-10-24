@@ -1,5 +1,8 @@
 # Vastora
 
+Current route lifecycle: [startup-only readiness](docs/startup-readiness.md).
+This supersedes the historical periodic-health lease behavior described below.
+
 Vastora is a self-hosted desired-state control plane for applications
 across multiple Sites and Nodes. The Center stores intent and orchestration
 state; one Agent binary is the only node-side executor for Docker workloads,

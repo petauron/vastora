@@ -449,7 +449,7 @@ func (s *Store) listMeridianRouteGrants(ctx context.Context) ([]MeridianRouteGra
 		}
 		value.HideNative, value.Enabled = hideNative == 1, enabled == 1
 		value.RuntimeHealthy = value.Enabled && healthy == 1 && value.Status == "ready" &&
-			value.DesiredRevision == value.AppliedRevision && healthExpires > s.now().UnixMilli()
+			value.DesiredRevision == value.AppliedRevision
 		if value.Status == "ready" && !value.RuntimeHealthy {
 			// Read-time expiry prevents a disconnected Agent's last successful
 			// receipt from presenting a permanently healthy route in management.

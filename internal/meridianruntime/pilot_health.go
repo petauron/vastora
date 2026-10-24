@@ -8,11 +8,11 @@ import (
 	"github.com/petauron/vastora/internal/landing"
 )
 
-// PilotPeerDeadlines never promotes process readiness to route readiness.
-// Missing/stale health blocks routes, while a foreign identity is a source
+// PilotPeerReadiness never promotes process readiness to route readiness.
+// Missing startup acceptance blocks routes; a foreign identity is a source
 // contract error. The expected peers and exits are pinned at takeover.
-func PilotPeerDeadlines(checkpoint PilotCounters, receipt PilotReceipt, now time.Time) (map[string]int64, error) {
-	deadlines := map[string]int64{}
+func PilotPeerReadiness(checkpoint PilotCounters, receipt PilotReceipt, now time.Time) (map[string]bool, error) {
+	readiness := map[string]bool{}
 	health := receipt.Health
 	revision := checkpoint.Revision
 	if receipt.RuntimeRevision != 0 {
@@ -22,15 +22,15 @@ func PilotPeerDeadlines(checkpoint PilotCounters, receipt PilotReceipt, now time
 		revision = receipt.RuntimeRevision
 	}
 	if health == nil {
-		return deadlines, nil
+		return readiness, nil
 	}
 	if (health.Source == nil) != (checkpoint.Source == nil) ||
 		health.Source != nil && *health.Source != *checkpoint.Source ||
 		len(health.Peers) != len(checkpoint.Peers) {
 		return nil, errors.New("meridianruntime: pilot route identities changed")
 	}
-	if health.SampledAt.IsZero() || health.SampledAt.After(now) || now.Sub(health.SampledAt) > landing.AllowLifetime {
-		return deadlines, nil
+	if health.SampledAt.IsZero() || health.SampledAt.After(now) {
+		return readiness, nil
 	}
 	for _, expected := range checkpoint.Peers {
 		report, ok := health.Peers[expected.EgressID]
@@ -40,20 +40,13 @@ func PilotPeerDeadlines(checkpoint PilotCounters, receipt PilotReceipt, now time
 		}
 		status := report.Status
 		exit, err := netip.ParseAddr(status.ExitIP)
-		private := status.LinkState == "direct" && status.Reason == "direct_and_business_ready"
-		public := status.LinkState == "authenticated" && status.Reason == "public_ss2022_and_business_ready"
-		ready := status.State == "healthy" && status.Stage == "complete" && (private || public) && status.ConsecutiveFailures == 0
-		grace := status.State == "degraded" && status.Reason == "network_failure_grace" && status.ConsecutiveFailures > 0 && status.ConsecutiveFailures < 3 && status.ConsecutiveSuccesses == 0
-		if (ready || grace) &&
+		if status.State == "healthy" && status.Stage == "startup" && status.Reason == "startup_ready" &&
 			(status.LinkState == "direct" || status.LinkState == "authenticated") && status.TCP && !status.UDP &&
 			status.ExitIP == checkpoint.ExpectedExits[expected.EgressID] && err == nil && landing.PublicIP(exit) &&
 			!status.StartedAt.IsZero() && !status.CheckedAt.Before(status.StartedAt) &&
-			!status.CheckedAt.After(health.SampledAt) && now.Sub(status.CheckedAt) <= landing.AllowLifetime &&
-			!status.LastHealthyAt.IsZero() && !status.LastHealthyAt.After(status.CheckedAt) && now.Sub(status.LastHealthyAt) < 45*time.Second &&
-			!status.SecurityCheckedAt.Before(status.StartedAt) && !status.SecurityCheckedAt.After(status.CheckedAt) &&
-			status.AllowedUntil.After(now) && !status.AllowedUntil.After(status.SecurityCheckedAt.Add(30*time.Second)) && !status.AllowedUntil.After(status.LastHealthyAt.Add(45*time.Second)) {
-			deadlines[expected.EgressID] = status.AllowedUntil.UnixMilli()
+			!status.CheckedAt.After(health.SampledAt) && status.AllowedUntil.IsZero() {
+			readiness[expected.EgressID] = true
 		}
 	}
-	return deadlines, nil
+	return readiness, nil
 }

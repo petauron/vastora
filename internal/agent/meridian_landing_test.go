@@ -401,7 +401,7 @@ func TestMeridianRetirementWaitRequiresFreshPeerEvidenceAndPreservesJournalOnTim
 		t.Fatal("retirement wait consumed old recovery evidence")
 	}
 	now := time.Now().UTC()
-	result.Peers[0].Status = landing.MonitorStatus{Revision: task.Desired.Revision, State: "healthy", LinkState: "direct", TCP: true, CheckedAt: now, AllowedUntil: now.Add(landing.AllowLifetime), ExitIP: "1.1.1.1"}
+	result.Peers[0].Status = landing.MonitorStatus{Revision: task.Desired.Revision, State: "healthy", LinkState: "direct", TCP: true, StartedAt: now.Add(-time.Millisecond), CheckedAt: now, Stage: "startup", Reason: "startup_ready", ExitIP: "1.1.1.1"}
 	if err := waitForMeridianRetirementPeers(context.Background(), task, func(context.Context) (meridianruntime.Result, error) { return result, nil }); err != nil {
 		t.Fatalf("fresh TCP-only evidence rejected: %v", err)
 	}

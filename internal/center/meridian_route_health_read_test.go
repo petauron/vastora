@@ -41,7 +41,7 @@ func openMeridianRouteHealthReadFixture(t *testing.T) (*Store, string, time.Time
 	return store, grant.ID, now
 }
 
-func TestMeridianRouteHealthExpiresInLiveAndAppliedSnapshotReads(t *testing.T) {
+func TestMeridianStartupProofPersistsInLiveAndAppliedSnapshotReads(t *testing.T) {
 	store, grantID, now := openMeridianRouteHealthReadFixture(t)
 	ctx := context.Background()
 	initial, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB)
@@ -60,7 +60,7 @@ func TestMeridianRouteHealthExpiresInLiveAndAppliedSnapshotReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	fallback, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB)
-	if err != nil || len(fallback.Entries) != 1 || len(fallback.Routes) != 0 {
+	if err != nil || len(fallback.Entries) != 1 || len(fallback.Routes) != 1 {
 		t.Fatalf("snapshot revived expired peer: entries=%d routes=%d err=%v", len(fallback.Entries), len(fallback.Routes), err)
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
@@ -78,11 +78,11 @@ func TestMeridianRouteHealthExpiresInLiveAndAppliedSnapshotReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	live, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB)
-	if err != nil || len(live.Entries) != 1 || len(live.Routes) != 0 {
+	if err != nil || len(live.Entries) != 1 || len(live.Routes) != 1 {
 		t.Fatalf("live projection revived expired peer: entries=%d routes=%d err=%v", len(live.Entries), len(live.Routes), err)
 	}
 	grants, err = store.listMeridianRouteGrants(ctx)
-	if err != nil || len(grants) != 1 || grants[0].RuntimeHealthy || grants[0].Status != "blocked" || grants[0].LastError == "" {
+	if err != nil || len(grants) != 1 || !grants[0].RuntimeHealthy || grants[0].Status != "ready" || grants[0].LastError != "" {
 		t.Fatalf("management still presents expired route as healthy: %#v err=%v", grants, err)
 	}
 	var storedHealthy int
@@ -110,12 +110,12 @@ func TestMeridianAppliedSnapshotRequiresCurrentRouteEvidenceAndPreservesHiddenNa
 		assignment string
 		hidden     bool
 	}{
-		{"missing lease", "health_expires_unix_ms=0", false},
+		{"missing startup proof", "runtime_healthy=0", false},
 		{"blocked with future lease", "status='blocked'", false},
 		{"unhealthy with future lease", "runtime_healthy=0", false},
 		{"pending with future lease", "status='pending'", false},
 		{"unapplied revision", "desired_revision=desired_revision+1", false},
-		{"hidden expired route", "health_expires_unix_ms=0,hide_native=1", true},
+		{"hidden unready route", "runtime_healthy=0,hide_native=1", true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -147,7 +147,7 @@ func TestMeridianAppliedSnapshotRequiresCurrentRouteEvidenceAndPreservesHiddenNa
 }
 
 func TestMeridianImportedRoutesUseLegacySnapshotOnlyUntilFirstAppliedEndpoint(t *testing.T) {
-	store, grantID, now := openMeridianRouteHealthReadFixture(t)
+	store, grantID, _ := openMeridianRouteHealthReadFixture(t)
 	ctx := context.Background()
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='project',subscription_authority='meridian',import_sha256=? WHERE id=1`, strings.Repeat("a", 64)); err != nil {
 		t.Fatal(err)
@@ -192,7 +192,7 @@ func TestMeridianImportedRoutesUseLegacySnapshotOnlyUntilFirstAppliedEndpoint(t 
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET applied_revision=desired_revision,runtime_healthy=1,status='ready' WHERE id=?`, sharedSnapshotEndpointID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET applied_revision=desired_revision,runtime_healthy=1,status='ready' WHERE id=?`, grantID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET applied_revision=desired_revision,runtime_healthy=0,status='blocked' WHERE id=?`, grantID); err != nil {
 		t.Fatal(err)
 	}
 	switched, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB)
@@ -210,7 +210,7 @@ func TestMeridianImportedRoutesUseLegacySnapshotOnlyUntilFirstAppliedEndpoint(t 
 	if err != nil || len(filtered.Routes) != 0 || len(filtered.Entries) != 1 {
 		t.Fatalf("snapshot revived legacy route after first apply: entries=%d routes=%d err=%v", len(filtered.Entries), len(filtered.Routes), err)
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET health_expires_unix_ms=? WHERE id=?`, now.Add(5*time.Second).UnixMilli(), grantID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET runtime_healthy=1,status='ready' WHERE id=?`, grantID); err != nil {
 		t.Fatal(err)
 	}
 	verified, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB)

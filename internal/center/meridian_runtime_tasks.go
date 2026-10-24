@@ -472,7 +472,7 @@ func (s *Store) buildMeridianRuntimeProjection(ctx context.Context, tx *sql.Tx, 
 	if retirePhase && legacyRetired == 0 {
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_route_grants
 			WHERE endpoint_id=? AND enabled=1 AND status<>'revoked'
-			AND (status<>'ready' OR runtime_healthy<>1 OR desired_revision<>applied_revision OR health_expires_unix_ms<=?)`, endpointID, s.now().UnixMilli()).Scan(&unreadyRoutes); err != nil {
+			AND (status<>'ready' OR runtime_healthy<>1 OR desired_revision<>applied_revision)`, endpointID).Scan(&unreadyRoutes); err != nil {
 			return projection, err
 		}
 	}

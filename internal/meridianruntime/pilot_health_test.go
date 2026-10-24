@@ -3,8 +3,6 @@ package meridianruntime
 import (
 	"testing"
 	"time"
-
-	"github.com/petauron/vastora/internal/landing"
 )
 
 func TestPilotRouteHealthRequiresFreshPinnedBusinessProof(t *testing.T) {
@@ -14,49 +12,52 @@ func TestPilotRouteHealthRequiresFreshPinnedBusinessProof(t *testing.T) {
 	checkpoint := PilotCounters{Revision: task.Desired.Revision, Source: task.Source, Peers: task.Peers, ExpectedExits: map[string]string{}}
 	health := &PilotHealth{SampledAt: now, Source: task.Source, Peers: map[string]PeerObservation{}}
 	for _, peer := range report.Peers {
-		peer.Status.Stage = "complete"
-		peer.Status.Reason = "direct_and_business_ready"
+		peer.Status.Stage = "startup"
+		peer.Status.Reason = "startup_ready"
 		peer.Status.UDP = false
 		peer.Status.StartedAt = now.Add(-time.Second)
 		peer.Status.CheckedAt = now
 		peer.Status.SecurityCheckedAt = now
 		peer.Status.LastHealthyAt = now
-		peer.Status.AllowedUntil = now.Add(landing.AllowLifetime - time.Second)
+		peer.Status.AllowedUntil = time.Time{}
 		checkpoint.ExpectedExits[peer.EgressID] = peer.Status.ExitIP
 		health.Peers[peer.EgressID] = peer
 	}
 	receipt := PilotReceipt{Health: health}
-	deadlines, err := PilotPeerDeadlines(checkpoint, receipt, now)
+	deadlines, err := PilotPeerReadiness(checkpoint, receipt, now)
 	if err != nil || len(deadlines) != len(task.Peers) {
 		t.Fatal("valid business evidence rejected", deadlines, err)
 	}
 
 	for id, peer := range health.Peers {
-		peer.Status.LinkState, peer.Status.Reason = "authenticated", "public_ss2022_and_business_ready"
+		peer.Status.LinkState, peer.Status.Reason = "authenticated", "startup_ready"
 		health.Peers[id] = peer
 	}
-	if deadlines, err := PilotPeerDeadlines(checkpoint, receipt, now); err != nil || len(deadlines) != len(task.Peers) {
+	if deadlines, err := PilotPeerReadiness(checkpoint, receipt, now); err != nil || len(deadlines) != len(task.Peers) {
 		t.Fatal("public business evidence rejected", err)
 	}
 	for id, peer := range health.Peers {
 		saved := peer
 		peer.Status.ExitIP = "8.8.4.4"
 		health.Peers[id] = peer
-		if deadlines, err := PilotPeerDeadlines(checkpoint, receipt, now); err != nil || deadlines[id] != 0 {
+		if deadlines, err := PilotPeerReadiness(checkpoint, receipt, now); err != nil || deadlines[id] {
 			t.Fatal("changed public exit accepted", err)
 		}
 		health.Peers[id] = saved
 	}
+	if ready, err := PilotPeerReadiness(checkpoint, receipt, now.Add(24*time.Hour)); err != nil || len(ready) != len(task.Peers) {
+		t.Fatal("startup proof expired", err)
+	}
 	first := task.Peers[0].EgressID
 	receipt.RuntimeRevision = checkpoint.Revision + 1
-	if _, err := PilotPeerDeadlines(checkpoint, receipt, now); err == nil {
+	if _, err := PilotPeerReadiness(checkpoint, receipt, now); err == nil {
 		t.Fatal("old health accepted for changed runtime")
 	}
 	for id, p := range health.Peers {
 		p.Status.Revision = receipt.RuntimeRevision
 		health.Peers[id] = p
 	}
-	if deadlines, err := PilotPeerDeadlines(checkpoint, receipt, now); err != nil || len(deadlines) != len(task.Peers) {
+	if deadlines, err := PilotPeerReadiness(checkpoint, receipt, now); err != nil || len(deadlines) != len(task.Peers) {
 		t.Fatal("verified transport revision health rejected", err)
 	}
 	peer := health.Peers[first]
@@ -64,35 +65,35 @@ func TestPilotRouteHealthRequiresFreshPinnedBusinessProof(t *testing.T) {
 	peer.Status.ConsecutiveFailures = 2
 	peer.Status.LastHealthyAt = now.Add(-10 * time.Second)
 	health.Peers[first] = peer
-	deadlines, err = PilotPeerDeadlines(checkpoint, receipt, now)
-	if err != nil || deadlines[first] == 0 {
-		t.Fatal("bounded grace rejected", err)
+	deadlines, err = PilotPeerReadiness(checkpoint, receipt, now)
+	if err != nil || deadlines[first] {
+		t.Fatal("legacy runtime grace accepted as startup proof", err)
 	}
 	peer.Status.ConsecutiveFailures = 3
 	health.Peers[first] = peer
-	deadlines, err = PilotPeerDeadlines(checkpoint, receipt, now)
-	if err != nil || deadlines[first] != 0 {
+	deadlines, err = PilotPeerReadiness(checkpoint, receipt, now)
+	if err != nil || deadlines[first] {
 		t.Fatal("third failure retained route", err)
 	}
 	peer.Status.ConsecutiveFailures = 2
 	peer.Status.LastHealthyAt = now.Add(-46 * time.Second)
 	health.Peers[first] = peer
-	deadlines, err = PilotPeerDeadlines(checkpoint, receipt, now)
-	if err != nil || deadlines[first] != 0 {
+	deadlines, err = PilotPeerReadiness(checkpoint, receipt, now)
+	if err != nil || deadlines[first] {
 		t.Fatal("stale business evidence retained route", err)
 	}
 	peer.Status.State = "blocked"
 	health.Peers[first] = peer
-	deadlines, err = PilotPeerDeadlines(checkpoint, receipt, now)
-	if err != nil || deadlines[first] != 0 || len(deadlines) != len(task.Peers)-1 {
+	deadlines, err = PilotPeerReadiness(checkpoint, receipt, now)
+	if err != nil || deadlines[first] || len(deadlines) != len(task.Peers)-1 {
 		t.Fatal("blocked peer changed other route health", deadlines, err)
 	}
 	peer.Identity.PublicKey = "different-peer"
 	health.Peers[first] = peer
-	if _, err := PilotPeerDeadlines(checkpoint, receipt, now); err == nil {
+	if _, err := PilotPeerReadiness(checkpoint, receipt, now); err == nil {
 		t.Fatal("foreign peer accepted")
 	}
-	if deadlines, err := PilotPeerDeadlines(checkpoint, PilotReceipt{}, now); err != nil || len(deadlines) != 0 {
+	if deadlines, err := PilotPeerReadiness(checkpoint, PilotReceipt{}, now); err != nil || len(deadlines) != 0 {
 		t.Fatal("missing health cleared warning")
 	}
 }

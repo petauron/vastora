@@ -96,25 +96,16 @@ func TestSubscriptionPreviewExplainsPartialLiveAndRetainedSnapshot(t *testing.T)
 	}
 }
 
-func TestSubscriptionPreviewDoesNotReviveExpiredRouteEvidence(t *testing.T) {
-	store, id, now := openMeridianRouteHealthReadFixture(t)
+func TestSubscriptionPreviewRetainsStartupAcceptedRoute(t *testing.T) {
+	store, _, now := openMeridianRouteHealthReadFixture(t)
 	ctx := context.Background()
 	if _, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB); err != nil {
 		t.Fatal(err)
 	}
 	store.now = func() time.Time { return now.Add(10 * time.Second) }
 	view, err := store.MeridianSubscriptionPreview(ctx, sharedSnapshotAccountB)
-	if err != nil || view.Count != 1 {
-		t.Fatalf("view=%#v err=%v", view, err)
-	}
-	found := false
-	for _, item := range view.Excluded {
-		if item.RouteID == id && item.Reason == "health_expired" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("expired route not explained", view.Excluded)
+	if err != nil || view.Count != 2 || len(view.Excluded) != 0 {
+		t.Fatalf("startup acceptance expired: %#v %v", view, err)
 	}
 }
 
@@ -217,6 +208,9 @@ func TestSubscriptionPreviewEmptyFilteredSnapshotDoesNotRestoreDirect(t *testing
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending' WHERE id=?`, sharedSnapshotEndpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE meridian_route_grants SET runtime_healthy=0,status='blocked' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
 	store.now = func() time.Time { return now.Add(10 * time.Second) }

@@ -930,7 +930,7 @@ func (s *Store) reconcileMeridianCutoverInTx(ctx context.Context, tx *sql.Tx, st
 		 ))),
 		(SELECT COUNT(*) FROM meridian_endpoints WHERE status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision AND legacy_retired=1),
 		(SELECT COUNT(*) FROM meridian_route_grants WHERE enabled=1 AND status<>'revoked'),
-		(SELECT COUNT(*) FROM meridian_route_grants WHERE enabled=1 AND status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision AND health_expires_unix_ms>?)`, s.now().UTC().UnixMilli()).Scan(&accounts, &credentials, &endpoints, &ready, &published, &retired, &routes, &readyRoutes); err != nil {
+		(SELECT COUNT(*) FROM meridian_route_grants WHERE enabled=1 AND status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision)`).Scan(&accounts, &credentials, &endpoints, &ready, &published, &retired, &routes, &readyRoutes); err != nil {
 		return err
 	}
 	if accounts != expectedAccounts || credentials != expectedCredentials || endpoints != expectedEndpoints || routes != expectedRoutes || expectedEndpoints == 0 {
@@ -1219,11 +1219,10 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 	// Explicit retirement retries call this function without the full cutover
 	// reconciler. Neither entries nor a controller-only host may retire while
 	// an imported fixed route has lost its fresh transport evidence.
-	nowMillis := s.now().UTC().UnixMilli()
 	var unreadyRoutes int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_route_grants
 		WHERE enabled=1 AND status<>'revoked'
-		AND (status<>'ready' OR runtime_healthy<>1 OR desired_revision<>applied_revision OR health_expires_unix_ms<=?)`, nowMillis).Scan(&unreadyRoutes); err != nil {
+		AND (status<>'ready' OR runtime_healthy<>1 OR desired_revision<>applied_revision)`).Scan(&unreadyRoutes); err != nil {
 		return err
 	}
 	if unreadyRoutes != 0 {
@@ -1236,7 +1235,7 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 		AND NOT EXISTS(
 			SELECT 1 FROM meridian_route_grants route
 			WHERE route.endpoint_id=endpoint.id AND route.enabled=1 AND route.status<>'revoked'
-			AND (route.status<>'ready' OR route.runtime_healthy<>1 OR route.desired_revision<>route.applied_revision OR route.health_expires_unix_ms<=?)
+			AND (route.status<>'ready' OR route.runtime_healthy<>1 OR route.desired_revision<>route.applied_revision)
 		)
 		AND application.app_key=? AND application.status='running'
 		AND NOT EXISTS(
@@ -1248,7 +1247,7 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 			SELECT 1 FROM application_commands command
 			WHERE command.application_id=endpoint.application_id AND command.kind=? AND command.state IN ('pending','running')
 		)
-		ORDER BY endpoint.id`, nowMillis, meridianAppKey, meridianruntime.ApplyKind)
+		ORDER BY endpoint.id`, meridianAppKey, meridianruntime.ApplyKind)
 	if err != nil {
 		return err
 	}
