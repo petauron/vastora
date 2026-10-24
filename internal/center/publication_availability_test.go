@@ -20,7 +20,7 @@ func TestPublicationAddressFailureIsIsolatedToOneEntry(t *testing.T) {
 		{name: "pending shared listener", kind: publicationShared443, status: "pending", missing: true},
 		{name: "empty public address", kind: publicationPublic, status: "ready"},
 		{name: "invalid public address", kind: publicationPublic, status: "ready", address: "not-an-ip"},
-		{name: "unsupported IPv6 address", kind: publicationPublic, status: "ready", address: "2001:db8::1"},
+		{name: "link local IPv6 address", kind: publicationPublic, status: "ready", address: "fe80::1"},
 		{name: "stopped stays stopped", kind: publicationPublic, status: "stopped", missing: true},
 		{name: "security failure is retained", kind: publicationPublic, status: "failed", missing: true, actionRequired: true, lastError: "security policy requires attention"},
 	} {

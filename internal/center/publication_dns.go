@@ -103,8 +103,12 @@ func (s *Store) publicationDNSRecord(ctx context.Context, publication Publicatio
 
 func publicationAddressDNSRecord(hostname, address string) (*DNSRecordInstruction, error) {
 	ip := net.ParseIP(address)
-	if ip == nil || ip.To4() == nil {
+	if ip == nil || ip.To4() == nil && !isPublicPublicationVerificationIP(ip) {
 		return nil, errPublicationEntryAddressUnavailable
 	}
-	return &DNSRecordInstruction{Type: "A", Name: hostname, Value: ip.String()}, nil
+	recordType := "A"
+	if ip.To4() == nil {
+		recordType = "AAAA"
+	}
+	return &DNSRecordInstruction{Type: recordType, Name: hostname, Value: ip.String()}, nil
 }

@@ -71,7 +71,7 @@ func Discover(now time.Time) ([]Candidate, error) {
 		}
 		for _, address := range addresses {
 			ip, _, err := net.ParseCIDR(address.String())
-			if err != nil || ip == nil || ip.To4() == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
+			if err != nil || ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
 				continue
 			}
 			kind := Classify(iface.Name, ip)
@@ -118,10 +118,20 @@ func defaultRouteAddress(remoteAddress string, dial func(string, string) (net.Co
 }
 
 func Classify(interfaceName string, ip net.IP) string {
-	if ip == nil || ip.To4() == nil || !ip.IsGlobalUnicast() {
+	if ip == nil || !ip.IsGlobalUnicast() {
 		return ""
 	}
 	name := strings.ToLower(strings.TrimSpace(interfaceName))
+	// Only public IPv6 on an ordinary host interface is an ingress candidate.
+	// IPv6 does not change private service or overlay identity selection.
+	if ip.To4() == nil {
+		v6 := ip.To16()
+		if v6 == nil || v6[0]&0xe0 != 0x20 || ip.IsPrivate() || strings.Contains(name, "tailscale") || IsVirtualInterface(name) {
+			return ""
+		}
+		return KindPublic
+	}
+
 	if strings.Contains(name, "tailscale") {
 		return KindHeadscale
 	}
@@ -203,7 +213,7 @@ func ValidateProfile(candidates []Candidate, profile Profile) error {
 		}
 		publicIP := net.ParseIP(strings.TrimSpace(profile.PublicAddress))
 		if publicIP == nil || Classify("external", publicIP) != KindPublic {
-			return errors.New("network: direct public ingress requires a valid public IPv4 address")
+			return errors.New("network: direct public ingress requires a valid public IP address")
 		}
 		bindIP := net.ParseIP(strings.TrimSpace(profile.PublicBindAddress))
 		if bindIP == nil {
