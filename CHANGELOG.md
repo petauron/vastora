@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.356](https://github.com/petauron/vastora/compare/v0.1.0-alpha.355...v0.1.0-alpha.356) (2026-10-24)
+
+
+### Bug Fixes
+
+* **glivela:** recognize installed native host runtime ([#1034](https://github.com/petauron/vastora/issues/1034)) ([4eb95da](https://github.com/petauron/vastora/commit/4eb95da3bf672dd0dbf6fa33189f262df44f917c))
+
 ## [0.1.0-alpha.355](https://github.com/petauron/vastora/compare/v0.1.0-alpha.354...v0.1.0-alpha.355) (2026-10-24)
 
 

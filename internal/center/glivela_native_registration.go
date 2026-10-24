@@ -56,7 +56,7 @@ func (s *Store) RegisterGlivelaNativeEntry(ctx context.Context, adminID string, 
 	var siteID, nodeID, created, seen, public, bind string
 	err = tx.QueryRowContext(ctx, `SELECT a.site_id,a.node_id,a.created_at,agent.last_seen_at,p.public_address,p.public_bind_address
  FROM applications a JOIN agents agent ON agent.id=a.node_id JOIN agent_network_profiles p ON p.agent_id=a.node_id
- WHERE a.id=? AND a.app_key='vastora-official/glivela-entry' AND a.runtime='systemd' AND a.status='running' AND agent.status='active'`, input.ApplicationID).Scan(&siteID, &nodeID, &created, &seen, &public, &bind)
+ WHERE a.id=? AND a.app_key='vastora-official/glivela-entry' AND a.runtime='host' AND a.status='running' AND agent.status='active'`, input.ApplicationID).Scan(&siteID, &nodeID, &created, &seen, &public, &bind)
 	if err != nil {
 		return "", errors.New("center: running native Glivela application required")
 	}
