@@ -101,12 +101,6 @@ func (m *Monitor) Run(ctx context.Context) (result error) {
 	return nil
 }
 
-func (m *Monitor) close() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*nftTimeout)
-	defer cancel()
-	return m.Gate.Block(ctx)
-}
-
 func leaseDeadline(gate *TrafficGate, before LinkResult, business BusinessResult, after LinkResult, now time.Time) (time.Time, bool) {
 	return leaseDeadlineForTransport(gate, before, business, after, now, false)
 }
