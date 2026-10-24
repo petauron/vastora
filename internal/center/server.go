@@ -332,6 +332,21 @@ func (s *Server) requireAuth(mutation bool, handler http.HandlerFunc) http.Handl
 			writeError(writer, http.StatusUnauthorized, err)
 			return
 		}
+		// Renew only an authenticated request. Logout must only clear cookies.
+		if request.URL.Path != "/api/v1/auth/logout" {
+			csrf, expires, err := s.store.renewSession(request.Context(), cookie.Value)
+			if err != nil {
+				status := http.StatusInternalServerError
+				if errors.Is(err, errRenewalSessionInvalid) {
+					status = http.StatusUnauthorized
+				}
+				writeError(writer, status, err)
+				return
+			}
+			if !expires.IsZero() {
+				s.setSessionCookiesUntil(writer, request, cookie.Value, csrf, expires)
+			}
+		}
 		handler(writer, request)
 	}
 }
@@ -345,7 +360,10 @@ func authenticatedSecretOwner(request *http.Request) string {
 }
 
 func (s *Server) setSessionCookies(writer http.ResponseWriter, request *http.Request, session, csrf string) {
-	expires := time.Now().Add(sessionLifetime)
+	s.setSessionCookiesUntil(writer, request, session, csrf, s.store.now().Add(sessionLifetime))
+}
+
+func (s *Server) setSessionCookiesUntil(writer http.ResponseWriter, request *http.Request, session, csrf string, expires time.Time) {
 	secure := s.secureCookies || forwardedHTTPS(request)
 	http.SetCookie(writer, &http.Cookie{Name: "vastora_session", Value: session, Path: "/", Expires: expires, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secure})
 	http.SetCookie(writer, &http.Cookie{Name: "vastora_csrf", Value: csrf, Path: "/", Expires: expires, HttpOnly: false, SameSite: http.SameSiteStrictMode, Secure: secure})

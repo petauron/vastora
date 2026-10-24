@@ -36,7 +36,7 @@ func TestGlivelaSequentialMigrationPreservesOriginalCheckpoint(t *testing.T) {
 		 endpoint_id TEXT NOT NULL UNIQUE REFERENCES meridian_endpoints(id),
 		 checkpoint_json BLOB NOT NULL CHECK(json_valid(checkpoint_json)),updated_at TEXT NOT NULL);
 		INSERT INTO glivela_pilot_checkpoint VALUES(1,'snapshot-shared-endpoint','{"retained":true}','original');
-		DELETE FROM goose_db_version WHERE version_id>=118; PRAGMA user_version=117`)
+		ALTER TABLE sessions DROP COLUMN absolute_expires_at; DELETE FROM goose_db_version WHERE version_id>=118; PRAGMA user_version=117`)
 	if err != nil {
 		t.Fatal(err)
 	}

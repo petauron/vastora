@@ -515,6 +515,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE application_adoptions`,
 		`DROP TABLE application_resources`,
 		`DROP TABLE catalog_legacy_evidence`,
+		`ALTER TABLE sessions DROP COLUMN absolute_expires_at`,
 		`ALTER TABLE deployments DROP COLUMN package_revision`,
 		`ALTER TABLE deployments DROP COLUMN manifest_sha256`,
 		`ALTER TABLE deployments DROP COLUMN authorized_capabilities_json`,
