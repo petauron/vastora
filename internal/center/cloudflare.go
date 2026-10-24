@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -305,11 +304,14 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 		if err := s.db.QueryRowContext(ctx, `SELECT public_address FROM agent_network_profiles WHERE agent_id = ? AND direct_public = 1`, gatewayID).Scan(&publicAddress); err != nil {
 			return errors.New("center: public entry node has no confirmed public address")
 		}
-		ip := net.ParseIP(publicAddress)
-		if ip == nil || ip.To4() == nil {
-			return errors.New("center: public entry address must be IPv4")
+		record, err := publicationAddressDNSRecord(hostname, publicAddress)
+		if err != nil {
+			return err
 		}
-		recordType := "A"
+		if kind == publicationShared443 && record.Type != "A" {
+			return errors.New("center: shared 443 entry address must be IPv4")
+		}
+		recordType := record.Type
 		if dnsRecordID == "" {
 			dnsRecordID, err = s.reusePublicationDNSRecord(ctx, publicationID, kind, gatewayID, hostname)
 			if err != nil {
@@ -318,7 +320,7 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 		}
 		existingDNSRecord := dnsRecordID != ""
 		if dnsRecordID == "" {
-			createdRecordID, created, createErr := client.ensureDNSRecord(ctx, recordType, hostname, ip.String(), false)
+			createdRecordID, created, createErr := client.ensureDNSRecord(ctx, recordType, hostname, record.Value, false)
 			if createErr != nil {
 				return createErr
 			}
@@ -340,7 +342,7 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 			dnsRecordID = createdRecordID
 		}
 		if existingDNSRecord {
-			if err := client.updateDNSRecord(ctx, dnsRecordID, recordType, hostname, ip.String(), false); err != nil {
+			if err := client.updateDNSRecord(ctx, dnsRecordID, recordType, hostname, record.Value, false); err != nil {
 				return err
 			}
 		}

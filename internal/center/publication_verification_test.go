@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -671,4 +672,60 @@ func seedVerificationPublication(t *testing.T, store *Store, kind, dnsProvider s
 		t.Fatal(err)
 	}
 	return node
+}
+
+func TestCloudflarePublicIPv6PublicationUsesDNSOnlyAAAA(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	node := seedVerificationPublication(t, store, publicationPublic, "cloudflare", 1, 0, "pending")
+	ctx := context.Background()
+	const address = "2001:db8::40"
+	if _, err := store.db.Exec(`UPDATE agent_network_profiles SET public_address=? WHERE agent_id=?`, address, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	writes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"success":true,"result":[],"errors":[]}`))
+			return
+		}
+		if r.Method != http.MethodPost && r.Method != http.MethodPut {
+			t.Errorf("unexpected method %s", r.Method)
+			w.WriteHeader(400)
+			return
+		}
+		var record cloudflareDNSRecord
+		if err := json.NewDecoder(r.Body).Decode(&record); err != nil {
+			t.Error(err)
+			w.WriteHeader(400)
+			return
+		}
+		if record.Type != "AAAA" || record.Content != address || record.Name != "verification.example.test" || record.Proxied {
+			t.Errorf("unexpected DNS record: %+v", record)
+		}
+		writes++
+		_, _ = w.Write([]byte(`{"success":true,"result":{"id":"ipv6-record"},"errors":[]}`))
+	}))
+	defer server.Close()
+	store.cloudflareOAuth.APIURL = server.URL
+	store.cloudflareOAuth.HTTPClient = server.Client()
+	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "access", RefreshToken: "refresh", ExpiresAt: time.Now().Add(time.Hour)})
+	for range 2 {
+		if err := store.reconcileCloudflarePublication(ctx, "verification-publication", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if writes != 2 {
+		t.Fatalf("want create and tracked update, got %d writes", writes)
+	}
+	if _, err := store.db.Exec(`UPDATE agent_network_profiles SET public_address='fd00::1' WHERE agent_id=?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.reconcileCloudflarePublication(ctx, "verification-publication", 1); err == nil {
+		t.Fatal("private IPv6 accepted for public publication")
+	}
+	if writes != 2 {
+		t.Fatal("invalid address changed DNS")
+	}
 }
