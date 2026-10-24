@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.357](https://github.com/petauron/vastora/compare/v0.1.0-alpha.356...v0.1.0-alpha.357) (2026-10-24)
+
+
+### Bug Fixes
+
+* **meridian:** retain startup readiness without runtime probe expiry ([#1036](https://github.com/petauron/vastora/issues/1036)) ([e48effe](https://github.com/petauron/vastora/commit/e48effe5a7d1c89361df1f57721c26d1a290b189))
+* publish native IPv6 entries with Cloudflare AAAA records ([#1038](https://github.com/petauron/vastora/issues/1038)) ([0dd0f30](https://github.com/petauron/vastora/commit/0dd0f302a95073d8b92767e0bb53b2532e24ed76))
+
 ## [0.1.0-alpha.356](https://github.com/petauron/vastora/compare/v0.1.0-alpha.355...v0.1.0-alpha.356) (2026-10-24)
 
 
