@@ -3379,6 +3379,84 @@
         }
       }
     },
+    "/api/v1/meridian/native-entries": {
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Register Glivela Native Entry",
+        "operationId": "registerGlivelaNativeEntry_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "applicationId": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "regionCode": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "applicationId",
+                  "regionCode",
+                  "name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/meridian/endpoints/{id}/glivela-pilot": {
       "post": {
         "tags": [

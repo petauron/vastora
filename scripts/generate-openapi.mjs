@@ -755,6 +755,9 @@ for (const route of routes) {
     operation.description = "Read directional traffic grouped by entry node and egress. Totals start at the first authenticated tracking sample, never infer historical direction, never reset or enforce quotas, and are not provider billing. Stale means no current active credential sample within 15 minutes.";
     operation.responses["200"].headers = noStoreHeaders;
     operation.responses["200"].content["application/json"].schema = schemaForGoType("MeridianTrafficView");
+  } else if (route.handler === "handleRegisterGlivelaNativeEntry") {
+    operation.requestBody.content["application/json"].schema.required = ["applicationId", "regionCode", "name"];
+    operation.responses["201"].headers = noStoreHeaders;
   } else if (route.handler === "handleCreateMeridianEndpoint") {
     operation.requestBody.content["application/json"].schema.required = [
       "applicationId", "verificationId", "targetIp", "targetHost", "serverName", "regionCode", "name",

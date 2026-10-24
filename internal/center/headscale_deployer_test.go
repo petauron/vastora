@@ -190,6 +190,23 @@ func TestAgentReportedNATEnablesPublicWebProfileWithoutCenterCoLocation(t *testi
 	if err != nil || publicAddress != "198.51.100.27" || bindAddress != "10.0.0.27" {
 		t.Fatalf("confirmed NAT mapping was not accepted for node-direct ingress: public=%q bind=%q err=%v", publicAddress, bindAddress, err)
 	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	candidates = append(candidates, networking.Candidate{Address: "2001:db8::27", Interface: "enp0s6", Kind: networking.KindPublic})
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", NetworkCandidates: candidates, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
+		t.Fatal(err)
+	}
+	v6 := *profile
+	v6.PublicAddress, v6.PublicBindAddress, v6.PublicMode = "2001:db8::27", "2001:db8::27", networking.PublicModeDirect
+	confirmed, err := store.ConfirmNetworkProfile(ctx, node.ID, v6)
+	if err != nil || confirmed.PublicAddress != v6.PublicAddress || !confirmed.PublicVerifiedAt.IsZero() {
+		t.Fatalf("direct IPv6 profile: %#v %v", confirmed, err)
+	}
+	v6.PublicAddress, v6.PublicBindAddress = "2001:db8::28", "2001:db8::28"
+	if _, err := store.ConfirmNetworkProfile(ctx, node.ID, v6); err == nil {
+		t.Fatal("unassigned IPv6 ingress accepted")
+	}
 }
 
 func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {

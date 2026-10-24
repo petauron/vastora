@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -160,17 +161,30 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 		input.PublicBindAddress = ""
 		input.PublicMode = ""
 	} else {
-		publicEgress, err := agentPublicEgress(ctx, tx, agentID)
-		if err != nil {
-			return nil, err
+		publicIP := net.ParseIP(input.PublicAddress)
+		if !lastSeenAt.After(s.now().UTC().Add(-agentConnectedMaxAge)) {
+			return nil, errors.New("center: an online Agent is required to confirm public ingress")
 		}
-		if publicEgress == nil || !lastSeenAt.After(s.now().UTC().Add(-agentConnectedMaxAge)) {
-			return nil, errors.New("center: wait for the Agent to detect its current public egress address")
+		if publicIP != nil && publicIP.To4() == nil {
+			// Direct IPv6 is authorized by the authenticated Agent's assigned
+			// interface address, not its unrelated NAT IPv4 egress observation.
+			if input.PublicMode != networking.PublicModeDirect || input.PublicBindAddress != publicIP.String() {
+				return nil, errors.New("center: IPv6 ingress must use an assigned direct address")
+			}
+			input.PublicVerifiedAt = time.Time{}
+		} else {
+			publicEgress, err := agentPublicEgress(ctx, tx, agentID)
+			if err != nil {
+				return nil, err
+			}
+			if publicEgress == nil || !lastSeenAt.After(s.now().UTC().Add(-agentConnectedMaxAge)) {
+				return nil, errors.New("center: wait for the Agent to detect its current public egress address")
+			}
+			if input.PublicAddress != publicEgress.Address || input.PublicBindAddress != publicEgress.BindAddress || input.PublicMode != publicEgress.Mode {
+				return nil, errors.New("center: public ingress must match the Agent's current public egress mapping")
+			}
+			input.PublicVerifiedAt = publicEgress.ObservedAt.UTC()
 		}
-		if input.PublicAddress != publicEgress.Address || input.PublicBindAddress != publicEgress.BindAddress || input.PublicMode != publicEgress.Mode {
-			return nil, errors.New("center: public ingress must match the Agent's current public egress mapping")
-		}
-		input.PublicVerifiedAt = publicEgress.ObservedAt.UTC()
 	}
 	if err := networking.ValidateProfile(candidates, input); err != nil {
 		return nil, err

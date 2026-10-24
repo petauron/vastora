@@ -200,3 +200,23 @@ func (s *Server) handleMeridianTraffic(writer http.ResponseWriter, request *http
 	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusOK, view)
 }
+
+func (s *Server) handleRegisterGlivelaNativeEntry(w http.ResponseWriter, r *http.Request) {
+	adminID, err := s.requestAdminID(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	var input GlivelaNativeRegistrationInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	id, err := s.store.RegisterGlivelaNativeEntry(r.Context(), adminID, input)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, map[string]string{"endpointId": id, "state": "awaiting-publication-verification"})
+}

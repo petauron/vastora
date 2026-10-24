@@ -693,7 +693,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	reportedHeadscaleAddress := false
 	for _, candidate := range heartbeat.NetworkCandidates {
 		ip := net.ParseIP(candidate.Address)
-		if ip == nil || ip.To4() == nil || candidate.Interface == "" || (candidate.Kind != networking.KindLAN && candidate.Kind != networking.KindHeadscale && candidate.Kind != networking.KindPublic) {
+		if ip == nil || candidate.Interface == "" || (candidate.Kind != networking.KindLAN && candidate.Kind != networking.KindHeadscale && candidate.Kind != networking.KindPublic) {
 			return errors.New("center: Agent reported an invalid network candidate")
 		}
 		kind := networking.Classify(candidate.Interface, ip)
@@ -1059,7 +1059,7 @@ func invalidateUnusableNetworkProfile(ctx context.Context, tx *sql.Tx, agentID s
 		if networking.ValidateProfile(candidates, *retained) != nil {
 			return nil
 		}
-		if retained.DirectPublic {
+		if retained.DirectPublic && !strings.Contains(retained.PublicAddress, ":") {
 			egress, err := agentPublicEgress(ctx, tx, agentID)
 			if err != nil {
 				return err

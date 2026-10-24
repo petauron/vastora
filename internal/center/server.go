@@ -155,6 +155,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/meridian/endpoints", s.requireAuth(true, s.handleCreateMeridianEndpoint))
 	mux.HandleFunc("PUT /api/v1/meridian/endpoints/{id}", s.requireAuth(true, s.handleUpdateMeridianEndpointName))
 	mux.HandleFunc("POST /api/v1/meridian/endpoints/{id}/recover", s.requireAuth(true, s.handleRecoverMeridianEndpoint))
+	mux.HandleFunc("POST /api/v1/meridian/native-entries", s.requireAuth(true, s.handleRegisterGlivelaNativeEntry))
 	mux.HandleFunc("POST /api/v1/meridian/endpoints/{id}/glivela-pilot", s.requireAuth(true, s.handleActivateGlivelaPilot))
 	mux.HandleFunc("GET /api/v1/meridian/endpoints/{id}/source-recovery", s.requireAuth(false, s.handleMeridianSourceRecovery))
 	mux.HandleFunc("POST /api/v1/meridian/endpoints/{id}/source-recovery", s.requireAuth(true, s.handleRecoverMeridianSource))
