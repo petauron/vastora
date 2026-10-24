@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.352](https://github.com/petauron/vastora/compare/v0.1.0-alpha.351...v0.1.0-alpha.352) (2026-10-24)
+
+
+### Bug Fixes
+
+* **auth:** renew active sessions with a seven-day maximum ([#1021](https://github.com/petauron/vastora/issues/1021)) ([4263097](https://github.com/petauron/vastora/commit/42630978b9047a9a8137f181ff2703a3cdb2bdfc))
+
 ## [0.1.0-alpha.351](https://github.com/petauron/vastora/compare/v0.1.0-alpha.350...v0.1.0-alpha.351) (2026-10-23)
 
 
