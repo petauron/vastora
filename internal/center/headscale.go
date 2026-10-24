@@ -246,6 +246,9 @@ func (s *Store) createHeadscaleJoin(ctx context.Context, agentID string, gateway
 	if err != nil {
 		return HeadscaleJoin{}, err
 	}
+	if err := s.reconcileHeadscaleCenterRole(ctx, client); err != nil {
+		return HeadscaleJoin{}, err
+	}
 	userID, err := client.ensureUser(ctx, "vastora")
 	if err != nil {
 		return HeadscaleJoin{}, err
@@ -497,6 +500,13 @@ func (s *Store) reconcileHeadscaleDNSForSystem(ctx context.Context, primaryCente
 		if centerAddress, err := s.coLocatedHeadscaleAddress(ctx); err != nil {
 			return err
 		} else if centerAddress != "" {
+			client, err := s.headscale(ctx)
+			if err != nil {
+				return err
+			}
+			if err := s.reconcileHeadscaleCenterRole(ctx, client); err != nil {
+				return err
+			}
 			if ip := net.ParseIP(centerAddress); ip == nil || ip.To4() == nil {
 				return errors.New("center: Headscale DNS address must be IPv4")
 			}
@@ -784,7 +794,7 @@ func headscaleRequestURL(path string, query url.Values) (string, error) {
 	case "/api/v1/node":
 		fixedURL = headscalePinnedRequestOrigin + "/api/v1/node"
 	default:
-		if !validHeadscaleNodePath(path) {
+		if !validHeadscaleNodePath(path) && !(strings.HasSuffix(path, "/tags") && validHeadscaleNodePath(strings.TrimSuffix(path, "/tags"))) {
 			return "", errors.New("center: Headscale API path is invalid")
 		}
 		fixedURL = headscalePinnedRequestOrigin + path
