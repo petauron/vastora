@@ -184,6 +184,9 @@ func TestRetiredBusinessKeepsAgentHeartbeatAndClaimUsable(t *testing.T) {
 	s := openMeridianSharedEndpointSnapshotFixture(t)
 	ctx := context.Background()
 	n := enrollOrchestrationNode(t, s, "ordinary-worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.23", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.23", LANAddress: "10.0.0.23", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := s.db.Exec(`UPDATE applications SET node_id=? WHERE id=(SELECT application_id FROM meridian_endpoints WHERE id=?)`, n.ID, sharedSnapshotEndpointID); err != nil {
+		t.Fatal(err)
+	}
 	dir := s.dataDir
 	s.Close()
 	writeSyntheticHandoverProof(t, dir)
@@ -194,12 +197,15 @@ func TestRetiredBusinessKeepsAgentHeartbeatAndClaimUsable(t *testing.T) {
 	defer s.Close()
 	before := handoverTableHashes(t, s.db)
 	for _, startup := range []bool{false, true} {
-		if err := s.RecordAgentHeartbeat(ctx, n.ID, n.Credential, NodeHeartbeat{Version: Version, Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, Startup: startup}); err != nil {
+		if err := s.RecordAgentHeartbeat(ctx, n.ID, n.Credential, NodeHeartbeat{Version: Version, Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, Startup: startup, ApplicationEndpointsObserved: true}); err != nil {
 			t.Fatal("retirement blocked ordinary heartbeat", err)
 		}
 		if _, err := s.ClaimNextTask(ctx, n.ID, n.Credential); err != nil {
 			t.Fatal("retirement blocked ordinary task selection", err)
 		}
+	}
+	if err := s.RecordAgentHeartbeat(ctx, n.ID, n.Credential, NodeHeartbeat{Version: Version, Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationEndpointsObserved: true, ApplicationEndpoints: []ApplicationEndpointObservation{{AppKey: meridianAppKey, Name: "inbound-1", Protocol: "tcp", AppProtocol: "vless/tcp/reality", Port: 443}}}); err != nil {
+		t.Fatal("retired legacy inventory rejected heartbeat", err)
 	}
 	if !reflect.DeepEqual(before, handoverTableHashes(t, s.db)) {
 		t.Fatal("ordinary Agent paths changed retired business")

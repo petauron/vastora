@@ -124,6 +124,9 @@ func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, a
 }
 
 func (s *Store) reconcileMeridianEndpoints(ctx context.Context, tx *sql.Tx, agentID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
+	if s.businessRetired {
+		return nil
+	}
 	seenNames, seenTags := map[string]bool{}, map[string]bool{}
 	for index := range observations {
 		value := &observations[index]
