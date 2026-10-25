@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.364](https://github.com/petauron/vastora/compare/v0.1.0-alpha.363...v0.1.0-alpha.364) (2026-10-25)
+
+
+### Bug Fixes
+
+* recover current applications without restoring retired proxy business ([d6e1d73](https://github.com/petauron/vastora/commit/d6e1d73bb0914c992ad2557a1e90ea433f312b01))
+
 ## [0.1.0-alpha.363](https://github.com/petauron/vastora/compare/v0.1.0-alpha.362...v0.1.0-alpha.363) (2026-10-25)
 
 
