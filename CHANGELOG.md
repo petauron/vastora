@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.360](https://github.com/petauron/vastora/compare/v0.1.0-alpha.359...v0.1.0-alpha.360) (2026-10-25)
+
+
+### Bug Fixes
+
+* retire legacy proxy business writes after final Glivela handover ([#1043](https://github.com/petauron/vastora/issues/1043)) ([cffd691](https://github.com/petauron/vastora/commit/cffd691fcaca7b44d44c162bc05b733ebe223f75))
+
 ## [0.1.0-alpha.359](https://github.com/petauron/vastora/compare/v0.1.0-alpha.358...v0.1.0-alpha.359) (2026-10-24)
 
 
