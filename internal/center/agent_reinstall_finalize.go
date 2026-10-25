@@ -70,6 +70,16 @@ func (s *Store) CompleteAgentReinstall(ctx context.Context, target, admin string
 		}
 	}
 	for _, app := range evidence.Plan.Applications {
+		if current, exists := evidence.Current[app.ApplicationID]; exists {
+			cleanups := []publicationCleanup{}
+			if err = s.completeApplication(ctx, tx, current.DeploymentID, app.ApplicationID, "install", current.Generation, current.Result, receipt.CompletedAt, &cleanups); err != nil {
+				return receipt, err
+			}
+			if len(cleanups) != 0 {
+				return receipt, errors.New("center: current recovery unexpectedly changes published services")
+			}
+			continue
+		}
 		result, exists := evidence.Runtimes[app.ApplicationID]
 		if !exists {
 			continue
@@ -134,7 +144,7 @@ func (s *Store) CompleteAgentReinstall(ctx context.Context, target, admin string
 			return receipt, err
 		}
 	}
-	if err = s.recordTaskEvent(ctx, tx, input.OperationID, target, "agent.reinstall", 1, "succeeded", "Recovery completed after authenticated original-client and monitoring verification"); err != nil {
+	if err = s.recordTaskEvent(ctx, tx, input.OperationID, target, "agent.reinstall", 1, "succeeded", "Recovery completed after authenticated installation and recorded business verification"); err != nil {
 		return receipt, err
 	}
 	if err = tx.Commit(); err != nil {

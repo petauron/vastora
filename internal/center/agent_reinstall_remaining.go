@@ -32,6 +32,14 @@ func reinstallRemaining(plan AgentReinstallPlan) []AgentReinstallRemaining {
 		if app.Recovery == "keep_stopped" || app.Recovery == "keep_retired" {
 			continue
 		}
+		if currentReinstallApp(app.AppKey) && app.Recovery != "reenroll_monitor" {
+			if app.CurrentRestoration == nil || app.CurrentRestoration.State != "succeeded" {
+				add("application_review", app.ApplicationID)
+			} else if app.CurrentRestoration.Verification != "operator_attested" {
+				add("application_review", app.ApplicationID)
+			}
+			continue
+		}
 		if app.Recovery == "restore_data" {
 			add("data_restore", app.ApplicationID)
 			continue

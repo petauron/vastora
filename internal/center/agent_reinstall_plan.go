@@ -49,17 +49,18 @@ type AgentReinstallNetwork struct {
 }
 
 type AgentReinstallApplication struct {
-	ApplicationID string                     `json:"applicationId"`
-	Name          string                     `json:"name"`
-	AppKey        string                     `json:"appKey"`
-	DeploymentID  string                     `json:"deploymentId"`
-	Version       string                     `json:"version"`
-	Operation     string                     `json:"operation"`
-	State         string                     `json:"state"`
-	Recovery      string                     `json:"recovery"`
-	SharedEntry   bool                       `json:"sharedEntry"`
-	Requirements  []string                   `json:"requirements"`
-	Preparation   *AgentReinstallPreparation `json:"preparation,omitempty"`
+	ApplicationID      string                       `json:"applicationId"`
+	Name               string                       `json:"name"`
+	AppKey             string                       `json:"appKey"`
+	DeploymentID       string                       `json:"deploymentId"`
+	Version            string                       `json:"version"`
+	Operation          string                       `json:"operation"`
+	State              string                       `json:"state"`
+	Recovery           string                       `json:"recovery"`
+	SharedEntry        bool                         `json:"sharedEntry"`
+	Requirements       []string                     `json:"requirements"`
+	CurrentRestoration *AgentReinstallCurrentStatus `json:"currentRestoration,omitempty"`
+	Preparation        *AgentReinstallPreparation   `json:"preparation,omitempty"`
 }
 
 type AgentReinstallPendingWork struct {
@@ -210,6 +211,16 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 			}
 		}
 	}
+	for i := range plan.Applications {
+		var status AgentReinstallCurrentStatus
+		err = tx.QueryRowContext(ctx, `SELECT r.deployment_id,d.state,CASE WHEN json_extract(r.operator_verification_json,'$.verifiedAt') IS NULL THEN 'required' ELSE 'operator_attested' END FROM agent_reinstall_current_applications r JOIN deployments d ON d.id=r.deployment_id JOIN agent_reinstall_operations op ON op.id=r.operation_id WHERE op.agent_id=? AND op.state='review_required' AND r.application_id=?`, plan.AgentID, plan.Applications[i].ApplicationID).Scan(&status.DeploymentID, &status.State, &status.Verification)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return plan, err
+		}
+		if err == nil {
+			plan.Applications[i].CurrentRestoration = &status
+		}
+	}
 	plan.Recovery, err = readAgentReinstallOperation(ctx, tx, plan.AgentID)
 	if err == nil && plan.Recovery != nil {
 		plan.Remaining = reinstallRemaining(plan)
@@ -237,7 +248,7 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 		 registry.host,registry.username,registry.secret_id,hex(registry_secret.sealed))
 		FROM applications a LEFT JOIN deployments d ON d.rowid=(SELECT previous.rowid FROM deployments previous
 		WHERE previous.application_id=a.id AND previous.agent_id=a.node_id
- AND NOT EXISTS(SELECT 1 FROM agent_reinstall_app_preparations rp WHERE rp.deployment_id=previous.id) AND NOT EXISTS(SELECT 1 FROM agent_reinstall_monitor_restorations mr WHERE mr.deployment_id=previous.id) ORDER BY previous.created_at DESC,previous.rowid DESC LIMIT 1)
+ AND NOT EXISTS(SELECT 1 FROM agent_reinstall_current_applications cr WHERE cr.deployment_id=previous.id) AND NOT EXISTS(SELECT 1 FROM agent_reinstall_app_preparations rp WHERE rp.deployment_id=previous.id) AND NOT EXISTS(SELECT 1 FROM agent_reinstall_monitor_restorations mr WHERE mr.deployment_id=previous.id) ORDER BY previous.created_at DESC,previous.rowid DESC LIMIT 1)
 		LEFT JOIN secrets saved ON saved.id=d.secret_id
 		LEFT JOIN registry_credentials registry ON registry.id=d.registry_credential_id
 		LEFT JOIN secrets registry_secret ON registry_secret.id=registry.secret_id

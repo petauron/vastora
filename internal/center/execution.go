@@ -269,6 +269,10 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 			if _, err = s.reinstallRuntimeTask(ctx, tx, agentID, id, false); err != nil {
 				return err
 			}
+		} else if strings.HasPrefix(id, "reinstall-current-") {
+			if _, err = s.reinstallCurrentTask(ctx, tx, agentID, id); err != nil {
+				return err
+			}
 		} else if _, err = s.validateReinstallPreparation(ctx, tx, agentID, id); err != nil {
 			return err
 		}
@@ -433,7 +437,18 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	if err != nil {
 		return controlplane.ExecutionAuthorization{}, err
 	}
-	if restoredMonitor != nil || task.SenulunRestore != nil {
+	currentRestore, err := s.reinstallCurrentTask(ctx, tx, agentID, task.ID)
+	if err != nil {
+		return controlplane.ExecutionAuthorization{}, err
+	}
+	if currentRestore != nil {
+		expected, _ := json.Marshal(currentRestore)
+		actual, _ := json.Marshal(task)
+		if string(expected) != string(actual) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
+	if restoredMonitor != nil || task.SenulunRestore != nil && currentRestore == nil {
 		if restoredMonitor == nil || task.SenulunRestore == nil {
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
@@ -481,7 +496,7 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	now := s.now().UTC()
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return controlplane.ExecutionAuthorization{}, err
-	} else if blocked && !preparation && runtime == nil && listener == nil && restoredMonitor == nil {
+	} else if blocked && !preparation && runtime == nil && listener == nil && restoredMonitor == nil && currentRestore == nil {
 		return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {

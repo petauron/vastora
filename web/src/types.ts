@@ -395,7 +395,7 @@ export type AgentReinstallPlan = {
   recovery?: AgentReinstallOperation;
   networkReview?: AgentReinstallNetworkReview;
   privateNetwork: { ownership: string; serviceAddress: string; privateAddress: string; profileRetained: boolean; addressRecovery: string; landingRoutes: number; publications: number };
-  applications: Array<{ applicationId: string; name: string; appKey: string; deploymentId: string; version: string; operation: string; state: string; recovery: string; sharedEntry: boolean; requirements: string[]; preparation?: AgentReinstallPreparation }>;
+  applications: Array<{ applicationId: string; name: string; appKey: string; deploymentId: string; version: string; operation: string; state: string; recovery: string; sharedEntry: boolean; requirements: string[]; currentRestoration?: { deploymentId: string; state: string; verification: string }; preparation?: AgentReinstallPreparation }>;
   pendingWork: Array<{ agentId: string; kind: string; count: number }>;
   executions: Array<{ id: string; agentId: string; taskId: string; attempt: number; kind: string; state: string; phase: string; identityRetired: boolean; resolution: "local_after_isolation" | "manual_review" }>;
   unclaimedLocalWork: AgentReinstallUnclaimedWork[];

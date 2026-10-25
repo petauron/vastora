@@ -496,7 +496,11 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	if err != nil {
 		return nil, err
 	}
-	preparation = preparation || restoredMonitor != nil
+	currentRestore, err := s.reinstallCurrentTask(ctx, tx, agentID, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	preparation = preparation || restoredMonitor != nil || currentRestore != nil
 	task.Config = json.RawMessage(config)
 	if err := json.Unmarshal(manifest, &task.Manifest); err != nil {
 		return nil, fmt.Errorf("center: decode pending task: %w", err)
@@ -582,6 +586,9 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 		task.Secrets = secretValue
 	} else {
 		task.Secrets = json.RawMessage(`{}`)
+	}
+	if currentRestore != nil {
+		task.SenulunRestore = currentRestore.SenulunRestore
 	}
 	if restoredMonitor != nil {
 		task.SenulunRestore = restoredMonitor.SenulunRestore
@@ -840,7 +847,11 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 	if err != nil {
 		return "", nil, err
 	}
-	preparation = preparation || restoredMonitor != nil
+	currentRestore, err := s.reinstallCurrentTask(ctx, tx, agentID, taskID)
+	if err != nil {
+		return "", nil, err
+	}
+	preparation = preparation || restoredMonitor != nil || currentRestore != nil
 	if preparation && reconciliationRequired {
 		return "", nil, errors.New("center: package preparation requires explicit outcome review")
 	}
@@ -851,6 +862,9 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 		if len(rawResult) != 0 && string(rawResult) != "null" && json.Unmarshal(rawResult, &taskResult) != nil {
 			return "", nil, errors.New("center: invalid Agent task result")
 		}
+	}
+	if currentRestore != nil && currentRestore.SenulunRestore != nil && succeeded && (taskResult.SenulunRestored == nil || taskResult.SenulunRestored.NodeID != currentRestore.SenulunRestore.NodeID) {
+		return "", nil, errors.New("center: original Senulun identity was not restored")
 	}
 	if restoredMonitor != nil && succeeded && (taskResult.SenulunRestored == nil || taskResult.SenulunRestored.NodeID != restoredMonitor.SenulunRestore.NodeID || len(taskResult.Services) != 0) {
 		return "", nil, errors.New("center: restored Senulun collector did not confirm the original monitoring identity")

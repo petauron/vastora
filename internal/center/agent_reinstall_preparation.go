@@ -352,7 +352,8 @@ func pendingAgentReinstallTask(ctx context.Context, tx *sql.Tx, agentID, require
  WHERE op.agent_id=? AND op.state='review_required' AND p.listener_state='pending' AND n.status='pending' AND n.desired_revision=p.listener_revision AND n.attempt=p.listener_attempt-1
  UNION ALL SELECT d.id,d.created_at FROM agent_reinstall_monitor_restorations m JOIN deployments d ON d.id=m.deployment_id JOIN agent_reinstall_monitor_rotations r ON r.command_id=m.rotation_command_id JOIN agent_reinstall_operations op ON op.id=r.operation_id
  WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND d.attempt=0
- ) WHERE (?='' OR id=?) ORDER BY created_at,id LIMIT 1`, agentID, agentID, agentID, agentID, requiredTaskID, requiredTaskID).Scan(&id)
+ UNION ALL SELECT d.id,d.created_at FROM agent_reinstall_current_applications r JOIN deployments d ON d.id=r.deployment_id JOIN agent_reinstall_operations op ON op.id=r.operation_id WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND d.attempt=0
+ ) WHERE (?='' OR id=?) ORDER BY created_at,id LIMIT 1`, agentID, agentID, agentID, agentID, agentID, requiredTaskID, requiredTaskID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errExecutionBlocked
 	}

@@ -12,14 +12,21 @@ import (
 
 // These values are reconstructed inside the final write transaction. Never
 // authorize completion from UI summaries or previously returned review DTOs.
+type currentReinstallCompletion struct {
+	DeploymentID string
+	Result       ApplicationTaskResult
+	Generation   int
+}
+
 type reinstallCompletionEvidence struct {
+	Current  map[string]currentReinstallCompletion
 	Plan     AgentReinstallPlan
 	Clients  map[string][]string
 	Runtimes map[string]meridianruntime.Result
 }
 
 func (s *Store) requireReinstallCompletion(ctx context.Context, tx *sql.Tx, target, admin, operation, revision string) (reinstallCompletionEvidence, error) {
-	evidence := reinstallCompletionEvidence{Clients: map[string][]string{}, Runtimes: map[string]meridianruntime.Result{}}
+	evidence := reinstallCompletionEvidence{Current: map[string]currentReinstallCompletion{}, Clients: map[string][]string{}, Runtimes: map[string]meridianruntime.Result{}}
 	plan, err := s.agentReinstallPlan(ctx, tx, target)
 	if err != nil {
 		return evidence, err
@@ -61,6 +68,12 @@ func (s *Store) requireReinstallCompletion(ctx context.Context, tx *sql.Tx, targ
 			if running {
 				return evidence, errors.New("center: an uninstalled application still has running state")
 			}
+		case currentReinstallApp(app.AppKey) && app.Recovery != "reenroll_monitor":
+			id, result, generation, verifyErr := s.requireCurrentReinstallVerification(ctx, tx, target, operation, app.ApplicationID)
+			if verifyErr != nil {
+				return evidence, verifyErr
+			}
+			evidence.Current[app.ApplicationID] = currentReinstallCompletion{DeploymentID: id, Result: result, Generation: generation}
 		case app.Recovery == "restore_data":
 			return evidence, errors.New("center: business data restoration has not been verified")
 		case app.AppKey == senulunAgentAppKey && app.Recovery == "reenroll_monitor":

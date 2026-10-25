@@ -222,6 +222,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/client-checks", s.requireAuth(true, s.handleAgentReinstallClientChecks))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/verify-entry", s.requireAuth(true, s.handleAgentReinstallEntryCheck))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/restore-entry", s.requireAuth(true, s.handleAgentReinstallListener))
+	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/current/verify", s.requireAuth(true, s.handleAgentReinstallCurrentVerification))
+	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/current", s.requireAuth(true, s.handleAgentReinstallCurrent))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-applications/prepare", s.requireAuth(true, s.handleAgentReinstallPreparation))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-monitor/reporting", s.requireAuth(true, s.handleAgentReinstallMonitorReporting))
 	mux.HandleFunc("POST /api/v1/agents/{id}/reinstall-monitor/restore", s.requireAuth(true, s.handleAgentReinstallMonitorRestore))
