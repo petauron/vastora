@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.361](https://github.com/petauron/vastora/compare/v0.1.0-alpha.360...v0.1.0-alpha.361) (2026-10-25)
+
+
+### Bug Fixes
+
+* ignore retired Glivela endpoint inventory in Agent heartbeats ([#1045](https://github.com/petauron/vastora/issues/1045)) ([074a5ba](https://github.com/petauron/vastora/commit/074a5bafdacdee67217930e09b57c1e9ee33ff5f))
+
 ## [0.1.0-alpha.360](https://github.com/petauron/vastora/compare/v0.1.0-alpha.359...v0.1.0-alpha.360) (2026-10-25)
 
 
