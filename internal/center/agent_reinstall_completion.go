@@ -48,6 +48,11 @@ func (s *Store) requireReinstallCompletion(ctx context.Context, tx *sql.Tx, targ
 	}
 	for _, app := range plan.Applications {
 		switch {
+		case app.Recovery == "keep_retired":
+			// Reconstructed in this transaction from the permanent handover
+			// marker; this excludes only the retired implementation, not the
+			// replacement application or its independent recovery gates.
+			continue
 		case app.Recovery == "keep_stopped":
 			var running bool
 			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM applications WHERE id=? AND status='running')`, app.ApplicationID).Scan(&running); err != nil {

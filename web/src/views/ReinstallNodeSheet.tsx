@@ -363,6 +363,7 @@ function recoveryLabel(value: string, language: Language) {
     case "rebuild_configuration": return copy(language, "重建配置", "Rebuild configuration");
     case "reenroll_monitor": return copy(language, "重新关联监控", "Re-enroll monitoring");
     case "restore_data": return copy(language, "需要数据备份", "Data backup required");
+    case "keep_retired": return copy(language, "保持退役 · 保留历史", "Keep retired · retain history");
     case "keep_stopped": return copy(language, "保持卸载", "Keep uninstalled");
     default: return copy(language, "需要核对", "Needs review");
   }

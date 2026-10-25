@@ -29,7 +29,7 @@ func reinstallRemaining(plan AgentReinstallPlan) []AgentReinstallRemaining {
 		add("network_review", "")
 	}
 	for _, app := range plan.Applications {
-		if app.Recovery == "keep_stopped" {
+		if app.Recovery == "keep_stopped" || app.Recovery == "keep_retired" {
 			continue
 		}
 		if app.Recovery == "restore_data" {

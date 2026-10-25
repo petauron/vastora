@@ -224,6 +224,7 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 	// latest successful deployment instead would resurrect an unwanted app.
 	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.name,a.app_key,COALESCE(d.id,''),COALESCE(d.app_version,''),
 		COALESCE(d.operation,''),COALESCE(d.state,''),COALESCE(d.manifest_json,'{}'),COALESCE(d.reconciliation_required,0),
+		(a.app_key='vastora-official/meridian' AND EXISTS(SELECT 1 FROM retired_proxy_business WHERE id=1)),
 		EXISTS(SELECT 1 FROM publications p JOIN services service ON service.id=p.service_id WHERE service.application_id=a.id AND service.status<>'stopped'
  AND p.ingress_owner='application_node' AND p.entry_node_id=a.node_id AND p.kind='public_shared_443' AND p.status<>'stopped'),
 		(EXISTS(SELECT 1 FROM deployments historical WHERE historical.application_id=a.id
@@ -248,15 +249,15 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 	for rows.Next() {
 		app := AgentReinstallApplication{Requirements: []string{}}
 		var manifestJSON []byte
-		var reconciliation, managedMonitorEvidence bool
+		var reconciliation, managedMonitorEvidence, retiredBusiness bool
 		var intent string
-		if err := rows.Scan(&app.ApplicationID, &app.Name, &app.AppKey, &app.DeploymentID, &app.Version, &app.Operation, &app.State, &manifestJSON, &reconciliation, &app.SharedEntry, &managedMonitorEvidence, &intent); err != nil {
+		if err := rows.Scan(&app.ApplicationID, &app.Name, &app.AppKey, &app.DeploymentID, &app.Version, &app.Operation, &app.State, &manifestJSON, &reconciliation, &retiredBusiness, &app.SharedEntry, &managedMonitorEvidence, &intent); err != nil {
 			return "", err
 		}
 		// Successful deployments are restoration input too. Changes to their
 		// configuration, artifact or credential must invalidate the review just
 		// as changes to unfinished work do; none of this input is returned.
-		if err := encoder.Encode(intent); err != nil {
+		if err := encoder.Encode([]any{intent, retiredBusiness}); err != nil {
 			return "", err
 		}
 		app.Recovery = "restore_data"
@@ -264,6 +265,11 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 		case app.DeploymentID == "":
 			app.Recovery = "review_required"
 			app.Requirements = append(app.Requirements, "saved_deployment_missing")
+		case retiredBusiness:
+			// The business owner has already changed. Reinstalling the host
+			// must not resurrect the frozen Center runtime or its credentials.
+			app.Recovery = "keep_retired"
+			app.Requirements = append(app.Requirements, "retain_retired_business_records")
 		case app.Operation == "uninstall":
 			app.Recovery = "keep_stopped"
 		default:
