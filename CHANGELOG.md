@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.363](https://github.com/petauron/vastora/compare/v0.1.0-alpha.362...v0.1.0-alpha.363) (2026-10-25)
+
+
+### Bug Fixes
+
+* isolate application loading from retired proxy APIs ([#1053](https://github.com/petauron/vastora/issues/1053)) ([5c1aa96](https://github.com/petauron/vastora/commit/5c1aa96e9e6e0282e00d4bbe282c5fc3f3e5687b))
+
 ## [0.1.0-alpha.362](https://github.com/petauron/vastora/compare/v0.1.0-alpha.361...v0.1.0-alpha.362) (2026-10-25)
 
 
