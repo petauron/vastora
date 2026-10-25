@@ -15,7 +15,7 @@ require (
 	github.com/petauron/catalog v0.4.1-0.20261019081100-736a82671387
 	github.com/petauron/glivela v0.1.0-alpha.24.0.20261018115648-011a0efc9777
 	github.com/pressly/goose/v3 v3.28.0
-	github.com/projectdiscovery/cdncheck v1.3.1
+	github.com/projectdiscovery/cdncheck v1.3.2
 	github.com/sethvargo/go-retry v0.5.0
 	github.com/sigstore/sigstore v1.10.11
 	github.com/theupdateframework/go-tuf/v2 v2.4.2
@@ -57,7 +57,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/projectdiscovery/blackrock v0.0.2 // indirect
 	github.com/projectdiscovery/retryabledns v1.0.116 // indirect
-	github.com/projectdiscovery/utils v0.11.9 // indirect
+	github.com/projectdiscovery/utils v0.11.10 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
@@ -66,7 +66,7 @@ require (
 	github.com/tidwall/gjson v1.20.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.2 // indirect
-	github.com/weppos/publicsuffix-go v0.50.3 // indirect
+	github.com/weppos/publicsuffix-go v0.50.4-0.20260821095816-b0fdb5c2d345 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
