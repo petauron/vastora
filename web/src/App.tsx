@@ -3,7 +3,7 @@ import { CircleAlertIcon, CircleCheckIcon, LogOutIcon, RefreshCwIcon } from "luc
 import { AuthShell } from "@/components/auth/AuthShell";
 import { CredentialPage } from "./views/CredentialPage";
 import { APIError, api, isAPIError } from "./api";
-import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
+import { ApplicationPageDataError, emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import type { AppData, CenterUpdateStatus, Screen, SetupStatus } from "./types";
 import type { Language } from "./translations";
 import { PageHeading, copy, userError } from "./views/shared";
@@ -46,6 +46,7 @@ export function App() {
   const [data, setData] = useState<AppData | null>(null);
   const [loadedScreens, setLoadedScreens] = useState<Set<Screen>>(() => new Set());
   const [loadingScreen, setLoadingScreen] = useState<Screen | null>(null);
+  const [applicationPageError, setApplicationPageError] = useState<ApplicationPageDataError | null>(null);
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [addFirstNode, setAddFirstNode] = useState(false);
   const [notice, setNotice] = useState<{ message: string; detail?: string; error?: boolean } | null>(null);
@@ -85,12 +86,21 @@ export function App() {
         if (current.has(target)) return current;
         return new Set(current).add(target);
       });
+      if (target === "apps") setApplicationPageError(null);
       setConnection("connected");
       setConnectionError(null);
       setLastSync(new Date());
       return true;
     } catch (error) {
       if (controller.signal.aborted || screenLoadGeneration.current !== generation || activeScreen.current !== target) return false;
+      if (error instanceof ApplicationPageDataError) {
+        setData((current) => ({ ...(current ?? emptyAppData(error.shared.status)), ...error.shared }));
+        setApplicationPageError(error);
+        setConnection("connected");
+        setConnectionError(null);
+        setLastSync(new Date());
+        return true;
+      }
       if (!(error instanceof APIError && error.status === 401)) {
         setConnection("reconnecting");
         setConnectionError(error);
@@ -342,10 +352,10 @@ export function App() {
           <div className={`desktop-window-content${windowScreen === "settings" ? " desktop-settings-window" : ""}${windowScreen === "apps" && !windowWorkspace ? " desktop-store-window" : ""}`} id={active ? "main-content" : undefined} role={active ? "main" : undefined} ref={active ? mainRef : undefined} tabIndex={-1}>
             {active ? statusAlerts : null}
             <Suspense fallback={<ScreenLoading language={language} desktop={false} />}>
-              {!loadedScreens.has(windowScreen) ? <ScreenLoading language={language} desktop={false} /> : null}
+              {windowScreen === "apps" && applicationPageError ? <Alert variant="destructive"><AlertTitle>{copy(language, "应用数据暂不可用", "Application data is unavailable")}</AlertTitle><AlertDescription className="flex flex-col gap-3"><span>{copy(language, "当前应用页加载失败，Center 仍可连接。可以重试或使用其他窗口。", "This application page could not load. Center is connected; retry or use another window.")}</span><span>{userError(language, applicationPageError.originalError)}</span><Button disabled={loadingScreen === "apps"} onClick={() => void loadScreen("apps").catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === "apps" ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "重试加载应用", "Retry applications")}</Button></AlertDescription></Alert> : !loadedScreens.has(windowScreen) ? <ScreenLoading language={language} desktop={false} /> : null}
               {loadedScreens.has(windowScreen) && windowScreen === "overview" ? <HomeView data={data} language={language} onNavigate={navigate} mutate={mutate} /> : null}
               {loadedScreens.has(windowScreen) && windowScreen === "nodes" ? <NodesView data={data} language={language} mutate={mutate} onAddFirstNodeHandled={() => setAddFirstNode(false)} onNavigate={navigate} startAdding={addFirstNode} /> : null}
-              {loadedScreens.has(windowScreen) && windowScreen === "apps" ? <AppsView active={active} data={data} language={language} mutate={mutate} workspaceKey={windowWorkspace} onOpenApp={openApp} onStore={() => navigate("apps")} onSettings={() => { navigate("settings"); window.history.replaceState({}, "", "/settings#catalog"); window.dispatchEvent(new HashChangeEvent("hashchange")); }} /> : null}
+              {loadedScreens.has(windowScreen) && windowScreen === "apps" && !applicationPageError ? <AppsView active={active} data={data} language={language} mutate={mutate} workspaceKey={windowWorkspace} onOpenApp={openApp} onStore={() => navigate("apps")} onSettings={() => { navigate("settings"); window.history.replaceState({}, "", "/settings#catalog"); window.dispatchEvent(new HashChangeEvent("hashchange")); }} /> : null}
               {loadedScreens.has(windowScreen) && windowScreen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(windowScreen) && windowScreen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} onNavigate={navigate} /> : null}
               {loadedScreens.has(windowScreen) && windowScreen === "assistant" ? <AssistantView language={language} /> : null}
