@@ -2,12 +2,8 @@ package center
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -214,15 +210,9 @@ func TestMeridianSharedEndpointMutationsPreserveOtherAccountSubscription(t *test
 			if snapshotErr != nil || snapshot.AccountRevision != 1 || len(snapshot.Entries) != 1 || snapshot.Entries[0].Material.Credential.AccountID != sharedSnapshotAccountB {
 				t.Fatalf("unrelated account lost its applied snapshot: revision=%d entries=%d err=%v", snapshot.AccountRevision, len(snapshot.Entries), snapshotErr)
 			}
-			server := NewServer(store, t.TempDir(), false)
-			response := httptest.NewRecorder()
-			server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sub/"+sharedSnapshotTokenB, nil))
-			decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(response.Body.String()))
-			if response.Code != http.StatusOK || err != nil || !strings.Contains(string(decoded), "vless://"+sharedSnapshotUUIDB+"@entry.example.test:443") {
-				t.Fatalf("unrelated subscription failed during rebuild: status=%d body=%q err=%v", response.Code, decoded, err)
-			}
-			if got := response.Header().Get("Subscription-Userinfo"); got != "upload=0; download=50; total=1000" {
-				t.Fatalf("unrelated account quota changed: %q", got)
+			projection, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB)
+			if err != nil || len(projection.Entries) != 1 || projection.Usage.UsedBytes != 50 {
+				t.Fatalf("unrelated legacy snapshot or quota changed: %v", err)
 			}
 		})
 	}

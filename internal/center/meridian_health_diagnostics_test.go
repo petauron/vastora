@@ -91,15 +91,8 @@ func TestMeridianRouteHealthReadRequiresSessionAndDoesNotLaunchTasks(t *testing.
 		}
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
-		want := http.StatusUnauthorized
-		if authenticated {
-			want = http.StatusOK
-		}
-		if response.Code != want {
-			t.Fatalf("auth=%v status=%d", authenticated, response.Code)
-		}
-		if authenticated && response.Header().Get("Cache-Control") != "no-store" {
-			t.Fatal("diagnosis is cacheable")
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("retired business API served: %d", response.Code)
 		}
 	}
 	var after int

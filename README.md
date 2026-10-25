@@ -175,3 +175,5 @@ Existing sessions retain their original expiry when migrating to schema 119;
 new logins receive the seven-day maximum. The normal pre-migration database
 backup applies. No Agent or managed application upgrade is needed for this
 Center-only change.
+
+Existing Glivela business installations require the [final data handover](docs/GLIVELA-BUSINESS-HANDOVER.md) before serving the replacement Center.

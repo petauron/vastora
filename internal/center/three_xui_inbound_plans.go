@@ -132,6 +132,9 @@ func threeXUIInboundResetOperationKey(serviceID, nextResetAt string) string {
 }
 
 func (s *Store) RunThreeXUIInboundPlanResets(ctx context.Context, interval time.Duration, report func(error)) {
+	if s.businessRetired {
+		return
+	}
 	if interval <= 0 {
 		interval = threeXUIInboundPlanResetInterval
 	}

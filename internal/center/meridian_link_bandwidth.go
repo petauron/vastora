@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
-	"net/http"
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
@@ -115,22 +114,6 @@ func (s *Store) StartMeridianLinkBandwidth(ctx context.Context, sourceID, landin
 		}
 	}
 	return tx.Commit()
-}
-
-func (s *Server) handleStartMeridianLinkBandwidth(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		SourceNodeID  string `json:"sourceNodeId"`
-		LandingNodeID string `json:"landingNodeId"`
-	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&input) != nil {
-		writeError(w, http.StatusBadRequest, errors.New("meridian_link_invalid_pair"))
-		return
-	}
-	if err := s.store.StartMeridianLinkBandwidth(r.Context(), input.SourceNodeID, input.LandingNodeID); err != nil {
-		writeError(w, http.StatusConflict, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
 }
 
 // A task receipt cannot validate measurements against a replaced private peer.

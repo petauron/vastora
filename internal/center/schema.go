@@ -3,10 +3,11 @@ package center
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
-const centerSchemaVersion = 120
+const centerSchemaVersion = 121
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -1082,6 +1083,13 @@ CREATE TABLE agent_reinstall_access_activations (
 	}
 	if _, err := tx.ExecContext(ctx, meridianHealthDiagnosticsSchema); err != nil {
 		return fmt.Errorf("center: initialize route health diagnostics: %w", err)
+	}
+	retirement, err := migrationFiles.ReadFile("migrations/00121_proxy_business_retirement.sql")
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, strings.Split(string(retirement), "-- +goose Down")[0]); err != nil {
+		return fmt.Errorf("center: initialize proxy business retirement: %w", err)
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO organizations(id, name, created_at, updated_at) VALUES(?, 'Vastora', ?, ?)`, defaultOrganizationID, now, now); err != nil {

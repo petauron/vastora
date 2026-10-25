@@ -3,12 +3,10 @@ package center
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +16,7 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
+func TestLegacySubscriptionSnapshotRemainsExportable(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -93,19 +91,9 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := NewServer(store, t.TempDir(), false)
-	request := httptest.NewRequest(http.MethodGet, "/sub/"+token, nil)
-	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || response.Header().Get("Subscription-Userinfo") != "upload=0; download=100; total=1000" {
-		t.Fatalf("subscription status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
-	}
-	if response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Referrer-Policy") != "no-referrer" || !strings.Contains(response.Header().Get("X-Robots-Tag"), "noindex") {
-		t.Fatalf("subscription secret-safety headers=%v", response.Header())
-	}
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(response.Body.String()))
-	if err != nil || !strings.Contains(string(decoded), "vless://"+protocolID+"@entry.example.test:443") {
-		t.Fatalf("subscription body=%q err=%v", decoded, err)
+	initial, err := store.MeridianSubscription(ctx, token)
+	if err != nil || len(initial.Entries) != 1 || initial.Usage.UsedBytes != 100 {
+		t.Fatalf("legacy export projection unavailable: %v", err)
 	}
 	var sealedSnapshot []byte
 	if err := store.db.QueryRowContext(ctx, `SELECT secret.sealed FROM meridian_subscription_snapshots snapshot JOIN secrets secret ON secret.id=snapshot.secret_id WHERE snapshot.account_id=?`, accountID).Scan(&sealedSnapshot); err != nil {
@@ -115,20 +103,11 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 		t.Fatal("applied Glivela subscription snapshot was stored in plaintext")
 	}
 
-	mihomoRequest := httptest.NewRequest(http.MethodGet, "/sub/"+token+"?target=clash", nil)
-	mihomoResponse := httptest.NewRecorder()
-	server.Handler().ServeHTTP(mihomoResponse, mihomoRequest)
-	if mihomoResponse.Code != http.StatusOK || !strings.Contains(mihomoResponse.Body.String(), "type: vless") || !strings.Contains(mihomoResponse.Body.String(), protocolID) {
-		t.Fatalf("Mihomo status=%d body=%s", mihomoResponse.Code, mihomoResponse.Body.String())
-	}
-
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, landingSelectionKey, `{"revision":0,"nodeIds":null}`); err != nil {
 		t.Fatal(err)
 	}
-	independent := httptest.NewRecorder()
-	server.Handler().ServeHTTP(independent, httptest.NewRequest(http.MethodGet, "/sub/"+token, nil))
-	if independent.Code != http.StatusOK {
-		t.Fatalf("native subscription depended on global landing metadata: status=%d body=%s", independent.Code, independent.Body.String())
+	if _, err := store.MeridianSubscription(ctx, token); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET total_bytes=120,used_bytes=105 WHERE id=?`, endpointID); err != nil {
 		t.Fatal(err)
@@ -213,37 +192,25 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE publications SET desired_revision=2,applied_revision=1,status='pending' WHERE service_id=?`, serviceID); err != nil {
 		t.Fatal(err)
 	}
-	snapshot := httptest.NewRecorder()
-	server.Handler().ServeHTTP(snapshot, httptest.NewRequest(http.MethodGet, "/sub/"+token, nil))
-	if snapshot.Code != http.StatusOK {
-		t.Fatalf("imported cutover snapshot status=%d body=%s", snapshot.Code, snapshot.Body.String())
+	if _, err := store.MeridianSubscription(ctx, token); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='complete' WHERE id=1;
 		UPDATE meridian_accounts SET desired_revision=2,applied_revision=1 WHERE id=?;
 		UPDATE meridian_endpoints SET desired_revision=2,applied_revision=1 WHERE id=?`, accountID, endpointID); err != nil {
 		t.Fatal(err)
 	}
-	recovered := httptest.NewRecorder()
-	server.Handler().ServeHTTP(recovered, httptest.NewRequest(http.MethodGet, "/sub/"+token, nil))
-	if recovered.Code != http.StatusOK || recovered.Body.String() != response.Body.String() {
-		t.Fatalf("pending runtime did not preserve last applied subscription: status=%d body=%s", recovered.Code, recovered.Body.String())
+	recovered, err := store.MeridianSubscription(ctx, token)
+	if err != nil || !reflect.DeepEqual(initial.Entries, recovered.Entries) {
+		t.Fatalf("legacy applied snapshot changed: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_accounts SET enabled=0,status='disabled' WHERE id=?`, accountID); err != nil {
 		t.Fatal(err)
 	}
-	revoked := httptest.NewRecorder()
-	server.Handler().ServeHTTP(revoked, httptest.NewRequest(http.MethodGet, "/sub/"+token, nil))
-	if revoked.Code != http.StatusNotFound {
-		t.Fatalf("disabled account served an applied snapshot: status=%d body=%s", revoked.Code, revoked.Body.String())
-	}
-
-	missing := httptest.NewRecorder()
-	server.Handler().ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/sub/not-the-token", nil))
-	if missing.Code != http.StatusNotFound {
-		t.Fatalf("missing token status=%d", missing.Code)
-	}
-	if missing.Header().Get("Cache-Control") != "no-store" || missing.Header().Get("Referrer-Policy") != "no-referrer" {
-		t.Fatalf("missing subscription token response was cacheable: headers=%v", missing.Header())
+	for _, value := range []string{token, "not-the-token"} {
+		if _, err := store.MeridianSubscription(ctx, value); !errors.Is(err, errMeridianSubscriptionNotFound) {
+			t.Fatalf("disabled or unknown legacy account: %v", err)
+		}
 	}
 }
 
@@ -548,12 +515,9 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	server := NewServer(store, t.TempDir(), false)
-	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sub/"+otherToken, nil))
-	decoded, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(response.Body.String()))
-	if response.Code != http.StatusOK || decodeErr != nil || !strings.Contains(string(decoded), "vless://"+otherProtocolID+"@endpoint-a.example.test:443") {
-		t.Fatalf("shared runtime rebuild withdrew unaffected subscription: status=%d body=%q err=%v", response.Code, decoded, decodeErr)
+	other, err := store.MeridianSubscription(ctx, otherToken)
+	if err != nil || len(other.Entries) == 0 {
+		t.Fatalf("unaffected legacy snapshot unavailable: %v", err)
 	}
 	if _, err := store.MeridianSubscription(ctx, "shared-token"); !errors.Is(err, errMeridianSubscriptionNotFound) {
 		t.Fatalf("applied snapshot bypassed exhausted account quota: %v", err)

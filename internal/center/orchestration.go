@@ -285,7 +285,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		}
 		*cleanups = append(*cleanups, values...)
 	}
-	if appKey == meridianAppKey {
+	if manifest.Runtime == nil && appKey == meridianAppKey && !s.businessRetired {
 		if _, err := s.ensureMeridianSubscriptionServiceInTx(ctx, tx, applicationID, now); err != nil {
 			return err
 		}
@@ -304,7 +304,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		}
 	}
 	reconcilePublications := true
-	if appKey == meridianAppKey {
+	if manifest.Runtime == nil && appKey == meridianAppKey && !s.businessRetired {
 		var cutoverProjection bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 			SELECT 1 FROM meridian_endpoints endpoint JOIN meridian_cutover cutover ON cutover.id=1
@@ -319,7 +319,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 			return err
 		}
 	}
-	if appKey == meridianAppKey {
+	if manifest.Runtime == nil && appKey == meridianAppKey && !s.businessRetired {
 		return s.reconcileMeridianCutoverInTx(ctx, tx, now.Format(time.RFC3339Nano))
 	}
 	return nil

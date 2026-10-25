@@ -149,6 +149,7 @@ func TestSecurityMigration114MatchesFreshSchema(t *testing.T) {
 	s := openOrchestrationStore(t)
 	defer s.Close()
 	ctx := context.Background()
+	dropRetirementFixture(t, s.db)
 	// Reconstruct the released v113 shape, not a current database with only
 	// its marker decremented. Otherwise the later ADD COLUMN correctly fails.
 	if _, err := s.db.Exec(`DROP TABLE glivela_pilot_checkpoint; ALTER TABLE deployments DROP COLUMN source_receipt_sha256; ALTER TABLE services DROP COLUMN proxy_protocol; DROP TABLE node_security_tasks; ALTER TABLE sessions DROP COLUMN absolute_expires_at; DELETE FROM goose_db_version WHERE version_id>=114; PRAGMA user_version=113`); err != nil {
