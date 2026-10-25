@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.362](https://github.com/petauron/vastora/compare/v0.1.0-alpha.361...v0.1.0-alpha.362) (2026-10-25)
+
+
+### Bug Fixes
+
+* display catalog expiry as a UTC calendar date ([#1050](https://github.com/petauron/vastora/issues/1050)) ([a66db97](https://github.com/petauron/vastora/commit/a66db975bea42c7ee1ce5f9ca9fe77cfb752eef4))
+
 ## [0.1.0-alpha.361](https://github.com/petauron/vastora/compare/v0.1.0-alpha.360...v0.1.0-alpha.361) (2026-10-25)
 
 
