@@ -695,6 +695,9 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 
 func dropRetirementFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
+	if _, err := db.Exec("DROP TABLE agent_reinstall_current_applications"); err != nil {
+		t.Fatal(err)
+	}
 	// Reconstruct the actual pre-retirement schema, rather than leaving new
 	// migration objects in this historical fixture.
 	triggers, err := db.Query("SELECT name FROM sqlite_schema WHERE type='trigger' AND name GLOB 'retired_proxy_*'")
