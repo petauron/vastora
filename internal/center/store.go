@@ -25,6 +25,7 @@ import (
 )
 
 type Store struct {
+	businessRetired                bool
 	glivelaPilotStatePath          string
 	agentUpdateScope               map[string]bool
 	db                             *sql.DB
@@ -235,6 +236,12 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 	store.verifyPublication = store.verifyPublicationRevision
 	store.issuePrivateCertificate = store.obtainPrivateCertificate
 	store.issueDomainCertificate = store.obtainPrivateCertificateWithCloudflare
+	handover, err := store.inspectBusinessHandover(context.Background())
+	if err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
 	if existingDatabase {
 		bound, err := inspectCenterDatabaseKeyBinding(context.Background(), db, key)
 		if err != nil {
@@ -251,6 +258,16 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		}
 	}
 	if err := store.initializeSchema(context.Background(), existingDatabase); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.applyBusinessHandover(context.Background(), handover); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.db.QueryRow("SELECT EXISTS(SELECT 1 FROM retired_proxy_business WHERE id=1)").Scan(&store.businessRetired); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, err
@@ -290,7 +307,12 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("center: recover expired retained execution results: %w", err)
 	}
-	if err := store.recoverSupersededLandingExecutionFailures(context.Background()); err != nil {
+	if err := func() error {
+		if store.businessRetired {
+			return nil
+		}
+		return store.recoverSupersededLandingExecutionFailures(context.Background())
+	}(); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, fmt.Errorf("center: recover superseded landing execution failures: %w", err)
@@ -305,17 +327,32 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := store.enforceThreeXUIWorkerIsolation(context.Background()); err != nil {
+	if err := func() error {
+		if store.businessRetired {
+			return nil
+		}
+		return store.enforceThreeXUIWorkerIsolation(context.Background())
+	}(); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, err
 	}
-	if err := store.resumeThreeXUIControllerConvergence(context.Background()); err != nil {
+	if err := func() error {
+		if store.businessRetired {
+			return nil
+		}
+		return store.resumeThreeXUIControllerConvergence(context.Background())
+	}(); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, fmt.Errorf("center: resume global 3x-ui controller convergence: %w", err)
 	}
-	if err := store.resumeGlobalLandingPool(context.Background()); err != nil {
+	if err := func() error {
+		if store.businessRetired {
+			return nil
+		}
+		return store.resumeGlobalLandingPool(context.Background())
+	}(); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, fmt.Errorf("center: resume global landing pool: %w", err)

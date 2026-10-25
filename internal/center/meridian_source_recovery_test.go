@@ -197,7 +197,7 @@ func TestMeridianSourceRecoveryRejectsUnreviewedOrRacingEvidence(t *testing.T) {
 	}
 }
 
-func TestMeridianSourceRecoveryHTTPRequiresAdminAndCSRF(t *testing.T) {
+func TestRetiredSourceRecoveryHTTPIsUnavailable(t *testing.T) {
 	f := openMeridianRecoveryFixture(t)
 	handler := NewServer(f.store, "", false).Handler()
 	path := "/api/v1/meridian/endpoints/" + sharedSnapshotEndpointID + "/source-recovery"
@@ -206,11 +206,11 @@ func TestMeridianSourceRecoveryHTTPRequiresAdminAndCSRF(t *testing.T) {
 		session, csrf bool
 		want          int
 	}{
-		{http.MethodGet, false, false, http.StatusUnauthorized},
-		{http.MethodPost, false, false, http.StatusUnauthorized},
-		{http.MethodPost, true, false, http.StatusUnauthorized},
-		{http.MethodGet, true, false, http.StatusOK},
-		{http.MethodPost, true, true, http.StatusAccepted},
+		{http.MethodGet, false, false, http.StatusNotFound},
+		{http.MethodPost, false, false, http.StatusNotFound},
+		{http.MethodPost, true, false, http.StatusNotFound},
+		{http.MethodGet, true, false, http.StatusNotFound},
+		{http.MethodPost, true, true, http.StatusNotFound},
 	} {
 		raw, _ := json.Marshal(f.input)
 		r := httptest.NewRequest(test.method, path, bytes.NewReader(raw))
@@ -227,9 +227,7 @@ func TestMeridianSourceRecoveryHTTPRequiresAdminAndCSRF(t *testing.T) {
 		if w.Code != test.want {
 			t.Fatalf("%s auth=%t csrf=%t status=%d: %s", test.method, test.session, test.csrf, w.Code, w.Body.String())
 		}
-		if test.method == http.MethodGet && test.session && (w.Header().Get("Cache-Control") != "no-store" || strings.Contains(w.Body.String(), "nodekey:")) {
-			t.Fatal("unsafe recovery preview")
-		}
+
 	}
 }
 

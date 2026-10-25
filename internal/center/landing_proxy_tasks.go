@@ -47,6 +47,9 @@ func landingProxyTaskRevision(id string) (int64, bool) {
 }
 
 func (s *Store) claimLandingProxyTask(ctx context.Context, tx *sql.Tx, nodeID string) (*AgentTask, error) {
+	if s.businessRetired {
+		return nil, nil
+	}
 	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
 		return nil, err
 	} else if owns {

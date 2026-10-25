@@ -497,6 +497,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	db.SetMaxOpenConns(1)
 	defer db.Close()
+	dropRetirementFixture(t, db)
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 		t.Fatal(err)
 	}
@@ -690,4 +691,34 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	) VALUES('unsupported-v3', 'service-v3', 'public_shared_443', 'agent-v3', 'unsupported.example.test', 'manual', 'pending', ?, ?)`, now, now); err == nil {
 		t.Fatal("legacy publications constraint unexpectedly accepted public_shared_443")
 	}
+}
+
+func dropRetirementFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+	// Reconstruct the actual pre-retirement schema, rather than leaving new
+	// migration objects in this historical fixture.
+	triggers, err := db.Query("SELECT name FROM sqlite_schema WHERE type='trigger' AND name GLOB 'retired_proxy_*'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retired []string
+	for triggers.Next() {
+		var name string
+		if err := triggers.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		retired = append(retired, name)
+	}
+	if err := triggers.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range retired {
+		if _, err := db.Exec(`DROP TRIGGER "` + name + `"`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec("DROP TABLE retired_proxy_business"); err != nil {
+		t.Fatal(err)
+	}
+
 }

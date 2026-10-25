@@ -204,6 +204,9 @@ func runCenter(arguments []string) error {
 		if err := store.UseHostNetworkAddresses(*hostNetworkAddresses); err != nil {
 			return err
 		}
+		if err := store.RequireBusinessHandover(context.Background()); err != nil {
+			return err
+		}
 		maintenanceContext, stopMaintenance := context.WithCancel(context.Background())
 		defer stopMaintenance()
 		if err := store.StartPublicationVerifications(maintenanceContext); err != nil {
@@ -212,21 +215,10 @@ func runCenter(arguments []string) error {
 		go store.RunAgentRemovals(maintenanceContext, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center node removal: %v\n", err)
 		})
-		go store.RunRouteHealthDiagnostics(maintenanceContext, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center route health diagnostics: %v\n", err)
-		})
-		go store.RunGlivelaPilotReceipts(maintenanceContext, func(err error) {
-			fmt.Fprintln(os.Stderr, "Center Glivela pilot receipt not confirmed; existing lease checks retained")
-		})
 		go store.RunCertificateRenewal(maintenanceContext, 12*time.Hour, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center private HTTPS renewal: %v\n", err)
 		})
-		go store.RunRealityNameReconciliation(maintenanceContext, time.Minute, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center REALITY name reconciliation: %v\n", err)
-		})
-		go store.RunRealityGuardRecovery(maintenanceContext, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center REALITY guard revalidation: %v\n", err)
-		})
+
 		go store.RunThreeXUIInboundPlanResets(maintenanceContext, time.Minute, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center REALITY traffic plan reset: %v\n", err)
 		})

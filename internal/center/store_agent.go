@@ -796,12 +796,12 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
-	if reinstalling && heartbeat.MeridianRuntime != nil {
+	if !s.businessRetired && reinstalling && heartbeat.MeridianRuntime != nil {
 		if err := s.recordReinstallRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
 			return err
 		}
 	}
-	if !executionBlocked && heartbeat.MeridianRuntime != nil {
+	if !s.businessRetired && !executionBlocked && heartbeat.MeridianRuntime != nil {
 		if err := s.recordMeridianRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
 			return err
 		}
@@ -840,19 +840,34 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 		if !executionBlocked {
-			if heartbeat.LandingClientRuntime != nil {
+			if !s.businessRetired && heartbeat.LandingClientRuntime != nil {
 				if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
 					return err
 				}
 			}
-			if err := s.reconcileClientLandingSourcesForNode(ctx, tx, id); err != nil {
+			if err := func() error {
+				if s.businessRetired {
+					return nil
+				}
+				return s.reconcileClientLandingSourcesForNode(ctx, tx, id)
+			}(); err != nil {
 				return err
 			}
-			if err := s.reconcileLandingSubscriptionOrigin(ctx, tx, id, now); err != nil {
+			if err := func() error {
+				if s.businessRetired {
+					return nil
+				}
+				return s.reconcileLandingSubscriptionOrigin(ctx, tx, id, now)
+			}(); err != nil {
 				return err
 			}
 		}
-		if err := recordLandingHealth(ctx, tx, id, heartbeat.LandingHealth, now); err != nil {
+		if err := func() error {
+			if s.businessRetired {
+				return nil
+			}
+			return recordLandingHealth(ctx, tx, id, heartbeat.LandingHealth, now)
+		}(); err != nil {
 			return err
 		}
 		if !executionBlocked {
@@ -866,7 +881,12 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
-	if err := recordLandingServerHealth(ctx, tx, id, heartbeat.LandingServerHealth, now); err != nil {
+	if err := func() error {
+		if s.businessRetired {
+			return nil
+		}
+		return recordLandingServerHealth(ctx, tx, id, heartbeat.LandingServerHealth, now)
+	}(); err != nil {
 		return err
 	}
 	if heartbeat.Startup && !reinstalling {
@@ -876,9 +896,6 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	recoveredPublications, err := publicationsAfterNetworkRecovery(ctx, tx, now)
 	if err != nil {
-		return err
-	}
-	if err := s.observeGlivelaPilotInTx(ctx, tx, id); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

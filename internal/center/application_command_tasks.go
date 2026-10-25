@@ -22,17 +22,19 @@ var (
 )
 
 func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
-	if err := s.resetDueMeridianAccounts(ctx, tx); err != nil {
-		return nil, err
-	}
-	if err := s.resetDueMeridianEndpoints(ctx, tx); err != nil {
-		return nil, err
-	}
-	if err := s.queueNextMeridianRuntime(ctx, tx, agentID); err != nil {
-		return nil, err
-	}
-	if err := s.queueNextLandingClientCommand(ctx, tx, agentID); err != nil {
-		return nil, err
+	if !s.businessRetired {
+		if err := s.resetDueMeridianAccounts(ctx, tx); err != nil {
+			return nil, err
+		}
+		if err := s.resetDueMeridianEndpoints(ctx, tx); err != nil {
+			return nil, err
+		}
+		if err := s.queueNextMeridianRuntime(ctx, tx, agentID); err != nil {
+			return nil, err
+		}
+		if err := s.queueNextLandingClientCommand(ctx, tx, agentID); err != nil {
+			return nil, err
+		}
 	}
 	var id, kind string
 	var inputJSON []byte
@@ -40,6 +42,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var reconciliationRequested int
 	err := tx.QueryRowContext(ctx, `SELECT c.id, c.kind, c.input_json, c.attempt, c.reconciliation_requested FROM application_commands c
 		WHERE c.agent_id = ? AND state = 'pending'
+ AND (?=0 OR c.kind IN (?,?,?,?))
 		AND NOT EXISTS (
 		 SELECT 1 FROM glivela_pilot_checkpoint pilot
 		 JOIN meridian_endpoints endpoint ON endpoint.id=pilot.endpoint_id
@@ -47,7 +50,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 		)
 		AND NOT EXISTS(SELECT 1 FROM agent_reinstall_operations r WHERE r.agent_id=c.gateway_node_id AND r.state NOT IN ('superseded','completed') AND NOT (`+reinstallInspectionAuthoritySQL+` OR `+reinstallRotationAuthoritySQL+` OR `+reinstallReportingAuthoritySQL+` OR `+reinstallAcceptanceAuthoritySQL+`))
 		ORDER BY CASE WHEN kind = ? AND COALESCE(json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END, '$.migrationId'), '') = '' THEN 1 ELSE 0 END,
-		created_at, c.rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt, &reconciliationRequested)
+		created_at, c.rowid LIMIT 1`, agentID, s.businessRetired, senulun.ReportingKind, senulun.RotationKind, senulun.InspectionKind, senulun.EnrollmentKind, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt, &reconciliationRequested)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
