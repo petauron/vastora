@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.365](https://github.com/petauron/vastora/compare/v0.1.0-alpha.364...v0.1.0-alpha.365) (2026-10-26)
+
+
+### Bug Fixes
+
+* complete current application recovery page ([#1062](https://github.com/petauron/vastora/issues/1062)) ([69f09ef](https://github.com/petauron/vastora/commit/69f09efca2a1ac5aad938d076b0a45bf58835822))
+
 ## [0.1.0-alpha.364](https://github.com/petauron/vastora/compare/v0.1.0-alpha.363...v0.1.0-alpha.364) (2026-10-25)
 
 
