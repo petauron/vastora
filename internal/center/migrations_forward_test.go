@@ -32,4 +32,3 @@ func TestOpenRejectsDatabaseFromANewerRelease(t *testing.T) {
 		t.Fatalf("rejected database unexpectedly created backups: %v, err = %v", backups, err)
 	}
 }
-
