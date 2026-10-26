@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.368](https://github.com/petauron/vastora/compare/v0.1.0-alpha.367...v0.1.0-alpha.368) (2026-10-26)
+
+
+### Bug Fixes
+
+* **center:** restore retained access through native service handover ([#1068](https://github.com/petauron/vastora/issues/1068)) ([85f4ec7](https://github.com/petauron/vastora/commit/85f4ec79d1589180e3a0f7f152ba5cb21de4ebdd))
+
 ## [0.1.0-alpha.367](https://github.com/petauron/vastora/compare/v0.1.0-alpha.366...v0.1.0-alpha.367) (2026-10-26)
 
 
