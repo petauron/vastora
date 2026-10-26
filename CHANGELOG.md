@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.370](https://github.com/petauron/vastora/compare/v0.1.0-alpha.369...v0.1.0-alpha.370) (2026-10-26)
+
+
+### Features
+
+* provide authenticated Glivela panel access ([#1072](https://github.com/petauron/vastora/issues/1072)) ([473012b](https://github.com/petauron/vastora/commit/473012b892ba46b42036a9a86698f8e10e269256))
+
 ## [0.1.0-alpha.369](https://github.com/petauron/vastora/compare/v0.1.0-alpha.368...v0.1.0-alpha.369) (2026-10-26)
 
 
