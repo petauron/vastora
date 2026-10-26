@@ -527,3 +527,6 @@ export type Deployment = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type ReinstallCurrentMaterial = { applicationId: string; config: Record<string, unknown>; senulunRestore?: { nodeId: string; token: string } };
+export type ReinstallCurrentVerification = { applicationId: string; originalIdentity: string; evidenceSha256: string; rotationReference: string; businessReference: string; verifiedAt: string };
