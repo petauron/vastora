@@ -24,7 +24,7 @@ func TestOpenRejectsDatabaseFromANewerRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), "not supported by this release") {
+	if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), "is newer than this release") {
 		t.Fatalf("newer database error = %v", err)
 	}
 	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "*.db"))
@@ -33,7 +33,3 @@ func TestOpenRejectsDatabaseFromANewerRelease(t *testing.T) {
 	}
 }
 
-// Construct historical versions by applying the released forward migrations.
-// Individual migration tests must not relabel the current schema as an old
-// version: that leaves future columns/tables in place and does not test an
-// upgrade that any released Center could actually perform.
