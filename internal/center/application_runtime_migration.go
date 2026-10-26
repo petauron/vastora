@@ -83,6 +83,7 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 		)
 		WHERE a.node_id = ? AND a.status = 'running' AND a.runtime_generation < ?
 		AND a.app_key <> ?
+		AND NOT EXISTS (SELECT 1 FROM glivela_pilot_checkpoint pilot JOIN meridian_endpoints endpoint ON endpoint.id=pilot.endpoint_id WHERE endpoint.application_id=a.id)
 		AND EXISTS (SELECT 1 FROM application_resources resource WHERE resource.application_id=a.id AND resource.adoption_state='ready' AND resource.package_revision>0)
 		AND d.state = 'succeeded' AND d.operation IN ('install', 'upgrade', 'configure')
 		AND NOT EXISTS (

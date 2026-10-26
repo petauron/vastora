@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { ServiceHandover } from "./ServiceHandover";
 import { GlivelaNativeRegistration } from "./GlivelaNativeRegistration";
 import { GlivelaPilotActivation } from "./GlivelaPilotActivation";
 
@@ -96,6 +97,7 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
       {!isWorker && !isLegacyController && deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{application.appKey === "vastora-official/pulse" ? copy(language, "打开监控", "Open monitoring") : copy(language, "打开主页", "Open homepage")}</Button> : !isWorker && !isLegacyController && app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}
       {!isWorker && !isLegacyController && visibleServices.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : null}
 			{visibleServices.map((service) => <ServiceRow data={data} key={service.id} language={language} locked={serviceAccessLocked} onPublish={() => onPublish(service)} onRename={() => onRenameReality(service)} onRemove={isController && service.appProtocol === "vless/tcp/reality" ? () => onRemoveReality(service) : undefined} onTraffic={() => onTraffic(service)} service={service} mutate={mutate} />)}
+      {application.appKey === "vastora-official/glivela-entry" ? <ServiceHandover data={data} application={application} language={language} mutate={mutate} disabled={serviceAccessLocked} /> : null}
       {isController && activeWorkers.length > 0 ? <p className="text-xs text-muted-foreground">{copy(language, "移除所有 Xray 节点后才能卸载订阅主机。", "Remove all Xray nodes before uninstalling the subscription controller.")}</p> : null}
     </div>
     <SheetFooter className="border-t">

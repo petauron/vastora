@@ -39,6 +39,12 @@ type serviceHandoverSnapshot struct {
 	Publications                                                                          []json.RawMessage
 }
 
+// A retired pilot runtime must never be replayed by a generic Agent upgrade.
+const obsoletePilotRuntimeReplay = `state='pending' AND attempt=0 AND reconciliation_required=0 AND operation='configure'
+ AND NOT EXISTS(SELECT 1 FROM task_executions execution WHERE execution.task_id=deployments.id)
+ AND EXISTS(SELECT 1 FROM task_events event WHERE event.task_id=deployments.id AND event.kind='application.apply' AND event.event='queued' AND event.message='application runtime generation '||deployments.runtime_generation)
+ AND EXISTS(SELECT 1 FROM glivela_pilot_checkpoint pilot JOIN meridian_endpoints endpoint ON endpoint.id=pilot.endpoint_id WHERE endpoint.application_id=deployments.application_id)`
+
 var errServiceHandover = errors.New("center: service handover requires current owned resources and reviewed backups")
 
 func handoverIdentifier(value string) bool {
@@ -67,7 +73,7 @@ func readServiceHandover(ctx context.Context, tx *sql.Tx, id string) (serviceHan
 	digest := sha256.Sum256(raw)
 	value.ReceiptSHA256 = hex.EncodeToString(digest[:])
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM deployments WHERE application_id=? AND (state IN ('pending','running') OR reconciliation_required=1))+(SELECT COUNT(*) FROM application_commands WHERE application_id=? AND (state IN ('pending','running') OR reconciliation_required=1))+(SELECT COUNT(*) FROM application_maintenance WHERE application_id=? AND (state IN ('pending','running') OR reconciliation_required=1))+(SELECT COUNT(*) FROM application_adoptions WHERE application_id=? AND state IN ('pending','running'))`, value.ApplicationID, value.ApplicationID, value.ApplicationID, value.ApplicationID).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM deployments WHERE application_id=? AND (state IN ('pending','running') OR reconciliation_required=1) AND NOT (`+obsoletePilotRuntimeReplay+`))+(SELECT COUNT(*) FROM application_commands WHERE application_id=? AND (state IN ('pending','running') OR reconciliation_required=1))+(SELECT COUNT(*) FROM application_maintenance WHERE application_id=? AND (state IN ('pending','running') OR reconciliation_required=1))+(SELECT COUNT(*) FROM application_adoptions WHERE application_id=? AND state IN ('pending','running'))`, value.ApplicationID, value.ApplicationID, value.ApplicationID, value.ApplicationID).Scan(&active); err != nil {
 		return value, err
 	}
 	if active != 0 {
@@ -177,6 +183,35 @@ func (s *Store) HandoverService(ctx context.Context, sourceID string, input Serv
 		return refused, errServiceHandover
 	}
 	stamp := s.now().UTC()
+	// Retire only unclaimed automatic replays of this source's obsolete runtime.
+	// Executed or ambiguous work still blocks handover; no task is acknowledged.
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM deployments WHERE application_id=? AND (`+obsoletePilotRuntimeReplay+`)`, source.ApplicationID)
+	if err != nil {
+		return refused, err
+	}
+	var obsolete []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return refused, err
+		}
+		obsolete = append(obsolete, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return refused, err
+	}
+	rows.Close()
+	for _, id := range obsolete {
+		message := "Retired unclaimed automatic replay: runtime is owned by Glivela"
+		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET state='failed',error=?,updated_at=? WHERE id=?`, message, stamp.Format(time.RFC3339Nano), id); err != nil {
+			return refused, err
+		}
+		if err := s.recordTaskEvent(ctx, tx, id, source.NodeID, "application.apply", applicationTaskRevision, "failed", message); err != nil {
+			return refused, err
+		}
+	}
 	// Retain the unpublished installation-created row as history. Its reserved
 	// name cannot silently overwrite another row; a collision rolls back.
 	if _, err = tx.ExecContext(ctx, `UPDATE services SET name=?,status='stopped',updated_at=? WHERE id=?`, "transferred-"+target.ID, stamp.Format(time.RFC3339Nano), target.ID); err != nil {
