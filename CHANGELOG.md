@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.369](https://github.com/petauron/vastora/compare/v0.1.0-alpha.368...v0.1.0-alpha.369) (2026-10-26)
+
+
+### Bug Fixes
+
+* **agent:** accept verified native private service forwarding ([#1070](https://github.com/petauron/vastora/issues/1070)) ([5e7c8d3](https://github.com/petauron/vastora/commit/5e7c8d3c7efec7f199573377fd96ccf48b0774fd))
+
 ## [0.1.0-alpha.368](https://github.com/petauron/vastora/compare/v0.1.0-alpha.367...v0.1.0-alpha.368) (2026-10-26)
 
 
