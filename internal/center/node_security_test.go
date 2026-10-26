@@ -3,11 +3,10 @@ package center
 import (
 	"context"
 	"encoding/json"
-	"testing"
-	"time"
-
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodesecurity"
+	"testing"
+	"time"
 )
 
 func TestNodeSecurityTaskLifecycleAndRevisionFence(t *testing.T) {
@@ -142,30 +141,5 @@ func TestOrdinaryProxyAndLandingNodesCanPreviewWithoutPublicUDP(t *testing.T) {
 	view, err := s.QueueNodeSecurity(ctx, node.ID, "security-admin", nodesecurity.Task{Action: "preview", Policy: p})
 	if err != nil || view.State != "pending" {
 		t.Fatal("ordinary proxy/landing topology was refused", err)
-	}
-}
-
-func TestSecurityMigration114MatchesFreshSchema(t *testing.T) {
-	s := openOrchestrationStore(t)
-	defer s.Close()
-	ctx := context.Background()
-	dropRetirementFixture(t, s.db)
-	// Reconstruct the released v113 shape, not a current database with only
-	// its marker decremented. Otherwise the later ADD COLUMN correctly fails.
-	if _, err := s.db.Exec(`DROP TABLE glivela_pilot_checkpoint; ALTER TABLE deployments DROP COLUMN source_receipt_sha256; ALTER TABLE services DROP COLUMN proxy_protocol; DROP TABLE node_security_tasks; ALTER TABLE sessions DROP COLUMN absolute_expires_at; DELETE FROM goose_db_version WHERE version_id>=114; PRAGMA user_version=113`); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.migrateSchema(ctx); err != nil {
-		t.Fatal(err)
-	}
-	var sql string
-	if err := s.db.QueryRow(`SELECT sql FROM sqlite_master WHERE name='node_security_tasks'`).Scan(&sql); err != nil {
-		t.Fatal(err)
-	}
-	if sql == "" {
-		t.Fatal("migration did not create security state")
-	}
-	if version, err := sqliteSchemaVersion(ctx, s.db); err != nil || version != centerSchemaVersion {
-		t.Fatalf("schema=%d err=%v", version, err)
 	}
 }

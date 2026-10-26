@@ -2,15 +2,14 @@ package center
 
 import (
 	"context"
+	"github.com/petauron/vastora/internal/landing"
 	"testing"
 	"time"
-
-	"github.com/petauron/vastora/internal/landing"
 )
 
 func TestLandingSelectionUsesManagedNodeAndQueuesDisable(t *testing.T) {
 	directory := t.TempDir()
-	createLegacyVersion3Database(t, directory)
+	createCurrentBusinessFixture(t, directory)
 	store, err := Open(directory)
 	if err != nil {
 		t.Fatal(err)
@@ -68,12 +67,9 @@ func TestLandingSelectionUsesManagedNodeAndQueuesDisable(t *testing.T) {
 	}
 }
 
-func TestLandingServerMigrationAndTaskRevisions(t *testing.T) {
+func TestLandingServerTaskRevisions(t *testing.T) {
 	directory := t.TempDir()
-	legacy := legacyMigrationStore(t, directory, 64)
-	if err := legacy.Close(); err != nil {
-		t.Fatal(err)
-	}
+	createCurrentBusinessFixture(t, directory)
 	store, err := Open(directory)
 	if err != nil {
 		t.Fatal(err)

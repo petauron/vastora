@@ -2,169 +2,11 @@ package center
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-	"reflect"
+	"github.com/petauron/glivela"
 	"testing"
 	"time"
-
-	"github.com/petauron/glivela"
 )
-
-func TestVersion89InvalidatesHealthBeforeLaterRendererMigration(t *testing.T) {
-	legacy := legacyMigrationStore(t, t.TempDir(), 88)
-	seedMeridianVersion88HealthFixture(t, legacy.db)
-	before := meridianVersion88PreservedState(t, legacy.db)
-	provider, err := newMigrationProvider(legacy.db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.UpTo(context.Background(), 89); err != nil {
-		t.Fatal(err)
-	}
-	if after := meridianVersion88PreservedState(t, legacy.db); !reflect.DeepEqual(before, after) {
-		t.Fatal("version 89 changed preserved Meridian material")
-	}
-	var revision, healthy int
-	var status string
-	if err := legacy.db.QueryRow(`SELECT desired_revision,runtime_healthy,status FROM meridian_endpoints WHERE id='v88-health-endpoint'`).Scan(&revision, &healthy, &status); err != nil || revision != 5 || healthy != 1 || status != "ready" {
-		t.Fatalf("version 89 changed endpoint state: revision=%d healthy=%d status=%s err=%v", revision, healthy, status, err)
-	}
-	for _, original := range []string{"ready", "pending", "revoking", "revoked", "failed"} {
-		wantStatus, wantMessage := original, "previous "+original+" diagnostic"
-		if original == "ready" {
-			wantStatus, wantMessage = "blocked", "Awaiting fresh direct entry-to-landing runtime evidence."
-		}
-		var expiry int64
-		var message string
-		if err := legacy.db.QueryRow(`SELECT desired_revision,runtime_healthy,health_expires_unix_ms,status,last_error FROM meridian_route_grants WHERE id=?`, "v88-health-grant-"+original).Scan(&revision, &healthy, &expiry, &status, &message); err != nil || revision != 3 || healthy != 0 || expiry != 0 || status != wantStatus || message != wantMessage {
-			t.Fatalf("version 89 route %s: revision=%d healthy=%d expiry=%d status=%s message=%q err=%v", original, revision, healthy, expiry, status, message, err)
-		}
-	}
-}
-
-func TestVersion89RequiresFreshLandingHealthWithoutChangingIdentityOrQuota(t *testing.T) {
-	directory := t.TempDir()
-	legacy := legacyMigrationStore(t, directory, 88)
-	seedMeridianVersion88HealthFixture(t, legacy.db)
-	before := meridianVersion88PreservedState(t, legacy.db)
-	if err := legacy.db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = migrated.Close() })
-	if after := meridianVersion88PreservedState(t, migrated.db); !reflect.DeepEqual(before, after) {
-		t.Fatal("migration changed Meridian identities, configuration, applied revisions, subscription material, or quota usage")
-	}
-	// Version 100 deliberately advances desired revisions and invalidates
-	// runtime health for the new renderer, while preserving applied identity.
-	var desired, applied, endpointHealthy int
-	var endpointStatus string
-	if err := migrated.db.QueryRow(`SELECT desired_revision,applied_revision,runtime_healthy,status FROM meridian_endpoints WHERE id='v88-health-endpoint'`).Scan(&desired, &applied, &endpointHealthy, &endpointStatus); err != nil || desired != 6 || applied != 5 || endpointHealthy != 0 || endpointStatus != "pending" {
-		t.Fatalf("renderer migration state: desired=%d applied=%d healthy=%d status=%s err=%v", desired, applied, endpointHealthy, endpointStatus, err)
-	}
-	var sourceJSON string
-	if err := migrated.db.QueryRow(`SELECT source_peer_json FROM meridian_endpoints WHERE id='v88-health-endpoint'`).Scan(&sourceJSON); err != nil || sourceJSON != "{}" {
-		t.Fatalf("migration authorized a mutable current source: source present=%t err=%v", sourceJSON != "{}", err)
-	}
-	for _, expected := range []struct {
-		id, status, message string
-	}{
-		{id: "ready", status: "pending", message: ""},
-		{id: "pending", status: "pending", message: ""},
-		{id: "revoking", status: "revoking", message: "previous revoking diagnostic"},
-		{id: "revoked", status: "revoked", message: "previous revoked diagnostic"},
-		{id: "failed", status: "pending", message: ""},
-	} {
-		var status, message string
-		var healthy int
-		var expires int64
-		if err := migrated.db.QueryRow(`SELECT status,runtime_healthy,health_expires_unix_ms,last_error FROM meridian_route_grants WHERE id=?`, "v88-health-grant-"+expected.id).Scan(&status, &healthy, &expires, &message); err != nil {
-			t.Fatal(err)
-		}
-		if status != expected.status || healthy != 0 || expires != 0 || message != expected.message {
-			t.Fatalf("route %s health was incorrectly inherited: status=%s healthy=%d expires=%d message=%q", expected.id, status, healthy, expires, message)
-		}
-		wantRevision := 4
-		if expected.id == "revoking" || expected.id == "revoked" {
-			wantRevision = 3
-		}
-		if err := migrated.db.QueryRow(`SELECT desired_revision,applied_revision FROM meridian_route_grants WHERE id=?`, "v88-health-grant-"+expected.id).Scan(&desired, &applied); err != nil || desired != wantRevision || applied != 3 {
-			t.Fatalf("route %s revisions=%d/%d err=%v", expected.id, desired, applied, err)
-		}
-	}
-	if _, err := migrated.db.Exec(`UPDATE meridian_route_grants SET health_expires_unix_ms=-1 WHERE id='v88-health-grant-ready'`); err == nil {
-		t.Fatal("migrated schema accepted a negative health expiry")
-	}
-	var version, violations int
-	if err := migrated.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != centerSchemaVersion {
-		t.Fatalf("migrated version=%d err=%v", version, err)
-	}
-	if err := migrated.db.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&violations); err != nil || violations != 0 {
-		t.Fatalf("migration broke foreign keys: count=%d err=%v", violations, err)
-	}
-	pattern := filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v88-before-v%d-*.db", centerSchemaVersion))
-	backups, err := filepath.Glob(pattern)
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("expected one pre-migration backup: count=%d err=%v", len(backups), err)
-	}
-	info, err := os.Stat(backups[0])
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("migration backup permissions are not private: %v", err)
-	}
-	backup, err := sql.Open("sqlite", "file:"+backups[0]+"?mode=ro")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer backup.Close()
-	if saved := meridianVersion88PreservedState(t, backup); !reflect.DeepEqual(saved, before) {
-		t.Fatal("backup did not preserve the pre-migration Meridian state")
-	}
-	if err := backup.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 88 {
-		t.Fatalf("backup version=%d err=%v", version, err)
-	}
-	var legacyHealthy, futureColumns int
-	if err := backup.QueryRow(`SELECT runtime_healthy FROM meridian_route_grants WHERE id='v88-health-grant-ready'`).Scan(&legacyHealthy); err != nil || legacyHealthy != 1 {
-		t.Fatalf("backup was taken after health invalidation: healthy=%d err=%v", legacyHealthy, err)
-	}
-	if err := backup.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('meridian_route_grants') WHERE name='health_expires_unix_ms'`).Scan(&futureColumns); err != nil || futureColumns != 0 {
-		t.Fatalf("backup was not a real version 88 schema: future columns=%d err=%v", futureColumns, err)
-	}
-	if err := backup.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('meridian_endpoints') WHERE name='source_peer_json'`).Scan(&futureColumns); err != nil || futureColumns != 0 {
-		t.Fatalf("backup already contained the new source authority: columns=%d err=%v", futureColumns, err)
-	}
-
-	// Reopening must not re-run the one-time health invalidation after a fresh
-	// observation has been accepted by the current release.
-	expires := time.Now().UTC().Add(time.Minute).UnixMilli()
-	if _, err := migrated.db.Exec(`UPDATE meridian_route_grants SET status='ready',runtime_healthy=1,health_expires_unix_ms=?,last_error='' WHERE id='v88-health-grant-ready'`, expires); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrated.Close(); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	var reopenedHealthy int
-	var reopenedExpiry int64
-	if err := reopened.db.QueryRow(`SELECT runtime_healthy,health_expires_unix_ms FROM meridian_route_grants WHERE id='v88-health-grant-ready'`).Scan(&reopenedHealthy, &reopenedExpiry); err != nil || reopenedHealthy != 1 || reopenedExpiry != expires {
-		t.Fatalf("reopening replayed health migration: healthy=%d expiry=%d err=%v", reopenedHealthy, reopenedExpiry, err)
-	}
-	if repeated, err := filepath.Glob(pattern); err != nil || len(repeated) != 1 {
-		t.Fatalf("reopening created another migration backup: count=%d err=%v", len(repeated), err)
-	}
-}
 
 func TestFreshMeridianSchemaRejectsNegativeRouteHealthExpiry(t *testing.T) {
 	store, _, grantID, _ := openMeridianRuntimeIdentityFixture(t)
@@ -181,7 +23,7 @@ func seedMeridianVersion88HealthFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.ExecContext(ctx, `INSERT INTO landing_client_capabilities(node_id,generation,peer_json,observed_at)
+	if _, err := db.ExecContext(ctx, `INSERT INTO agent_private_peer_capabilities(node_id,generation,peer_json,observed_at)
 		VALUES('agent-v3',1,'{"id":"current-observation","publicKey":"test-source-key","address":"100.64.0.71"}',?)`, stamp); err != nil {
 		t.Fatal(err)
 	}
@@ -238,56 +80,3 @@ func seedMeridianVersion88HealthFixture(t *testing.T, db *sql.DB) {
 
 // Private listen_port is intentionally migrated in v102 and tested there.
 // Public subscription addresses, credentials and usage remain invariant.
-func meridianVersion88PreservedState(t *testing.T, db *sql.DB) map[string]string {
-	t.Helper()
-	queries := map[string]string{
-		"endpoints": `SELECT id,application_id,service_id,inbound_tag,advertise_host,advertise_port,target,target_ip,server_names_json,
-			private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,
-			hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,applied_revision,legacy_retired,last_error,created_at,updated_at
-			FROM meridian_endpoints ORDER BY id`,
-		"accounts":    `SELECT * FROM meridian_accounts ORDER BY id`,
-		"credentials": `SELECT * FROM meridian_credentials ORDER BY id`,
-		"usage":       `SELECT * FROM meridian_usage_watermarks ORDER BY credential_id`,
-		"snapshots":   `SELECT * FROM meridian_subscription_snapshots ORDER BY account_id`,
-		"secrets":     `SELECT * FROM secrets WHERE id GLOB 'v88-health-*' ORDER BY id`,
-		"grants":      `SELECT id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,mode,hide_native,enabled,applied_revision,created_at,updated_at FROM meridian_route_grants ORDER BY id`,
-	}
-	result := make(map[string]string, len(queries))
-	for name, query := range queries {
-		rows, err := db.Query(query)
-		if err != nil {
-			t.Fatal(err)
-		}
-		columns, err := rows.Columns()
-		if err != nil {
-			rows.Close()
-			t.Fatal(err)
-		}
-		digest := sha256.New()
-		encoder := json.NewEncoder(digest)
-		for rows.Next() {
-			values := make([]any, len(columns))
-			pointers := make([]any, len(columns))
-			for index := range values {
-				pointers[index] = &values[index]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				rows.Close()
-				t.Fatal(err)
-			}
-			if err := encoder.Encode(values); err != nil {
-				rows.Close()
-				t.Fatal(err)
-			}
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			t.Fatal(err)
-		}
-		if err := rows.Close(); err != nil {
-			t.Fatal(err)
-		}
-		result[name] = fmt.Sprintf("%x", digest.Sum(nil))
-	}
-	return result
-}

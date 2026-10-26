@@ -2,12 +2,15 @@ package center
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
-	"strings"
 	"time"
 )
 
-const centerSchemaVersion = 122
+const centerSchemaVersion = 123
+
+//go:embed schema_retirement.sql
+var currentRetirementSchema string
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -1085,11 +1088,7 @@ CREATE TABLE agent_reinstall_access_activations (
 	if _, err := tx.ExecContext(ctx, meridianHealthDiagnosticsSchema); err != nil {
 		return fmt.Errorf("center: initialize route health diagnostics: %w", err)
 	}
-	retirement, err := migrationFiles.ReadFile("migrations/00121_proxy_business_retirement.sql")
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, strings.Split(string(retirement), "-- +goose Down")[0]); err != nil {
+	if _, err := tx.ExecContext(ctx, currentRetirementSchema); err != nil {
 		return fmt.Errorf("center: initialize proxy business retirement: %w", err)
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)

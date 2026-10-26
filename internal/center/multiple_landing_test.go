@@ -2,87 +2,13 @@ package center
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"fmt"
-	"path/filepath"
+	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/networking"
 	"slices"
 	"testing"
 	"time"
-
-	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/networking"
 )
-
-func TestMultipleLandingMigrationPreservesSelectionAndBacksUp(t *testing.T) {
-	for _, nodeID := range []string{"", "agent-v3"} {
-		t.Run("selected_"+nodeID, func(t *testing.T) {
-			directory := t.TempDir()
-			legacy := legacyMigrationStore(t, directory, 66)
-			if _, err := legacy.db.Exec(`INSERT INTO settings(key,value) VALUES(?,json_object('nodeId',?,'revision',9))`, "three_x_ui_landing_selection", nodeID); err != nil {
-				t.Fatal(err)
-			}
-			if err := legacy.Close(); err != nil {
-				t.Fatal(err)
-			}
-			store, err := Open(directory)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer store.Close()
-			tx, err := store.db.Begin()
-			if err != nil {
-				t.Fatal(err)
-			}
-			selection, err := readLandingSelection(context.Background(), tx)
-			tx.Rollback()
-			expected := []string{}
-			if nodeID != "" {
-				expected = append(expected, nodeID)
-			}
-			if err != nil || selection.Revision != 9 || !slices.Equal(selection.NodeIDs, expected) {
-				t.Fatalf("selection not preserved: %+v %v", selection, err)
-			}
-			backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v66-before-v%d-*.db", centerSchemaVersion)))
-			if err != nil || len(backups) != 1 {
-				t.Fatalf("missing pre-migration backup: %v %v", backups, err)
-			}
-			backup, err := sql.Open("sqlite", backups[0])
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer backup.Close()
-			var old string
-			if err := backup.QueryRow(`SELECT json_extract(value,'$.nodeId') FROM settings WHERE key=?`, "three_x_ui_landing_selection").Scan(&old); err != nil || old != nodeID {
-				t.Fatalf("original selection missing from backup: %v", err)
-			}
-		})
-	}
-}
-
-func TestMultipleLandingMigrationRejectsInvalidSelection(t *testing.T) {
-	directory := t.TempDir()
-	legacy := legacyMigrationStore(t, directory, 66)
-	if _, err := legacy.db.Exec(`INSERT INTO settings(key,value) VALUES(?,'{"revision":9}')`, "three_x_ui_landing_selection"); err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if store, err := Open(directory); err == nil {
-		store.Close()
-		t.Fatal("malformed released setting was silently replaced")
-	}
-	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var version int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 66 {
-		t.Fatalf("failed migration advanced schema: %d %v", version, err)
-	}
-}
 
 func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 	store := openOrchestrationStore(t)
