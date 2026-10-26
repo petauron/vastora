@@ -13,6 +13,12 @@
 
 ## GitHub releases and Actions storage
 
+- Before manually dispatching CI, inspect runs for the exact commit and required
+  scope. Reuse an already queued, running or successful applicable full check;
+  do not dispatch a duplicate for observation or cache warming. Retry only a
+  failed/interrupted required run or an explicitly requested benchmark. Main
+  cache warming compiles only; PR checks and main CodeQL remain required.
+
 - Use Release Please v5, pinned to a reviewed full commit SHA, with the built-in
   `GITHUB_TOKEN`. Do not add a PAT or a separate release-token secret. Grant only
   the job permissions needed; never weaken branch protection to enable releases.

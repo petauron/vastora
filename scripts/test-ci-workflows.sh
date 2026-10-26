@@ -250,18 +250,21 @@ if grep -Fq 'target=/go/pkg/mod' "$center_dockerfile"; then
   echo 'Center image dependency downloads must live in an exportable layer, not an unexported cache mount.' >&2
   exit 1
 fi
-# Only the integration job warms compiled caches on main; dependency downloads
-# retain their existing path-filtered workflow. Never run the whole PR matrix.
-require_line "$ci_workflow" '    branches: [main]'
-require_line "$ci_workflow" "      - 'deploy/landing/Dockerfile'"
-require_line "$ci_workflow" "      - '.github/workflows/ci.yml'"
-for job in go-tests go-packages go-quality go-build web deployment security composite-runtime; do
-  condition="$(sed -n "/^  $job:/,/^    needs:/p" "$ci_workflow" | grep '^    if:')"
-  if printf '%s\n' "$condition" | grep -Fq "github.event_name == 'push'"; then
-    echo "$job must not duplicate PR checks on main pushes." >&2
-    exit 1
-  fi
-done
+# Main only compiles cache inputs. PR/manual/scheduled CI retains real tests.
+build_cache_workflow="$project_dir/.github/workflows/build-cache.yml"
+require_line "$build_cache_workflow" '    branches: [main]'
+require_line "$build_cache_workflow" "      - '.github/workflows/build-cache.yml'"
+require_line "$build_cache_workflow" '    name: Warm compiled packages (no tests)'
+require_line "$build_cache_workflow" 'go test -c -tags=integration'
+require_line "$codeql_workflow" '  push:'
+if grep -Fq '  push:' "$ci_workflow"; then
+  echo 'Main pushes must not repeat integration tests for cache warming.' >&2
+  exit 1
+fi
+if grep -E 'sudo | -test\.|go test ' "$build_cache_workflow" | grep -v 'go test -c '; then
+  echo 'Build cache workflow must compile without executing tests.' >&2
+  exit 1
+fi
 for workflow in "$ci_workflow" "$codeql_workflow" "$cache_workflow"; do
   if ! grep -Fq 'timeout-minutes:' "$workflow"; then
     echo "$workflow has no job timeouts." >&2
