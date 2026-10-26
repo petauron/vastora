@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.367](https://github.com/petauron/vastora/compare/v0.1.0-alpha.366...v0.1.0-alpha.367) (2026-10-26)
+
+
+### Bug Fixes
+
+* **center:** persist current application recovery verification ([#1066](https://github.com/petauron/vastora/issues/1066)) ([4242a07](https://github.com/petauron/vastora/commit/4242a075955b5ebde953d4ae966b3d9acf40d0cc))
+
 ## [0.1.0-alpha.366](https://github.com/petauron/vastora/compare/v0.1.0-alpha.365...v0.1.0-alpha.366) (2026-10-26)
 
 
