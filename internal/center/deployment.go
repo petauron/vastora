@@ -383,6 +383,12 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				}
 			}
 		}
+		if request.AppKey == meridianAppKey {
+			deploymentConfig, err = removeJSONObjectKeys(deploymentConfig, panelConfigKey)
+			if err != nil {
+				return DeploymentView{}, err
+			}
+		}
 		if request.AppKey == senulunAgentAppKey {
 			if request.Operation == "install" {
 				// Senulun owns enrollment. Its administrator supplies the endpoint
@@ -421,6 +427,12 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			}
 			config, secrets, err = normalizeDeploymentConfig(userInputManifest(manifest, request.AppKey), deploymentConfig)
 		}
+		if err != nil {
+			return DeploymentView{}, err
+		}
+	}
+	if request.AppKey == meridianAppKey && request.Operation != "uninstall" {
+		secrets, err = s.withPanelAccess(ctx, request.AgentID, manifest, secrets)
 		if err != nil {
 			return DeploymentView{}, err
 		}

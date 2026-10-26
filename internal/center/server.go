@@ -284,6 +284,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/assistant/proposals/{id}/approve", s.requireAuth(true, s.handleApproveAssistantProposal))
 	mux.HandleFunc("POST /api/v1/assistant/proposals/{id}/reject", s.requireAuth(true, s.handleRejectAssistantProposal))
 	mux.HandleFunc("POST /api/v1/assistant/proposals/{id}/apply", s.requireAuth(true, s.handleApplyAssistantProposal))
+	mux.HandleFunc("POST /api/v1/applications/{id}/panel/v1/admin/{operation}", s.requireAuth(true, s.handleApplicationPanel))
 	mux.Handle("/api/", http.NotFoundHandler())
 	mux.Handle("/", s.staticHandler())
 	return securityHeaders(mux)
