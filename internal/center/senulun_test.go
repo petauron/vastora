@@ -3,13 +3,10 @@ package center
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"path/filepath"
-	"strings"
-	"testing"
-
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/senulun"
+	"strings"
+	"testing"
 )
 
 func senulunFixture(t *testing.T) (*Store, AgentCredential, AgentCredential, DeploymentView) {
@@ -111,35 +108,4 @@ func TestSenulunServicesAreIndependentPerHost(t *testing.T) {
 	if _, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: service.ID, AppKey: senulunAppKey, Operation: "uninstall"}); err != nil {
 		t.Fatalf("another independent service prevented uninstall: %v", err)
 	}
-}
-
-func TestSenulunMigrationPreservesExistingCommands(t *testing.T) {
-	dir := t.TempDir()
-	legacy := legacyMigrationStore(t, dir, 70)
-	if _, err := legacy.db.Exec(`INSERT INTO application_commands(rowid,id,application_id,agent_id,gateway_node_id,kind,input_json,state,attempt,created_at,updated_at) VALUES(81,'old-command','application-v3','agent-v3','agent-v3','3xui.reality.rename','{"action":"rename"}','pending',3,'created','updated')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.Close(); err != nil {
-		t.Fatal(err)
-	}
-	store := openBeforeCatalogMaintenanceForTest(t, dir)
-	defer store.Close()
-	var rowid, attempt int
-	var input, state string
-	if err := store.db.QueryRow(`SELECT rowid,attempt,input_json,state FROM application_commands WHERE id = 'old-command'`).Scan(&rowid, &attempt, &input, &state); err != nil {
-		t.Fatal(err)
-	}
-	if rowid != 81 || attempt != 3 || input != `{"action":"rename"}` || state != "pending" {
-		t.Fatal("migration changed pending 3x-ui work")
-	}
-	for _, id := range []string{"pulse-one", "pulse-two"} {
-		if _, err := store.db.Exec(`INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,'application-v3','agent-v3','agent-v3','pulse.enrollment.create',?,'pending','','')`, id, `{"deploymentId":"`+id+`"}`); err != nil {
-			t.Fatal(err)
-		}
-	}
-	backups, err := filepath.Glob(filepath.Join(dir, "migration-backups", fmt.Sprintf("center-v70-before-v%d-*.db", centerSchemaVersion)))
-	if err != nil || len(backups) != 1 {
-		t.Fatal("pre-migration backup missing")
-	}
-	finishCatalogMaintenanceFixture(t, store, dir)
 }

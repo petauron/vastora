@@ -128,11 +128,13 @@ in-place update in Settings. The first release with this capability may still
 be installed by running the same command again; later updates preserve the
 configuration and use the built-in updater.
 
-Released Center schemas upgrade in place through ordered, forward-only
-migrations. Center writes a private, consistent SQLite snapshot before applying
-pending migrations and refuses to start if migration, foreign-key, or integrity
-verification fails. Restore that snapshot to downgrade; database downgrades are
-never attempted automatically.
+Center uses schema **123** as the compact alpha baseline. New installations
+create the current schema directly. A completed schema-122 database is backed
+up, checked, and converted in place by replacing only its migration journal;
+business tables and encrypted values are not copied or rewritten. Historical
+migrations 4–122 are no longer shipped. See [database baseline conversion](docs/database-baseline.md)
+for older databases and recovery. Later changes remain forward-only; integrity
+and foreign-key failures prevent startup.
 
 ## Security model
 

@@ -9,141 +9,100 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/database"
 )
 
-const schemaBaselineVersion int64 = 3
+const schemaBaselineVersion int64 = 123
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
+// Schema 122 is structurally identical to baseline 123. Only migration
+// bookkeeping changes; business rows, secrets and identifiers stay in place.
 func (s *Store) migrateSchema(ctx context.Context) error {
-	provider, err := newMigrationProvider(s.db)
+	version, err := sqliteSchemaVersion(ctx, s.db)
 	if err != nil {
 		return err
+	}
+	if version > centerSchemaVersion {
+		return fmt.Errorf("center: database schema %d is newer than this release", version)
+	}
+	if version < 122 {
+		return fmt.Errorf("center: database schema %d predates baseline 123; upgrade a backup with the last schema-122 release first", version)
+	}
+	if version == 122 {
+		if err := s.compactMigrationHistory(ctx); err != nil {
+			return err
+		}
 	}
 	hasHistory, err := migrationHistoryExists(ctx, s.db)
 	if err != nil {
 		return err
 	}
 	if !hasHistory {
-		legacyVersion, err := sqliteSchemaVersion(ctx, s.db)
-		if err != nil {
-			return err
-		}
-		if legacyVersion < schemaBaselineVersion || legacyVersion > centerSchemaVersion {
-			return fmt.Errorf("center: database schema version %d cannot be upgraded by this release", legacyVersion)
-		}
-		if err := s.initializeMigrationHistory(ctx, legacyVersion); err != nil {
-			return err
-		}
+		return errors.New("center: existing database is missing migration history")
+	}
+	provider, err := newMigrationProvider(s.db)
+	if err != nil {
+		return err
 	}
 	current, target, err := provider.GetVersions(ctx)
 	if err != nil {
 		return fmt.Errorf("center: inspect database migrations: %w", err)
 	}
-	if current > target || target != centerSchemaVersion {
-		return fmt.Errorf("center: database migration range %d to %d is not supported by this release", current, target)
+	version, err = sqliteSchemaVersion(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	if current != version || current < schemaBaselineVersion || current > target || target != centerSchemaVersion {
+		return fmt.Errorf("center: inconsistent or unsupported database versions: history=%d schema=%d target=%d", current, version, target)
 	}
 	if current < target {
 		backup, err := s.createMigrationBackup(ctx, current, target)
 		if err != nil {
 			return err
 		}
-		// Check quiescence before crossing the package-runtime migration boundary.
-		// Released migrations 100 through 108 retain their original meaning.
-		if current >= 100 && current < 109 {
-			if err := requireCatalogV4Quiescence(ctx, s.db); err != nil {
-				return fmt.Errorf("center: catalog v4 maintenance preflight (backup: %s): %w", backup, err)
-			}
-		}
-		if current < 15 {
-			if _, err := provider.UpTo(ctx, 14); err != nil {
-				return fmt.Errorf("center: migrate database from %d to %d (backup: %s): %w", current, target, backup, err)
-			}
-			if err := s.stageLegacySiteCertificates(ctx); err != nil {
-				return fmt.Errorf("center: prepare private HTTPS certificates before database migration (backup: %s): %w", backup, err)
-			}
-		}
-		if current < 56 {
-			if _, err := provider.UpTo(ctx, 55); err != nil {
-				return fmt.Errorf("center: migrate database from %d to %d (backup: %s): %w", current, target, backup, err)
-			}
-			// The released migration 56 reset shared/Tunnel publications to
-			// pending, including explicit stops. Preserve those rows before
-			// crossing that boundary; migration 64 consumes this durable input.
-			if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS migration_56_stopped_publications (
-				publication_id TEXT PRIMARY KEY, last_error TEXT NOT NULL, action_required INTEGER NOT NULL CHECK(action_required IN (0,1)));
-				INSERT OR IGNORE INTO migration_56_stopped_publications(publication_id, last_error, action_required)
-				SELECT p.id, p.last_error, CASE
-					WHEN p.last_error = 'REALITY guard requires hardening before publication' OR p.gateway_node_id IS NULL THEN 1
-					WHEN (p.kind = 'public_shared_443' OR (p.kind = 'public_direct' AND service.protocol NOT IN ('http', 'https')))
-					 AND p.gateway_node_id <> application.node_id THEN 1
-					ELSE 0 END
-				FROM publications p JOIN services service ON service.id = p.service_id
-				JOIN applications application ON application.id = service.application_id
-				WHERE p.status = 'stopped'`); err != nil {
-				return fmt.Errorf("center: preserve stopped entries before database migration (backup: %s): %w", backup, err)
-			}
-		}
 		if _, err := provider.Up(ctx); err != nil {
-			return fmt.Errorf("center: migrate database from %d to %d (backup: %s): %w", current, target, backup, err)
+			return fmt.Errorf("center: migrate database (backup: %s): %w", backup, err)
 		}
-	}
-	if err := repairReleasedVersion80Marker(ctx, s.db, provider); err != nil {
-		return err
-	}
-	if err := s.activateMigratedSiteCertificates(ctx); err != nil {
-		return fmt.Errorf("center: activate migrated private HTTPS certificates: %w", err)
 	}
 	return verifyMigratedSchema(ctx, s.db, target)
 }
 
-func requireCatalogV4Quiescence(ctx context.Context, db *sql.DB) error {
-	for _, table := range []string{"deployments", "application_commands"} {
-		var unfinished bool
-		query := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE state IN ('pending','running') OR reconciliation_required=1)`, table)
-		if err := db.QueryRowContext(ctx, query).Scan(&unfinished); err != nil {
-			return fmt.Errorf("inspect unfinished %s: %w", table, err)
-		}
-		if unfinished {
-			return fmt.Errorf("unfinished %s must be resolved before catalog v4 migration", table)
-		}
+func (s *Store) compactMigrationHistory(ctx context.Context) error {
+	// Refuse a partially upgraded or inconsistent database before any write.
+	var current int64
+	var applied bool
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(version_id),MIN(is_applied) FROM goose_db_version`).Scan(&current, &applied); err != nil {
+		return fmt.Errorf("center: inspect pre-baseline history: %w", err)
 	}
-	return nil
-}
-
-// Version 80 was briefly released without advancing PRAGMA user_version after
-// goose committed the node diagnostics migration. Repair only that exact,
-// structurally complete state; every other mismatch remains fail-closed.
-func repairReleasedVersion80Marker(ctx context.Context, db *sql.DB, provider *goose.Provider) error {
-	version, err := sqliteSchemaVersion(ctx, db)
-	if err != nil || version != 79 {
+	if current != 122 || !applied {
+		return fmt.Errorf("center: baseline requires completed schema 122, found history %d", current)
+	}
+	if err := verifyMigratedSchema(ctx, s.db, 122); err != nil {
 		return err
 	}
-	current, target, err := provider.GetVersions(ctx)
+	backup, err := s.createMigrationBackup(ctx, 122, schemaBaselineVersion)
 	if err != nil {
-		return fmt.Errorf("center: inspect database migrations before schema marker repair: %w", err)
+		return err
 	}
-	if current != 80 || target != 80 {
-		return nil
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	var storedSQL string
-	if err := db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='node_diagnostic_checks'`).Scan(&storedSQL); err != nil {
-		return fmt.Errorf("center: version 80 migration is incomplete; refusing schema marker repair: %w", err)
+	defer tx.Rollback()
+	// Do not drop or recreate application tables. This transaction changes only
+	// the migration journal and the monotonic schema marker.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM goose_db_version;
+ INSERT INTO goose_db_version(version_id,is_applied) VALUES(0,1),(123,1);
+ PRAGMA user_version=123;`); err != nil {
+		return fmt.Errorf("center: compact migration history (backup: %s): %w", backup, err)
 	}
-	normalize := func(value string) string {
-		return strings.Join(strings.Fields(strings.TrimSuffix(strings.TrimSpace(value), ";")), " ")
-	}
-	if normalize(storedSQL) != normalize(nodeDiagnosticsSchema80SQL) {
-		return errors.New("center: version 80 migration schema is incomplete; refusing schema marker repair")
-	}
-	if _, err := db.ExecContext(ctx, `PRAGMA user_version = 80`); err != nil {
-		return fmt.Errorf("center: repair released version 80 schema marker: %w", err)
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("center: commit baseline (backup: %s): %w", backup, err)
 	}
 	return nil
 }
@@ -158,7 +117,6 @@ func newMigrationProvider(db *sql.DB) (*goose.Provider, error) {
 		db,
 		migrations,
 		goose.WithDisableGlobalRegistry(true),
-		goose.WithGoMigrations(goose.NewGoMigration(schemaBaselineVersion, nil, nil)),
 		goose.WithLogger(goose.NopLogger()),
 	)
 	if err != nil {

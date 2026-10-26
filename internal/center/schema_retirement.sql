@@ -153,7 +153,5 @@ CREATE TRIGGER retired_proxy_glivela_pilot_checkpoint_update BEFORE UPDATE ON gl
 -- +goose StatementBegin
 CREATE TRIGGER retired_proxy_glivela_pilot_checkpoint_delete BEFORE DELETE ON glivela_pilot_checkpoint WHEN EXISTS(SELECT 1 FROM retired_proxy_business WHERE id=1) BEGIN SELECT RAISE(ABORT,'proxy business permanently handed over to Glivela'); END;
 -- +goose StatementEnd
-PRAGMA user_version=121;
 
--- +goose Down
-SELECT RAISE(ABORT,'database downgrade unsupported');
+
