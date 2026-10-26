@@ -56,12 +56,20 @@ require_line "$ci_workflow" "if: github.event_name != 'pull_request' || needs.ch
 # Version policy is exercised with a fake Go command, never a network/build.
 policy_dir="$(mktemp -d)"
 trap 'rm -rf "$policy_dir"' EXIT HUP INT TERM
-mkdir "$policy_dir/bin"
+mkdir -p "$policy_dir/bin" "$policy_dir/internal/center"
 cat > "$policy_dir/bin/go" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >> "$CI_GO_LOG"
 case "$*" in
-  *-list*) printf 'TestOne\nTestTwo\nExampleOne\nFuzzOne\n' ;;
+  *' -c '*)
+    while [ "$1" != -o ]; do shift; done
+    shift
+    cat > "$1" <<'BINARY'
+#!/bin/sh
+printf '%s\n' "$*" >> "$CI_GO_LOG"
+case "$*" in *-test.list*) printf 'TestOne\nTestTwo\nExampleOne\nFuzzOne\n' ;; esac
+BINARY
+    chmod +x "$1" ;;
   list*) printf 'github.com/petauron/vastora/internal/center\ngithub.com/petauron/vastora/internal/agent\n' ;;
 esac
 EOF
@@ -78,7 +86,7 @@ for version in 0.1.0-alpha.317 0.1.0-alpha 0.1.0-beta.1 0.1.0; do
     *)
       grep -Fq -- 'test -race' "$policy_dir/go.log" ;;
   esac
-  grep -Fq 'internal/center -run' "$policy_dir/go.log"
+  grep -Fq -- '-test.run' "$policy_dir/go.log"
   grep -Fq 'internal/agent' "$policy_dir/go.log"
 done
 
