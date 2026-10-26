@@ -106,7 +106,7 @@ func (s *Store) VerifyAgentReinstallCurrent(ctx context.Context, target, admin s
 	if _, err = tx.ExecContext(ctx, `UPDATE agent_reinstall_current_applications SET operator_verification_json=? WHERE deployment_id=?`, raw, id); err != nil {
 		return err
 	}
-	if err = s.recordTaskEvent(ctx, tx, input.OperationID, target, "agent.reinstall", 1, "operator_verified", "Operator recorded original business identity, credential rotation and live access/reporting evidence; this is not an automatic business check"); err != nil {
+	if err = s.recordTaskEvent(ctx, tx, input.OperationID, target, "agent.reinstall.current.verify", 1, "succeeded", "Operator recorded original business identity, credential rotation and live access/reporting evidence; this is not an automatic business check"); err != nil {
 		return err
 	}
 	return tx.Commit()
