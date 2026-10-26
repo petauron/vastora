@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.366](https://github.com/petauron/vastora/compare/v0.1.0-alpha.365...v0.1.0-alpha.366) (2026-10-26)
+
+
+### Bug Fixes
+
+* dispatch approved current monitor restorations ([#1064](https://github.com/petauron/vastora/issues/1064)) ([b7b9689](https://github.com/petauron/vastora/commit/b7b96895d58aa35cb8efc93bc66aef670b22db41))
+
 ## [0.1.0-alpha.365](https://github.com/petauron/vastora/compare/v0.1.0-alpha.364...v0.1.0-alpha.365) (2026-10-26)
 
 
