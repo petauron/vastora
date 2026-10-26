@@ -247,6 +247,8 @@ export const api = {
 	revealApplicationCommand: (id: string, operationKey: string) => request<{ shareUri: string }>(`/api/v1/application-commands/${encodeURIComponent(id)}/reveal`, { method: "POST", headers: { "Idempotency-Key": operationKey }, body: "{}" }),
 	acknowledgeApplicationCommand: (id: string, operationKey: string) => request<{ acknowledged: boolean }>(`/api/v1/application-commands/${encodeURIComponent(id)}/ack`, { method: "POST", headers: { "Idempotency-Key": operationKey }, body: "{}" }),
 	services: (signal?: AbortSignal) => inventory<"services", Service>("/api/v1/services", "services", signal),
+  previewServiceHandover: (source: string, target: string) => request<{ sourceServiceId: string; targetServiceId: string; sourceSha256: string; targetSha256: string; publications: number; state: string }>(`/api/v1/services/${encodeURIComponent(source)}/handover?targetServiceId=${encodeURIComponent(target)}`),
+  handoverService: (source: string, input: { targetServiceId: string; sourceSha256: string; targetSha256: string; backupsConfirmed: boolean }) => request(`/api/v1/services/${encodeURIComponent(source)}/handover`, { method: "POST", body: JSON.stringify(input) }),
 	routes: () => request<{ routes: Route[] }>("/api/v1/routes"),
 	publications: (signal?: AbortSignal) => inventory<"publications", Publication>("/api/v1/publications", "publications", signal),
 	integrations: (signal?: AbortSignal) => request<{ integrations: Integration[] }>("/api/v1/integrations", { signal }),
