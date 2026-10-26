@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { copy, userError } from "./shared";
 
 type App = AgentReinstallPlan["applications"][number];
-const supported = new Set(["vastora-official/glivela-entry", "vastora-official/senulun-agent", "vastora-official/komari-agent"]);
+const supported = new Set(["vastora-official/glivela-entry", "vastora-official/pulse-agent", "vastora-official/komari-agent"]);
 
 export function ReinstallCurrentApplications({ plan, busy, language, onChanged, onBusy }: { plan: AgentReinstallPlan; busy: boolean; language: Language; onChanged: () => void; onBusy: (value: boolean) => void }) {
   const apps = plan.applications.filter((app) => supported.has(app.appKey) && !["keep_stopped", "keep_retired", "reenroll_monitor"].includes(app.recovery));
