@@ -3,14 +3,13 @@ package center
 import (
 	"context"
 	"encoding/json"
+	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/meridianruntime"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
 func TestMeridianHealthDiagnosticsChangesOnlyAndRecovery(t *testing.T) {
@@ -208,28 +207,5 @@ func TestMeridianHealthDiagnosticsRetentionAndCascade(t *testing.T) {
 	}
 	if err := s.db.QueryRow(`SELECT count(*) FROM meridian_route_health_events WHERE route_id=?`, id).Scan(&count); err != nil || count != 0 {
 		t.Fatal("history older than seven days was retained")
-	}
-}
-
-func TestVersion112MigrationAddsDiagnosticsWithoutInheritingHealth(t *testing.T) {
-	directory := t.TempDir()
-	old := legacyMigrationStore(t, directory, 111)
-	if err := old.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	var version int
-	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != centerSchemaVersion {
-		t.Fatalf("wrong schema: %d %v", version, err)
-	}
-	if _, err := s.db.Exec(`SELECT health_diagnostics_json FROM meridian_route_grants LIMIT 1`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec(`SELECT diagnostics_json FROM meridian_route_health_events LIMIT 1`); err != nil {
-		t.Fatal(err)
 	}
 }

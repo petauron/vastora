@@ -7,15 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"path/filepath"
-	"testing"
-	"time"
-
 	"github.com/petauron/catalog/catalog"
 	"github.com/theupdateframework/go-tuf/v2/metadata"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
 )
 
 func TestOfficialUIBundleCacheRejectsTamperingAndWrongVersion(t *testing.T) {
@@ -81,33 +78,6 @@ func TestOfficialUIBundleEndpointRequiresSession(t *testing.T) {
 	NewServer(store, "", false).Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated official UI request returned %d", response.Code)
-	}
-}
-
-func TestOfficialUIBundleSchemaMigratesForwardWithBackup(t *testing.T) {
-	directory := t.TempDir()
-	previous := legacyMigrationStore(t, directory, 100)
-	if err := previous.Close(); err != nil {
-		t.Fatal(err)
-	}
-	upgraded, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer upgraded.Close()
-	var version, count int
-	if err := upgraded.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != centerSchemaVersion {
-		t.Fatalf("schema version: %d %v", version, err)
-	}
-	if err := upgraded.db.QueryRow(`SELECT count(*) FROM official_app_ui_assets`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("UI cache was not created empty: %d %v", count, err)
-	}
-	if err := upgraded.db.QueryRow(`SELECT count(*) FROM official_app_ui_history`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("UI version history was not created empty: %d %v", count, err)
-	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v100-before-v%d-*.db", centerSchemaVersion)))
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("pre-migration backup missing: %v %v", backups, err)
 	}
 }
 

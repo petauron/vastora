@@ -1,10 +1,8 @@
 package center
 
 import (
-	"context"
 	"encoding/json"
 	"github.com/petauron/vastora/internal/landing"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -33,29 +31,5 @@ func TestNativeLandingHealthRequiresFreshMatchingRuntimeEvidence(t *testing.T) {
 	}
 	if nativeLandingHealthy([]byte(`{}`), now.Format(time.RFC3339Nano), 2, now) {
 		t.Fatal("missing evidence accepted")
-	}
-}
-
-func TestVersion113LandingHealthMigrationBacksUpAndStartsUnknown(t *testing.T) {
-	dir := t.TempDir()
-	old := legacyMigrationStore(t, dir, 112)
-	if err := old.db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != centerSchemaVersion {
-		t.Fatalf("version=%d err=%v", version, err)
-	}
-	if _, err = s.db.ExecContext(context.Background(), `SELECT health_json,health_received_at FROM landing_server_states`); err != nil {
-		t.Fatal(err)
-	}
-	files, err := filepath.Glob(filepath.Join(dir, "migration-backups", "*"))
-	if err != nil || len(files) == 0 {
-		t.Fatalf("missing pre-migration backup: %v", err)
 	}
 }

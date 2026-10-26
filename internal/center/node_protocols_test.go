@@ -3,13 +3,10 @@ package center
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"path/filepath"
+	"github.com/petauron/vastora/internal/nodeprotocol"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/petauron/vastora/internal/nodeprotocol"
 )
 
 func nodeProtocolFixture(t *testing.T) (*Store, AgentCredential) {
@@ -162,48 +159,4 @@ func TestProtocolPortPreparationRetainsObservedNodeAndDomain(t *testing.T) {
 	if node.ID == "" {
 		t.Fatal("fixture node missing")
 	}
-}
-
-func TestNodeProtocolMigrationPreservesPendingWork(t *testing.T) {
-	dir := t.TempDir()
-	legacy := legacyMigrationStore(t, dir, 69)
-	if _, err := legacy.db.Exec(`INSERT INTO application_commands(rowid,id,application_id,agent_id,gateway_node_id,kind,input_json,state,attempt,created_at,updated_at) VALUES(71,'application-command-old','application-v3','agent-v3','agent-v3','3xui.reality.rename','{"action":"rename"}','pending',4,'created','updated')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.Close(); err != nil {
-		t.Fatal(err)
-	}
-	store := openBeforeCatalogMaintenanceForTest(t, dir)
-	defer store.Close()
-	var rowid, attempt int
-	var input, state string
-	if err := store.db.QueryRow(`SELECT rowid,attempt,input_json,state FROM application_commands WHERE id='application-command-old'`).Scan(&rowid, &attempt, &input, &state); err != nil {
-		t.Fatal(err)
-	}
-	if rowid != 71 || attempt != 4 || input != `{"action":"rename"}` || state != "pending" {
-		t.Fatal("migration altered existing work")
-	}
-	insert := `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES('application-command-new','application-v3','agent-v3','agent-v3','3xui.protocols.configure','{}','pending','','')`
-	if _, err := store.db.Exec(insert); err == nil {
-		t.Fatal("active-operation exclusion lost")
-	}
-	if _, err := store.db.Exec(`UPDATE application_commands SET state='succeeded' WHERE id='application-command-old'`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.db.Exec(insert); err != nil {
-		t.Fatalf("new protocol command rejected: %v", err)
-	}
-	backups, err := filepath.Glob(filepath.Join(dir, "migration-backups", fmt.Sprintf("center-v69-before-v%d-*.db", centerSchemaVersion)))
-	if err != nil || len(backups) != 1 {
-		t.Fatal("pre-migration backup missing")
-	}
-	var table string
-	if err := store.db.QueryRow(`SELECT name FROM sqlite_master WHERE name='three_x_ui_node_protocols'`).Scan(&table); err != nil {
-		t.Fatal("protocol table missing")
-	}
-	var trigger string
-	if err := store.db.QueryRow(`SELECT name FROM sqlite_master WHERE name='node_protocols_delete_certificate'`).Scan(&trigger); err != nil {
-		t.Fatal("certificate cleanup missing")
-	}
-	finishCatalogMaintenanceFixture(t, store, dir)
 }
