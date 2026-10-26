@@ -169,58 +169,58 @@ func (s *Server) handleApplicationPanel(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if r.URL.RawQuery != "" || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		http.Error(w, "invalid application request", 400)
+		http.Error(w, "invalid application request", http.StatusBadRequest)
 		return
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
 		u, e := url.Parse(origin)
 		if e != nil || u.Host != r.Host || (u.Scheme != "https" && u.Scheme != "http") {
-			http.Error(w, "cross-origin request refused", 403)
+			http.Error(w, "cross-origin request refused", http.StatusForbidden)
 			return
 		}
 	}
 	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		http.Error(w, "cross-origin request refused", 403)
+		http.Error(w, "cross-origin request refused", http.StatusForbidden)
 		return
 	}
 	var node, endpoint string
 	err := s.store.db.QueryRowContext(r.Context(), `SELECT a.node_id,sv.endpoint FROM applications a JOIN services sv ON sv.application_id=a.id WHERE a.id=? AND a.app_key=? AND a.status='running' AND sv.name='controller' AND sv.protocol='https' AND sv.status IN ('ready','running','publishing')`, r.PathValue("id"), meridianAppKey).Scan(&node, &endpoint)
 	if err != nil {
-		writeError(w, 503, errors.New("center: application panel unavailable"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("center: application panel unavailable"))
 		return
 	}
 	host, port, err := net.SplitHostPort(endpoint)
 	ip := net.ParseIP(host)
 	number, e := strconv.Atoi(port)
 	if err != nil || e != nil || number < 1 || number > 65535 || ip == nil || ip.IsLoopback() || !networking.IsPrivateServiceAddress(host) {
-		writeError(w, 503, errors.New("center: application endpoint unverified"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("center: application endpoint unverified"))
 		return
 	}
 	identity, err := s.store.panelIdentity(r.Context(), node, false)
 	if err != nil {
-		writeError(w, 503, errors.New("center: application access requires managed upgrade"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("center: application access requires managed upgrade"))
 		return
 	}
 	certificate, err := tls.X509KeyPair([]byte(identity.Certificate), []byte(identity.Key))
 	if err != nil {
-		writeError(w, 503, errors.New("center: application access identity unavailable"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("center: application access identity unavailable"))
 		return
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM([]byte(identity.CA)) {
-		writeError(w, 503, errors.New("center: application access trust unavailable"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("center: application access trust unavailable"))
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
 	if err != nil {
-		http.Error(w, "application request too large", 413)
+		http.Error(w, "application request too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+net.JoinHostPort(host, port)+"/v1/admin/"+operation, bytes.NewReader(body))
 	if err != nil {
-		http.Error(w, "invalid application target", 503)
+		http.Error(w, "invalid application target", http.StatusServiceUnavailable)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -229,22 +229,22 @@ func (s *Server) handleApplicationPanel(w http.ResponseWriter, r *http.Request) 
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(req)
 	if err != nil {
-		writeError(w, 502, errors.New("center: application panel connection failed"))
+		writeError(w, http.StatusBadGateway, errors.New("center: application panel connection failed"))
 		return
 	}
 	defer response.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
 	if err != nil || len(payload) > 8<<20 {
-		writeError(w, 502, errors.New("center: application response unavailable"))
+		writeError(w, http.StatusBadGateway, errors.New("center: application response unavailable"))
 		return
 	}
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
-		writeError(w, 502, errors.New("center: application redirect refused"))
+		writeError(w, http.StatusBadGateway, errors.New("center: application redirect refused"))
 		return
 	}
 	// Upstream authentication failures are not a revoked Vastora session.
-	if response.StatusCode == 401 || response.StatusCode == 403 {
-		writeError(w, 502, errors.New("center: application access identity rejected"))
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		writeError(w, http.StatusBadGateway, errors.New("center: application access identity rejected"))
 		return
 	}
 	contentType := response.Header.Get("Content-Type")
