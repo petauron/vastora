@@ -1,3 +1,4 @@
+import { ReinstallCurrentApplications } from "./ReinstallCurrentApplications";
 import { ReinstallClientAcceptance } from "./ReinstallClientAcceptance";
 import { useEffect, useRef, useState } from "react";
 import { RotateCcwIcon, ShieldCheckIcon } from "lucide-react";
@@ -341,9 +342,10 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
           </section> : null}
           {joined && plan.monitoring.length > 0 ? <ReinstallMonitorReview plan={plan} busy={busy} language={language} onInspect={inspectMonitor} onRotate={rotateMonitor} onRestore={restoreMonitor} onReporting={inspectMonitorReporting} /> : null}
           {joined && plan.networkReview ? <ReinstallNetworkReview key={plan.revision} review={plan.networkReview} busy={busy} language={language} onApprove={approveNetwork} /> : null}
+          {joined ? <ReinstallCurrentApplications key={`${agent.id}:${recovery.id}`} plan={plan} language={language} busy={busy} onChanged={refresh} onBusy={setBusy} /> : null}
           {joined ? <ReinstallApplicationReview onLanding={updateLanding} plan={plan} busy={busy} language={language} onPrepare={prepareApplication} onRestoreRuntime={restoreRuntime} onRestoreListener={restoreListener} onActivateAccess={activateAccess} onDNS={migrateDNS} workingDNS={workingDNS} onVerifyEntry={verifyEntry} checkingEntry={checkingEntry} /> : null}
           {command ? <><p className="text-sm">{copy(language, "在重装后的原服务器执行一次", "Run once on the reinstalled original server")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div><p className="text-xs text-muted-foreground">{copy(language, `命令有效期至 ${formatDate(language, enrollment!.expiresAt)}`, `Command valid until ${formatDate(language, enrollment!.expiresAt)}`)}</p></> : null}
-          {joined ? <><ReinstallClientAcceptance plan={plan} language={language} revision={revision} /><ReinstallRemaining plan={plan} language={language} /></> : null}
+          {joined ? <>{plan.applications.some((app) => app.preparation) ? <ReinstallClientAcceptance plan={plan} language={language} revision={revision} /> : null}<ReinstallRemaining plan={plan} language={language} /></> : null}
         </> : null}
       </div>
       <SheetFooter className="flex-row flex-wrap justify-end gap-2">
