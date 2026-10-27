@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.371](https://github.com/petauron/vastora/compare/v0.1.0-alpha.370...v0.1.0-alpha.371) (2026-10-27)
+
+
+### Bug Fixes
+
+* remove retired Center egress controls ([#1081](https://github.com/petauron/vastora/issues/1081)) ([adf8540](https://github.com/petauron/vastora/commit/adf85408ecc6cf95bcedc76efc0538da5b4b555f))
+
 ## [0.1.0-alpha.370](https://github.com/petauron/vastora/compare/v0.1.0-alpha.369...v0.1.0-alpha.370) (2026-10-26)
 
 
