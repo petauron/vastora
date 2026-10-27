@@ -423,10 +423,6 @@ for (const route of routes) {
       content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
     };
   }
-  if (route.handler === "handleNodeEgress") {
-    if (route.method === "get") delete operation.requestBody;
-    operation.responses[status].content["application/json"].schema = schemaForGoType("NodeEgressView");
-  }
   const noStoreHeaders = {
     "Cache-Control": {
       description: "Prevents storage of the security-sensitive response.",

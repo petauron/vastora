@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"time"
 
 	"github.com/petauron/glivela"
@@ -164,24 +163,4 @@ func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRun
 		p.task.EgressClients = append(p.task.EgressClients, meridianruntime.AcceptanceClient{Protocol: glivela.Hysteria2, Hysteria: &hy2, Material: *material})
 	}
 	return nil
-}
-
-func (s *Server) handleNodeEgress(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPut {
-		var input NodeEgressInput
-		if err := decodeJSON(r, &input); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		if _, err := s.store.SetNodeEgress(r.Context(), r.PathValue("id"), input); err != nil {
-			writeError(w, http.StatusConflict, err)
-			return
-		}
-	}
-	view, err := s.store.NodeEgress(r.Context(), r.PathValue("id"))
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, view)
 }

@@ -145,8 +145,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/applications/{id}/maintenance", s.requireAuth(true, s.handleQueueApplicationMaintenance))
 	mux.HandleFunc("GET /api/v1/applications/{id}/maintenance/{taskId}", s.requireAuth(false, s.handleApplicationMaintenance))
 	mux.HandleFunc("GET /api/v1/applications/{id}/backups", s.requireAuth(false, s.handleApplicationBackups))
-	mux.HandleFunc("GET /api/v1/nodes/{id}/egress-policy", s.requireAuth(false, s.handleNodeEgress))
-	mux.HandleFunc("PUT /api/v1/nodes/{id}/egress-policy", s.requireAuth(true, s.handleNodeEgress))
 	mux.HandleFunc("POST /api/v1/applications/{id}/credentials/reveal", s.requireAuth(true, s.handleRevealApplicationCredentials))
 	mux.HandleFunc("POST /api/v1/applications/{id}/credentials/rotate", s.requireAuth(true, s.handleRotateApplicationCredentials))
 	mux.HandleFunc("GET /api/v1/applications/{id}/credentials/rotations/{rotationId}", s.requireAuth(false, s.handleApplicationCredentialRotation))
