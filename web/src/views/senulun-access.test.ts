@@ -4,9 +4,9 @@ import { canInstall, eligibleAppNodes, gatewaysForKind, installBlocker, packageN
 
 const agent: AgentView = { id: "collector", name: "Collector", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 0, enrolledAt: "2026-09-26T00:00:00Z", lastSeenAt: "2026-09-26T00:00:00Z", siteId: "site", roles: ["worker"], connected: true, credentialRevoked: false, capabilities: { docker: false, gateway: false, tunnel: false, metrics: true, logs: false, executorVersions: { systemd: 1 }, runtimeCapabilities: [] }, networkCandidates: [], networkProfile: { serviceAddress: "10.0.0.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: false, remoteUpdateSupported: true };
 const app = (id: string, kind: string): AppView => ({ key: `vastora-official/${id}`, sourceId: "vastora-official", fetchedAt: "2026-09-26T00:00:00Z", manifestSha256: "a".repeat(64), app: { id, version: "1.0.0", packageRevision: 1, runtime: { kind, version: 1, requiredCapabilities: [] }, name: { en: id, "zh-CN": id }, description: { en: id, "zh-CN": id }, config: [] } });
-const native = app("pulse-agent", "systemd");
-const container = app("pulse", "docker");
-const controller = { id: "monitor", appKey: "vastora-official/pulse", status: "running", installedVersion: "0.1.0-alpha.2" } as Application;
+const native = app("senlun-agent", "systemd");
+const container = app("senlun", "docker");
+const controller = { id: "monitor", appKey: "vastora-official/senlun", status: "running", installedVersion: "0.1.0-alpha.2" } as Application;
 const dashboard = { id: "dashboard", applicationId: "monitor", name: "dashboard", status: "ready", protocol: "http" } as Service;
 const data = { apps: [native, container], agents: [agent], applications: [controller], services: [dashboard], publications: [] } as unknown as AppData;
 
@@ -18,11 +18,11 @@ describe("Senlun app access", () => {
   it("allows an independent monitoring service on another eligible host", () => {
     const dockerAgent = { ...agent, capabilities: { ...agent.capabilities, docker: true, executorVersions: { docker: 1 } } };
     const ready = { ...data, agents: [dockerAgent] };
-    expect(eligibleAppNodes(ready, "vastora-official/pulse")).toEqual([dockerAgent]);
-    expect(installBlocker(ready, "vastora-official/pulse", "zh-CN")).not.toContain("全局监控主机");
+    expect(eligibleAppNodes(ready, "vastora-official/senlun")).toEqual([dockerAgent]);
+    expect(installBlocker(ready, "vastora-official/senlun", "zh-CN")).not.toContain("全局监控主机");
   });
   it("allows a collector without any Center-managed monitoring service or publication", () => {
-    expect(eligibleAppNodes({ ...data, applications: [], services: [], publications: [] }, "vastora-official/pulse-agent")).toEqual([agent]);
+    expect(eligibleAppNodes({ ...data, applications: [], services: [], publications: [] }, "vastora-official/senlun-agent")).toEqual([agent]);
   });
   it("does not offer unauthenticated direct public access", () => {
     expect(gatewaysForKind(data, dashboard, "public_direct")).toEqual([]);

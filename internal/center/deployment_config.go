@@ -86,10 +86,11 @@ func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appK
 	var configJSON []byte
 	var secretID sql.NullString
 	if err := s.db.QueryRowContext(ctx, `SELECT d.id, d.config_json, d.secret_id FROM deployments d
-			WHERE d.agent_id = ? AND d.app_key = ? AND d.state = 'succeeded' AND d.operation IN ('install', 'upgrade', 'configure')
+		JOIN applications a ON a.id = d.application_id AND a.node_id = d.agent_id
+		WHERE d.agent_id = ? AND a.app_key = ? AND d.state = 'succeeded' AND d.operation IN ('install', 'upgrade', 'configure')
 		AND NOT EXISTS (
 			SELECT 1 FROM deployments removed
-			WHERE removed.agent_id = d.agent_id AND removed.app_key = d.app_key
+			WHERE removed.agent_id = d.agent_id AND removed.application_id = d.application_id
 			AND removed.state = 'succeeded' AND removed.operation = 'uninstall' AND removed.created_at > d.created_at
 		)
 		ORDER BY d.updated_at DESC, d.rowid DESC LIMIT 1`, agentID, appKey).Scan(&deploymentID, &configJSON, &secretID); errors.Is(err, sql.ErrNoRows) {

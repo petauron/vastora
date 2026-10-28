@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 )
@@ -87,6 +88,34 @@ func openOrchestrationStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	payload, err := os.ReadFile("testdata/reviewed-catalog-v4.json")
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	// Keep the old signed fixture as historical evidence while exercising the
+	// current app identities in ordinary orchestration tests.
+	var fixture catalog.Catalog
+	if err := json.Unmarshal(payload, &fixture); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	for i := range fixture.Apps {
+		app := &fixture.Apps[i]
+		switch app.ID {
+		case "pulse":
+			app.ID = "senlun"
+			app.Images[0].Name = "senlun"
+			app.Runtime.Docker.Containers[0].Name = "senlun"
+			app.Runtime.Docker.Containers[0].Image = "senlun"
+		case "pulse-agent":
+			app.ID = "senlun-agent"
+			for j := range app.Artifacts {
+				app.Artifacts[j].Name = "senlun-agent"
+			}
+			app.Runtime.Systemd.Artifact = "senlun-agent"
+		}
+	}
+	payload, err = json.Marshal(fixture)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)

@@ -14,7 +14,7 @@ export function SenlunWorkspace({ group, data, language, onManage, onUpgrade }: 
   const name = group.app ? localized(group.app, language, "name") : instance.application.name;
   const accessURL = senulunDashboardURL(data);
 
-  return <Card aria-label={name} data-app-workspace="vastora-official/pulse">
+  return <Card aria-label={name} data-app-workspace="vastora-official/senlun">
     <CardHeader className="flex flex-row items-center justify-between gap-3">
       <CardTitle>{name}</CardTitle>
       <ApplicationStatus instance={instance} language={language} onUpgrade={onUpgrade} />

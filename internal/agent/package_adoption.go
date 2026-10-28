@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/moby/moby/client"
-	"github.com/petauron/vastora/internal/senulun"
 )
 
 func historicalReceipt(task DeploymentTask, kind string) *InstanceResources {
@@ -69,11 +68,11 @@ func inspectDormantMeridianContainers(ctx context.Context, docker packageDockerE
 // Installation of all ordinary v4 packages is selected by runtime kind alone.
 func historicalDockerResources(ctx context.Context, task DeploymentTask, history AppliedInstallation, docker packageDockerEngine, stateDirectory string) (*InstanceResources, error) {
 	names := map[string]struct{ name, logical, component string }{
-		senulun.ServiceKey: {senulunContainer, "pulse", "pulse"},
-		cpaKey:             {cpaContainer, "cpa", "cpa"},
-		keeperKey:          {keeperContainer, "keeper", "keeper"},
-		threeXUIKey:        {threeXUIContainer, "3x-ui", "3x-ui"},
-		meridianKey:        {meridianXrayContainer, "xray", "xray"},
+		"vastora-official/pulse": {senulunContainer, "pulse", "pulse"},
+		cpaKey:                   {cpaContainer, "cpa", "cpa"},
+		keeperKey:                {keeperContainer, "keeper", "keeper"},
+		threeXUIKey:              {threeXUIContainer, "3x-ui", "3x-ui"},
+		meridianKey:              {meridianXrayContainer, "xray", "xray"},
 	}
 	binding, ok := names[task.AppKey]
 	if !ok {
@@ -202,7 +201,7 @@ func historicalSystemdResources(ctx context.Context, task DeploymentTask, histor
 			if !bytes.HasPrefix(snapshot.Data, []byte(komariUnitMarker)) {
 				return nil, errors.New("agent: historical unit is not managed")
 			}
-			if task.AppKey == senulun.AgentKey && !senulunUnitOwnedBy(snapshot.Data, task.ApplicationID) {
+			if task.AppKey == "vastora-official/pulse-agent" && !senulunUnitOwnedBy(snapshot.Data, task.ApplicationID) {
 				return nil, errors.New("agent: historical unit belongs to another instance")
 			}
 		}
@@ -217,7 +216,7 @@ func historicalSystemdResources(ctx context.Context, task DeploymentTask, histor
 		}
 		receipt.Resources = append(receipt.Resources, resource)
 	}
-	if task.AppKey == senulun.AgentKey {
+	if task.AppKey == "vastora-official/pulse-agent" {
 		info, err := os.Lstat(manager.path(senulunState))
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return nil, errors.New("agent: historical Senulun state is missing or unsafe")

@@ -22,7 +22,7 @@ func TestSenulunInspectionUsesReviewedContainerAndFixedCLI(t *testing.T) {
 	for _, mode := range []string{"success", "old-service", "wrong-owner", "wrong-deployment", "wrong-id", "secret-field", "partial-failure", "trailing-json", "invalid-active"} {
 		t.Run(mode, func(t *testing.T) {
 			task := senulun.InspectionTask{ApplicationID: "monitor-service", DeploymentID: "reviewed-deployment", EnrollmentIDs: []string{"registration-1", "registration-2"}}
-			labels := applicationResourceLabels(senulun.ServiceKey, "pulse", task.ApplicationID, task.DeploymentID)
+			labels := applicationResourceLabels(senulun.ServiceKey, "senlun", task.ApplicationID, task.DeploymentID)
 			if mode == "wrong-owner" {
 				labels[applicationInstallationLabel] = "other-app"
 			}
@@ -132,7 +132,7 @@ func TestSenulunInspectionUsesReviewedContainerAndFixedCLI(t *testing.T) {
 func senulunReviewedTestPackage(t *testing.T, applicationID, deploymentID string) string {
 	t.Helper()
 	directory := packageTestDirectory(t)
-	receipt := &InstanceResources{Version: 1, ApplicationID: applicationID, AppKey: senulun.ServiceKey, TaskID: deploymentID, Runtime: "docker", State: "ready", Resources: []RuntimeResource{{Kind: "container", LogicalName: "pulse", Name: senulunContainer, ID: "fixed-pulse", Component: "pulse"}}}
+	receipt := &InstanceResources{Version: 1, ApplicationID: applicationID, AppKey: senulun.ServiceKey, TaskID: deploymentID, Runtime: "docker", State: "ready", Resources: []RuntimeResource{{Kind: "container", LogicalName: "senlun", Name: senulunContainer, ID: "fixed-pulse", Component: "senlun"}}}
 	if err := (PackageExecutor{StateDirectory: directory}).save(receipt); err != nil {
 		t.Fatal(err)
 	}

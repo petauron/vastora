@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	ServiceKey           = "vastora-official/pulse"
-	AgentKey             = "vastora-official/pulse-agent"
+	ServiceKey           = "vastora-official/senlun"
+	AgentKey             = "vastora-official/senlun-agent"
 	EnrollmentKind       = "pulse.enrollment.create"
 	DefaultGeoIPProvider = "geojs"
 )

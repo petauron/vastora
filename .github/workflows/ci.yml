@@ -191,6 +191,7 @@ jobs:
           VASTORA_LANDING_XRAY_IMAGE=$(jq -er '.apps[] | select(.id == "meridian") | .images[] | select(.name == "xray-core") | .reference' internal/center/testdata/reviewed-catalog-v4.json)
           export VASTORA_LANDING_XRAY_IMAGE
           docker pull "$VASTORA_LANDING_XRAY_IMAGE"
+          sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" VASTORA_PACKAGE_HOST_INTEGRATION=1 VASTORA_LANDING_XRAY_IMAGE="$VASTORA_LANDING_XRAY_IMAGE" "$RUNNER_TEMP/package-systemd.test" -test.run '^TestSenlunVolumeTransferRealDocker$' -test.count=1 -test.v
           (cd internal/landing && "$RUNNER_TEMP/landing.test" -test.run '^TestLandingRoutesAcceptedByCatalogXray$' -test.count=1)
       - name: Validate generated Headscale config with pinned binary
         env:

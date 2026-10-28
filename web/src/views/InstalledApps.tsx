@@ -11,6 +11,6 @@ export function InstalledApps(props: Omit<AppWorkspaceProps, "showSite">) {
   const showSite = new Set(group.instances.map((instance) => instance.application.siteId)).size > 1;
   const legacy = group.appKey === threeXUIAppKey;
   if (group.appKey === "vastora-official/meridian") return <OfficialAppWorkspaceHost {...props} showSite={showSite} />;
-  if (group.appKey === "vastora-official/pulse") return <SenlunWorkspace {...props} showSite={showSite} />;
+  if (group.appKey === "vastora-official/senlun") return <SenlunWorkspace {...props} showSite={showSite} />;
   return <IPQualityProvider enabled={legacy} agents={props.data.agents}><LandingProvider enabled={legacy} agents={props.data.agents}><DefaultInstalledAppWorkspace {...props} showSite={showSite} /></LandingProvider></IPQualityProvider>;
 }

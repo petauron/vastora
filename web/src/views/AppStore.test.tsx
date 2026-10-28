@@ -10,15 +10,15 @@ import { dashboard } from "./views.test-support";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-function app(id = "pulse-agent", sourceId = "vastora-official"): AppView {
+function app(id = "senlun-agent", sourceId = "vastora-official"): AppView {
   return {
     key: `${sourceId}/${id}`, sourceId, fetchedAt: "2026-09-11T00:00:00Z", manifestSha256: "a".repeat(64),
     app: {
-      id, version: "0.1.0-alpha.2", packageRevision: 1, runtime: { kind: id === "pulse" ? "docker" : "systemd", version: 1 }, name: id === "pulse"
+      id, version: "0.1.0-alpha.2", packageRevision: 1, runtime: { kind: id === "senlun" ? "docker" : "systemd", version: 1 }, name: id === "senlun"
         ? { en: "Senlun", "zh-CN": "Senlun 监控主机" }
         : { en: "Senlun Agent", "zh-CN": "Senlun 探针" },
       description: { en: "Collect host metrics without Docker.", "zh-CN": "采集主机监控指标，无需 Docker。" },
-      hostAccess: id !== "pulse", config: [],
+      hostAccess: id !== "senlun", config: [],
     },
   };
 }
@@ -47,20 +47,20 @@ function markup(node: Parameters<typeof renderToStaticMarkup>[0]) {
 }
 
 describe("app identity", () => {
-  it.each(["pulse", "pulse-agent"])("marks %s as official without a danger badge", (id) => {
+  it.each(["senlun", "senlun-agent"])("marks %s as official without a danger badge", (id) => {
     const value = app(id);
     const container = markup(<><AppIdentityBadge app={value} language="zh-CN" /><AppHostAccessNote app={value} language="zh-CN" /></>);
     expect(container.querySelector('[aria-label="Petauron 官方应用"]')?.textContent).toBe("官方");
     expect(container.textContent).not.toContain("高权限");
     expect(container.querySelector(".text-destructive")).toBeNull();
-    if (id === "pulse-agent") expect(container.textContent).toContain("读取主机监控指标");
-    expect(value.app.hostAccess).toBe(id === "pulse-agent");
+    if (id === "senlun-agent") expect(container.textContent).toContain("读取主机监控指标");
+    expect(value.app.hostAccess).toBe(id === "senlun-agent");
   });
 
   it.each([
     app("komari-agent"),
-    app("pulse-agent", "community"),
-    { ...app(), key: "community/pulse-agent" },
+    app("senlun-agent", "community"),
+    { ...app(), key: "community/senlun-agent" },
     { ...app(), sourceId: "community" },
     { ...app(), app: { ...app().app, id: "another-app" } },
   ])("does not confuse catalog inclusion or copied names with official authorship: $key", (value) => {
@@ -74,7 +74,7 @@ describe("app identity", () => {
 
 describe("app store cards", () => {
   it("keeps same-name apps attributable to their catalog namespaces", () => {
-    const values = [app("pulse"), app("pulse", "community")];
+    const values = [app("senlun"), app("senlun", "community")];
     const container = markup(<>{values.map(value => <AppStoreCard key={value.key} app={value} language="zh-CN" installedCount={0} canInstall blocker="" onInstall={vi.fn()} />)}</>);
     const origins = [...container.querySelectorAll('[aria-label="目录来源"]')].map(value => value.textContent);
     expect(origins).toEqual(["community · "]);
@@ -105,7 +105,7 @@ describe("app store cards", () => {
     expect(button?.getAttribute("aria-describedby")).toBeTruthy();
   });
   it("keeps the grid compact and full metadata available in app details", async () => {
-    const value = app("pulse");
+    const value = app("senlun");
     value.app.services = [{ name: "dashboard", protocol: "http", containerPort: 8080 }];
     const container = markup(<AppStoreCard app={value} language="zh-CN" installedCount={1} canInstall blocker="" onInstall={vi.fn()} />);
     expect(container.querySelector("h3")?.textContent).toBe("Senlun 监控主机");
@@ -125,7 +125,7 @@ describe("app store cards", () => {
   });
 
   it("keeps blockers visible next to the disabled action and IDs unique across sources", () => {
-    const container = markup(<>{[app(), app("pulse-agent", "community")].map((value) =>
+    const container = markup(<>{[app(), app("senlun-agent", "community")].map((value) =>
       <AppStoreCard key={value.key} app={value} language="zh-CN" installedCount={0} canInstall={false} blocker="先配置访问入口" onInstall={vi.fn()} />
     )}</>);
     const buttons = [...container.querySelectorAll<HTMLButtonElement>(installSelector)];
@@ -162,7 +162,7 @@ describe("app store cards", () => {
   });
 
   it("retains third-party source and host permissions in details", async () => {
-    await inspectDetails(app("pulse-agent", "community"), "zh-CN", 0, (details) => {
+    await inspectDetails(app("senlun-agent", "community"), "zh-CN", 0, (details) => {
       expect(details.textContent).toContain("第三方目录 · community");
       expect(details.textContent).toContain("高权限");
       expect(details.textContent).toContain("请确认来源与用途");

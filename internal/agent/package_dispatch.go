@@ -53,6 +53,16 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 	if err := validatePackageTask(task); err != nil {
 		return ApplicationTaskResult{}, err
 	}
+	if senlunServiceIdentityTask(task) {
+		return e.renameSenlunServiceIdentity(ctx, task)
+	}
+	if senlunNativeIdentityTask(task) {
+		receipt, err := e.renameSenlunNativeIdentity(ctx, task.ApplicationID, task.ID, task.SourceReceiptSHA256, task.Manifest)
+		if err != nil {
+			return ApplicationTaskResult{}, err
+		}
+		return ApplicationTaskResult{Resources: receipt, SourceReceiptSHA256: task.SourceReceiptSHA256}, nil
+	}
 	if task.SourceReceiptSHA256 != "" {
 		return e.replaceStagedNative(ctx, task)
 	}
@@ -175,7 +185,7 @@ func (e ApplicationExecutor) Adopt(ctx context.Context, task DeploymentTask) (Ap
 	task.Operation = "adopt"
 	var backend PackageBackend
 	var receipt *InstanceResources
-	if task.AppKey == senulun.AgentKey || task.AppKey == komariKey {
+	if task.AppKey == "vastora-official/pulse-agent" || task.AppKey == komariKey {
 		manager, ok := e.Host.(SystemdHostApplicationManager)
 		if !ok {
 			return ApplicationTaskResult{}, errors.New("agent: systemd historical inspection unavailable")

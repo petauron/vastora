@@ -23,7 +23,7 @@ func TestManagedUpgradeSenulunEnrollmentIsOneTimeAndIdentityIsRequired(t *testin
 	var recipe catalog.AppManifest
 	for _, app := range officialContractFixture(t).Apps {
 		if app.ID == "pulse-agent" {
-			recipe = app
+			recipe = currentSenlunFixture(app)
 		}
 	}
 	if recipe.Runtime == nil {

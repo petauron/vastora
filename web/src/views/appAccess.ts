@@ -84,7 +84,7 @@ function preferredKind(data: AppData, service: Service, kinds: PublicationKind[]
 
 export function gatewaysForKind(data: AppData, service: Service, kind: PublicationKind): AgentView[] {
   const app = data.applications.find((value) => value.id === service.applicationId);
-  if (app?.appKey === "vastora-official/pulse" && kind === "public_direct") return [];
+  if (app?.appKey === "vastora-official/senlun" && kind === "public_direct") return [];
   const site = data.sites.find((value) => value.id === service.siteId);
   return data.agents.filter((agent) => {
     if (!agent.connected || agent.siteId !== service.siteId || !agent.networkProfile) return false;
@@ -115,7 +115,7 @@ export function canInstall(agent: AgentView, app?: AppView) {
 // Browser links refer only to this app's published entry points. Collectors
 // are configured independently with the URL chosen in Senlun.
 export function senulunDashboardURL(data: AppData) {
-  const installations = data.applications.filter((app) => app.appKey === "vastora-official/pulse" && isInstalledApplication(app));
+  const installations = data.applications.filter((app) => app.appKey === "vastora-official/senlun" && isInstalledApplication(app));
   if (installations.length !== 1 || installations[0].status !== "running") return undefined;
   const application = installations[0];
   const dashboard = data.services.find((value) => value.applicationId === application?.id && value.name === "dashboard" && ["ready", "publishing"].includes(value.status));

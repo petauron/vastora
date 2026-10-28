@@ -682,9 +682,13 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
 		err = c.executionTransition(ctx, store, "step", "persist", false, "")
 		if err == nil {
-			_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
-			if err == nil {
-				err = store.completeNativeReplacement(ctx, task)
+			if senlunIdentityTask(task) {
+				err = store.completeSenlunIdentity(ctx, task)
+			} else {
+				_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+				if err == nil {
+					err = store.completeNativeReplacement(ctx, task)
+				}
 			}
 		}
 		if err != nil && task.SourceReceiptSHA256 != "" {
@@ -710,6 +714,22 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	completionContext, completionCancel := freshTaskControlContext(ctx)
 	completeErr := c.sendTaskCompletion(completionContext, store, completion)
 	completionCancel()
+	if completeErr == nil && err == nil && senlunIdentityTask(task) {
+		if senlunServiceIdentityTask(task) {
+			finisher, ok := c.Executor.(interface {
+				FinishSenlunServiceIdentity(context.Context, DeploymentTask) error
+			})
+			if !ok {
+				completeErr = errors.New("agent: Senlun service identity cleanup requires review")
+			} else {
+				cleanupContext, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+				completeErr = finisher.FinishSenlunServiceIdentity(cleanupContext, task)
+				cancelCleanup()
+			}
+		} else {
+			completeErr = store.finishSenlunIdentity(task)
+		}
+	}
 	if completeErr != nil {
 		if report != nil {
 			report(completeErr)
