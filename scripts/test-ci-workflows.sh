@@ -118,7 +118,13 @@ for suite in center packages; do
 done
 ci_backend="$(printf '%s\n' 'internal/center/server.go' | "$classifier" --files ci)"
 printf '%s\n' "$ci_backend" | grep -Fxq 'go=true'
-printf '%s\n' "$ci_backend" | grep -Fxq 'integration=false'
+printf '%s\n' "$ci_backend" | grep -Fxq 'integration=true'
+for path in internal/center/agent_removal.go internal/center/business_handover.go internal/center/migrations/00124_completed_node_removals.sql cmd/vastora/node_lifecycle_integration_test.go; do
+  classified="$(printf '%s\n' "$path" | "$classifier" --files ci)"
+  printf '%s\n' "$classified" | grep -Fxq 'integration=true'
+done
+require_line "$ci_workflow" '          VASTORA_NODE_LIFECYCLE_INTEGRATION: "1"'
+require_line "$ci_workflow" "        run: go test ./cmd/vastora -run '^TestCenterTwoAgentsLifecycle$' -count=1 -timeout=4m -v"
 ci_host="$(printf '%s\n' 'internal/agent/host.go' | "$classifier" --files ci)"
 printf '%s\n' "$ci_host" | grep -Fxq 'integration=true'
 ci_release="$(printf '%s\n' 'version.txt' | "$classifier" --files ci)"

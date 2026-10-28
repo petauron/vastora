@@ -47,6 +47,9 @@ func TestFreshAndMigratedDatabasesHaveEquivalentSchema(t *testing.T) {
 	if _, err := old.db.Exec(`INSERT INTO secrets(id,sealed,created_at,updated_at) VALUES('baseline-preserved',X'0001FF','before','before')`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := old.db.Exec(`INSERT INTO agent_removals(agent_id,state,prepared,headscale_done,headscale_identity_json,tunnel_done,last_error,created_at,updated_at) VALUES('agent-v3','failed',0,1,'{"nodeKey":"synthetic-key"}',0,'historical pilot fence','before','before')`); err != nil {
+		t.Fatal(err)
+	}
 	// Compare every business table, including opaque encrypted bytes. Only the
 	// migration journal is expected to change.
 	snapshot := func(db *sql.DB) map[string][]string {
@@ -105,7 +108,7 @@ func TestFreshAndMigratedDatabasesHaveEquivalentSchema(t *testing.T) {
 		t.Fatal("baseline conversion changed business data")
 	}
 	var count int
-	if err := migrated.db.QueryRow(`SELECT COUNT(*) FROM goose_db_version`).Scan(&count); err != nil || count != 2 {
+	if err := migrated.db.QueryRow(`SELECT COUNT(*) FROM goose_db_version`).Scan(&count); err != nil || count != 3 {
 		t.Fatalf("history not compacted: %d %v", count, err)
 	}
 	backups, err := filepath.Glob(filepath.Join(migratedDirectory, "migration-backups", "center-v122-before-v123-*.db"))

@@ -109,10 +109,70 @@ func TestBusinessHandoverPreservesHistoryAndPermanentlyFencesWrites(t *testing.T
 	if s.RequireBusinessHandover(context.Background()) == nil {
 		t.Fatal("old business may serve without completed handover")
 	}
+	ctx := context.Background()
+	worker := enrollAccessTestNode(t, s, "retired-entry", "10.0.0.80")
+	if _, err := s.db.Exec(`UPDATE applications SET node_id=? WHERE id='snapshot-shared-app'`, worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO glivela_pilot_checkpoint(endpoint_id,checkpoint_json,updated_at) VALUES(?, '{}', 'before')`, sharedSnapshotEndpointID); err != nil {
+		t.Fatal(err)
+	}
 	before := handoverTableHashes(t, s.db)
 	s.Close()
 	writeSyntheticHandoverProof(t, dir)
 	assertRetiredHandover(t, dir, before)
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	expireRemovalNode(t, s, worker.ID)
+	if err := s.StartAgentRemoval(ctx, worker.ID, "retired-entry"); err != nil {
+		t.Fatal(err)
+	}
+	// Reproduce a pre-upgrade removal stopped by the historical pilot fence.
+	if _, err := s.db.Exec(`UPDATE agent_removals SET state='failed',last_error=? WHERE agent_id=?`, errGlivelaPilotOwnsRuntime.Error(), worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StartAgentRemoval(ctx, worker.ID, "retired-entry"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.resumeAgentRemovals(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if removalCount(t, s, `SELECT COUNT(*) FROM agent_removals WHERE agent_id=? AND state='complete' AND prepared=1 AND headscale_done=1 AND tunnel_done=1`, worker.ID) != 1 {
+		t.Fatal("handed-over offline removal did not complete")
+	}
+	if !reflect.DeepEqual(before, handoverTableHashes(t, s.db)) {
+		t.Fatal("offline removal changed frozen accounts, subscriptions, counters or ownership")
+	}
+	agents, err := s.ListAgents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range agents {
+		if a.ID == worker.ID {
+			t.Fatal("completed removal still appears in node inventory")
+		}
+	}
+	apps, err := s.ListApplications(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range apps {
+		if a.NodeID == worker.ID {
+			t.Fatal("completed removal still appears in installation inventory")
+		}
+	}
+	if err := s.RecordAgentHeartbeat(ctx, worker.ID, worker.Credential, NodeHeartbeat{Version: "test"}); err == nil {
+		t.Fatal("archived node reconnected")
+	}
+	if err := s.StartAgentRemoval(ctx, worker.ID, "retired-entry"); err != nil {
+		t.Fatal("completed removal replay was not idempotent", err)
+	}
+	if removalCount(t, s, `SELECT COUNT(*) FROM agent_removals WHERE agent_id=? AND state='complete'`, worker.ID) != 1 {
+		t.Fatal("completed removal replay reopened cleanup")
+	}
 }
 func TestBusinessHandoverRejectsChangedFinalSource(t *testing.T) {
 	s := openMeridianSharedEndpointSnapshotFixture(t)
