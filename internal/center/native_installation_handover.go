@@ -96,6 +96,9 @@ func completeNativeReplacement(ctx context.Context, tx *sql.Tx, taskID, applicat
 	if sourceSHA != result.SourceReceiptSHA256 || sourceKey == targetKey {
 		return errors.New("center: original installation handover evidence differs")
 	}
+	if sourceKey == "vastora-official/pulse-agent" && targetKey == "vastora-official/senlun-agent" {
+		return completeSenlunNativeIdentity(ctx, tx, applicationID, sourceSHA, manifestRaw, now)
+	}
 	var previous []byte
 	if err := tx.QueryRowContext(ctx, `SELECT resources_json FROM application_resources WHERE application_id=? AND adoption_state='ready'`, applicationID).Scan(&previous); err != nil || !sourceReceiptMatches(previous, applicationID, sourceKey, sourceSHA) {
 		return errors.New("center: original resource registration changed during handover")

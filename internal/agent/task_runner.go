@@ -682,9 +682,13 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
 		err = c.executionTransition(ctx, store, "step", "persist", false, "")
 		if err == nil {
-			_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
-			if err == nil {
-				err = store.completeNativeReplacement(ctx, task)
+			if senlunNativeIdentityTask(task) {
+				err = store.completeSenlunNativeIdentity(ctx, task)
+			} else {
+				_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+				if err == nil {
+					err = store.completeNativeReplacement(ctx, task)
+				}
 			}
 		}
 		if err != nil && task.SourceReceiptSHA256 != "" {

@@ -65,7 +65,7 @@ func runtimeInputs(task DeploymentTask) (map[string]any, map[string]string, erro
 	// signed runtime recipe. Keep the original task intact for product identity
 	// validation, enrollment and restoration. All other keys remain subject to
 	// the generic recipe validator, including for every other application.
-	if task.AppKey == senulun.AgentKey && task.Manifest.Runtime != nil && task.Manifest.Runtime.Kind == "systemd" {
+	if (task.AppKey == senulun.AgentKey || senlunNativeIdentityTask(task)) && task.Manifest.Runtime != nil && task.Manifest.Runtime.Kind == "systemd" {
 		delete(config, "service_application_id")
 	}
 	declared := map[string]catalog.ConfigField{}
@@ -76,7 +76,7 @@ func runtimeInputs(task DeploymentTask) (map[string]any, map[string]string, erro
 			// The systemd product preparer verifies either an existing private
 			// identity, an explicit restoration, or a fresh enrollment token
 			// before staging anything. Other required secrets remain mandatory.
-			oneTimeEnrollment := task.AppKey == senulun.AgentKey && field.Key == "enrollment_token" && task.Manifest.Runtime != nil && task.Manifest.Runtime.Kind == "systemd"
+			oneTimeEnrollment := (task.AppKey == senulun.AgentKey || senlunNativeIdentityTask(task)) && field.Key == "enrollment_token" && task.Manifest.Runtime != nil && task.Manifest.Runtime.Kind == "systemd"
 			if field.Required && !oneTimeEnrollment && strings.TrimSpace(secrets[field.Key]) == "" {
 				return nil, nil, fmt.Errorf("agent: required package secret %s is missing", field.Key)
 			}

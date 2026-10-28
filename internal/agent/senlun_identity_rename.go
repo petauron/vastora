@@ -8,17 +8,19 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/secret"
 	"github.com/petauron/vastora/internal/senulun"
 )
 
-// renameSenlunNativeIdentity is a one-time, offline local registration change.
-// The caller must stop the Vastora Agent, verify target against the signed
-// catalog, and coordinate the Center record before restarting the Agent. It
-// never changes or restarts the monitoring service or its state directory.
-func (e ApplicationExecutor) renameSenlunNativeIdentity(ctx context.Context, applicationID, expectedReceiptSHA256 string, target catalog.AppManifest) (*InstanceResources, error) {
-	if e.Store == nil || applicationID == "" || target.ID != "senlun-agent" {
+// renameSenlunNativeIdentity is a one-time authenticated registration change.
+// The caller must deliver the target from the verified signed catalog and let
+// Center commit the matching result. It never changes or restarts the
+// monitoring service or its state directory.
+func (e ApplicationExecutor) renameSenlunNativeIdentity(ctx context.Context, applicationID, migrationTaskID, expectedReceiptSHA256 string, target catalog.AppManifest) (*InstanceResources, error) {
+	if e.Store == nil || applicationID == "" || migrationTaskID == "" || target.ID != "senlun-agent" {
 		return nil, errors.New("agent: Senlun identity migration requires an existing agent instance")
 	}
 	const oldKey = "vastora-official/pulse-agent"
@@ -110,16 +112,76 @@ func (e ApplicationExecutor) renameSenlunNativeIdentity(ctx context.Context, app
 	}
 	// A partial write leaves the marker in place. Subsequent package operations
 	// fail closed; the monitoring process and its credentials remain untouched.
-	receipt.AppKey, receipt.PackageRevision, receipt.ManifestSHA256 = newKey, canonicalTarget.PackageRevision, hex.EncodeToString(targetSHA[:])
+	receipt.AppKey, receipt.TaskID, receipt.PackageRevision, receipt.ManifestSHA256 = newKey, migrationTaskID, canonicalTarget.PackageRevision, hex.EncodeToString(targetSHA[:])
 	if err := executor.save(receipt); err != nil {
 		return nil, errors.New("agent: Senlun resource registration requires review")
 	}
-	installation.AppKey, installation.Manifest = newKey, canonicalTarget
-	if _, err := e.Store.RecordApplied(ctx, installation); err != nil {
+	if err := e.Store.renameSenlunApplied(ctx, installation, migrationTaskID, canonicalTarget); err != nil {
 		return nil, errors.New("agent: Senlun applied identity requires review")
 	}
 	if err := os.Remove(marker); err != nil {
 		return nil, errors.New("agent: completed Senlun identity migration requires review")
 	}
 	return receipt, nil
+}
+
+// Preserve the encrypted application values while atomically replacing the old
+// startup registration with the real migration task identity.
+func (s *Store) renameSenlunApplied(ctx context.Context, previous AppliedInstallation, taskID string, target catalog.AppManifest) error {
+	config, err := canonicalJSONObject(previous.Config)
+	if err != nil {
+		return err
+	}
+	secrets, err := canonicalJSONObject(previous.Secrets)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(sealedApplicationState{ApplicationID: previous.ApplicationID, Config: config, Secrets: secrets, ServiceAddress: previous.ServiceAddress, Manifest: target, ApplicationRole: previous.ApplicationRole})
+	if err != nil {
+		return err
+	}
+	sealed, err := secret.Seal(s.key, encoded, applicationStateContext(taskID))
+	clear(encoded)
+	if err != nil {
+		return err
+	}
+	configSHA := sha256.Sum256(config)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var oldCount, newCount int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM applied_installations WHERE app_key=? AND instance_id=?`, previous.AppKey, previous.InstanceID).Scan(&oldCount); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM applied_installations WHERE app_key=? OR instance_id=?`, "vastora-official/senlun-agent", taskID).Scan(&newCount); err != nil {
+		return err
+	}
+	if oldCount != 1 || newCount != 0 {
+		return errors.New("agent: Senlun applied registration changed during migration")
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO applied_installations(instance_id,app_key,version,sealed_state,config_hash,applied_at) VALUES(?,?,?,?,?,?)`, taskID, "vastora-official/senlun-agent", target.Version, sealed, hex.EncodeToString(configSHA[:]), s.now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_installations WHERE app_key=? AND instance_id=?`, previous.AppKey, previous.InstanceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func senlunNativeIdentityTask(task DeploymentTask) bool {
+	return task.AppKey == "vastora-official/senlun-agent" && task.SourceReceiptSHA256 != "" && task.Operation == "install"
+}
+
+func (s *Store) completeSenlunNativeIdentity(ctx context.Context, task DeploymentTask) error {
+	installed, err := s.AppliedInstallation(ctx, task.AppKey)
+	if err != nil || installed.InstanceID != task.ID || installed.ApplicationID != task.ApplicationID {
+		return errors.New("agent: Senlun identity migration was not committed")
+	}
+	receipt, err := (PackageExecutor{StateDirectory: s.dataDir}).ReadResources(task.ApplicationID)
+	if err != nil || receipt.AppKey != task.AppKey || receipt.TaskID != task.ID || receipt.ManifestSHA256 != task.ManifestSHA256 || receipt.PackageRevision != task.PackageRevision || receipt.State != "ready" {
+		return errors.New("agent: Senlun migrated resource receipt is unavailable")
+	}
+	return nil
 }

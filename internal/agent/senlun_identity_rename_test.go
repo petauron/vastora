@@ -72,13 +72,13 @@ func TestSenlunNativeIdentityRenameRetainsOwnedStateWithoutBackup(t *testing.T) 
 	receiptSHA := sha256.Sum256(rawReceipt)
 	backend := &fakePackageBackend{}
 	executor := ApplicationExecutor{Store: store, PackageBackend: backend}
-	if _, err := executor.renameSenlunNativeIdentity(ctx, installation.ApplicationID, "wrong-digest", target); err == nil {
+	if _, err := executor.renameSenlunNativeIdentity(ctx, installation.ApplicationID, "migration-task", "wrong-digest", target); err == nil {
 		t.Fatal("accepted changed source receipt")
 	}
 	if len(backend.calls) != 0 {
 		t.Fatal("invalid identity reached resource inspection")
 	}
-	result, err := executor.renameSenlunNativeIdentity(ctx, installation.ApplicationID, hex.EncodeToString(receiptSHA[:]), target)
+	result, err := executor.renameSenlunNativeIdentity(ctx, installation.ApplicationID, "migration-task", hex.EncodeToString(receiptSHA[:]), target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestSenlunNativeIdentityRenameRetainsOwnedStateWithoutBackup(t *testing.T) 
 		t.Fatal("identity change modified the running resources")
 	}
 	updated, err := store.AppliedInstallation(ctx, result.AppKey)
-	if err != nil || updated.ApplicationID != installation.ApplicationID || updated.InstanceID != installation.InstanceID || string(updated.Config) != string(installation.Config) || string(updated.Secrets) != string(installation.Secrets) {
+	if err != nil || updated.ApplicationID != installation.ApplicationID || updated.InstanceID != "migration-task" || string(updated.Config) != string(installation.Config) || string(updated.Secrets) != string(installation.Secrets) {
 		t.Fatal("identity change lost the original application or credentials")
 	}
 	if _, err := store.AppliedInstallation(ctx, installation.AppKey); !errors.Is(err, errApplicationNotInstalled) {

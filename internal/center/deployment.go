@@ -184,7 +184,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if request.Operation != "install" && request.Operation != "upgrade" && request.Operation != "configure" && request.Operation != "uninstall" {
 		return DeploymentView{}, errors.New("center: invalid deployment operation")
 	}
-	if (request.ReplaceApplicationID == "") != (request.SourceReceiptSHA256 == "") || request.ReplaceApplicationID != "" && (request.Operation != "install" || !request.BackupsConfirmed || request.Role != "" || request.AuthorizedCapabilities == nil) {
+	renameSenlunAgent := senlunNativeIdentityRequest(request)
+	if (request.ReplaceApplicationID == "") != (request.SourceReceiptSHA256 == "") || request.ReplaceApplicationID != "" && (request.Operation != "install" || (!renameSenlunAgent && !request.BackupsConfirmed) || request.Role != "" || request.AuthorizedCapabilities == nil) {
 		return DeploymentView{}, errors.New("center: explicit native handover requires the original application, receipt digest, backup confirmation and reviewed target permissions")
 	}
 	if err := s.validateSenulunDeployment(ctx, request); err != nil {
@@ -368,8 +369,18 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		config, secrets = []byte(`{}`), []byte(`{}`)
 	} else {
 		deploymentConfig := request.Config
-		if request.Operation == "upgrade" || request.Operation == "configure" {
-			deploymentConfig, err = s.mergePreviousDeploymentConfig(ctx, request.AgentID, request.AppKey, request.Config)
+		if renameSenlunAgent && len(request.Config) != 0 {
+			changes, changeErr := decodeJSONObject(request.Config, "center: identity migration requires an empty configuration")
+			if changeErr != nil || len(changes) != 0 {
+				return DeploymentView{}, errors.New("center: identity migration cannot modify application settings")
+			}
+		}
+		if request.Operation == "upgrade" || request.Operation == "configure" || renameSenlunAgent {
+			previousKey := request.AppKey
+			if renameSenlunAgent {
+				previousKey = "vastora-official/pulse-agent"
+			}
+			deploymentConfig, err = s.mergePreviousDeploymentConfig(ctx, request.AgentID, previousKey, request.Config)
 			if err != nil {
 				return DeploymentView{}, err
 			}
@@ -398,8 +409,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				return DeploymentView{}, err
 			}
 		}
-		if request.AppKey == senulunAgentAppKey {
-			if request.Operation == "install" {
+		if request.AppKey == senulunAgentAppKey || renameSenlunAgent {
+			if request.Operation == "install" && !renameSenlunAgent {
 				// Senulun owns enrollment. Its administrator supplies the endpoint
 				// and short-lived token through the ordinary package configuration.
 				config, secrets, err = normalizeDeploymentConfig(userInputManifest(manifest, request.AppKey), deploymentConfig)
