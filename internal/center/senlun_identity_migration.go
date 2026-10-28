@@ -30,7 +30,7 @@ func validateSenlunNativeIdentitySource(ctx context.Context, tx *sql.Tx, applica
 		FROM applications a JOIN application_resources r ON r.application_id=a.id
 		JOIN deployments d ON d.rowid=(SELECT old.rowid FROM deployments old WHERE old.application_id=a.id AND old.app_key=a.app_key AND old.state='succeeded' ORDER BY old.created_at DESC,old.rowid DESC LIMIT 1)
 		WHERE a.id=? AND a.app_key=? AND d.operation IN ('install','upgrade','configure')`, applicationID, legacySenlunNativeIdentityKey).Scan(&nodeID, &status, &adoption, &rawReceipt, &rawManifest, &version, &revision)
-	if err != nil || (allowPending && status != "pending") || (!allowPending && (status == "pending" || status == "deploying")) || adoption != "ready" {
+	if err != nil || (allowPending && status != "pending" && status != "deploying") || (!allowPending && (status == "pending" || status == "deploying")) || adoption != "ready" {
 		return "", errors.New("center: original Senlun ownership requires review")
 	}
 	var receipt struct {
