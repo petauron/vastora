@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Purge only after provider and subscription cleanup have succeeded. The
@@ -16,7 +17,7 @@ func (s *Store) finishAgentRemoval(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err = validateAgentRemovalDependencies(ctx, tx, id); err != nil {
+	if err = validateAgentRemovalDependencies(ctx, tx, id, s.businessRetired); err != nil {
 		return err
 	}
 	var ready bool
@@ -25,6 +26,21 @@ func (s *Store) finishAgentRemoval(ctx context.Context, id string) error {
 	}
 	if !ready {
 		return fmt.Errorf("center: node removal cleanup is incomplete")
+	}
+	if s.businessRetired {
+		// Frozen business has restrictive references to its old platform owners.
+		// Preserve those rows and their secrets instead of cascading into the
+		// historical ledger. Completion removes them from active platform views;
+		// the revoked identity and durable removal row also fence reconnects.
+		result, err := tx.ExecContext(ctx, `UPDATE agent_removals SET state='complete',last_error='',updated_at=?
+			WHERE agent_id=? AND EXISTS(SELECT 1 FROM agents WHERE id=? AND status='disabled' AND credential_revoked_at<>'')`, s.now().UTC().Format(time.RFC3339Nano), id, id)
+		if err != nil {
+			return err
+		}
+		if count, err := result.RowsAffected(); err != nil || count != 1 {
+			return fmt.Errorf("center: retired node identity changed during cleanup")
+		}
+		return tx.Commit()
 	}
 	secretIDs, err := agentRemovalSecretIDs(ctx, tx, id)
 	if err != nil {

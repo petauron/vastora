@@ -1155,7 +1155,7 @@ func normalizeAgentPublicEgress(value *networking.PublicEgress, candidates []net
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, runtime_recovery, tailscale_ownership, credential_revoked_at <> '', public_egress_address, public_egress_bind_address, public_egress_mode, public_egress_observed_at, remote_update_supported, COALESCE((SELECT value FROM settings WHERE key='agent_runtime_recovery:'||agents.id),'[]') FROM agents ORDER BY status, name, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, runtime_recovery, tailscale_ownership, credential_revoked_at <> '', public_egress_address, public_egress_bind_address, public_egress_mode, public_egress_observed_at, remote_update_supported, COALESCE((SELECT value FROM settings WHERE key='agent_runtime_recovery:'||agents.id),'[]') FROM agents WHERE NOT EXISTS(SELECT 1 FROM agent_removals r WHERE r.agent_id=agents.id AND r.state='complete') ORDER BY status, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list agents: %w", err)
 	}

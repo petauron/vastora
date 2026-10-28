@@ -13,7 +13,7 @@ import (
 
 const agentRemovalSchema = `CREATE TABLE agent_removals (
  agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
- state TEXT NOT NULL CHECK(state IN ('pending','failed')),
+ state TEXT NOT NULL CHECK(state IN ('pending','failed','complete')),
  prepared INTEGER NOT NULL DEFAULT 0 CHECK(prepared IN (0,1)),
  headscale_done INTEGER NOT NULL DEFAULT 0 CHECK(headscale_done IN (0,1)),
  headscale_identity_json BLOB NOT NULL DEFAULT '{}',
@@ -55,13 +55,22 @@ func (s *Store) StartAgentRemoval(ctx context.Context, id, confirmation string) 
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_removals WHERE agent_id=?`, id).Scan(&existing); err != nil {
 		return err
 	}
+	if existing != 0 {
+		var state string
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM agent_removals WHERE agent_id=?`, id).Scan(&state); err != nil {
+			return err
+		}
+		if state == "complete" {
+			return nil // An exact administrative replay cannot revive archived history.
+		}
+	}
 	now := s.now().UTC()
 	if existing == 0 {
 		lastSeen, parseErr := time.Parse(time.RFC3339Nano, seen)
 		if parseErr != nil || lastSeen.After(now.Add(-agentConnectedMaxAge)) {
 			return errNodeRemovalOnline
 		}
-		if err := validateAgentRemovalDependencies(ctx, tx, id); err != nil {
+		if err := validateAgentRemovalDependencies(ctx, tx, id, s.businessRetired); err != nil {
 			return err
 		}
 		// Retain application history until remote/controller cleanup succeeds.
@@ -78,8 +87,10 @@ func (s *Store) StartAgentRemoval(ctx context.Context, id, confirmation string) 
 	} else {
 		// Explicit retry preserves task identity and receipt reconciliation on
 		// the surviving controller; it never creates competing remove tasks.
-		if err := retryRemovedAgentCommands(ctx, tx, id, now); err != nil {
-			return err
+		if !s.businessRetired {
+			if err := retryRemovedAgentCommands(ctx, tx, id, now); err != nil {
+				return err
+			}
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_removals(agent_id,state,created_at,updated_at) VALUES(?,'pending',?,?)
@@ -93,22 +104,27 @@ func (s *Store) StartAgentRemoval(ctx context.Context, id, confirmation string) 
 	return nil
 }
 
-func validateAgentRemovalDependencies(ctx context.Context, tx *sql.Tx, id string) error {
+func validateAgentRemovalDependencies(ctx context.Context, tx *sql.Tx, id string, businessRetired bool) error {
 	// Removing one expired worker must never implicitly destroy a controller,
 	// switch another node's egress to direct, or take down another app's entry.
 	checks := []string{
 		`SELECT COUNT(*) FROM application_commands c JOIN applications a ON a.id=c.application_id WHERE a.node_id=? AND c.agent_id<>a.node_id AND c.kind<>'3xui.node.reconcile' AND (c.state='running' OR c.reconciliation_required=1)`,
-		`SELECT COUNT(*) FROM landing_client_grants g JOIN three_x_ui_client_accounts p ON p.id=g.parent_id JOIN applications a ON a.id=p.controller_id JOIN applications e ON e.id=g.application_id WHERE a.node_id=? AND e.node_id<>a.node_id`,
 		`SELECT COUNT(*) FROM three_x_ui_nodes n JOIN applications a ON a.id=n.master_application_id JOIN applications w ON w.id=n.worker_application_id WHERE a.node_id=? AND w.node_id<>a.node_id AND (w.status<>'stopped' OR n.status<>'stopped')`,
 		`SELECT COUNT(*) FROM publications p JOIN services s ON s.id=p.service_id JOIN applications a ON a.id=s.application_id WHERE p.entry_node_id=? AND a.node_id<>p.entry_node_id AND (p.status<>'stopped' OR p.cleanup_pending=1)`,
-		`SELECT COUNT(*) FROM landing_proxy_states WHERE landing_node_id=? AND node_id<>landing_node_id AND (status<>'stopped' OR desired_revision<>applied_revision OR json_extract(desired_json,'$.proxy') IS NOT NULL OR json_extract(desired_json,'$.clients') IS NOT NULL)`,
-		`SELECT COUNT(*) FROM landing_proxy_retirements WHERE landing_node_id=? AND node_id<>landing_node_id`,
-		`SELECT COUNT(*) FROM landing_client_grants g JOIN applications a ON a.id=g.application_id WHERE g.landing_node_id=? AND a.node_id<>g.landing_node_id AND g.status<>'revoked'`,
-		`SELECT COUNT(*) FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id JOIN applications a ON a.id=e.application_id WHERE ? IN (g.egress_node_id,g.ipv4_egress_node_id) AND a.node_id<>g.egress_node_id AND g.status<>'revoked'`,
-		`SELECT COUNT(*) FROM meridian_credentials c JOIN meridian_endpoints e ON e.id=c.endpoint_id JOIN applications a ON a.id=e.application_id WHERE c.egress_node_id=? AND a.node_id<>c.egress_node_id AND c.enabled=1`,
 		`SELECT COUNT(*) FROM three_x_ui_migrations m JOIN applications a ON a.id=m.source_application_id OR a.id=m.target_application_id WHERE a.node_id=? AND m.state IN ('backing_up','restoring','switching')`,
 		`SELECT COUNT(*) FROM applications a WHERE a.node_id=? AND a.app_key='vastora-official/pulse' AND EXISTS(SELECT 1 FROM applications p WHERE p.node_id<>a.node_id AND p.app_key='vastora-official/pulse-agent' AND p.status<>'stopped')`,
 		`SELECT COUNT(*) FROM agent_network_candidates c JOIN settings s ON s.key='cloudflare_setup_gateway_binding' WHERE c.agent_id=? AND c.address=json_extract(s.value,'$.bindAddress')`,
+	}
+	if !businessRetired {
+		// The handed-over tables are frozen history, not current dependencies.
+		checks = append(checks,
+			`SELECT COUNT(*) FROM landing_client_grants g JOIN three_x_ui_client_accounts p ON p.id=g.parent_id JOIN applications a ON a.id=p.controller_id JOIN applications e ON e.id=g.application_id WHERE a.node_id=? AND e.node_id<>a.node_id`,
+			`SELECT COUNT(*) FROM landing_proxy_states WHERE landing_node_id=? AND node_id<>landing_node_id AND (status<>'stopped' OR desired_revision<>applied_revision OR json_extract(desired_json,'$.proxy') IS NOT NULL OR json_extract(desired_json,'$.clients') IS NOT NULL)`,
+			`SELECT COUNT(*) FROM landing_proxy_retirements WHERE landing_node_id=? AND node_id<>landing_node_id`,
+			`SELECT COUNT(*) FROM landing_client_grants g JOIN applications a ON a.id=g.application_id WHERE g.landing_node_id=? AND a.node_id<>g.landing_node_id AND g.status<>'revoked'`,
+			`SELECT COUNT(*) FROM meridian_route_grants g JOIN meridian_endpoints e ON e.id=g.endpoint_id JOIN applications a ON a.id=e.application_id WHERE ? IN (g.egress_node_id,g.ipv4_egress_node_id) AND a.node_id<>g.egress_node_id AND g.status<>'revoked'`,
+			`SELECT COUNT(*) FROM meridian_credentials c JOIN meridian_endpoints e ON e.id=c.endpoint_id JOIN applications a ON a.id=e.application_id WHERE c.egress_node_id=? AND a.node_id<>c.egress_node_id AND c.enabled=1`,
+		)
 	}
 	for _, query := range checks {
 		var count int
@@ -299,7 +315,7 @@ func (s *Store) prepareAgentRemoval(ctx context.Context, id string) error {
 	if prepared {
 		return nil
 	}
-	if err = validateAgentRemovalDependencies(ctx, tx, id); err != nil {
+	if err = validateAgentRemovalDependencies(ctx, tx, id, s.businessRetired); err != nil {
 		return err
 	}
 	now := s.now().UTC()
@@ -314,7 +330,7 @@ func (s *Store) prepareAgentRemoval(ctx context.Context, id string) error {
 	for _, app := range apps {
 		var cleanups []publicationCleanup
 		// This is desired-state retirement, NOT a fabricated Agent completion.
-		if err = s.retireApplicationManagement(ctx, tx, app, now, &cleanups); err != nil {
+		if err = s.retireApplicationManagement(ctx, tx, app, now, &cleanups, s.businessRetired); err != nil {
 			return err
 		}
 	}
@@ -331,6 +347,9 @@ func (s *Store) prepareAgentRemoval(ctx context.Context, id string) error {
 }
 
 func (s *Store) removeAgentSubscriptionNodes(ctx context.Context, id string) error {
+	if s.businessRetired {
+		return nil // Independent Glivela owns subscriptions; never queue legacy proxy work.
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -419,6 +438,9 @@ func retireMigratedAgentTopology(ctx context.Context, tx *sql.Tx, id string, now
 }
 
 func (s *Store) removeAgentLandingReferences(ctx context.Context, tx *sql.Tx, id string) error {
+	if s.businessRetired {
+		return nil // Preserve the frozen source allowlists, credentials and accounting.
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT landing_node_id FROM landing_proxy_states WHERE node_id=? UNION SELECT landing_node_id FROM landing_proxy_retirements WHERE node_id=? UNION SELECT landing_node_id FROM landing_client_grants WHERE application_id IN(SELECT id FROM applications WHERE node_id=?)`, id, id, id)
 	if err != nil {
 		return err

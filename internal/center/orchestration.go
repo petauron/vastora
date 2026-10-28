@@ -127,9 +127,14 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 
 // Retire control-plane access after either a confirmed uninstall or explicit
 // offline-node removal. This makes no claim that remote resources were removed.
-func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time, cleanups *[]publicationCleanup) error {
-	if err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); err != nil {
-		return err
+func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time, cleanups *[]publicationCleanup, preserveProxyHistory bool) error {
+	if preserveProxyHistory && !s.businessRetired {
+		return errGlivelaPilotOwnsRuntime
+	}
+	if !preserveProxyHistory {
+		if err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); err != nil {
+			return err
+		}
 	}
 	var uninstallAppKey string
 	if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&uninstallAppKey); err != nil {
@@ -139,7 +144,7 @@ func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, app
 	if err != nil {
 		return err
 	}
-	if uninstallAppKey == meridianAppKey {
+	if uninstallAppKey == meridianAppKey && !preserveProxyHistory {
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET enabled=0,runtime_healthy=0,status='revoked',last_error='',updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?) AND status<>'revoked'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 			return err
 		}
@@ -195,7 +200,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		return err
 	}
 	if operation == "uninstall" {
-		return s.retireApplicationManagement(ctx, tx, applicationID, now, cleanups)
+		return s.retireApplicationManagement(ctx, tx, applicationID, now, cleanups, false)
 	}
 	var siteID, appKey, role string
 	if err := tx.QueryRowContext(ctx, `SELECT site_id, app_key, role FROM applications WHERE id = ?`, applicationID).Scan(&siteID, &appKey, &role); err != nil {
@@ -603,6 +608,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 			WHERE candidate.agent_id = a.node_id AND candidate.app_key = a.app_key AND candidate.state = 'succeeded'
 			ORDER BY candidate.created_at DESC, candidate.rowid DESC LIMIT 1
 		)
+		WHERE NOT EXISTS(SELECT 1 FROM agent_removals r WHERE r.agent_id=a.node_id AND r.state='complete')
 		ORDER BY a.name, a.id`)
 	if err != nil {
 		return nil, err

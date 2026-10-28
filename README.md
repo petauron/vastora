@@ -179,3 +179,7 @@ backup applies. No Agent or managed application upgrade is needed for this
 Center-only change.
 
 Existing Glivela business installations require the [final data handover](docs/GLIVELA-BUSINESS-HANDOVER.md) before serving the replacement Center.
+
+离线节点在 Glivela 完成独立接管后，平台移除保留冻结业务历史及外键引用，
+完成状态从正常节点和安装列表移除；业务订阅须先由 Glivela 停用。参见
+[永久移除离线节点](docs/offline-node-removal.md)。

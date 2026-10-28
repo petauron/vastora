@@ -83,7 +83,7 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 		t.Fatal("another application's lifecycle blocked", err)
 	}
 	var cleanups []publicationCleanup
-	if err := store.retireApplicationManagement(ctx, tx, p.EntryID, now, &cleanups); err != errGlivelaPilotOwnsRuntime || len(cleanups) != 0 {
+	if err := store.retireApplicationManagement(ctx, tx, p.EntryID, now, &cleanups, false); err != errGlivelaPilotOwnsRuntime || len(cleanups) != 0 {
 		t.Fatal("legacy retirement changed owned publication", err)
 	}
 	tx.Rollback()

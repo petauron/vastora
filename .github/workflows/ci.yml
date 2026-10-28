@@ -196,6 +196,10 @@ jobs:
         env:
           VASTORA_HEADSCALE_CONFIG_INTEGRATION: "1"
         run: go test ./internal/deployer -run '^TestGeneratedHeadscaleConfigAcceptedByPinnedBinary$' -count=1
+      - name: Verify Center and two real Agent processes
+        env:
+          VASTORA_NODE_LIFECYCLE_INTEGRATION: "1"
+        run: go test ./cmd/vastora -run '^TestCenterTwoAgentsLifecycle$' -count=1 -timeout=4m -v
       - name: Verify Agent decommission on real systemd
         run: |
           go test -c -o /tmp/vastora-systemd-decommission.test ./cmd/vastora
