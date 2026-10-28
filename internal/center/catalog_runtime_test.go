@@ -390,8 +390,13 @@ func TestManagedUpgradeDormantMeridianRequiresAdoptionAndOnlyStagesImage(t *test
 func TestCatalogRuntimeRenamedInstanceRetainsDeploymentHistory(t *testing.T) {
 	store, node, app := independentRuntimeStore(t)
 	ctx := context.Background()
+	app.Config = []catalog.ConfigField{
+		{Key: "setting", Type: "string", Label: catalog.LocalizedText{English: "Setting", SimplifiedChinese: "设置"}, Description: catalog.LocalizedText{English: "Setting", SimplifiedChinese: "设置"}},
+		{Key: "token", Type: "string", Secret: true, Label: catalog.LocalizedText{English: "Token", SimplifiedChinese: "令牌"}, Description: catalog.LocalizedText{English: "Token", SimplifiedChinese: "令牌"}},
+	}
+	seedIndependentPackage(t, store, app)
 	oldKey := OfficialCatalogSourceID + "/" + app.ID
-	_, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: oldKey, Config: json.RawMessage(`{}`)})
+	_, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: oldKey, Config: json.RawMessage(`{"setting":"retained","token":"synthetic-secret"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,8 +425,18 @@ func TestCatalogRuntimeRenamedInstanceRetainsDeploymentHistory(t *testing.T) {
 	if _, err = store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: newKey, Operation: "configure", Config: json.RawMessage(`{"unused":true}`)}); err == nil || !strings.Contains(err.Error(), "upgrade the renamed application") {
 		t.Fatalf("old manifest was accepted for a renamed application: %v", err)
 	}
-	if _, err = store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: newKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err != nil {
+	upgrade, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: newKey, Operation: "upgrade", Config: json.RawMessage(`{}`)})
+	if err != nil {
 		t.Fatal(err)
+	}
+	var savedConfig []byte
+	var secretID string
+	if err = store.db.QueryRowContext(ctx, `SELECT config_json,secret_id FROM deployments WHERE id=?`, upgrade.ID).Scan(&savedConfig, &secretID); err != nil {
+		t.Fatal(err)
+	}
+	savedSecret, err := store.getSecret(ctx, secretID, "deployment:"+upgrade.ID)
+	if err != nil || string(savedConfig) != `{"setting":"retained"}` || string(savedSecret) != `{"token":"synthetic-secret"}` {
+		t.Fatal("renamed instance lost its prior settings or encrypted secret")
 	}
 	var historicalKey string
 	var historicalManifest []byte
