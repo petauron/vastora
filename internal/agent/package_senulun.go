@@ -214,9 +214,9 @@ func (b *SystemdPackageBackend) restoreSenulunIdentity(ctx context.Context, task
 	defer cancel()
 	// The executable comes from the verified installed recipe, not a command
 	// fallback. Retained historical versions still speak their original CLI.
-	prefix := "SENULUN_"
-	if task.Manifest.Runtime.Systemd.Executable == "pulse-agent" {
-		prefix = "PULSE_"
+	prefix := "SENLUN_"
+	if task.Manifest.Runtime.Systemd.Executable == "senulun-agent" {
+		prefix = "SENULUN_"
 	}
 	args := []string{"-u", user, "--", "env", "-i", prefix + "SERVICE_URL=" + settings.ServiceURL, prefix + "CREDENTIALS_PATH=" + path, b.Manager.path(binary.Path), "credentials", "import", task.SenulunRestore.NodeID}
 	input := strings.NewReader(task.SenulunRestore.Token + "\n")

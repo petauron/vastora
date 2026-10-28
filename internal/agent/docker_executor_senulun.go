@@ -69,7 +69,7 @@ func senulunServiceCLI(ctx context.Context, docker *client.Client, containerID s
 }
 
 func senulunServiceExecutable(entrypoint []string) (string, error) {
-	if len(entrypoint) > 0 && (entrypoint[0] == "/usr/local/bin/senulun-service" || entrypoint[0] == "/usr/local/bin/pulse-service") {
+	if len(entrypoint) > 0 && (entrypoint[0] == "/usr/local/bin/senulun-service" || entrypoint[0] == "/usr/local/bin/senlun-service") {
 		return entrypoint[0], nil
 	}
 	return "", errors.New("agent: installed Senulun executable is not a recognized signed runtime")

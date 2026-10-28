@@ -10,7 +10,7 @@ const controller = { id: "monitor", appKey: "vastora-official/pulse", status: "r
 const dashboard = { id: "dashboard", applicationId: "monitor", name: "dashboard", status: "ready", protocol: "http" } as Service;
 const data = { apps: [native, container], agents: [agent], applications: [controller], services: [dashboard], publications: [] } as unknown as AppData;
 
-describe("Senulun app access", () => {
+describe("Senlun app access", () => {
   it("allows native collectors without Docker", () => {
     expect(canInstall(agent, native)).toBe(true);
     expect(canInstall(agent, container)).toBe(false);

@@ -77,7 +77,7 @@ signed revision. This is the explicit availability versus freeze-detection trade
    one writer. Keep download paths, roots, source identity, channel, TUF state
    and rollback high-water marks. Enable both production gates and publish
    schema 4 at a strictly higher catalog revision.
-9. Refresh Center and verify visibility with no app task/restart. Existing Senulun
+9. Refresh Center and verify visibility with no app task/restart. Existing Senlun
    `v0.1.0-alpha.5` can use its original tag/SHA/release run; no re-release.
 10. Exit maintenance only after acceptance. Failures leave maintenance in force.
     Program rollback requires matching backup restoration; never run old code

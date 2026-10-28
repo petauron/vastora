@@ -1,18 +1,18 @@
-# Senulun
+# Senlun
 
-Senulun is an independent application. It owns administrator accounts, probe
+Senlun is an independent application. It owns administrator accounts, probe
 enrollment, monitoring configuration, themes and monitoring data. Vastora manages
 package installation, upgrades, runtime resources and access entries; it is not
-required to run a Senulun Service or Agent installed outside Vastora.
+required to run a Senlun Service or Agent installed outside Vastora.
 
 ## Install
 
-1. Install **Senulun 监控主机** on a Docker-capable node. Set `public_url` to the
-   exact HTTPS browser origin. Initialize the administrator at Senulun's `/login`
+1. Install **Senlun 监控主机** on a Docker-capable node. Set `public_url` to the
+   exact HTTPS browser origin. Initialize the administrator at Senlun's `/login`
    page through a private entry before exposing the dashboard. There is no
    Vastora-generated administrator setup token.
-2. In Senulun, create an Agent enrollment token.
-3. Install **Senulun 探针**, explicitly supplying its HTTPS Service URL, node name,
+2. In Senlun, create an Agent enrollment token.
+3. Install **Senlun 探针**, explicitly supplying its HTTPS Service URL, node name,
    optional group and enrollment token. The Service may be installed elsewhere,
    including outside Vastora. Center delivers the token as an encrypted package
    secret and does not execute enrollment commands on the Service.
@@ -20,12 +20,12 @@ required to run a Senulun Service or Agent installed outside Vastora.
 Independent Service installations on different hosts are allowed. Each Agent
 chooses its own Service. The usual one-instance-per-package-per-host rule remains.
 For installation without Vastora, see the
-[Senulun standalone guide](https://github.com/petauron/senulun/blob/main/docs/STANDALONE.md).
+[Senlun standalone guide](https://github.com/petauron/senlun/blob/main/docs/STANDALONE.md).
 
 ## Access and runtime
 
 - Service: checksum-pinned container image, private bind and persistent data
-  volume. Senulun handles its own login and request authentication.
+  volume. Senlun handles its own login and request authentication.
 - Agent: checksum-verified native executable, unprivileged systemd user,
   persistent identity, no inbound listening port. The current native package
   requires Debian 12/13 or Ubuntu 24.04/26.04; unsupported hosts fail before
@@ -35,7 +35,7 @@ For installation without Vastora, see the
   The Agent's HTTPS API endpoint must not require interactive browser login.
 - Optional `trusted_proxy_ip` is the exact immediate reverse-proxy peer, not a
   wildcard or a client address. Leave it empty unless the proxy topology is known.
-- Collection intervals, probe targets and monitoring policies belong to Senulun.
+- Collection intervals, probe targets and monitoring policies belong to Senlun.
   Vastora does not override them.
 
 ## Lifecycle and historical installations
