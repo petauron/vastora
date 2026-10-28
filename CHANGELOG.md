@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.372](https://github.com/petauron/vastora/compare/v0.1.0-alpha.371...v0.1.0-alpha.372) (2026-10-28)
+
+
+### Bug Fixes
+
+* complete handed-over node removal with multi-agent CI ([#1084](https://github.com/petauron/vastora/issues/1084)) ([b57d76c](https://github.com/petauron/vastora/commit/b57d76ce92a642af92693f5a3dc575989adf9989))
+
 ## [0.1.0-alpha.371](https://github.com/petauron/vastora/compare/v0.1.0-alpha.370...v0.1.0-alpha.371) (2026-10-27)
 
 
