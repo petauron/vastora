@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.373](https://github.com/petauron/vastora/compare/v0.1.0-alpha.372...v0.1.0-alpha.373) (2026-10-28)
+
+
+### Features
+
+* **nodes:** show Glivela SSH protection status in node management ([#1087](https://github.com/petauron/vastora/issues/1087)) ([00e0270](https://github.com/petauron/vastora/commit/00e027037b274e67fa3d8924d013df83a1bfc3cb))
+
+
+### Bug Fixes
+
+* **center:** allow adopted systemd v2 uninstall ([#1090](https://github.com/petauron/vastora/issues/1090)) ([e704ab5](https://github.com/petauron/vastora/commit/e704ab5a019ac32b017dbd3c499ca894d17e5cd8)), closes [#1089](https://github.com/petauron/vastora/issues/1089)
+
 ## [0.1.0-alpha.372](https://github.com/petauron/vastora/compare/v0.1.0-alpha.371...v0.1.0-alpha.372) (2026-10-28)
 
 
