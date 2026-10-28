@@ -244,7 +244,9 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, errors.New("center: migration authorization is only valid for a 3x-ui worker conversion")
 	}
 	var activeTasks int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE agent_id = ? AND app_key = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, request.AgentID, request.AppKey).Scan(&activeTasks); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments d WHERE d.agent_id = ?
+		AND (d.app_key = ? OR d.application_id IN (SELECT a.id FROM applications a WHERE a.node_id = ? AND a.app_key = ?))
+		AND (d.state IN ('pending', 'running') OR d.reconciliation_required = 1)`, request.AgentID, request.AppKey, request.AgentID, request.AppKey).Scan(&activeTasks); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: inspect active deployment task: %w", err)
 	}
 	if activeTasks != 0 {
@@ -299,6 +301,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	} else if len(active.Manifest) == 0 || json.Unmarshal(active.Manifest, &manifest) != nil {
 		return DeploymentView{}, errors.New("center: installed application manifest is invalid")
+	} else if !strings.HasSuffix(request.AppKey, "/"+manifest.ID) {
+		return DeploymentView{}, errors.New("center: upgrade the renamed application to its current catalog recipe before configuring or uninstalling it")
 	}
 	legacyRemoval := request.Operation == "uninstall" && active.PackageRevision == 0 && manifest.Runtime == nil && manifest.PackageRevision == 0
 	if !legacyRemoval && catalog.ValidateApp(manifest) != nil {

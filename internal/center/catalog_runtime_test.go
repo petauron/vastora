@@ -386,3 +386,49 @@ func TestManagedUpgradeDormantMeridianRequiresAdoptionAndOnlyStagesImage(t *test
 		t.Fatal("staged package identity was not retained")
 	}
 }
+
+func TestCatalogRuntimeRenamedInstanceRetainsDeploymentHistory(t *testing.T) {
+	store, node, app := independentRuntimeStore(t)
+	ctx := context.Background()
+	oldKey := OfficialCatalogSourceID + "/" + app.ID
+	_, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: oldKey, Config: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	confirmIndependentTask(t, store, node, task)
+	var originalManifest []byte
+	if err = store.db.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id=?`, task.ID).Scan(&originalManifest); err != nil {
+		t.Fatal(err)
+	}
+
+	app.ID = "renamed-app"
+	app.PackageRevision = 2
+	seedIndependentPackage(t, store, app)
+	newKey := OfficialCatalogSourceID + "/" + app.ID
+	if _, err = store.db.ExecContext(ctx, `UPDATE applications SET app_key=? WHERE id=?`, newKey, task.ApplicationID); err != nil {
+		t.Fatal(err)
+	}
+	active, err := store.activeDeployment(ctx, node.ID, newKey)
+	if err != nil || !active.Installed || active.ID != task.ID || active.PackageRevision != 1 {
+		t.Fatalf("renamed instance lost its installed deployment: %+v, %v", active, err)
+	}
+	apps, err := store.ListApplications(ctx)
+	if err != nil || len(apps) != 1 || apps[0].ID != task.ApplicationID || !apps[0].UpdateAvailable || apps[0].InstalledPackageRevision != 1 || apps[0].AvailablePackageRevision != 2 {
+		t.Fatalf("renamed instance lost upgrade state: %+v, %v", apps, err)
+	}
+	if _, err = store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: newKey, Operation: "configure", Config: json.RawMessage(`{"unused":true}`)}); err == nil || !strings.Contains(err.Error(), "upgrade the renamed application") {
+		t.Fatalf("old manifest was accepted for a renamed application: %v", err)
+	}
+	if _, err = store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: newKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	var historicalKey string
+	var historicalManifest []byte
+	if err = store.db.QueryRowContext(ctx, `SELECT app_key,manifest_json FROM deployments WHERE id=?`, task.ID).Scan(&historicalKey, &historicalManifest); err != nil {
+		t.Fatal(err)
+	}
+	if historicalKey != oldKey || string(historicalManifest) != string(originalManifest) {
+		t.Fatal("renaming rewrote historical deployment evidence")
+	}
+}

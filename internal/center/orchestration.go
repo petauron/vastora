@@ -605,7 +605,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		LEFT JOIN three_x_ui_backups b ON b.application_id = a.id
 		LEFT JOIN deployments latest ON latest.rowid = (
 			SELECT candidate.rowid FROM deployments candidate
-			WHERE candidate.agent_id = a.node_id AND candidate.app_key = a.app_key AND candidate.state = 'succeeded'
+			WHERE candidate.agent_id = a.node_id AND candidate.application_id = a.id AND candidate.state = 'succeeded'
 			ORDER BY candidate.created_at DESC, candidate.rowid DESC LIMIT 1
 		)
 		WHERE NOT EXISTS(SELECT 1 FROM agent_removals r WHERE r.agent_id=a.node_id AND r.state='complete')
