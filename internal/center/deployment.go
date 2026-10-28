@@ -587,6 +587,12 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if request.Operation != "uninstall" && net.ParseIP(serviceAddress) == nil {
 		return DeploymentView{}, errors.New("center: confirm a valid Agent private service address before installing or changing applications")
 	}
+	if renameSenlun && request.AppKey == senlunServiceIdentityKey {
+		var originalAddress string
+		if err := tx.QueryRowContext(ctx, `SELECT service_address FROM deployments WHERE application_id=? AND app_key=? AND state='succeeded' ORDER BY created_at DESC,rowid DESC LIMIT 1`, applicationID, legacySenlunServiceIdentityKey).Scan(&originalAddress); err != nil || originalAddress != serviceAddress {
+			return DeploymentView{}, errors.New("center: original Senlun service address changed; review before renaming")
+		}
+	}
 	deployment.ApplicationID = applicationID
 	var secretID any
 	if len(secrets) != 0 && string(secrets) != "{}" {

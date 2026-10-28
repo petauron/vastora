@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 function fixture(): AppData {
-  const appKey = "vastora-official/pulse-agent";
+  const appKey = "vastora-official/senlun-agent";
   return {
     meridian: emptyAppData({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.test" }).meridian,
     status: {}, centerUpdate: {}, systemDomain: {}, centerRemoteAccess: null,
@@ -31,10 +31,10 @@ function fixture(): AppData {
       { id: "failed-node", name: "Edge Node A", connected: true, credentialRevoked: false, siteId: "site", capabilities: { docker: true, executorVersions: { docker: 1, systemd: 1 }, runtimeCapabilities: [] }, networkProfile: { serviceAddress: "10.0.0.2" } },
     ],
     apps: [{ key: appKey, sourceId: "vastora-official", fetchedAt: "2026-09-11T00:00:00Z", manifestSha256: "a".repeat(64), app: {
-      id: "pulse-agent", version: "0.1.0-alpha.2", packageRevision: 1, runtime: { kind: "systemd", version: 1 }, name: { en: "Collector", "zh-CN": "探针" },
+      id: "senlun-agent", version: "0.1.0-alpha.2", packageRevision: 1, runtime: { kind: "systemd", version: 1 }, name: { en: "Collector", "zh-CN": "探针" },
       description: { en: "Host metrics", "zh-CN": "主机监控" }, hostAccess: true, config: [],
     } }],
-    applications: [{ id: "monitor", appKey: "vastora-official/pulse", status: "running" }],
+    applications: [{ id: "monitor", appKey: "vastora-official/senlun", status: "running" }],
     services: [{ id: "dashboard", applicationId: "monitor", name: "dashboard", status: "ready" }],
     publications: [{ id: "private", serviceId: "dashboard", status: "ready", tlsEnabled: true, kind: "headscale_gateway" }],
     deployments: [{ id: "failed-install", agentId: "failed-node", appKey, appVersion: "0.1.0-alpha.2", state: "failed", operation: "install", deleteData: false, error: "agent: Senlun installation failed", createdAt: "2026-09-11T00:00:00Z", updatedAt: "2026-09-11T00:00:00Z" }],

@@ -165,7 +165,7 @@ func TestSenlunServiceIdentityMigrationPreservesServiceAndHistory(t *testing.T) 
 	if task.ID != migration.ID || task.ApplicationID != installed.ApplicationID || task.SourceReceiptSHA256 != request.SourceReceiptSHA256 || !strings.Contains(string(task.Config), "monitor.example.test") {
 		t.Fatal("migration did not retain the original service and settings")
 	}
-	result, _ := json.Marshal(map[string]any{"sourceReceiptSha256": request.SourceReceiptSHA256, "services": []any{map[string]any{"name": "dashboard", "protocol": "http", "containerPort": 8080, "hostPort": 18080, "address": "10.0.0.10"}}})
+	result, _ := json.Marshal(map[string]any{"sourceReceiptSha256": request.SourceReceiptSHA256, "sourceResources": json.RawMessage(receipt), "services": []any{map[string]any{"name": "dashboard", "protocol": "http", "containerPort": 8080, "hostPort": 18080, "address": "10.0.0.10"}}})
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", mockPackageResult(t, task, result), task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}

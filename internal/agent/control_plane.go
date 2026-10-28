@@ -223,6 +223,7 @@ type ApplicationServiceResult struct {
 
 type ApplicationTaskResult struct {
 	SourceReceiptSHA256  string                              `json:"sourceReceiptSha256,omitempty"`
+	SourceResources      json.RawMessage                     `json:"sourceResources,omitempty"`
 	NodeSecurity         *nodesecurity.View                  `json:"nodeSecurity,omitempty"`
 	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
 	Resources            *InstanceResources                  `json:"resources,omitempty"`

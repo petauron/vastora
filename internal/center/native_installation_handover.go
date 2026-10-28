@@ -1,6 +1,7 @@
 package center
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -97,6 +98,12 @@ func completeNativeReplacement(ctx context.Context, tx *sql.Tx, taskID, applicat
 		return errors.New("center: original installation handover evidence differs")
 	}
 	if expectedSource, _ := senlunIdentitySource(targetKey); expectedSource != "" && sourceKey == expectedSource {
+		if targetKey == senlunServiceIdentityKey {
+			var previous []byte
+			if err := tx.QueryRowContext(ctx, `SELECT resources_json FROM application_resources WHERE application_id=? AND adoption_state='ready'`, applicationID).Scan(&previous); err != nil || len(result.SourceResources) > 1<<20 || !bytes.Equal(previous, result.SourceResources) {
+				return errors.New("center: original Senlun service receipt evidence differs")
+			}
+		}
 		return completeSenlunIdentity(ctx, tx, applicationID, sourceSHA, manifestRaw, now)
 	}
 	var previous []byte

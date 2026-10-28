@@ -29,6 +29,7 @@ type ApplicationServiceResult struct {
 
 type ApplicationTaskResult struct {
 	SourceReceiptSHA256  string                              `json:"sourceReceiptSha256,omitempty"`
+	SourceResources      json.RawMessage                     `json:"sourceResources,omitempty"`
 	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
 	Resources            json.RawMessage                     `json:"resources,omitempty"`
 	SenulunRestored      *senulun.RestoreResult              `json:"pulseRestored,omitempty"`

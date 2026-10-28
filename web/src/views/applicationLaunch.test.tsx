@@ -13,7 +13,7 @@ function access(kind: Publication["kind"], hostname: string): Publication {
 
 function senulun() {
   const data = dashboard();
-  data.applications = [{ ...data.applications[0], id: "senulun", name: "Senlun", appKey: "vastora-official/pulse" }];
+  data.applications = [{ ...data.applications[0], id: "senulun", name: "Senlun", appKey: "vastora-official/senlun" }];
   data.apps = [];
   data.services = [{ id: "dashboard", applicationId: "senulun", siteId: "site", name: "dashboard", protocol: "http", containerPort: 8080, hostPort: 18080, endpoint: "192.0.2.1:18080", source: "catalog", management: true, status: "ready", createdAt: "", updatedAt: "" }];
   data.publications = [access("headscale_gateway", "senulun.private.example"), access("cloudflare_tunnel", "senulun.example.com")];
@@ -25,14 +25,14 @@ describe("Senlun browser access", () => {
     const data = senulun();
     data.desktopDataUnavailable = true;
     expect(desktopApplications(data, "en")).toEqual([]);
-    expect(applicationLaunchURL(data, "vastora-official/pulse")).toBeUndefined();
+    expect(applicationLaunchURL(data, "vastora-official/senlun")).toBeUndefined();
     data.desktopDataUnavailable = false;
     expect(desktopApplications(data, "en")[0].url).toBe("https://senulun.example.com/");
   });
 
   it("opens the configured public tunnel", () => {
     const data = senulun();
-    expect(applicationLaunchURL(data, "vastora-official/pulse")).toBe("https://senulun.example.com/");
+    expect(applicationLaunchURL(data, "vastora-official/senlun")).toBe("https://senulun.example.com/");
     expect(desktopApplications(data, "en")[0].url).toBe("https://senulun.example.com/");
   });
 

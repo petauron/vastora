@@ -275,6 +275,9 @@ func (e ApplicationExecutor) renameSenlunServiceIdentity(ctx context.Context, ta
 	}
 	result.Resources = &newReceipt
 	result.SourceReceiptSHA256 = task.SourceReceiptSHA256
+	// Keep the original ownership receipt as authenticated task evidence. It
+	// contains resource metadata, never the application's data or credentials.
+	result.SourceResources = json.RawMessage(rawReceipt)
 	address := task.ServiceAddress
 	if address == "" {
 		address = "127.0.0.1"
