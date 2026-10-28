@@ -14,7 +14,7 @@ func TestSenulunGenericRecipeUsesApplicationOwnedSetup(t *testing.T) {
 	task := packageTestTask(t)
 	for _, app := range officialContractFixture(t).Apps {
 		if app.ID == "pulse" {
-			task.Manifest = app
+			task.Manifest = currentSenlunFixture(app)
 		}
 	}
 	task.AppKey = senulun.ServiceKey
@@ -49,7 +49,7 @@ func TestSenulunRejectsObsoleteBootstrapSecretBeforeDocker(t *testing.T) {
 	task := packageTestTask(t)
 	for _, app := range officialContractFixture(t).Apps {
 		if app.ID == "pulse" {
-			task.Manifest = app
+			task.Manifest = currentSenlunFixture(app)
 		}
 	}
 	task.AppKey = senulun.ServiceKey

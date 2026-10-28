@@ -112,7 +112,7 @@ func validateAgentRemovalDependencies(ctx context.Context, tx *sql.Tx, id string
 		`SELECT COUNT(*) FROM three_x_ui_nodes n JOIN applications a ON a.id=n.master_application_id JOIN applications w ON w.id=n.worker_application_id WHERE a.node_id=? AND w.node_id<>a.node_id AND (w.status<>'stopped' OR n.status<>'stopped')`,
 		`SELECT COUNT(*) FROM publications p JOIN services s ON s.id=p.service_id JOIN applications a ON a.id=s.application_id WHERE p.entry_node_id=? AND a.node_id<>p.entry_node_id AND (p.status<>'stopped' OR p.cleanup_pending=1)`,
 		`SELECT COUNT(*) FROM three_x_ui_migrations m JOIN applications a ON a.id=m.source_application_id OR a.id=m.target_application_id WHERE a.node_id=? AND m.state IN ('backing_up','restoring','switching')`,
-		`SELECT COUNT(*) FROM applications a WHERE a.node_id=? AND a.app_key='vastora-official/pulse' AND EXISTS(SELECT 1 FROM applications p WHERE p.node_id<>a.node_id AND p.app_key='vastora-official/pulse-agent' AND p.status<>'stopped')`,
+		`SELECT COUNT(*) FROM applications a WHERE a.node_id=? AND a.app_key IN ('vastora-official/pulse','vastora-official/senlun') AND EXISTS(SELECT 1 FROM applications p WHERE p.node_id<>a.node_id AND p.app_key IN ('vastora-official/pulse-agent','vastora-official/senlun-agent') AND p.status<>'stopped')`,
 		`SELECT COUNT(*) FROM agent_network_candidates c JOIN settings s ON s.key='cloudflare_setup_gateway_binding' WHERE c.agent_id=? AND c.address=json_extract(s.value,'$.bindAddress')`,
 	}
 	if !businessRetired {

@@ -185,7 +185,7 @@ func (e ApplicationExecutor) Adopt(ctx context.Context, task DeploymentTask) (Ap
 	task.Operation = "adopt"
 	var backend PackageBackend
 	var receipt *InstanceResources
-	if task.AppKey == senulun.AgentKey || task.AppKey == komariKey {
+	if task.AppKey == "vastora-official/pulse-agent" || task.AppKey == komariKey {
 		manager, ok := e.Host.(SystemdHostApplicationManager)
 		if !ok {
 			return ApplicationTaskResult{}, errors.New("agent: systemd historical inspection unavailable")

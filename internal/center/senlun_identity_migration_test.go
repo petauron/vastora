@@ -100,3 +100,84 @@ func TestSenlunNativeIdentityMigrationRetainsInstanceAndHistory(t *testing.T) {
 		t.Fatal("migration changed the original deployment history")
 	}
 }
+
+func TestSenlunServiceIdentityMigrationPreservesServiceAndHistory(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	raw, err := os.ReadFile("testdata/reviewed-catalog-v4.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture catalog.Catalog
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	var previous catalog.AppManifest
+	for _, app := range fixture.Apps {
+		if app.ID == "pulse" {
+			previous = app
+		}
+	}
+	if previous.Runtime == nil || previous.Runtime.Docker == nil {
+		t.Fatal("missing historical service fixture")
+	}
+	seedIndependentPackage(t, store, previous)
+	node := enrollOrchestrationNode(t, store, "monitor", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
+	installed, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: legacySenlunServiceIdentityKey, Config: json.RawMessage(`{"public_url":"https://monitor.example.test"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := claimTask(t, store, node)
+	services := json.RawMessage(`{"services":[{"name":"dashboard","protocol":"http","containerPort":8080,"hostPort":18080,"address":"10.0.0.10"}]}`)
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, original.ID, original.Attempt, true, "", mockPackageResult(t, original, services), original.RequiredRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	var originalManifest, receipt []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id=?`, original.ID).Scan(&originalManifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT resources_json FROM application_resources WHERE application_id=?`, installed.ApplicationID).Scan(&receipt); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(receipt)
+	raw, _ = json.Marshal(previous)
+	var target catalog.AppManifest
+	if err := json.Unmarshal(raw, &target); err != nil {
+		t.Fatal(err)
+	}
+	target.ID, target.PackageRevision = "senlun", previous.PackageRevision+1
+	target.Images[0].Name = "senlun"
+	target.Runtime.Docker.Containers[0].Name = "senlun"
+	target.Runtime.Docker.Containers[0].Image = "senlun"
+	seedIndependentPackage(t, store, target)
+	grants := []string{}
+	request := DeploymentRequest{AgentID: node.ID, AppKey: senlunServiceIdentityKey, Operation: "install", ReplaceApplicationID: installed.ApplicationID, SourceReceiptSHA256: hex.EncodeToString(digest[:]), AuthorizedCapabilities: &grants, Config: json.RawMessage(`{}`)}
+	migration, err := store.CreateDeployment(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var key string
+	if err := store.db.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, installed.ApplicationID).Scan(&key); err != nil || key != legacySenlunServiceIdentityKey {
+		t.Fatal("Center changed service identity before the Agent confirmed it")
+	}
+	task := claimTask(t, store, node)
+	if task.ID != migration.ID || task.ApplicationID != installed.ApplicationID || task.SourceReceiptSHA256 != request.SourceReceiptSHA256 || !strings.Contains(string(task.Config), "monitor.example.test") {
+		t.Fatal("migration did not retain the original service and settings")
+	}
+	result, _ := json.Marshal(map[string]any{"sourceReceiptSha256": request.SourceReceiptSHA256, "services": []any{map[string]any{"name": "dashboard", "protocol": "http", "containerPort": 8080, "hostPort": 18080, "address": "10.0.0.10"}}})
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", mockPackageResult(t, task, result), task.RequiredRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, installed.ApplicationID).Scan(&key); err != nil || key != senlunServiceIdentityKey {
+		t.Fatal("confirmed service migration did not retain its instance")
+	}
+	var after []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id=?`, original.ID).Scan(&after); err != nil || string(after) != string(originalManifest) {
+		t.Fatal("migration changed the original deployment history")
+	}
+	var serviceCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE application_id=? AND name='dashboard'`, installed.ApplicationID).Scan(&serviceCount); err != nil || serviceCount != 1 {
+		t.Fatal("migration did not preserve the original service")
+	}
+}

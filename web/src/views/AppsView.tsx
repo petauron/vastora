@@ -69,7 +69,7 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
   ) => {
     let result: Deployment | undefined;
     const scope = deploymentSecretScope(agent.id, app.key, operation);
-    const operationKey = app.key === "vastora-official/3x-ui" && operation === "install" && role !== "worker" || app.key === "vastora-official/pulse" && (operation === "install" || operation === "upgrade") ? secretOperation(scope) : undefined;
+    const operationKey = app.key === "vastora-official/3x-ui" && operation === "install" && role !== "worker" || app.key === "vastora-official/senlun" && (operation === "install" || operation === "upgrade") ? secretOperation(scope) : undefined;
     const messages = { install: copy(language, "安装任务已创建。可在活动中查看进度。", "Install task created. Follow progress in Activity."), upgrade: copy(language, "升级任务已创建。", "Upgrade task created."), configure: copy(language, "配置任务已创建。", "Configuration task created.") };
     await mutate(async () => { result = await api.createDeployment(agent.id, app.key, config, operation, false, role, registryCredentialId, operationKey, authorizedCapabilities, operation === "configure" ? undefined : { packageRevision: app.app.packageRevision ?? 0, manifestSha256: app.manifestSha256 ?? "", ...(backupsConfirmed ? { backupsConfirmed: true } : {}) }); }, messages[operation], { reportError: false });
     if (result?.oneTimeCredentials && operationKey) setCredentials({ ...result.oneTimeCredentials, deploymentId: result.id, operationKey, scope });

@@ -472,7 +472,7 @@ func readPendingApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, 
 		 JOIN meridian_endpoints endpoint ON endpoint.id=pilot.endpoint_id
 		 WHERE endpoint.application_id=d.application_id
 		) OR (d.app_key='vastora-official/glivela-entry' AND d.operation='upgrade' AND a.runtime='host'))
-		AND NOT (d.app_key = 'vastora-official/pulse-agent' AND d.operation = 'install' AND d.secret_id IS NULL
+		AND NOT (d.app_key = 'vastora-official/senlun-agent' AND d.operation = 'install' AND d.secret_id IS NULL AND d.source_receipt_sha256 = ''
 	 AND NOT EXISTS (SELECT 1 FROM agent_reinstall_current_applications current_restore WHERE current_restore.deployment_id=d.id))`
 	queryArgs := []any{agentID}
 	if requiredTaskID != "" {

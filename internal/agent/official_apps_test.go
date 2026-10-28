@@ -29,3 +29,21 @@ func TestCatalogRecipesUseGenericRuntimeCapabilities(t *testing.T) {
 		}
 	}
 }
+
+// Model the current identity in tests without rewriting the archived fixture.
+func currentSenlunFixture(app catalog.AppManifest) catalog.AppManifest {
+	switch app.ID {
+	case "pulse":
+		app.ID = "senlun"
+		app.Images[0].Name = "senlun"
+		app.Runtime.Docker.Containers[0].Name = "senlun"
+		app.Runtime.Docker.Containers[0].Image = "senlun"
+	case "pulse-agent":
+		app.ID = "senlun-agent"
+		for i := range app.Artifacts {
+			app.Artifacts[i].Name = "senlun-agent"
+		}
+		app.Runtime.Systemd.Artifact = "senlun-agent"
+	}
+	return app
+}
