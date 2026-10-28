@@ -394,6 +394,7 @@ func TestCatalogRuntimeRenamedInstanceRetainsDeploymentHistory(t *testing.T) {
 		{Key: "setting", Type: "string", Label: catalog.LocalizedText{English: "Setting", SimplifiedChinese: "设置"}, Description: catalog.LocalizedText{English: "Setting", SimplifiedChinese: "设置"}},
 		{Key: "token", Type: "string", Secret: true, Label: catalog.LocalizedText{English: "Token", SimplifiedChinese: "令牌"}, Description: catalog.LocalizedText{English: "Token", SimplifiedChinese: "令牌"}},
 	}
+	app.PackageRevision = 2
 	seedIndependentPackage(t, store, app)
 	oldKey := OfficialCatalogSourceID + "/" + app.ID
 	_, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: oldKey, Config: json.RawMessage(`{"setting":"retained","token":"synthetic-secret"}`)})
@@ -408,18 +409,18 @@ func TestCatalogRuntimeRenamedInstanceRetainsDeploymentHistory(t *testing.T) {
 	}
 
 	app.ID = "renamed-app"
-	app.PackageRevision = 2
+	app.PackageRevision = 3
 	seedIndependentPackage(t, store, app)
 	newKey := OfficialCatalogSourceID + "/" + app.ID
 	if _, err = store.db.ExecContext(ctx, `UPDATE applications SET app_key=? WHERE id=?`, newKey, task.ApplicationID); err != nil {
 		t.Fatal(err)
 	}
 	active, err := store.activeDeployment(ctx, node.ID, newKey)
-	if err != nil || !active.Installed || active.ID != task.ID || active.PackageRevision != 1 {
+	if err != nil || !active.Installed || active.ID != task.ID || active.PackageRevision != 2 {
 		t.Fatalf("renamed instance lost its installed deployment: %+v, %v", active, err)
 	}
 	apps, err := store.ListApplications(ctx)
-	if err != nil || len(apps) != 1 || apps[0].ID != task.ApplicationID || !apps[0].UpdateAvailable || apps[0].InstalledPackageRevision != 1 || apps[0].AvailablePackageRevision != 2 {
+	if err != nil || len(apps) != 1 || apps[0].ID != task.ApplicationID || !apps[0].UpdateAvailable || apps[0].InstalledPackageRevision != 2 || apps[0].AvailablePackageRevision != 3 {
 		t.Fatalf("renamed instance lost upgrade state: %+v, %v", apps, err)
 	}
 	if _, err = store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: newKey, Operation: "configure", Config: json.RawMessage(`{"unused":true}`)}); err == nil || !strings.Contains(err.Error(), "upgrade the renamed application") {
