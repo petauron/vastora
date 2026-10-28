@@ -183,3 +183,7 @@ Existing Glivela business installations require the [final data handover](docs/G
 离线节点在 Glivela 完成独立接管后，平台移除保留冻结业务历史及外键引用，
 完成状态从正常节点和安装列表移除；业务订阅须先由 Glivela 停用。参见
 [永久移除离线节点](docs/offline-node-removal.md)。
+
+节点管理的“SSH 保护策略”按需读取 Glivela 当前状态，显示代理出口对宿主 SSH
+地址的保护配置、运行修订与最后上报。该只读快照不代表 SSH 登录验证；宿主登录
+安全基线仍单独管理。读取失败或缺少节点映射时显示未知，可手动刷新。

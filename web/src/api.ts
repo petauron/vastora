@@ -1,3 +1,4 @@
+import type { SSHProtectionInventory } from "./node-ssh-protection-types";
 import type { ReinstallCurrentMaterial, ReinstallCurrentVerification } from "./types";
 import type { ReinstallClientCheck, ReinstallClientCheckInput } from "./reinstall-acceptance-types";
 import type { Action, AgentReinstallLandingSource, AgentReinstallDNS, AgentReinstallDNSInput, AgentReinstallAccess, AgentReinstallEntryCheck, AgentReinstallListener, AgentReinstallRuntime, AgentReinstallApplicationInput, AgentReinstallPreparation, AgentEnrollment, AgentReinstallPlan, AgentReinstallInput, AgentReinstallNetworkInput, AgentReinstallNetworkApproval, AgentReinstallLocalWorkInput, AgentReinstallLocalDisposition, AgentReinstallMonitorInput, AgentReinstallMonitorInspection, AgentReinstallMonitorRotation, AgentReinstallMonitorReporting, AgentReinstallMonitorRestore, AgentUpdate, AgentView, ApplicationCommand, ApplicationCommandKind, ApplicationCredentialRotation, ApplicationCredentials, AppView, Application, AssistantConversation, AssistantExecution, AssistantProvider, AssistantProposal, AssistantRun, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, CreatePublicationInput, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, RealitySecurityCheck, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration, XrayConfigurationRecovery } from "./types";
@@ -90,6 +91,9 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
+  nodeSSHProtection(applicationId: string, signal?: AbortSignal) {
+    return request<SSHProtectionInventory>(`/api/v1/applications/${encodeURIComponent(applicationId)}/panel/v1/admin/business`, { method: "POST", body: "{}", signal });
+  },
 	 nodeSecurity: (id: string, signal?: AbortSignal) => request<NodeSecurity>(`/api/v1/agents/${encodeURIComponent(id)}/security`, { signal }),
 	 configureNodeSecurity: (id: string, input: SecurityTask, signal?: AbortSignal) => request<NodeSecurity>(`/api/v1/agents/${encodeURIComponent(id)}/security`, { method: "POST", body: JSON.stringify(input), signal }),
   ipQuality: (signal?: AbortSignal, preferences?: IPQualityPreferences, compareNodeId?: string, compareAddress?: string) => {
