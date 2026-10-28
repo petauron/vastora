@@ -413,6 +413,14 @@
 .desktop-launchpad-icon i:nth-child(3n) { background: #7fa774; }
 .desktop-launchpad-icon i:nth-child(4n) { background: #a081ce; }
 .desktop-shell :is(button, a):focus-visible { outline: 2px solid #148af8; outline-offset: 3px; }
+/* Embedded applications own their inner spacing and scrolling. The desktop
+   owns the outer window clip; carry its available height through the mount. */
+.desktop-window-content:has(.official-app-workspace) { padding: 0; gap: 0; overflow: hidden; }
+.apps-workspace:has(> .official-app-workspace),
+.official-app-workspace,
+.official-app-mount { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.official-app-workspace > :not(.official-app-mount) { margin: 24px; flex-shrink: 0; }
+
 .desktop-store-window { padding: 0; overflow: hidden; background: transparent; }
 .desktop-store-window .apps-workspace[data-mode="store"] { flex: 1; min-height: 0; }
 .desktop-store-window .apps-workspace[data-mode="store"] > :not(.store-layout) { margin: 16px 20px 0; }
