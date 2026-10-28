@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.374](https://github.com/petauron/vastora/compare/v0.1.0-alpha.373...v0.1.0-alpha.374) (2026-10-28)
+
+
+### Features
+
+* retain Senlun runtime configuration through rename upgrades ([#1091](https://github.com/petauron/vastora/issues/1091)) ([80224e1](https://github.com/petauron/vastora/commit/80224e1cc3ad9d810153fd567ae00a1e8b3df89c))
+
 ## [0.1.0-alpha.373](https://github.com/petauron/vastora/compare/v0.1.0-alpha.372...v0.1.0-alpha.373) (2026-10-28)
 
 
