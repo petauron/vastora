@@ -90,6 +90,9 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
+  nodeSSHProtection(applicationId: string, signal?: AbortSignal) {
+    return request<import("./node-ssh-protection-types").SSHProtectionInventory>(`/api/v1/applications/${encodeURIComponent(applicationId)}/panel/v1/admin/business`, { method: "POST", body: "{}", signal });
+  },
 	 nodeSecurity: (id: string, signal?: AbortSignal) => request<NodeSecurity>(`/api/v1/agents/${encodeURIComponent(id)}/security`, { signal }),
 	 configureNodeSecurity: (id: string, input: SecurityTask, signal?: AbortSignal) => request<NodeSecurity>(`/api/v1/agents/${encodeURIComponent(id)}/security`, { method: "POST", body: JSON.stringify(input), signal }),
   ipQuality: (signal?: AbortSignal, preferences?: IPQualityPreferences, compareNodeId?: string, compareAddress?: string) => {
