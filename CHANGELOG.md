@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.377](https://github.com/petauron/vastora/compare/v0.1.0-alpha.376...v0.1.0-alpha.377) (2026-10-28)
+
+
+### Features
+
+* migrate Senlun application identities ([0a13dc6](https://github.com/petauron/vastora/commit/0a13dc62839eff8df29a3b2f5cf13c06e8528038))
+
+
+### Bug Fixes
+
+* **ui:** fit official app panel to window edges ([4c72402](https://github.com/petauron/vastora/commit/4c7240232260b17ee41375210f0032f979eed651))
+
 ## [0.1.0-alpha.376](https://github.com/petauron/vastora/compare/v0.1.0-alpha.375...v0.1.0-alpha.376) (2026-10-28)
 
 
