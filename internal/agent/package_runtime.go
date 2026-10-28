@@ -326,6 +326,35 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if err := e.Backend.Prepare(ctx, task, receipt); err != nil {
 		return result, err
 	}
+	if task.Operation == "configure" && task.Manifest.Runtime.Kind == "systemd" && task.Manifest.Runtime.Version == 2 {
+		backend, ok := e.Backend.(*NativeServicesPackageBackend)
+		if !ok || receipt.State != "ready" {
+			return result, errors.New("agent: native service port update requires a ready owned bundle")
+		}
+		if err := backend.Healthy(ctx, task, receipt); err != nil {
+			return result, err
+		}
+		if err := backend.probeServicePorts(ctx, task); err != nil {
+			return result, err
+		}
+		for _, service := range task.Manifest.Services {
+			port, portErr := serviceHostPort(task.Config, service)
+			if portErr != nil {
+				return result, portErr
+			}
+			address := task.ServiceAddress
+			if address == "" {
+				address = "127.0.0.1"
+			}
+			result.Services = append(result.Services, ApplicationServiceResult{Name: service.Name, Protocol: service.Protocol, ContainerPort: service.ContainerPort, HostPort: port, Address: address})
+		}
+		receipt.TaskID = task.ID
+		if err := e.save(receipt); err != nil {
+			return ApplicationTaskResult{}, err
+		}
+		result.Resources = receipt
+		return result, nil
+	}
 	receipt.State, receipt.TaskID = "prepared", task.ID
 	if err := e.save(receipt); err != nil {
 		return result, err

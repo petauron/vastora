@@ -67,7 +67,8 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 		var changes map[string]json.RawMessage
 		programOnly := len(request.Config) == 0 || json.Unmarshal(request.Config, &changes) == nil && len(changes) == 0
 		var ownerErr error
-		if programOnly {
+		portOnly := request.Operation == "configure" && manifest.Runtime != nil && manifest.Runtime.Kind == "systemd" && manifest.Runtime.Version == 2 && validateNativeServicePortConfigure(manifest, request.Config) == nil
+		if programOnly || portOnly {
 			ownerErr = requireApplicationDeploymentOwner(ctx, tx, applicationID, request.Operation, manifest)
 		} else {
 			ownerErr = requireLegacyMeridianApplicationOwner(ctx, tx, applicationID)
@@ -726,7 +727,7 @@ func requireApplicationDeploymentOwner(ctx context.Context, tx *sql.Tx, applicat
 	if err == nil || !errors.Is(err, errGlivelaPilotOwnsRuntime) {
 		return err
 	}
-	if operation != "upgrade" || manifest.Runtime == nil || manifest.Runtime.Kind != "systemd" || manifest.Runtime.Version != 2 {
+	if (operation != "upgrade" && operation != "configure") || manifest.Runtime == nil || manifest.Runtime.Kind != "systemd" || manifest.Runtime.Version != 2 {
 		return err
 	}
 	var key, runtime string
