@@ -34,6 +34,7 @@ func TestSenlunVolumeTransferValidatesContentWithoutBackup(t *testing.T) {
 	}
 	for _, header := range []*tar.Header{
 		{Name: "../escape", Typeflag: tar.TypeReg, Mode: 0600},
+		{Name: "senlun/../senlun/file", Typeflag: tar.TypeReg, Mode: 0600},
 		{Name: "senlun/link", Typeflag: tar.TypeSymlink, Linkname: "../outside", Mode: 0777},
 	} {
 		var bad bytes.Buffer

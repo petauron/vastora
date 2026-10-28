@@ -15,21 +15,39 @@ import (
 
 const senlunNativeIdentityKey = "vastora-official/senlun-agent"
 const legacySenlunNativeIdentityKey = "vastora-official/pulse-agent"
+const senlunServiceIdentityKey = "vastora-official/senlun"
+const legacySenlunServiceIdentityKey = "vastora-official/pulse"
 
-func senlunNativeIdentityRequest(request DeploymentRequest) bool {
-	return request.AppKey == senlunNativeIdentityKey && request.ReplaceApplicationID != "" && request.SourceReceiptSHA256 != "" && request.Operation == "install"
+func senlunIdentitySource(target string) (string, string) {
+	switch target {
+	case senlunNativeIdentityKey:
+		return legacySenlunNativeIdentityKey, "systemd"
+	case senlunServiceIdentityKey:
+		return legacySenlunServiceIdentityKey, "docker"
+	default:
+		return "", ""
+	}
+}
+
+func senlunIdentityRequest(request DeploymentRequest) bool {
+	source, _ := senlunIdentitySource(request.AppKey)
+	return source != "" && request.ReplaceApplicationID != "" && request.SourceReceiptSHA256 != "" && request.Operation == "install"
 }
 
 // Check both the signed historical deployment and the current Agent receipt.
 // A changed artifact, permission or runtime is not an identity-only migration.
-func validateSenlunNativeIdentitySource(ctx context.Context, tx *sql.Tx, applicationID, expectedSHA string, target catalog.AppManifest, allowPending bool) (string, error) {
+func validateSenlunIdentitySource(ctx context.Context, tx *sql.Tx, applicationID, expectedSHA string, target catalog.AppManifest, allowPending bool) (string, error) {
+	sourceKey, runtime := senlunIdentitySource("vastora-official/" + target.ID)
+	if sourceKey == "" {
+		return "", errors.New("center: unsupported Senlun identity migration")
+	}
 	var nodeID, status, adoption, version string
 	var rawReceipt, rawManifest []byte
 	var revision int
 	err := tx.QueryRowContext(ctx, `SELECT a.node_id,a.status,r.adoption_state,r.resources_json,d.manifest_json,d.app_version,d.package_revision
 		FROM applications a JOIN application_resources r ON r.application_id=a.id
 		JOIN deployments d ON d.rowid=(SELECT old.rowid FROM deployments old WHERE old.application_id=a.id AND old.app_key=a.app_key AND old.state='succeeded' ORDER BY old.created_at DESC,old.rowid DESC LIMIT 1)
-		WHERE a.id=? AND a.app_key=? AND d.operation IN ('install','upgrade','configure')`, applicationID, legacySenlunNativeIdentityKey).Scan(&nodeID, &status, &adoption, &rawReceipt, &rawManifest, &version, &revision)
+		WHERE a.id=? AND a.app_key=? AND d.operation IN ('install','upgrade','configure')`, applicationID, sourceKey).Scan(&nodeID, &status, &adoption, &rawReceipt, &rawManifest, &version, &revision)
 	if err != nil || (allowPending && status != "pending" && status != "deploying") || (!allowPending && (status == "pending" || status == "deploying")) || adoption != "ready" {
 		return "", errors.New("center: original Senlun ownership requires review")
 	}
@@ -44,7 +62,7 @@ func validateSenlunNativeIdentitySource(ctx context.Context, tx *sql.Tx, applica
 		ManifestSHA256  string `json:"manifestSha256"`
 	}
 	digest := sha256.Sum256(rawReceipt)
-	if len(rawReceipt) > 1<<20 || hex.EncodeToString(digest[:]) != expectedSHA || json.Unmarshal(rawReceipt, &receipt) != nil || receipt.Version != 1 || receipt.ApplicationID != applicationID || receipt.AppKey != legacySenlunNativeIdentityKey || receipt.Runtime != "systemd" || receipt.State != "ready" || receipt.PackageVersion != version || receipt.PackageRevision != revision {
+	if len(rawReceipt) > 1<<20 || hex.EncodeToString(digest[:]) != expectedSHA || json.Unmarshal(rawReceipt, &receipt) != nil || receipt.Version != 1 || receipt.ApplicationID != applicationID || receipt.AppKey != sourceKey || receipt.Runtime != runtime || receipt.State != "ready" || receipt.PackageVersion != version || receipt.PackageRevision != revision {
 		return "", errors.New("center: original Senlun resource receipt differs")
 	}
 	var previous catalog.AppManifest
@@ -61,8 +79,8 @@ func validateSenlunNativeIdentitySource(ctx context.Context, tx *sql.Tx, applica
 	return nodeID, nil
 }
 
-func (s *Store) prepareSenlunNativeIdentity(ctx context.Context, tx *sql.Tx, request DeploymentRequest, target catalog.AppManifest, now time.Time) (string, error) {
-	nodeID, err := validateSenlunNativeIdentitySource(ctx, tx, request.ReplaceApplicationID, request.SourceReceiptSHA256, target, false)
+func (s *Store) prepareSenlunIdentity(ctx context.Context, tx *sql.Tx, request DeploymentRequest, target catalog.AppManifest, now time.Time) (string, error) {
+	nodeID, err := validateSenlunIdentitySource(ctx, tx, request.ReplaceApplicationID, request.SourceReceiptSHA256, target, false)
 	if err != nil || nodeID != request.AgentID {
 		return "", errors.New("center: Senlun identity source or target node differs")
 	}
@@ -70,7 +88,7 @@ func (s *Store) prepareSenlunNativeIdentity(ctx context.Context, tx *sql.Tx, req
 		return "", err
 	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM deployments WHERE application_id=? AND (state IN ('pending','running') OR reconciliation_required=1))+(SELECT COUNT(*) FROM application_commands WHERE application_id=? AND state IN ('pending','running'))+(SELECT COUNT(*) FROM applications WHERE node_id=? AND app_key=? AND id<>?)`, request.ReplaceApplicationID, request.ReplaceApplicationID, nodeID, senlunNativeIdentityKey, request.ReplaceApplicationID).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM deployments WHERE application_id=? AND (state IN ('pending','running') OR reconciliation_required=1))+(SELECT COUNT(*) FROM application_commands WHERE application_id=? AND state IN ('pending','running'))+(SELECT COUNT(*) FROM applications WHERE node_id=? AND app_key=? AND id<>?)`, request.ReplaceApplicationID, request.ReplaceApplicationID, nodeID, request.AppKey, request.ReplaceApplicationID).Scan(&active); err != nil {
 		return "", err
 	}
 	if active != 0 {
@@ -85,20 +103,25 @@ func (s *Store) prepareSenlunNativeIdentity(ctx context.Context, tx *sql.Tx, req
 	return request.ReplaceApplicationID, nil
 }
 
-func completeSenlunNativeIdentity(ctx context.Context, tx *sql.Tx, applicationID, expectedSHA string, targetRaw []byte, now time.Time) error {
+func completeSenlunIdentity(ctx context.Context, tx *sql.Tx, applicationID, expectedSHA string, targetRaw []byte, now time.Time) error {
 	var target catalog.AppManifest
-	if json.Unmarshal(targetRaw, &target) != nil || target.ID != "senlun-agent" {
+	if json.Unmarshal(targetRaw, &target) != nil {
+		return errors.New("center: authorized Senlun target recipe is invalid")
+	}
+	targetKey := "vastora-official/" + target.ID
+	sourceKey, _ := senlunIdentitySource(targetKey)
+	if sourceKey == "" {
 		return errors.New("center: authorized Senlun target recipe is invalid")
 	}
 	// prepare marked this same instance pending. Recheck the original receipt
 	// and signed recipe in the same transaction as the identity update.
-	if _, err := validateSenlunNativeIdentitySource(ctx, tx, applicationID, expectedSHA, target, true); err != nil {
+	if _, err := validateSenlunIdentitySource(ctx, tx, applicationID, expectedSHA, target, true); err != nil {
 		return err
 	}
 	if err := retainNativeReplacementBindings(ctx, tx, applicationID, target); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE applications SET app_key=?,updated_at=? WHERE id=? AND app_key=?`, senlunNativeIdentityKey, now.Format(time.RFC3339Nano), applicationID, legacySenlunNativeIdentityKey)
+	result, err := tx.ExecContext(ctx, `UPDATE applications SET app_key=?,updated_at=? WHERE id=? AND app_key=?`, targetKey, now.Format(time.RFC3339Nano), applicationID, sourceKey)
 	if err != nil {
 		return err
 	}

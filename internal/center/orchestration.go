@@ -49,8 +49,8 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 		if err := requireLegacyMeridianApplicationOwner(ctx, tx, request.ReplaceApplicationID); err != nil {
 			return "", err
 		}
-		if senlunNativeIdentityRequest(request) {
-			return s.prepareSenlunNativeIdentity(ctx, tx, request, manifest, now)
+		if senlunIdentityRequest(request) {
+			return s.prepareSenlunIdentity(ctx, tx, request, manifest, now)
 		}
 		return s.prepareNativeReplacement(ctx, tx, request, manifest, now)
 	}

@@ -184,8 +184,9 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if request.Operation != "install" && request.Operation != "upgrade" && request.Operation != "configure" && request.Operation != "uninstall" {
 		return DeploymentView{}, errors.New("center: invalid deployment operation")
 	}
-	renameSenlunAgent := senlunNativeIdentityRequest(request)
-	if (request.ReplaceApplicationID == "") != (request.SourceReceiptSHA256 == "") || request.ReplaceApplicationID != "" && (request.Operation != "install" || (!renameSenlunAgent && !request.BackupsConfirmed) || request.Role != "" || request.AuthorizedCapabilities == nil) {
+	renameSenlun := senlunIdentityRequest(request)
+	renameSenlunAgent := renameSenlun && request.AppKey == senlunNativeIdentityKey
+	if (request.ReplaceApplicationID == "") != (request.SourceReceiptSHA256 == "") || request.ReplaceApplicationID != "" && (request.Operation != "install" || (!renameSenlun && !request.BackupsConfirmed) || request.Role != "" || request.AuthorizedCapabilities == nil) {
 		return DeploymentView{}, errors.New("center: explicit native handover requires the original application, receipt digest, backup confirmation and reviewed target permissions")
 	}
 	if err := s.validateSenulunDeployment(ctx, request); err != nil {
@@ -369,16 +370,16 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		config, secrets = []byte(`{}`), []byte(`{}`)
 	} else {
 		deploymentConfig := request.Config
-		if renameSenlunAgent && len(request.Config) != 0 {
+		if renameSenlun && len(request.Config) != 0 {
 			changes, changeErr := decodeJSONObject(request.Config, "center: identity migration requires an empty configuration")
 			if changeErr != nil || len(changes) != 0 {
 				return DeploymentView{}, errors.New("center: identity migration cannot modify application settings")
 			}
 		}
-		if request.Operation == "upgrade" || request.Operation == "configure" || renameSenlunAgent {
+		if request.Operation == "upgrade" || request.Operation == "configure" || renameSenlun {
 			previousKey := request.AppKey
-			if renameSenlunAgent {
-				previousKey = "vastora-official/pulse-agent"
+			if renameSenlun {
+				previousKey, _ = senlunIdentitySource(request.AppKey)
 			}
 			deploymentConfig, err = s.mergePreviousDeploymentConfig(ctx, request.AgentID, previousKey, request.Config)
 			if err != nil {
@@ -439,8 +440,12 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				return DeploymentView{}, err
 			}
 		} else {
-			if request.AppKey == senulunAppKey {
-				deploymentConfig, err = s.withSenulunPublicOrigin(ctx, request.AgentID, request.Operation, deploymentConfig)
+			if request.AppKey == senulunAppKey || renameSenlun && request.AppKey == senlunServiceIdentityKey {
+				operation := request.Operation
+				if renameSenlun {
+					operation = "upgrade"
+				}
+				deploymentConfig, err = s.withSenulunPublicOrigin(ctx, request.AgentID, operation, deploymentConfig)
 				if err != nil {
 					return DeploymentView{}, err
 				}
@@ -457,7 +462,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if request.AppKey == senulunAppKey && request.Operation != "uninstall" {
+	if (request.AppKey == senulunAppKey || renameSenlun && request.AppKey == senlunServiceIdentityKey) && request.Operation != "uninstall" {
 		if _, err := senulun.DecodeServiceConfig(config); err != nil {
 			return DeploymentView{}, err
 		}
