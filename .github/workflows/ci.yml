@@ -270,7 +270,7 @@ jobs:
           # checked commit; historic commits do not need rescanning on every PR.
           log_opts="-1 $HEAD_SHA"
           if [ -n "$BASE_SHA" ]; then log_opts="$BASE_SHA..$HEAD_SHA"; fi
-          go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --log-opts="$log_opts" .
+          go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --verbose --log-opts="$log_opts" .
 
   release-metadata:
     name: Release metadata

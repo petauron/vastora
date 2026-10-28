@@ -9,7 +9,7 @@ import (
 )
 
 func TestSenulunUpgradeEnvironmentPreservesConfiguration(t *testing.T) {
-	before := []string{"SENULUN_PUBLIC_URL=https://old.example.invalid", "SENULUN_DATABASE_PATH=/var/lib/senulun/pulse.db", "SENULUN_GITHUB_CLIENT_ID=synthetic-id", "SENULUN_TRAFFIC_KEY_FILE=/var/lib/senulun/key", "SENULUN_RETENTION_DAYS=23"}
+	before := []string{"SENULUN_PUBLIC_URL=https://old.example.invalid", "SENULUN_DATABASE_PATH=/var/lib/senulun/store/senulun.db", "SENULUN_GITHUB_CLIENT_ID=synthetic-id", "SENULUN_TRAFFIC_KEY_FILE=/var/lib/senulun/key", "SENULUN_RETENTION_DAYS=23"}
 	before = append(before, "SENULUN_SETUP_TOKEN_FILE=/pulse-bootstrap/setup-token")
 	got, err := senulunUpgradeEnvironment(before, []string{"SENLUN_PUBLIC_URL=https://new.example.invalid"})
 	if err != nil {
