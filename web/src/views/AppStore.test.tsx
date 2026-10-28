@@ -15,8 +15,8 @@ function app(id = "pulse-agent", sourceId = "vastora-official"): AppView {
     key: `${sourceId}/${id}`, sourceId, fetchedAt: "2026-09-11T00:00:00Z", manifestSha256: "a".repeat(64),
     app: {
       id, version: "0.1.0-alpha.2", packageRevision: 1, runtime: { kind: id === "pulse" ? "docker" : "systemd", version: 1 }, name: id === "pulse"
-        ? { en: "Senulun", "zh-CN": "Senulun 监控主机" }
-        : { en: "Senulun Agent", "zh-CN": "Senulun 探针" },
+        ? { en: "Senlun", "zh-CN": "Senlun 监控主机" }
+        : { en: "Senlun Agent", "zh-CN": "Senlun 探针" },
       description: { en: "Collect host metrics without Docker.", "zh-CN": "采集主机监控指标，无需 Docker。" },
       hostAccess: id !== "pulse", config: [],
     },
@@ -108,11 +108,11 @@ describe("app store cards", () => {
     const value = app("pulse");
     value.app.services = [{ name: "dashboard", protocol: "http", containerPort: 8080 }];
     const container = markup(<AppStoreCard app={value} language="zh-CN" installedCount={1} canInstall blocker="" onInstall={vi.fn()} />);
-    expect(container.querySelector("h3")?.textContent).toBe("Senulun 监控主机");
+    expect(container.querySelector("h3")?.textContent).toBe("Senlun 监控主机");
     expect(container.textContent).toContain("已安装到 1 个节点");
     expect(container.textContent).not.toContain("v0.1.0-alpha.2");
     expect(container.querySelector<HTMLButtonElement>(installSelector)?.disabled).toBe(false);
-    expect(container.querySelector(installSelector)?.getAttribute("aria-label")).toBe("安装 Senulun 监控主机");
+    expect(container.querySelector(installSelector)?.getAttribute("aria-label")).toBe("安装 Senlun 监控主机");
     await inspectDetails(value, "zh-CN", 1, (details) => {
       expect(details.textContent).toContain(value.app.description["zh-CN"]);
       expect(details.textContent).toContain("v0.1.0-alpha.2 · r1");

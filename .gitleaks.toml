@@ -16,3 +16,10 @@ targetRules = ["generic-api-key"]
 condition = "AND"
 paths = ['''^catalog/trust/README\.md$''']
 regexes = ['''^e7892d2fba95f7f7cb9aa9cb62b9b8ebae0b993409d3a5485a2b38d9319ab0e4$''']
+
+[[allowlists]]
+description = "Reviewed synthetic interval and retention assignments in environment conversion fixtures"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['^internal/(agent/senulun_brand_environment_test|senulun/brand_environment_test)\.go$']
+regexes = ['^SEN(ULUN|LUN)_(INTERVAL_SECONDS=30|RETENTION_DAYS=23)$']

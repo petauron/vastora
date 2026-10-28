@@ -2,7 +2,7 @@
 
 This is an implementation checkpoint, not production approval. Vastora changes
 are reviewed in PR #716. Catalog publication is triggered manually after a
-successful application release; the Senulun notification PR #25 was closed. The shared
+successful application release; the Senlun notification PR #25 was closed. The shared
 module is published as petauron/catalog v0.2.0 and pinned without a development
 workspace replacement. The earlier local-verification bullets below predate this
 dependency update and the schema 102 merge; current CI and the bounded historical
@@ -20,7 +20,7 @@ The focused Center `TestAgentReinstall` suite passes after carrying the saved
 package revision, canonical manifest digest, and approved capabilities into
 replacement deployments. The preparation claim/projection checks also reject
 changed digests, revisions, and capability grants. This is local recovery
-coverage, not live deployment or adoption evidence. Focused package lifecycle, catalog admission, and Senulun restore tests pass; the
+coverage, not live deployment or adoption evidence. Focused package lifecycle, catalog admission, and Senlun restore tests pass; the
 command entry point compiles. Migration fixtures cover both schema 100 and the
 released schema 108, retain backups/trust/application identity, and reject
 unfinished or uncertain work without advancing the source schema. An online-backup copy of the released schema 108 database also passed
@@ -31,11 +31,11 @@ created its pre-upgrade backup. The test copies its input again before migration
 it does not start Center or contact Agents. Current CI and A1 rollout remain
 pending; this is not evidence of live adoption or application restart behavior.
 
-The historical Senulun Docker adoption rehearsal also passed against a private
+The historical Senlun Docker adoption rehearsal also passed against a private
 Agent database/key snapshot and the existing runtime. A read-only HTTP proxy
 rejected Docker write methods, and the package receipt was written only into
 a temporary directory. Container ID, StartedAt, mounts, container configuration
-and host configuration were unchanged. This proves the sampled Senulun service
+and host configuration were unchanged. This proves the sampled Senlun service
 adoption path; it does not claim fleet-wide or systemd historical adoption.
 
 ## Earlier local checkpoint
@@ -124,12 +124,12 @@ transferred to A1 and verified by SHA-256 before running only
 The test created a pre-migration backup, preserved the checked historical row
 digests, 37 applications and 16 manifest identities, and left the copied database
 at schema 102 with `quick_check=ok`. The live database remained at schema 100;
-Center/Senulun container IDs and start times and the Agent MainPID/InvocationID
+Center/Senlun container IDs and start times and the Agent MainPID/InvocationID
 were unchanged before and after. This exercises the two-step migration against
 a full historical database copy, but does not prove actual Agent resource
 adoption, application-volume recovery, or a live no-restart cutover.
 
-On 2026-09-27, a read-only preflight resolved the already published Senulun
+On 2026-09-27, a read-only preflight resolved the already published Senlun
 `v0.1.0-alpha.5` against its protected source commit and successful release run.
 GitHub artifact attestations, `SHA256SUMS`, both native architectures and the
 multi-platform OCI index passed the catalog source verifier. Applying those
@@ -162,7 +162,7 @@ the production migration and single-writer cutover must be completed separately.
   uncertain tasks and independently back up Center, Agents and application data.
 - After rehearsal and the agreed maintenance window, establish a single writer,
   retain trust/high-water history, and verify manual publication of a released
-  Senulun version becomes visible without a Vastora source change or an automatic
+  Senlun version becomes visible without a Vastora source change or an automatic
   application upgrade.
 
 The default Docker context on the development machine must not be used as an

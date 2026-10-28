@@ -7,9 +7,9 @@ import { ApplicationStatus } from "./apps/InstalledApplicationPrimitives";
 import { localized, senulunDashboardURL } from "./appAccess";
 import { copy } from "./shared";
 
-// Senulun serves and owns its dashboard. Center only shows installation state,
+// Senlun serves and owns its dashboard. Center only shows installation state,
 // access publication, and a link to the dashboard's authenticated origin.
-export function SenulunWorkspace({ group, data, language, onManage, onUpgrade }: AppWorkspaceProps) {
+export function SenlunWorkspace({ group, data, language, onManage, onUpgrade }: AppWorkspaceProps) {
   const instance = group.instances[0];
   const name = group.app ? localized(group.app, language, "name") : instance.application.name;
   const accessURL = senulunDashboardURL(data);

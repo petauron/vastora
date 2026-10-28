@@ -12,7 +12,7 @@ import (
 
 func senulunCanonicalEnvironment(environment []string) bool {
 	for _, entry := range environment {
-		if strings.HasPrefix(entry, "SENULUN_PUBLIC_URL=") {
+		if strings.HasPrefix(entry, "SENLUN_PUBLIC_URL=") {
 			return true
 		}
 	}
@@ -23,14 +23,14 @@ func applicationOwnedNativeFileForTask(task DeploymentTask, logical string) bool
 	// Only the explicitly converted first-party environment is replaced. Its
 	// values have already been merged and validated before the old unit stops.
 	// Node credential files and every third-party config retain the old rule.
-	if logical == "environment" && task.AppKey == senulun.AgentKey && task.Operation == "upgrade" && task.Manifest.Runtime != nil && task.Manifest.Runtime.Systemd != nil && task.Manifest.Runtime.Systemd.Executable == "senulun-agent" {
+	if logical == "environment" && task.AppKey == senulun.AgentKey && task.Operation == "upgrade" && task.Manifest.Runtime != nil && task.Manifest.Runtime.Systemd != nil && task.Manifest.Runtime.Systemd.Executable == "senlun-agent" {
 		return false
 	}
 	return applicationOwnedNativeFile(logical)
 }
 
 func (b *SystemdPackageBackend) preserveSenulunEnvironment(task DeploymentTask, receipt *InstanceResources, path string) error {
-	if task.AppKey != senulun.AgentKey || task.Operation != "upgrade" || task.Manifest.Runtime.Systemd.Executable != "senulun-agent" {
+	if task.AppKey != senulun.AgentKey || task.Operation != "upgrade" || task.Manifest.Runtime.Systemd.Executable != "senlun-agent" {
 		return nil
 	}
 	old := resourceNamed(receipt, "file", "environment")
@@ -61,7 +61,7 @@ func (b *SystemdPackageBackend) preserveSenulunEnvironment(task DeploymentTask, 
 	var appended strings.Builder
 	for _, entry := range converted {
 		key, value, _ := strings.Cut(entry, "=")
-		if strings.HasPrefix(key, "SENULUN_") && !keys[key] {
+		if strings.HasPrefix(key, "SENLUN_") && !keys[key] {
 			appended.WriteString(key + "=" + strconv.Quote(value) + "\n")
 		}
 	}
@@ -107,14 +107,14 @@ func senulunUpgradeEnvironment(previous, desired []string) ([]string, error) {
 		return nil, err
 	}
 	converted = slices.DeleteFunc(converted, func(entry string) bool {
-		return strings.HasPrefix(entry, "SENULUN_SETUP_TOKEN_FILE=")
+		return strings.HasPrefix(entry, "SENLUN_SETUP_TOKEN_FILE=")
 	})
 	for i, entry := range converted {
-		if strings.HasPrefix(entry, "SENULUN_DATABASE_PATH=") {
-			if entry != "SENULUN_DATABASE_PATH=/var/lib/senulun/pulse.db" && entry != "SENULUN_DATABASE_PATH=/var/lib/senulun/store/senulun.db" {
+		if strings.HasPrefix(entry, "SENLUN_DATABASE_PATH=") {
+			if entry != "SENLUN_DATABASE_PATH=/var/lib/senlun/store/senulun.db" && entry != "SENLUN_DATABASE_PATH=/var/lib/senlun/senlun-store/senlun.db" {
 				return nil, errors.New("agent: custom Senulun database requires explicit offline migration; existing configuration is unchanged")
 			}
-			converted[i] = "SENULUN_DATABASE_PATH=/var/lib/senulun/store/senulun.db"
+			converted[i] = "SENLUN_DATABASE_PATH=/var/lib/senlun/senlun-store/senlun.db"
 		}
 	}
 	// Preserve all existing choices, including OAuth, limits and the traffic

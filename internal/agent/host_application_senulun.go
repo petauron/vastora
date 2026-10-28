@@ -63,7 +63,9 @@ func senulunRetainLocation(config senulun.AgentConfig, environment []byte) (senu
 		key = strings.TrimSpace(key)
 		// Normalize an already converted file for this one-shot location import.
 		// The running collector itself only reads its canonical environment.
-		if strings.HasPrefix(key, "SENULUN_") {
+		if strings.HasPrefix(key, "SENLUN_") {
+			key = "PULSE_" + strings.TrimPrefix(key, "SENLUN_")
+		} else if strings.HasPrefix(key, "SENULUN_") {
 			key = "PULSE_" + strings.TrimPrefix(key, "SENULUN_")
 		}
 		if !ok || key != "PULSE_NODE_REGION" && key != "PULSE_GEOIP_PROVIDER" {

@@ -111,7 +111,7 @@ export function canInstall(agent: AgentView, app?: AppView) {
 }
 
 // Browser links refer only to this app's published entry points. Collectors
-// are configured independently with the URL chosen in Senulun.
+// are configured independently with the URL chosen in Senlun.
 export function senulunDashboardURL(data: AppData) {
   const installations = data.applications.filter((app) => app.appKey === "vastora-official/pulse" && isInstalledApplication(app));
   if (installations.length !== 1 || installations[0].status !== "running") return undefined;
