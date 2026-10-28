@@ -104,7 +104,15 @@ func legacyRemovalAuthorization(ctx context.Context, db registryCredentialQuerie
 		return nil, errors.New("center: historical permission evidence mismatch")
 	}
 	var capabilities NodeCapabilities
-	if json.Unmarshal(capabilitiesRaw, &capabilities) != nil || receipt.Runtime != "docker" && receipt.Runtime != "systemd" || capabilities.ExecutorVersions[receipt.Runtime] != 1 {
+	if json.Unmarshal(capabilitiesRaw, &capabilities) != nil {
+		return nil, errors.New("center: target node cannot remove the adopted runtime")
+	}
+	// The systemd v2 executor still removes adopted v1 single-service receipts.
+	// Reject unknown versions instead of assuming future compatibility.
+	version := capabilities.ExecutorVersions[receipt.Runtime]
+	supported := receipt.Runtime == "docker" && version == 1 ||
+		receipt.Runtime == "systemd" && (version == 1 || version == 2)
+	if !supported {
 		return nil, errors.New("center: target node cannot remove the adopted runtime")
 	}
 	return grants, nil
