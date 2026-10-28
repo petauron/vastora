@@ -113,6 +113,9 @@ func (e ApplicationExecutor) renameSenlunServiceIdentity(ctx context.Context, ta
 		return result, err
 	}
 	defer closeDocker()
+	if _, ok := docker.(senlunContainerLister); !ok {
+		return result, errors.New("agent: Senlun volume writer inspection is unavailable")
+	}
 	backend := &DockerPackageBackend{Docker: docker, StateDirectory: e.packageDirectory()}
 	if configured, ok := e.PackageBackend.(*DockerPackageBackend); ok {
 		backend.CheckHealth = configured.CheckHealth
@@ -205,6 +208,9 @@ func (e ApplicationExecutor) renameSenlunServiceIdentity(ctx context.Context, ta
 		return result, errors.New("agent: Senlun service could not stop for identity transfer")
 	}
 	sourceStopped = true
+	if err := noSenlunVolumeWriters(ctx, docker, sourceVolume.Name); err != nil {
+		return result, err
+	}
 	preserved, err := captureContainerConfiguration(ctx, docker, sourceContainer.ID, declaration, nil)
 	if err != nil {
 		return result, errors.New("agent: existing Senlun configuration could not be preserved")
@@ -290,6 +296,30 @@ func (e ApplicationExecutor) renameSenlunServiceIdentity(ctx context.Context, ta
 		result.Services = append(result.Services, ApplicationServiceResult{Name: service.Name, Protocol: service.Protocol, ContainerPort: service.ContainerPort, HostPort: port, Address: address})
 	}
 	return result, nil
+}
+
+type senlunContainerLister interface {
+	ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error)
+}
+
+// The source must have no other running Docker writers during its transfer.
+func noSenlunVolumeWriters(ctx context.Context, docker packageDockerEngine, volumeName string) error {
+	lister, ok := docker.(senlunContainerLister)
+	if !ok {
+		return errors.New("agent: Senlun volume writer inspection is unavailable")
+	}
+	running, err := lister.ContainerList(ctx, client.ContainerListOptions{})
+	if err != nil {
+		return errors.New("agent: Senlun volume writers could not be inspected")
+	}
+	for _, current := range running.Items {
+		for _, item := range current.Mounts {
+			if item.Type == mount.TypeVolume && item.Name == volumeName {
+				return errors.New("agent: another running container uses the Senlun source volume")
+			}
+		}
+	}
+	return nil
 }
 
 // restoreSenlunBeforeTargetStart is only called before any attempt to start

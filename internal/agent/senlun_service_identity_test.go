@@ -22,6 +22,16 @@ import (
 
 type senlunMigrationDocker struct{ *fakePackageDocker }
 
+func (d *senlunMigrationDocker) ContainerList(_ context.Context, _ client.ContainerListOptions) (client.ContainerListResult, error) {
+	var result client.ContainerListResult
+	for _, current := range d.containers {
+		if current.Container.State != nil && current.Container.State.Running {
+			result.Items = append(result.Items, container.Summary{ID: current.Container.ID, Mounts: current.Container.Mounts})
+		}
+	}
+	return result, nil
+}
+
 func (d *senlunMigrationDocker) ContainerRename(ctx context.Context, id string, options client.ContainerRenameOptions) (client.ContainerRenameResult, error) {
 	current, err := d.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	if err != nil {
@@ -200,5 +210,26 @@ func TestSenlunServiceIdentityTransferPreservesStateWithoutBackup(t *testing.T) 
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestSenlunVolumeTransferRejectsOtherRunningWriters(t *testing.T) {
+	ctx := context.Background()
+	docker := &senlunMigrationDocker{newPackageDocker()}
+	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{Name: "other", Config: &container.Config{}, HostConfig: &container.HostConfig{Mounts: []mount.Mount{{Type: mount.TypeVolume, Source: "source-volume", Target: "/data"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := noSenlunVolumeWriters(ctx, docker, "source-volume"); err == nil {
+		t.Fatal("accepted a concurrent source-volume writer")
+	}
+	if _, err := docker.ContainerStop(ctx, created.ID, client.ContainerStopOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := noSenlunVolumeWriters(ctx, docker, "source-volume"); err != nil {
+		t.Fatal(err)
 	}
 }
