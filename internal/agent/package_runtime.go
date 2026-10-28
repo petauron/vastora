@@ -107,6 +107,13 @@ func (e PackageExecutor) ReadResources(id string) (*InstanceResources, error) {
 	if err := checkPackageParents(path); err != nil {
 		return nil, err
 	}
+	// An interrupted identity change must be inspected before another package
+	// operation can use a partially updated local registration.
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(path), "senlun-identity.pending")); err == nil {
+		return nil, errors.New("agent: unfinished Senlun identity migration requires review")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
