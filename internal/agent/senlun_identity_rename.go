@@ -127,6 +127,10 @@ func (e ApplicationExecutor) renameSenlunNativeIdentity(ctx context.Context, app
 // Preserve the encrypted application values while atomically replacing the old
 // startup registration with the real migration task identity.
 func (s *Store) renameSenlunApplied(ctx context.Context, previous AppliedInstallation, taskID string, target catalog.AppManifest) error {
+	newKey := "vastora-official/" + target.ID
+	if !((previous.AppKey == "vastora-official/pulse-agent" && newKey == "vastora-official/senlun-agent") || (previous.AppKey == "vastora-official/pulse" && newKey == "vastora-official/senlun")) {
+		return errors.New("agent: unsupported Senlun applied identity migration")
+	}
 	config, err := canonicalJSONObject(previous.Config)
 	if err != nil {
 		return err
@@ -154,13 +158,13 @@ func (s *Store) renameSenlunApplied(ctx context.Context, previous AppliedInstall
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM applied_installations WHERE app_key=? AND instance_id=?`, previous.AppKey, previous.InstanceID).Scan(&oldCount); err != nil {
 		return err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM applied_installations WHERE app_key=? OR instance_id=?`, "vastora-official/senlun-agent", taskID).Scan(&newCount); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM applied_installations WHERE app_key=? OR instance_id=?`, newKey, taskID).Scan(&newCount); err != nil {
 		return err
 	}
 	if oldCount != 1 || newCount != 0 {
 		return errors.New("agent: Senlun applied registration changed during migration")
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO applied_installations(instance_id,app_key,version,sealed_state,config_hash,applied_at) VALUES(?,?,?,?,?,?)`, taskID, "vastora-official/senlun-agent", target.Version, sealed, hex.EncodeToString(configSHA[:]), s.now().UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO applied_installations(instance_id,app_key,version,sealed_state,config_hash,applied_at) VALUES(?,?,?,?,?,?)`, taskID, newKey, target.Version, sealed, hex.EncodeToString(configSHA[:]), s.now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_installations WHERE app_key=? AND instance_id=?`, previous.AppKey, previous.InstanceID); err != nil {
@@ -173,11 +177,23 @@ func senlunNativeIdentityTask(task DeploymentTask) bool {
 	return task.AppKey == "vastora-official/senlun-agent" && task.SourceReceiptSHA256 != "" && task.Operation == "install"
 }
 
+func senlunServiceIdentityTask(task DeploymentTask) bool {
+	return task.AppKey == "vastora-official/senlun" && task.SourceReceiptSHA256 != "" && task.Operation == "install"
+}
+
+func senlunIdentityTask(task DeploymentTask) bool {
+	return senlunNativeIdentityTask(task) || senlunServiceIdentityTask(task)
+}
+
 type senlunIdentityIntent struct {
-	ApplicationID string `json:"applicationId"`
-	TaskID        string `json:"taskId"`
-	SourceSHA     string `json:"sourceReceiptSha256"`
-	TargetSHA     string `json:"targetManifestSha256"`
+	ApplicationID         string `json:"applicationId"`
+	TaskID                string `json:"taskId"`
+	SourceSHA             string `json:"sourceReceiptSha256"`
+	TargetSHA             string `json:"targetManifestSha256"`
+	SourceContainerID     string `json:"sourceContainerId,omitempty"`
+	SourceContainerName   string `json:"sourceContainerName,omitempty"`
+	SourceVolume          string `json:"sourceVolume,omitempty"`
+	SourceVolumeComponent string `json:"sourceVolumeComponent,omitempty"`
 }
 
 func syncSenlunIdentityDirectory(path string) error {
@@ -202,7 +218,7 @@ func (s *Store) validateSenlunIdentityIntent(task DeploymentTask) (string, error
 	return path, nil
 }
 
-func (s *Store) completeSenlunNativeIdentity(ctx context.Context, task DeploymentTask) error {
+func (s *Store) completeSenlunIdentity(ctx context.Context, task DeploymentTask) error {
 	if _, err := s.validateSenlunIdentityIntent(task); err != nil {
 		return err
 	}
@@ -217,7 +233,7 @@ func (s *Store) completeSenlunNativeIdentity(ctx context.Context, task Deploymen
 	return nil
 }
 
-func (s *Store) finishSenlunNativeIdentity(task DeploymentTask) error {
+func (s *Store) finishSenlunIdentity(task DeploymentTask) error {
 	path, err := s.validateSenlunIdentityIntent(task)
 	if err != nil {
 		return err

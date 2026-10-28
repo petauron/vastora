@@ -53,6 +53,9 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 	if err := validatePackageTask(task); err != nil {
 		return ApplicationTaskResult{}, err
 	}
+	if senlunServiceIdentityTask(task) {
+		return e.renameSenlunServiceIdentity(ctx, task)
+	}
 	if senlunNativeIdentityTask(task) {
 		receipt, err := e.renameSenlunNativeIdentity(ctx, task.ApplicationID, task.ID, task.SourceReceiptSHA256, task.Manifest)
 		if err != nil {

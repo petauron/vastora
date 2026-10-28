@@ -64,7 +64,7 @@ func streamSenlunVolume(ctx context.Context, source io.Reader, destination io.Wr
 			if header.Size != 0 {
 				return nil, errors.New("agent: invalid Senlun data directory")
 			}
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			size += header.Size
 			if size < 0 || size > 64<<30 {
 				return nil, errors.New("agent: Senlun data transfer exceeds its limit")

@@ -99,10 +99,10 @@ func TestSenlunNativeIdentityRenameRetainsOwnedStateWithoutBackup(t *testing.T) 
 		t.Fatal("unconfirmed migration did not block further package actions")
 	}
 	task := DeploymentTask{ID: "migration-task", ApplicationID: installation.ApplicationID, AppKey: result.AppKey, Operation: "install", SourceReceiptSHA256: hex.EncodeToString(receiptSHA[:]), ManifestSHA256: result.ManifestSHA256, PackageRevision: result.PackageRevision}
-	if err := store.completeSenlunNativeIdentity(ctx, task); err != nil {
+	if err := store.completeSenlunIdentity(ctx, task); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.finishSenlunNativeIdentity(task); err != nil {
+	if err := store.finishSenlunIdentity(task); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := packages.ReadResources(installation.ApplicationID); err != nil {
