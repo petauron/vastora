@@ -19,7 +19,7 @@ import (
 // The caller must deliver the target from the verified signed catalog and let
 // Center commit the matching result. It never changes or restarts the
 // monitoring service or its state directory.
-func (e ApplicationExecutor) renameSenlunNativeIdentity(ctx context.Context, applicationID, migrationTaskID, expectedReceiptSHA256 string, target catalog.AppManifest) (*InstanceResources, error) {
+func (e ApplicationExecutor) renameSenlunNativeIdentity(ctx context.Context, applicationID, migrationTaskID, expectedReceiptSHA256 string, target catalog.AppManifest) (result *InstanceResources, resultErr error) {
 	if e.Store == nil || applicationID == "" || migrationTaskID == "" || target.ID != "senlun-agent" {
 		return nil, errors.New("agent: Senlun identity migration requires an existing agent instance")
 	}
@@ -88,11 +88,7 @@ func (e ApplicationExecutor) renameSenlunNativeIdentity(ctx context.Context, app
 	}
 	targetSHA := sha256.Sum256(rawTarget)
 	marker := filepath.Join(filepath.Dir(executor.receiptPath(applicationID)), "senlun-identity.pending")
-	intent, err := json.Marshal(struct {
-		ApplicationID string `json:"applicationId"`
-		SourceSHA     string `json:"sourceReceiptSha256"`
-		TargetSHA     string `json:"targetManifestSha256"`
-	}{applicationID, expectedReceiptSHA256, hex.EncodeToString(targetSHA[:])})
+	intent, err := json.Marshal(senlunIdentityIntent{ApplicationID: applicationID, TaskID: migrationTaskID, SourceSHA: expectedReceiptSHA256, TargetSHA: hex.EncodeToString(targetSHA[:])})
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +96,11 @@ func (e ApplicationExecutor) renameSenlunNativeIdentity(ctx context.Context, app
 	if err != nil {
 		return nil, errors.New("agent: unfinished Senlun identity migration requires review")
 	}
+	defer func() {
+		if resultErr != nil {
+			resultErr = uncertainTaskOutcome(resultErr)
+		}
+	}()
 	_, writeErr := file.Write(intent)
 	if writeErr == nil {
 		writeErr = file.Sync()
@@ -107,21 +108,19 @@ func (e ApplicationExecutor) renameSenlunNativeIdentity(ctx context.Context, app
 	if closeErr := file.Close(); writeErr == nil {
 		writeErr = closeErr
 	}
-	if writeErr != nil {
+	if writeErr != nil || syncSenlunIdentityDirectory(filepath.Dir(marker)) != nil {
 		return nil, errors.New("agent: Senlun identity migration intent requires review")
 	}
 	// A partial write leaves the marker in place. Subsequent package operations
 	// fail closed; the monitoring process and its credentials remain untouched.
 	receipt.AppKey, receipt.TaskID, receipt.PackageRevision, receipt.ManifestSHA256 = newKey, migrationTaskID, canonicalTarget.PackageRevision, hex.EncodeToString(targetSHA[:])
-	if err := executor.save(receipt); err != nil {
+	if err := executor.save(receipt); err != nil || syncSenlunIdentityDirectory(filepath.Dir(marker)) != nil {
 		return nil, errors.New("agent: Senlun resource registration requires review")
 	}
 	if err := e.Store.renameSenlunApplied(ctx, installation, migrationTaskID, canonicalTarget); err != nil {
 		return nil, errors.New("agent: Senlun applied identity requires review")
 	}
-	if err := os.Remove(marker); err != nil {
-		return nil, errors.New("agent: completed Senlun identity migration requires review")
-	}
+	// Keep the non-secret intent until Center confirms the actual result.
 	return receipt, nil
 }
 
@@ -174,14 +173,57 @@ func senlunNativeIdentityTask(task DeploymentTask) bool {
 	return task.AppKey == "vastora-official/senlun-agent" && task.SourceReceiptSHA256 != "" && task.Operation == "install"
 }
 
+type senlunIdentityIntent struct {
+	ApplicationID string `json:"applicationId"`
+	TaskID        string `json:"taskId"`
+	SourceSHA     string `json:"sourceReceiptSha256"`
+	TargetSHA     string `json:"targetManifestSha256"`
+}
+
+func syncSenlunIdentityDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return errors.Join(directory.Sync(), directory.Close())
+}
+
+func (s *Store) validateSenlunIdentityIntent(task DeploymentTask) (string, error) {
+	path := filepath.Join(filepath.Dir((PackageExecutor{StateDirectory: s.dataDir}).receiptPath(task.ApplicationID)), "senlun-identity.pending")
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 4096 {
+		return "", errors.New("agent: Senlun identity migration intent is unavailable")
+	}
+	raw, err := os.ReadFile(path)
+	var intent senlunIdentityIntent
+	if err != nil || json.Unmarshal(raw, &intent) != nil || intent.ApplicationID != task.ApplicationID || intent.TaskID != task.ID || intent.SourceSHA != task.SourceReceiptSHA256 || intent.TargetSHA != task.ManifestSHA256 {
+		return "", errors.New("agent: Senlun identity migration intent differs")
+	}
+	return path, nil
+}
+
 func (s *Store) completeSenlunNativeIdentity(ctx context.Context, task DeploymentTask) error {
+	if _, err := s.validateSenlunIdentityIntent(task); err != nil {
+		return err
+	}
 	installed, err := s.AppliedInstallation(ctx, task.AppKey)
 	if err != nil || installed.InstanceID != task.ID || installed.ApplicationID != task.ApplicationID {
 		return errors.New("agent: Senlun identity migration was not committed")
 	}
-	receipt, err := (PackageExecutor{StateDirectory: s.dataDir}).ReadResources(task.ApplicationID)
+	receipt, err := (PackageExecutor{StateDirectory: s.dataDir}).readResources(task.ApplicationID, true)
 	if err != nil || receipt.AppKey != task.AppKey || receipt.TaskID != task.ID || receipt.ManifestSHA256 != task.ManifestSHA256 || receipt.PackageRevision != task.PackageRevision || receipt.State != "ready" {
 		return errors.New("agent: Senlun migrated resource receipt is unavailable")
 	}
 	return nil
+}
+
+func (s *Store) finishSenlunNativeIdentity(task DeploymentTask) error {
+	path, err := s.validateSenlunIdentityIntent(task)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	return syncSenlunIdentityDirectory(filepath.Dir(path))
 }

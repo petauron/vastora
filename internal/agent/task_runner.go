@@ -714,6 +714,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	completionContext, completionCancel := freshTaskControlContext(ctx)
 	completeErr := c.sendTaskCompletion(completionContext, store, completion)
 	completionCancel()
+	if completeErr == nil && err == nil && senlunNativeIdentityTask(task) {
+		completeErr = store.finishSenlunNativeIdentity(task)
+	}
 	if completeErr != nil {
 		if report != nil {
 			report(completeErr)

@@ -95,14 +95,17 @@ func TestSenlunNativeIdentityRenameRetainsOwnedStateWithoutBackup(t *testing.T) 
 	if _, err := os.Stat(filepath.Join(filepath.Dir(packages.receiptPath(installation.ApplicationID)), "backups")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("identity change created a backup")
 	}
+	if _, err := packages.ReadResources(installation.ApplicationID); err == nil {
+		t.Fatal("unconfirmed migration did not block further package actions")
+	}
+	task := DeploymentTask{ID: "migration-task", ApplicationID: installation.ApplicationID, AppKey: result.AppKey, Operation: "install", SourceReceiptSHA256: hex.EncodeToString(receiptSHA[:]), ManifestSHA256: result.ManifestSHA256, PackageRevision: result.PackageRevision}
+	if err := store.completeSenlunNativeIdentity(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.finishSenlunNativeIdentity(task); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := packages.ReadResources(installation.ApplicationID); err != nil {
 		t.Fatal(err)
-	}
-	marker := filepath.Join(filepath.Dir(packages.receiptPath(installation.ApplicationID)), "senlun-identity.pending")
-	if err := os.WriteFile(marker, []byte(`{}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := packages.ReadResources(installation.ApplicationID); err == nil {
-		t.Fatal("interrupted migration did not block further package actions")
 	}
 }

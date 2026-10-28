@@ -100,6 +100,10 @@ func (e PackageExecutor) receiptPath(id string) string {
 }
 
 func (e PackageExecutor) ReadResources(id string) (*InstanceResources, error) {
+	return e.readResources(id, false)
+}
+
+func (e PackageExecutor) readResources(id string, allowIdentityMigration bool) (*InstanceResources, error) {
 	if e.StateDirectory == "" || id == "" {
 		return nil, errors.New("agent: package state directory and identity are required")
 	}
@@ -109,10 +113,12 @@ func (e PackageExecutor) ReadResources(id string) (*InstanceResources, error) {
 	}
 	// An interrupted identity change must be inspected before another package
 	// operation can use a partially updated local registration.
-	if _, err := os.Lstat(filepath.Join(filepath.Dir(path), "senlun-identity.pending")); err == nil {
-		return nil, errors.New("agent: unfinished Senlun identity migration requires review")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+	if !allowIdentityMigration {
+		if _, err := os.Lstat(filepath.Join(filepath.Dir(path), "senlun-identity.pending")); err == nil {
+			return nil, errors.New("agent: unfinished Senlun identity migration requires review")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
