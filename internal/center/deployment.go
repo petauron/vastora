@@ -322,6 +322,11 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, fmt.Errorf("center: catalog version %s is older than installed version %s; downgrade is not allowed", manifest.Version, active.Version)
 		}
 	}
+	if request.Operation == "configure" && manifest.Runtime != nil && manifest.Runtime.Kind == "systemd" && manifest.Runtime.Version == 2 {
+		if err := validateNativeServicePortConfigure(manifest, request.Config); err != nil {
+			return DeploymentView{}, err
+		}
+	}
 	var grants []string
 	if legacyRemoval {
 		grants, err = legacyRemovalAuthorization(ctx, s.db, request.AgentID, request.AppKey, active.Manifest)

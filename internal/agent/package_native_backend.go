@@ -27,6 +27,11 @@ func (b *NativeServicesPackageBackend) Prepare(ctx context.Context, task Deploym
 	if err := inspectNativeCollisions(ctx, b.Manager, task.ApplicationID, prepared, receipt); err != nil {
 		return err
 	}
+	if task.Operation == "configure" {
+		if err := b.verifyServicePortConfiguration(ctx, task, prepared, receipt); err != nil {
+			return err
+		}
+	}
 	b.prepared = &prepared
 	return nil
 }
@@ -42,6 +47,9 @@ func (b *NativeServicesPackageBackend) Inspect(ctx context.Context, task Deploym
 func (b *NativeServicesPackageBackend) Apply(ctx context.Context, task DeploymentTask, receipt *InstanceResources, persist func() error) error {
 	if b.prepared == nil {
 		return errors.New("agent: native bundle was not prepared")
+	}
+	if task.Operation == "configure" {
+		return errors.New("agent: native service port updates must use the metadata-only executor")
 	}
 	return applyNativePackage(ctx, b.Manager, task, *b.prepared, receipt, persist)
 }

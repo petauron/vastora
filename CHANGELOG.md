@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.376](https://github.com/petauron/vastora/compare/v0.1.0-alpha.375...v0.1.0-alpha.376) (2026-10-28)
+
+
+### Bug Fixes
+
+* safely update native application service ports ([380d6ba](https://github.com/petauron/vastora/commit/380d6ba60561ab93d32d49be64671bcb5facb5eb))
+
 ## [0.1.0-alpha.375](https://github.com/petauron/vastora/compare/v0.1.0-alpha.374...v0.1.0-alpha.375) (2026-10-28)
 
 
