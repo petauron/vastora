@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.375](https://github.com/petauron/vastora/compare/v0.1.0-alpha.374...v0.1.0-alpha.375) (2026-10-28)
+
+
+### Bug Fixes
+
+* allow supported systemd v1 upgrades in app store ([#1093](https://github.com/petauron/vastora/issues/1093)) ([2950734](https://github.com/petauron/vastora/commit/29507346a2d97e17ee633d88d0dc8d74483aee7a))
+
 ## [0.1.0-alpha.374](https://github.com/petauron/vastora/compare/v0.1.0-alpha.373...v0.1.0-alpha.374) (2026-10-28)
 
 
