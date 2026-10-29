@@ -21,8 +21,6 @@ import (
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/sethvargo/go-retry"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -76,6 +74,17 @@ func (f *hostControlGRPCFixture) DecommissionCallback(ctx context.Context, in *a
 	}
 	return f.callback(ctx, in)
 }
+
+// grpcTestHTTPServer serves existing fixtures over HTTP/1 and cleartext HTTP/2.
+func grpcTestHTTPServer(handler http.Handler) *httptest.Server {
+	server := httptest.NewUnstartedServer(handler)
+	server.Config.Protocols = new(http.Protocols)
+	server.Config.Protocols.SetHTTP1(true)
+	server.Config.Protocols.SetUnencryptedHTTP2(true)
+	server.Start()
+	return server
+}
+
 func hostControlFixtureServer(f *hostControlGRPCFixture) *httptest.Server {
 	server := grpc.NewServer()
 	agentpb.RegisterAgentControlServer(server, f)
@@ -88,7 +97,7 @@ func hostControlFixtureServer(f *hostControlGRPCFixture) *httptest.Server {
 		}
 		server.ServeHTTP(w, r)
 	})
-	return httptest.NewServer(h2c.NewHandler(handler, &http2.Server{}))
+	return grpcTestHTTPServer(handler)
 }
 func requireHostFixtureCredential(t *testing.T, ctx context.Context, expected string) {
 	t.Helper()

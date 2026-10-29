@@ -21,8 +21,6 @@ import (
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/networking"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -105,6 +103,17 @@ func (f *controlGRPCFixture) Connect(stream agentpb.AgentControl_ConnectServer) 
 	}
 	return f.connect(stream)
 }
+
+// grpcTestHTTPServer serves existing fixtures over HTTP/1 and cleartext HTTP/2.
+func grpcTestHTTPServer(handler http.Handler) *httptest.Server {
+	server := httptest.NewUnstartedServer(handler)
+	server.Config.Protocols = new(http.Protocols)
+	server.Config.Protocols.SetHTTP1(true)
+	server.Config.Protocols.SetUnencryptedHTTP2(true)
+	server.Start()
+	return server
+}
+
 func controlFixtureServer(f *controlGRPCFixture) *httptest.Server {
 	server := grpc.NewServer()
 	agentpb.RegisterAgentControlServer(server, f)
@@ -118,7 +127,7 @@ func controlFixtureServer(f *controlGRPCFixture) *httptest.Server {
 		}
 		server.ServeHTTP(w, r)
 	})
-	return httptest.NewServer(h2c.NewHandler(handler, &http2.Server{}))
+	return grpcTestHTTPServer(handler)
 }
 func fixtureDocument(t *testing.T, value any) *agentpb.Document {
 	t.Helper()
@@ -427,7 +436,7 @@ func TestTaskStreamWaitsWithoutPolling(t *testing.T) {
 	service := &idleTaskStreamFixture{ready: make(chan struct{})}
 	grpcServer := grpc.NewServer()
 	agentpb.RegisterAgentControlServer(grpcServer, service)
-	server := httptest.NewServer(h2c.NewHandler(grpcServer, &http2.Server{}))
+	server := grpcTestHTTPServer(grpcServer)
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {

@@ -8,8 +8,6 @@ import (
 	"testing"
 
 	"github.com/petauron/vastora/internal/agentpb"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -26,7 +24,7 @@ func (f enrollmentGRPCFixture) Enroll(ctx context.Context, input *agentpb.Enroll
 func enrollmentFixtureServer(enroll func(context.Context, *agentpb.EnrollRequest) (*agentpb.EnrollResponse, error)) *httptest.Server {
 	server := grpc.NewServer()
 	agentpb.RegisterAgentControlServer(server, enrollmentGRPCFixture{enroll: enroll})
-	return httptest.NewServer(h2c.NewHandler(server, &http2.Server{}))
+	return grpcTestHTTPServer(server)
 }
 
 func TestInspectInstallOperationFindsPendingFreshInstallWithoutMigration(t *testing.T) {

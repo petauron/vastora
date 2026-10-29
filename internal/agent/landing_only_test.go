@@ -4,27 +4,26 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	"github.com/petauron/vastora/internal/agentpb"
 )
 
 func TestLandingOnlyHeartbeatEncodesAbsentTailscaleOwnership(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, input *agentpb.AgentDocument) (*agentpb.Document, error) {
 		var payload struct {
 			TailscaleOwnership string       `json:"tailscaleOwnership"`
 			Capabilities       Capabilities `json:"capabilities"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		if err := json.Unmarshal(input.Json, &payload); err != nil {
 			t.Error(err)
 		}
 		if payload.TailscaleOwnership != "" || !payload.Capabilities.LandingOnly || payload.Capabilities.Docker {
 			t.Errorf("invalid landing heartbeat: %+v", payload)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{}`))
-	}))
+		return fixtureDocument(t, map[string]any{}), nil
+	}})
 	defer server.Close()
 	s, err := Open(t.TempDir())
 	if err != nil {

@@ -15,8 +15,6 @@ import (
 	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -116,7 +114,7 @@ func TestExecutionAgentCenterFlow(t *testing.T) {
 				}),
 			)
 			agentpb.RegisterAgentControlServer(grpcServer, newAgentGRPCService(NewServer(store, "", false)))
-			server := httptest.NewServer(h2c.NewHandler(grpcServer, &http2.Server{}))
+			server := grpcTestHTTPServer(grpcServer)
 			defer server.Close()
 			local, err := agent.Open(t.TempDir())
 			if err != nil {

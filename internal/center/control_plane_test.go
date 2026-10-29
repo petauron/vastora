@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -19,6 +20,16 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+// grpcTestHTTPServer serves existing fixtures over HTTP/1 and cleartext HTTP/2.
+func grpcTestHTTPServer(handler http.Handler) *httptest.Server {
+	server := httptest.NewUnstartedServer(handler)
+	server.Config.Protocols = new(http.Protocols)
+	server.Config.Protocols.SetHTTP1(true)
+	server.Config.Protocols.SetUnencryptedHTTP2(true)
+	server.Start()
+	return server
+}
 
 func agentGRPCTestContext(ctx context.Context, credential string) context.Context {
 	return metadata.NewIncomingContext(ctx, metadata.Pairs("authorization", "Bearer "+credential))

@@ -15,10 +15,12 @@ services:
       - --listen
       - 0.0.0.0:8080
       - --allow-container-http
+      - --agent-grpc-listen
+      - 0.0.0.0:8089
       - --host-network-addresses
       - ${VASTORA_HOST_NETWORK_ADDRESSES:-}
       - --co-located-agent-url
-      - http://127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}
+      - http://127.0.0.1:${VASTORA_CENTER_AGENT_GRPC_PORT:-18089}
       - --web-dir
       - /app/web/dist
       - --official-catalog-origin
@@ -43,6 +45,7 @@ services:
       - https://vastora.petauron.com/oauth/cloudflare
     ports:
       - 127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}:8080
+      - 127.0.0.1:${VASTORA_CENTER_AGENT_GRPC_PORT:-18089}:8089
     networks:
       default:
         aliases:

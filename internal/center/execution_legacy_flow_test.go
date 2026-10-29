@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"net/http/httptest"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -14,8 +13,6 @@ import (
 	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -55,7 +52,7 @@ func TestLegacyReceiptCutoverPreservesLostArchiveAcknowledgement(t *testing.T) {
 		}),
 	)
 	agentpb.RegisterAgentControlServer(grpcServer, newAgentGRPCService(NewServer(store, "", false)))
-	server := httptest.NewServer(h2c.NewHandler(grpcServer, &http2.Server{}))
+	server := grpcTestHTTPServer(grpcServer)
 	defer server.Close()
 	directory := t.TempDir()
 	local, err := agent.Open(directory)

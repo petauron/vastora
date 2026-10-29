@@ -6,8 +6,6 @@ import (
 
 	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 )
 
@@ -45,5 +43,5 @@ func (s *Server) agentGRPCHandler(web http.Handler) http.Handler {
 		}
 		server.ServeHTTP(w, clone)
 	})
-	return h2c.NewHandler(handler, &http2.Server{MaxConcurrentStreams: 32})
+	return handler
 }

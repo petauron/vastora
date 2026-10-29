@@ -71,7 +71,14 @@ func TestCenterTwoAgentsLifecycle(t *testing.T) {
 	address := listener.Addr().String()
 	listener.Close()
 	lab.origin = "http://" + address
-	centerArgs := []string{"center", "serve", "--data-dir", filepath.Join(lab.root, "center"), "--listen", address, "--agent-connect-url", lab.origin}
+	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcAddress := grpcListener.Addr().String()
+	grpcListener.Close()
+	lab.grpcOrigin = "http://" + grpcAddress
+	centerArgs := []string{"center", "serve", "--data-dir", filepath.Join(lab.root, "center"), "--listen", address, "--agent-grpc-listen", grpcAddress, "--agent-connect-url", lab.grpcOrigin}
 	controller := lab.start("center", centerArgs...)
 	lab.ready(controller)
 	lab.call("POST", "/api/v1/setup/admin", map[string]string{"username": "test-admin", "password": lab.secret()}, nil, http.StatusCreated)
@@ -82,7 +89,7 @@ func TestCenterTwoAgentsLifecycle(t *testing.T) {
 	}
 	lab.call("POST", "/api/v1/setup/complete", map[string]any{
 		"site":    map[string]string{"name": "CI lifecycle", "code": "ci-lifecycle", "timezone": "UTC"},
-		"network": map[string]string{"agentConnectionMode": "lan", "agentConnectUrl": lab.origin},
+		"network": map[string]string{"agentConnectionMode": "lan", "agentConnectUrl": lab.grpcOrigin},
 	}, &setup, http.StatusCreated)
 	target := lab.enroll("target", setup.Site.ID)
 	peer := lab.enroll("peer", setup.Site.ID)
@@ -167,11 +174,11 @@ type nodeLifecycleAgent struct {
 	directory string
 }
 type nodeLifecycleLab struct {
-	t            *testing.T
-	ctx          context.Context
-	root, origin string
-	client       *http.Client
-	secrets      []string
+	t                        *testing.T
+	ctx                      context.Context
+	root, origin, grpcOrigin string
+	client                   *http.Client
+	secrets                  []string
 }
 
 func (l *nodeLifecycleLab) secret() string {
@@ -308,7 +315,7 @@ func (l *nodeLifecycleLab) enroll(name, siteID string) nodeLifecycleAgent {
 	var enrollment struct {
 		Token string `json:"token"`
 	}
-	l.call("POST", "/api/v1/agent-enrollments", map[string]any{"name": name, "siteId": siteID, "centerUrl": l.origin}, &enrollment, http.StatusCreated)
+	l.call("POST", "/api/v1/agent-enrollments", map[string]any{"name": name, "siteId": siteID, "centerUrl": l.grpcOrigin}, &enrollment, http.StatusCreated)
 	if enrollment.Token == "" {
 		l.t.Fatal("missing enrollment token")
 	}
@@ -318,7 +325,7 @@ func (l *nodeLifecycleLab) enroll(name, siteID string) nodeLifecycleAgent {
 		l.t.Fatal(err)
 	}
 	directory := filepath.Join(l.root, name)
-	if err := l.command("agent", "enroll", "--data-dir", directory, "--center-url", l.origin, "--token-file", tokenFile).Run(); err != nil {
+	if err := l.command("agent", "enroll", "--data-dir", directory, "--center-url", l.grpcOrigin, "--token-file", tokenFile).Run(); err != nil {
 		l.t.Fatalf("enroll %s: %v", name, err)
 	}
 	_ = os.Remove(tokenFile)
@@ -339,7 +346,7 @@ func (l *nodeLifecycleLab) serve(node nodeLifecycleAgent) *nodeLifecycleProcess 
 }
 func (l *nodeLifecycleLab) assertRevoked(node nodeLifecycleAgent) {
 	l.t.Helper()
-	origin, err := url.Parse(l.origin)
+	origin, err := url.Parse(l.grpcOrigin)
 	if err != nil {
 		l.t.Fatal(err)
 	}
@@ -380,7 +387,7 @@ func (l *nodeLifecycleLab) assertRestartRejected(node nodeLifecycleAgent, p *nod
 			l.t.Fatal(err)
 		}
 		return bytes.Contains(log, []byte(`"event":"control_plane.heartbeat"`)) &&
-			bytes.Contains(log, []byte("Sign in to continue."))
+			bytes.Contains(log, []byte("agent authentication failed"))
 	})
 	l.assertRevoked(node)
 }

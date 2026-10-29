@@ -66,6 +66,7 @@
     { "value": "opentelemetry.io", "reason": "Reviewed public dependency namespace" },
     { "value": "owasp.org", "reason": "Reviewed public security reference" },
     { "value": "petauron.com", "reason": "Reviewed public project domain" },
+    { "value": "pkg.go.dev", "reason": "Official Go package documentation referenced by generated gRPC bindings" },
     { "value": "sqlite.org", "reason": "Reviewed public SQLite reference" },
     { "value": "scamalytics.com", "reason": "Reviewed public IP risk documentation" },
     { "value": "shadcn.com", "reason": "Reviewed public component schema" },

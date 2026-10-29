@@ -297,7 +297,11 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 						grpcMatcher[key] = value
 					}
 					grpcMatcher["header"] = map[string][]string{"Content-Type": {"application/grpc*"}}
-					grpcProxy := map[string]any{"handler": "reverse_proxy", "upstreams": upstreams,
+					grpcUpstreams := make([]map[string]string, 0, len(route.Upstreams))
+					for _, upstream := range route.Upstreams {
+						grpcUpstreams = append(grpcUpstreams, map[string]string{"dial": net.JoinHostPort(upstream.Address, strconv.Itoa(gatewayruntime.CenterGRPCPort))})
+					}
+					grpcProxy := map[string]any{"handler": "reverse_proxy", "upstreams": grpcUpstreams,
 						"transport": map[string]any{"protocol": "http", "versions": []string{"h2c"}}}
 					httpsRoutes = append(httpsRoutes, caddyRoute{Match: []map[string]any{grpcMatcher}, Handle: []map[string]any{grpcProxy}, Terminal: true})
 				}

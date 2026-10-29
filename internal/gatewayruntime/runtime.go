@@ -6,6 +6,7 @@ const (
 	CaddyImage           = "docker.io/library/caddy:2.11.4@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d"
 	CaddyContainer       = "vastora-gateway-caddy"
 	CaddyAdminSocket     = "/run/vastora/caddy-admin.sock"
+	CenterGRPCPort       = 8089 // private container-network listener
 	CaddyComponentLabel  = "gateway"
 	HAProxyContainer     = "vastora-gateway-haproxy"
 	Layer4ComponentLabel = "layer4-gateway"

@@ -1,7 +1,6 @@
 package center
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -10,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestLandingLatencyDeltaOnlyChangesTheCompletedPair(t *testing.T) {
@@ -95,32 +97,29 @@ func TestLegacyLatencyReportAndRetiredStream(t *testing.T) {
 	}
 	ms := 12.0
 	observation := landing.LatencyObservation{Target: landing.LatencyTarget{NodeID: owner.ID, Revision: 1, Peer: peer}, State: "direct", LatencyMS: &ms, CheckedAt: store.now().UTC()}
-	post := func(node, credential string, value landing.LatencyObservation, want int) {
+	service := newAgentGRPCService(NewServer(store, "", false))
+	post := func(node, credential string, value landing.LatencyObservation, want codes.Code) {
 		t.Helper()
-		body, _ := json.Marshal(value)
-		req, _ := http.NewRequestWithContext(streamContext, http.MethodPost, server.URL+"/api/v1/agents/"+node+"/landing-latencies", bytes.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+credential)
-		req.Header.Set("Content-Type", "application/json")
-		result, err := http.DefaultClient.Do(req)
+		body, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
 		}
-		result.Body.Close()
-		if result.StatusCode != want {
-			t.Fatalf("report status = %d, want %d", result.StatusCode, want)
+		_, err = service.ReportLandingLatency(agentGRPCTestContext(streamContext, credential), &agentpb.AgentDocument{AgentId: node, Json: body})
+		if status.Code(err) != want {
+			t.Fatalf("report status = %s, want %s: %v", status.Code(err), want, err)
 		}
 	}
-	post(source.ID, "incorrect", observation, http.StatusUnauthorized)
-	post(owner.ID, source.Credential, observation, http.StatusUnauthorized)
-	post(source.ID, source.Credential, observation, http.StatusNoContent)
-	post(source.ID, source.Credential, observation, http.StatusConflict) // Replayed evidence.
+	post(source.ID, "incorrect", observation, codes.Unauthenticated)
+	post(owner.ID, source.Credential, observation, codes.Unauthenticated)
+	post(source.ID, source.Credential, observation, codes.OK)
+	post(source.ID, source.Credential, observation, codes.FailedPrecondition) // Replayed evidence.
 	observation.CheckedAt = store.now().UTC()
 	observation.Target.Peer.PublicKey = "wrong-identity"
-	post(source.ID, source.Credential, observation, http.StatusConflict)
+	post(source.ID, source.Credential, observation, codes.FailedPrecondition)
 	if err := store.SelectLanding(ctx, LandingSelection{Revision: 1, NodeIDs: []string{}}); err != nil {
 		t.Fatal(err)
 	}
 	observation.Target.Peer = peer
-	post(source.ID, source.Credential, observation, http.StatusConflict)
+	post(source.ID, source.Credential, observation, codes.FailedPrecondition)
 
 }

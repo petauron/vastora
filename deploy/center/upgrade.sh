@@ -175,7 +175,14 @@ awk -v image="$new_image" -v host_addresses="$host_network_addresses" '
 chmod 0600 "$candidate_env"
 bootstrap_port="$(awk -F= '$1 == "VASTORA_CENTER_BOOTSTRAP_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$candidate_env")"
 if [ -z "$bootstrap_port" ]; then bootstrap_port=8080; fi
-local_center_url="http://127.0.0.1:$bootstrap_port"
+grpc_port="$(awk -F= '$1 == "VASTORA_CENTER_AGENT_GRPC_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$candidate_env")"
+if [ -z "$grpc_port" ]; then grpc_port=18089; fi
+case "$grpc_port" in *[!0-9]*|'') echo "The private Agent gRPC port is invalid." >&2; exit 2 ;; esac
+if [ "$grpc_port" -lt 1 ] || [ "$grpc_port" -gt 65535 ]; then
+  echo "The private Agent gRPC port is invalid." >&2
+  exit 2
+fi
+local_center_url="http://127.0.0.1:$grpc_port"
 
 host_update_status_file="${VASTORA_UPDATE_STATUS_FILE:-}"
 host_update_target_version="${VASTORA_UPDATE_TARGET_VERSION:-}"

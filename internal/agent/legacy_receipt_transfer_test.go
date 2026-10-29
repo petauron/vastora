@@ -9,8 +9,6 @@ import (
 
 	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -28,7 +26,7 @@ func (f receiptGRPCFixture) ImportLegacyReceipts(ctx context.Context, input *age
 func receiptFixtureServer(importReceipt func(context.Context, *agentpb.AgentDocument) (*agentpb.Document, error)) *httptest.Server {
 	server := grpc.NewServer()
 	agentpb.RegisterAgentControlServer(server, receiptGRPCFixture{importReceipt: importReceipt})
-	return httptest.NewServer(h2c.NewHandler(server, &http2.Server{}))
+	return grpcTestHTTPServer(server)
 }
 
 func TestAcknowledgedHistoryDoesNotBlockTaskReceiver(t *testing.T) {
