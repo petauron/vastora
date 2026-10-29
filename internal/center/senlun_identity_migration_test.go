@@ -70,6 +70,19 @@ func TestSenlunNativeIdentityMigrationRetainsInstanceAndHistory(t *testing.T) {
 		target.Artifacts[i].Name = "senlun-agent"
 	}
 	seedIndependentPackage(t, store, target)
+	// Another online collector retained the accepted rename recipe before this
+	// collector returned. The live catalog now advertises a newer executable.
+	online := enrollOrchestrationNode(t, store, "online-collector", NodeCapabilities{}, []networking.Candidate{{Address: "10.0.0.12", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.12", LANAddress: "10.0.0.12", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: online.ID, AppKey: senlunNativeIdentityKey, Config: json.RawMessage(`{"service_url":"https://independent.example.test/","node_name":"online-node","enrollment_token":"other-fixture-token"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	retained := claimTask(t, store, online)
+	if err := store.CompleteTask(ctx, online.ID, online.Credential, retained.ID, retained.Attempt, true, "", mockPackageResult(t, retained, json.RawMessage(`{"services":[]}`)), retained.RequiredRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	current := target
+	current.Version = "99.0.0"
+	seedIndependentPackage(t, store, current)
 	grants := []string{}
 	request := DeploymentRequest{AgentID: node.ID, AppKey: senlunNativeIdentityKey, Operation: "install", ReplaceApplicationID: installed.ApplicationID, SourceReceiptSHA256: strings.Repeat("0", 64), AuthorizedCapabilities: &grants, Config: json.RawMessage(`{}`)}
 	if _, err := store.CreateDeployment(ctx, request); err == nil {
@@ -80,10 +93,15 @@ func TestSenlunNativeIdentityMigrationRetainsInstanceAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if migration.AppVersion != target.Version || migration.PackageRevision != target.PackageRevision {
+		t.Fatal("identity migration selected the newer executable")
+	}
 	var key string
 	if err := store.db.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, installed.ApplicationID).Scan(&key); err != nil || key != legacySenlunNativeIdentityKey {
 		t.Fatal("Center changed identity before an Agent result")
 	}
+	current.PackageRevision++
+	seedIndependentPackage(t, store, current)
 	task := claimTask(t, store, node)
 	if task.ID != migration.ID || task.ApplicationID != installed.ApplicationID || task.SourceReceiptSHA256 != request.SourceReceiptSHA256 || strings.Contains(string(task.Config)+string(task.Secrets), "fixture-enrollment-token") || !strings.Contains(string(task.Config), "same-node") {
 		t.Fatal("migration did not preserve the original instance configuration")

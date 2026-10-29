@@ -53,5 +53,17 @@ their immutable evidence remains supported for existing installations. New Agent
 recovery preserves its data without contacting or rotating credentials on a
 Center-managed Service.
 
+For an offline collector still registered as `pulse-agent`, explicit identity
+migration can reuse a retained, successful `senlun-agent` recipe at the same
+application version. Center verifies its canonical digest against immutable
+accepted catalog history, checks the original resource receipt and requires the
+current, unexpired catalog to still authorize Senlun collectors. The recipe must
+change identity only; artifacts, runtime behavior and permissions cannot change.
+Center repeats these checks before dispatch. If no matching recipe is retained,
+migration stops for review rather than relabeling the running binary as a newer
+version. After migration, upgrade separately through the current signed catalog.
+Node credentials, monitoring history and traffic counters stay in their existing
+state directory; no new enrollment or probe restart is part of the rename.
+
 See the [standalone installation guide](https://github.com/petauron/senlun/blob/main/docs/STANDALONE.md)
 for installation and operation without Vastora.

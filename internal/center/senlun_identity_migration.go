@@ -11,6 +11,7 @@ import (
 
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/senulun"
+	"golang.org/x/mod/semver"
 )
 
 const senlunNativeIdentityKey = "vastora-official/senlun-agent"
@@ -32,6 +33,93 @@ func senlunIdentitySource(target string) (string, string) {
 func senlunIdentityRequest(request DeploymentRequest) bool {
 	source, _ := senlunIdentitySource(request.AppKey)
 	return source != "" && request.ReplaceApplicationID != "" && request.SourceReceiptSHA256 != "" && request.Operation == "install"
+}
+
+// An offline collector may return after the catalog has advanced. Rename only
+// with an accepted same-version recipe; upgrading the executable is a separate
+// operation. Retained deployment bytes are never trusted without the immutable
+// catalog digest and the original instance's current resource receipt.
+func (s *Store) senlunNativeIdentityManifest(ctx context.Context, request DeploymentRequest, current catalog.AppManifest) (catalog.AppManifest, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return catalog.AppManifest{}, err
+	}
+	defer tx.Rollback()
+	if err := authorizeOfficialManifest(ctx, tx, "stable", current, s.now().UTC()); err != nil {
+		return catalog.AppManifest{}, err
+	}
+	if _, err := validateSenlunIdentitySource(ctx, tx, request.ReplaceApplicationID, request.SourceReceiptSHA256, current, false); err == nil {
+		return current, nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT d.manifest_json,d.package_revision FROM deployments d
+		WHERE d.app_key=? AND d.state='succeeded' AND d.operation IN ('install','upgrade','configure')
+		AND d.app_version=(SELECT old.app_version FROM deployments old WHERE old.application_id=? AND old.app_key=? AND old.state='succeeded' ORDER BY old.created_at DESC,old.rowid DESC LIMIT 1)
+		ORDER BY d.package_revision DESC`, senlunNativeIdentityKey, request.ReplaceApplicationID, legacySenlunNativeIdentityKey)
+	if err != nil {
+		return catalog.AppManifest{}, err
+	}
+	var candidates []catalog.AppManifest
+	for rows.Next() {
+		var raw []byte
+		var revision int
+		if err := rows.Scan(&raw, &revision); err != nil {
+			rows.Close()
+			return catalog.AppManifest{}, err
+		}
+		var candidate catalog.AppManifest
+		if json.Unmarshal(raw, &candidate) == nil && candidate.PackageRevision == revision {
+			candidates = append(candidates, candidate)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return catalog.AppManifest{}, err
+	}
+	for _, candidate := range candidates {
+		if err := authorizeSenlunNativeIdentity(ctx, tx, request.ReplaceApplicationID, request.SourceReceiptSHA256, candidate, s.now().UTC(), false); err == nil {
+			return candidate, nil
+		}
+	}
+	return catalog.AppManifest{}, errors.New("center: no verified same-version Senlun identity recipe is retained; review the original installation")
+}
+
+func authorizeSenlunNativeIdentity(ctx context.Context, tx *sql.Tx, applicationID, sourceSHA string, target catalog.AppManifest, now time.Time, allowPending bool) error {
+	if "vastora-official/"+target.ID != senlunNativeIdentityKey {
+		return errors.New("center: historical identity recipes are only allowed for Senlun collectors")
+	}
+	value, _, err := readAcceptedOfficialCatalog(ctx, tx, "stable")
+	if err != nil {
+		return err
+	}
+	available := false
+	for _, current := range value.Apps {
+		if current.ID != target.ID || current.Runtime == nil || current.Runtime.Kind != "systemd" {
+			continue
+		}
+		comparison := semver.Compare(canonicalAppVersion(current.Version), canonicalAppVersion(target.Version))
+		if comparison < 0 || comparison == 0 && current.PackageRevision < target.PackageRevision {
+			break
+		}
+		if err := authorizeOfficialManifest(ctx, tx, "stable", current, now); err != nil {
+			return err
+		}
+		available = true
+		break
+	}
+	if !available {
+		return errors.New("center: Senlun collector is no longer authorized by the current catalog")
+	}
+	_, _, digest, err := canonicalPackage(target)
+	if err != nil {
+		return err
+	}
+	var acceptedSHA string
+	if err := tx.QueryRowContext(ctx, `SELECT manifest_sha256 FROM catalog_manifest_history WHERE source_id=? AND app_id=? AND version=? AND package_revision=?`, OfficialCatalogSourceID, target.ID, target.Version, target.PackageRevision).Scan(&acceptedSHA); err != nil || acceptedSHA != digest {
+		return errors.New("center: retained Senlun identity recipe does not match accepted catalog history")
+	}
+	_, err = validateSenlunIdentitySource(ctx, tx, applicationID, sourceSHA, target, allowPending)
+	return err
 }
 
 // Check both the signed historical deployment and the current Agent receipt.
