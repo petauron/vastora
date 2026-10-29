@@ -12,7 +12,7 @@ import { catalogInstallBlocked, copy } from "./shared";
 import { isBackgroundApplication } from "./applicationLaunch";
 import { AppIcon } from "@/components/desktop/AppIcon";
 
-export function AppStore({ data, language, onInstall, query = "", renderInstalledActions, renderInstalledSummary, renderInstalledStatus, renderInstalledDetailActions }: { data: AppData; language: Language; onInstall: (app: AppView) => void; query?: string; renderInstalledActions?: (key: string) => ReactNode; renderInstalledSummary?: (key: string) => ReactNode; renderInstalledStatus?: (key: string) => ReactNode; renderInstalledDetailActions?: (key: string) => ReactNode }) {
+export function AppStore({ data, language, onInstall, query = "", hideApp, extraCard, renderInstalledActions, renderInstalledSummary, renderInstalledStatus, renderInstalledDetailActions }: { data: AppData; language: Language; onInstall: (app: AppView) => void; query?: string; hideApp?: (app: AppView) => boolean; extraCard?: ReactNode; renderInstalledActions?: (key: string) => ReactNode; renderInstalledSummary?: (key: string) => ReactNode; renderInstalledStatus?: (key: string) => ReactNode; renderInstalledDetailActions?: (key: string) => ReactNode }) {
   const officialSource = data.sources.find((source) => source.id === "vastora-official");
   const officialUnavailable = officialSource && (officialSource.status === "pending" || officialSource.status === "failed" || officialSource.status === "expired" || !data.apps.some((app) => app.sourceId === officialSource.id));
   const installedCounts = new Map<string, number>();
@@ -39,7 +39,8 @@ export function AppStore({ data, language, onInstall, query = "", renderInstalle
         : copy(language, "请到控制面板刷新应用目录，验证完成后即可安装。已安装应用不受影响。", "Refresh the app catalog in Control Panel before installing. Installed apps are unaffected.")}</AlertDescription>
     </Alert> : null}
     <div className="store-app-grid">
-      {data.apps.filter((app) => !query || [localized(app, language, "name"), localized(app, language, "description"), app.sourceId, app.key].some((text) => text.toLocaleLowerCase().includes(query))).map((app) => {
+      {extraCard}
+      {data.apps.filter((app) => !hideApp?.(app) && (!query || [localized(app, language, "name"), localized(app, language, "description"), app.sourceId, app.key].some((text) => text.toLocaleLowerCase().includes(query)))).map((app) => {
         const canInstall = eligibleAppNodes(data, app.key).length > 0;
         return <AppStoreCard key={app.key} app={app} language={language}
           status={renderInstalledStatus?.(app.key)} detailActions={renderInstalledDetailActions?.(app.key)} installedCount={installedCounts.get(app.key) ?? 0} summary={renderInstalledSummary?.(app.key)} canInstall={canInstall}
