@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.382](https://github.com/petauron/vastora/compare/v0.1.0-alpha.381...v0.1.0-alpha.382) (2026-10-29)
+
+
+### Bug Fixes
+
+* **center:** migrate offline Senlun identities with retained recipes ([#1114](https://github.com/petauron/vastora/issues/1114)) ([46332b0](https://github.com/petauron/vastora/commit/46332b03858c10f2e2d128fe063508b6ad39998b))
+
 ## [0.1.0-alpha.381](https://github.com/petauron/vastora/compare/v0.1.0-alpha.380...v0.1.0-alpha.381) (2026-10-29)
 
 
