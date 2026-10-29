@@ -3,10 +3,34 @@ package agent
 import (
 	"context"
 	"errors"
-	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/petauron/vastora/internal/agentpb"
+	"github.com/petauron/vastora/internal/controlplane"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+// Existing failure-ordering cases exercise the gRPC control transport.
+type unavailableExecutionFixture struct {
+	agentpb.UnimplementedAgentControlServer
+}
+
+func (unavailableExecutionFixture) Heartbeat(context.Context, *agentpb.AgentDocument) (*agentpb.Document, error) {
+	return nil, status.Error(codes.Unavailable, "Center unavailable")
+}
+func (unavailableExecutionFixture) TransitionExecution(context.Context, *agentpb.ExecutionDocument) (*agentpb.Document, error) {
+	return nil, status.Error(codes.Unavailable, "Center unavailable")
+}
+func unavailableExecutionServer() *httptest.Server {
+	server := grpc.NewServer()
+	agentpb.RegisterAgentControlServer(server, unavailableExecutionFixture{})
+	return httptest.NewServer(h2c.NewHandler(server, &http2.Server{}))
+}
 
 func TestExecutionControlFailureCancelsOnlyItsOwner(t *testing.T) {
 	store := &Store{}
@@ -40,9 +64,9 @@ func TestExecutionControlFailureCancelsOnlyItsOwner(t *testing.T) {
 }
 
 func TestExecutionHTTPRequestErrorsStopActiveExecution(t *testing.T) {
-	for _, method := range []string{"GET", "POST"} {
+	for _, method := range []string{"heartbeat", "transition"} {
 		t.Run(method, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+			server := unavailableExecutionServer()
 			defer server.Close()
 			store := &Store{}
 			ctx, abort, release, err := store.beginExecution(context.Background())
@@ -50,21 +74,21 @@ func TestExecutionHTTPRequestErrorsStopActiveExecution(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer release()
-			client := Client{HTTPClient: server.Client(), executionAbort: abort}
-			if method == "GET" {
-				err = client.get(ctx, server.URL, "", "", "", nil)
-			} else {
-				err = client.post(ctx, server.URL, map[string]string{}, "", "", "", nil)
+			client := Client{executionAbort: abort}
+			operation := rpcHeartbeat
+			if method == "transition" {
+				operation = rpcExecutionTransition
 			}
+			err = client.callAgentRPC(ctx, Connection{CenterURL: server.URL, AgentID: "node", Credential: "credential"}, operation, "execution", map[string]string{}, nil, controlplane.MaxJSONPayload, false)
 			if err == nil || ctx.Err() == nil {
-				t.Fatalf("HTTP failure did not stop execution: %v %v", err, ctx.Err())
+				t.Fatalf("control failure did not stop execution: %v %v", err, ctx.Err())
 			}
 		})
 	}
 }
 
 func TestExecutionHeartbeatFailureCancelsCurrentOperation(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+	server := unavailableExecutionServer()
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -79,7 +103,7 @@ func TestExecutionHeartbeatFailureCancelsCurrentOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	if err := (Client{HTTPClient: server.Client()}).Heartbeat(context.Background(), store); err == nil {
+	if err := (Client{}).Heartbeat(context.Background(), store); err == nil {
 		t.Fatal("expected heartbeat failure")
 	}
 	if ctx.Err() == nil {

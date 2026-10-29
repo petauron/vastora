@@ -3,7 +3,6 @@ package center
 import (
 	"context"
 	"errors"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -100,8 +99,8 @@ func TestAgentReinstallAccessWithoutSharedEntry(t *testing.T) {
 	if err != nil || task == nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	if response := submitRestoredRuntime(t, s, node, task, true, true); response != nil {
+		t.Fatal(response)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {

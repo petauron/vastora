@@ -2,13 +2,13 @@ package agent
 
 import (
 	"context"
-
+	"encoding/json"
 	"errors"
-
 	"runtime"
-
 	"strings"
+	"time"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 )
 
@@ -54,11 +54,27 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 	if err != nil {
 		return Enrollment{}, errors.New("agent: stored enrollment identity is invalid")
 	}
-	var response Enrollment
-	if err := c.post(ctx, baseURL+"/api/v1/agents/enroll", map[string]any{
-		"token": operation.Token, "operationId": operation.OperationID, "version": Version, "operatingSystem": runtime.GOOS, "architecture": runtime.GOARCH, "publicKey": publicKey,
-	}, "", caFingerprint, caCertificatePEM, &response); err != nil {
+	connection := Connection{CenterURL: baseURL, CAFingerprint: caFingerprint, CACertificatePEM: caCertificatePEM}
+	conn, release, err := c.grpcConnection(connection, false)
+	if err != nil {
 		return Enrollment{}, err
+	}
+	defer release()
+	requestContext, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	result, err := agentGRPCClient(conn).Enroll(requestContext, &agentpb.EnrollRequest{
+		Token: operation.Token, OperationId: operation.OperationID, Version: Version,
+		OperatingSystem: runtime.GOOS, Architecture: runtime.GOARCH, PublicKey: publicKey,
+	})
+	if err != nil {
+		return Enrollment{}, agentGRPCError(err)
+	}
+	if result == nil {
+		return Enrollment{}, errors.New("agent: Center returned an incomplete enrollment response")
+	}
+	response := Enrollment{ID: result.AgentId, Credential: result.Credential, Name: result.Name, Roles: result.Roles}
+	if err := json.Unmarshal(result.CapabilitiesJson, &response.Capabilities); err != nil {
+		return Enrollment{}, errors.New("agent: Center returned invalid enrollment capabilities")
 	}
 	if response.ID == "" || response.Credential == "" || strings.TrimSpace(response.Name) == "" || len(response.Roles) == 0 {
 		return Enrollment{}, errors.New("agent: Center returned an incomplete enrollment response")

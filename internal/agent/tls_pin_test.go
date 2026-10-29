@@ -16,6 +16,15 @@ import (
 	"time"
 )
 
+// Exercise the same certificate verifier used by gRPC with a real TLS handshake.
+func pinnedTLSClientForTest(fingerprint, certificate string, timeout time.Duration) (*http.Client, error) {
+	config, err := pinnedTLSConfig(fingerprint, certificate)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: config}, Timeout: timeout}, nil
+}
+
 func TestPinnedCenterRejectsDifferentCARoot(t *testing.T) {
 	leafA, rootA := testPrivateCenterChain(t, "root-a")
 	leafB, rootB := testPrivateCenterChain(t, "root-b")
@@ -37,7 +46,7 @@ func TestPinnedHTTPClientTrustsPresentedPrivateIssuingCA(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 
-	client, err := pinnedHTTPClient(certificatePublicKeyFingerprint(issuer), "", time.Second)
+	client, err := pinnedTLSClientForTest(certificatePublicKeyFingerprint(issuer), "", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +57,7 @@ func TestPinnedHTTPClientTrustsPresentedPrivateIssuingCA(t *testing.T) {
 	response.Body.Close()
 
 	_, wrongIssuer := testPrivateCenterTLSCertificate(t)
-	wrongClient, err := pinnedHTTPClient(certificatePublicKeyFingerprint(wrongIssuer), "", time.Second)
+	wrongClient, err := pinnedTLSClientForTest(certificatePublicKeyFingerprint(wrongIssuer), "", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +77,7 @@ func TestPinnedHTTPClientTrustsIndependentlySuppliedPrivateCAWhenServerOmitsIt(t
 	defer server.Close()
 
 	issuerPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Raw}))
-	client, err := pinnedHTTPClient(certificatePublicKeyFingerprint(issuer), issuerPEM, time.Second)
+	client, err := pinnedTLSClientForTest(certificatePublicKeyFingerprint(issuer), issuerPEM, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

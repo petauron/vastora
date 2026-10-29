@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"time"
 
 	"github.com/petauron/catalog/catalog"
@@ -30,11 +29,10 @@ const (
 )
 
 type Client struct {
-	centerControl      *centerControlSession
+	centerRPC          *grpcControlSession
 	executionAbort     func(error)
 	executionSession   string
 	execution          controlplane.ExecutionAuthorization
-	HTTPClient         *http.Client
 	Executor           Executor
 	Roles              []string
 	Capabilities       Capabilities
@@ -94,9 +92,11 @@ type uncertainTaskOutcomeError struct{ cause error }
 type centerResponseError struct {
 	status  int
 	message string
+	cause   error
 }
 
 func (e *centerResponseError) Error() string { return "agent: Center request failed: " + e.message }
+func (e *centerResponseError) Unwrap() error { return e.cause }
 
 func (e *uncertainTaskOutcomeError) Error() string { return e.cause.Error() }
 func (e *uncertainTaskOutcomeError) Unwrap() error { return e.cause }

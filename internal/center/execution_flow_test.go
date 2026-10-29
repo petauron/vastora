@@ -12,9 +12,27 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+type faultingAgentStream struct {
+	grpc.ServerStream
+	beforeSend func(any) error
+}
+
+func (s *faultingAgentStream) SendMsg(value any) error {
+	if err := s.beforeSend(value); err != nil {
+		return err
+	}
+	return s.ServerStream.SendMsg(value)
+}
 
 type executionFlowExecutor struct {
 	calls      atomic.Int64
@@ -73,28 +91,32 @@ func TestExecutionAgentCenterFlow(t *testing.T) {
 			handler := NewServer(store, "", false).Handler()
 			var reports atomic.Int64
 			var lost atomic.Bool
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if mode == "claim-lost" && strings.HasSuffix(r.URL.Path, "/tasks/next") && !lost.Load() || mode == "start-lost" && strings.Contains(r.URL.Path, "/executions/") && !lost.Load() {
-					// Let Center commit the grant/consumption, then lose its reply.
-					recorder := httptest.NewRecorder()
-					handler.ServeHTTP(recorder, r)
-					if recorder.Code != http.StatusOK {
-						w.WriteHeader(recorder.Code)
-						return
+			grpcServer := grpc.NewServer(
+				grpc.UnaryInterceptor(func(ctx context.Context, request any, info *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
+					if info.FullMethod == agentpb.AgentControl_CompleteTask_FullMethodName {
+						reports.Add(1)
+						if mode == "result-lost" {
+							return nil, status.Error(codes.Unavailable, "result unavailable")
+						}
 					}
-					lost.Store(true)
-					w.WriteHeader(http.StatusServiceUnavailable)
-					return
-				}
-				if strings.HasSuffix(r.URL.Path, "/result") {
-					reports.Add(1)
-					if mode == "result-lost" {
-						w.WriteHeader(http.StatusServiceUnavailable)
-						return
+					result, err := next(ctx, request)
+					if mode == "start-lost" && info.FullMethod == agentpb.AgentControl_TransitionExecution_FullMethodName && err == nil && !lost.Swap(true) {
+						return nil, status.Error(codes.Unavailable, "start reply lost")
 					}
-				}
-				handler.ServeHTTP(w, r)
-			}))
+					return result, err
+				}),
+				grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, next grpc.StreamHandler) error {
+					return next(srv, &faultingAgentStream{ServerStream: stream, beforeSend: func(value any) error {
+						frame, ok := value.(*agentpb.CenterFrame)
+						if mode == "claim-lost" && ok && frame.GetAssignment() != nil && !lost.Swap(true) {
+							return status.Error(codes.Unavailable, "assignment reply lost")
+						}
+						return nil
+					}})
+				}),
+			)
+			agentpb.RegisterAgentControlServer(grpcServer, newAgentGRPCService(NewServer(store, "", false)))
+			server := httptest.NewServer(h2c.NewHandler(grpcServer, &http2.Server{}))
 			defer server.Close()
 			local, err := agent.Open(t.TempDir())
 			if err != nil {
@@ -109,7 +131,7 @@ func TestExecutionAgentCenterFlow(t *testing.T) {
 				t.Fatal(err)
 			}
 			executor := &executionFlowExecutor{fail: mode == "failure" || mode == "abandon"}
-			client := agent.Client{HTTPClient: server.Client(), Executor: executor, Capabilities: agent.Capabilities{Docker: true, ExecutorVersions: map[string]int{"docker": 1, "systemd": 1}, RuntimeCapabilities: []string{"root"}}}
+			client := agent.Client{Executor: executor, Capabilities: agent.Capabilities{Docker: true, ExecutorVersions: map[string]int{"docker": 1, "systemd": 1}, RuntimeCapabilities: []string{"root"}}}
 			defer func() {
 				if executor.restored.Load() != 0 || executor.maintained.Load() != 0 {
 					t.Fatalf("execution loop bypassed authorization: restore=%d maintenance=%d", executor.restored.Load(), executor.maintained.Load())

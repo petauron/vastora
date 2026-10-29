@@ -157,7 +157,7 @@ existing="$temporary_dir/existing"
 install -d "$fake_bin" "$existing"
 install -m 0644 "$temporary_dir/compose.yaml" "$existing/compose.yaml"
 printf '%s\n' 'old setup' > "$existing/setup.sh"
-printf '%s\n' 'VASTORA_VERSION=0.1.0-test' 'VASTORA_CENTER_IMAGE=old-image' > "$existing/release.env"
+printf '%s\n' 'VASTORA_VERSION=0.1.0-test' 'VASTORA_CENTER_IMAGE=old-image' 'VASTORA_AGENT_CONTROL_PROTOCOL=grpc-v1' > "$existing/release.env"
 printf '%s\n' 'VASTORA_CENTER_IMAGE=old-image' 'VASTORA_CENTER_BOOTSTRAP_PORT=19090' 'VASTORA_CUSTOM_VALUE=preserved' > "$existing/.env"
 cat > "$fake_bin/docker" <<'EOF'
 #!/bin/sh

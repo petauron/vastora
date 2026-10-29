@@ -65,6 +65,15 @@ if [ "$(awk -f "$source_dir/compare-semver.awk" "$new_version" "$installed_versi
   echo "Refusing to downgrade Center from $installed_version to $new_version; no files were changed." >&2
   exit 1
 fi
+# Old HTTP-only Agents cannot contact this Center after an automatic update.
+# Do not cross the protocol boundary until a coordinated migration is available.
+installed_protocol="$(awk -F= '$1 == "VASTORA_AGENT_CONTROL_PROTOCOL" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
+new_protocol="$(awk -F= '$1 == "VASTORA_AGENT_CONTROL_PROTOCOL" {sub(/^[^=]*=/, ""); print; exit}' "$source_dir/release.env")"
+if [ "$installed_protocol" != "grpc-v1" ] || [ "$new_protocol" != "grpc-v1" ]; then
+  echo "Refusing an uncoordinated Center/Agent protocol transition; no services or deployment files were changed." >&2
+  echo "Existing HTTP Agents need an identity-preserving coordinated migration before this release can be installed." >&2
+  exit 1
+fi
 case "$new_image" in
   *@sha256:????????????????????????????????????????????????????????????????) ;;
   *) echo "The release image is not pinned by a complete sha256 digest." >&2; exit 2 ;;

@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/tailscalehost"
 	"golang.org/x/mod/semver"
 )
@@ -123,8 +123,7 @@ func (c Client) beginTailscaleUpdate(ctx context.Context, store *Store, task Dep
 	if err != nil {
 		return err
 	}
-	endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/tailscale-updates/" + url.PathEscape(task.ID) + "/start"
-	return c.post(ctx, endpoint, map[string]any{"executionId": c.execution.ID, "sessionId": c.executionSession, "attempt": task.Attempt}, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+	return c.callAgentRPC(ctx, connection, rpcBeginTailscaleUpdate, task.ID, map[string]any{"executionId": c.execution.ID, "sessionId": c.executionSession, "attempt": task.Attempt}, nil, controlplane.MaxJSONPayload, false)
 }
 
 func (s *Store) setTailscaleUpdateTask(id string) {

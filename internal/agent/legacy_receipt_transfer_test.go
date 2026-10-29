@@ -3,13 +3,33 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
+
+type receiptGRPCFixture struct {
+	agentpb.UnimplementedAgentControlServer
+	importReceipt func(context.Context, *agentpb.AgentDocument) (*agentpb.Document, error)
+}
+
+func (f receiptGRPCFixture) ImportLegacyReceipts(ctx context.Context, input *agentpb.AgentDocument) (*agentpb.Document, error) {
+	return f.importReceipt(ctx, input)
+}
+func receiptFixtureServer(importReceipt func(context.Context, *agentpb.AgentDocument) (*agentpb.Document, error)) *httptest.Server {
+	server := grpc.NewServer()
+	agentpb.RegisterAgentControlServer(server, receiptGRPCFixture{importReceipt: importReceipt})
+	return httptest.NewServer(h2c.NewHandler(server, &http2.Server{}))
+}
 
 func TestAcknowledgedHistoryDoesNotBlockTaskReceiver(t *testing.T) {
 	store, err := Open(t.TempDir())
@@ -40,28 +60,28 @@ func TestLegacyTransferReconnectsAfterTemporaryOutageButNotInvalidEvidence(t *te
 			defer cancel()
 			seedLegacyReceipt(t, store, DeploymentTask{ID: "unfinished", Kind: "application.apply", Attempt: 1}, "processing", nil)
 			calls := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := receiptFixtureServer(func(_ context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
 				calls++
 				if calls == 1 && mode != "wrong-digest" {
-					w.WriteHeader(http.StatusBadGateway)
-					return
+					return nil, status.Error(codes.Unavailable, "temporary outage")
 				}
 				var input controlplane.LegacyReceiptImport
-				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				if err := json.Unmarshal(request.Json, &input); err != nil {
 					t.Error(err)
-					return
+					return nil, err
 				}
 				digest := input.Digest
 				if mode == "wrong-digest" {
 					digest = "unverified"
 				}
-				json.NewEncoder(w).Encode(map[string]any{"archived": true, "id": controlplane.LegacyReceiptArchiveID("node", input.Receipt.TaskID, input.Receipt.Attempt), "digest": digest})
-			}))
+				body, err := json.Marshal(map[string]any{"archived": true, "id": controlplane.LegacyReceiptArchiveID("node", input.Receipt.TaskID, input.Receipt.Attempt), "digest": digest})
+				return &agentpb.Document{Json: body}, err
+			})
 			defer server.Close()
 			if err := store.SaveConnection(ctx, testConnection(t, "node", "test", server.URL, "credential")); err != nil {
 				t.Fatal(err)
 			}
-			client := Client{HTTPClient: server.Client(), executionSession: "registered-session"}
+			client := Client{executionSession: "registered-session"}
 			ready := client.transferLegacyReceiptsBeforeTasks(ctx, store, func(error) {
 				if mode == "cancel" {
 					cancel()
@@ -93,24 +113,22 @@ func TestLegacyReceiptTransferRetiresOnlyConfirmedUnchangedEvidence(t *testing.T
 			ctx := context.Background()
 			seedLegacyReceipt(t, store, DeploymentTask{ID: "old-task", Kind: "application.apply", Attempt: 1}, "processing", nil)
 			calls := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := receiptFixtureServer(func(ctx context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
 				calls++
-				if r.URL.Path != "/api/v1/agents/node/legacy-receipts" || r.Header.Get("Authorization") != "Bearer credential" {
-					t.Error("unexpected transfer endpoint or credential")
+				md, _ := metadata.FromIncomingContext(ctx)
+				if request.AgentId != "node" || len(md.Get("authorization")) != 1 || md.Get("authorization")[0] != "Bearer credential" {
+					t.Error("unexpected transfer identity or credential")
 				}
 				var input controlplane.LegacyReceiptImport
-				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				if err := json.Unmarshal(request.Json, &input); err != nil {
 					t.Error(err)
-					w.WriteHeader(400)
-					return
+					return nil, err
 				}
 				if mode == "unavailable" {
-					w.WriteHeader(503)
-					return
+					return nil, status.Error(codes.Unavailable, "unavailable")
 				}
 				if mode == "invalid-json" {
-					w.Write([]byte(`{`))
-					return
+					return &agentpb.Document{Json: []byte(`{`)}, nil
 				}
 				id := controlplane.LegacyReceiptArchiveID("node", input.Receipt.TaskID, input.Receipt.Attempt)
 				digest := input.Digest
@@ -125,13 +143,14 @@ func TestLegacyReceiptTransferRetiresOnlyConfirmedUnchangedEvidence(t *testing.T
 						t.Error(err)
 					}
 				}
-				json.NewEncoder(w).Encode(map[string]any{"archived": true, "id": id, "digest": digest})
-			}))
+				body, err := json.Marshal(map[string]any{"archived": true, "id": id, "digest": digest})
+				return &agentpb.Document{Json: body}, err
+			})
 			defer server.Close()
 			if err := store.SaveConnection(ctx, testConnection(t, "node", "test", server.URL, "credential")); err != nil {
 				t.Fatal(err)
 			}
-			client := Client{HTTPClient: server.Client(), executionSession: "test-registered-process-session"}
+			client := Client{executionSession: "test-registered-process-session"}
 			err = client.TransferLegacyReceipts(ctx, store)
 			if (err == nil) != (mode == "success") || calls != 1 {
 				t.Fatalf("transfer calls=%d err=%v", calls, err)

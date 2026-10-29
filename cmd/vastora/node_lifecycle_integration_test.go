@@ -21,7 +21,13 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/center"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // Run the actual CLI entry points in separate processes, without installing
@@ -333,19 +339,20 @@ func (l *nodeLifecycleLab) serve(node nodeLifecycleAgent) *nodeLifecycleProcess 
 }
 func (l *nodeLifecycleLab) assertRevoked(node nodeLifecycleAgent) {
 	l.t.Helper()
-	request, err := http.NewRequestWithContext(l.ctx, "POST", l.origin+"/api/v1/agents/"+node.AgentID+"/heartbeat", strings.NewReader("{}"))
+	origin, err := url.Parse(l.origin)
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	request.Header.Set("Authorization", "Bearer "+node.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := l.client.Do(request)
+	conn, err := grpc.NewClient("passthrough:///"+origin.Host, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusUnauthorized {
-		l.t.Fatalf("removed identity heartbeat returned %d", response.StatusCode)
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(metadata.AppendToOutgoingContext(l.ctx, "authorization", "Bearer "+node.Credential), 3*time.Second)
+	defer cancel()
+	_, err = agentpb.NewAgentControlClient(conn).Heartbeat(ctx, &agentpb.AgentDocument{AgentId: node.AgentID, Json: []byte(`{}`)})
+	if status.Code(err) != codes.Unauthenticated {
+		l.t.Fatalf("removed identity heartbeat returned %s: %v", status.Code(err), err)
 	}
 	if l.node(node.AgentID) != nil {
 		l.t.Fatal("removed node still appears in inventory")

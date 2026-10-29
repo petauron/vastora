@@ -6,8 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -35,8 +33,8 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...str
 	if err != nil || task == nil {
 		t.Fatal(err)
 	}
-	if response := preparationResult(t, s, node, task, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	if response := preparationResult(t, s, node, task, true); response != nil {
+		t.Fatal(response)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -92,7 +90,7 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...str
 	return s, node, input
 }
 
-func submitRestoredRuntime(t *testing.T, s *Store, node AgentCredential, task *AgentTask, valid, succeeded bool) *httptest.ResponseRecorder {
+func submitRestoredRuntime(t *testing.T, s *Store, node AgentCredential, task *AgentTask, valid, succeeded bool) error {
 	t.Helper()
 	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
 	// Fresh machines have no superseded 3x-ui installation to retire.
@@ -103,18 +101,13 @@ func submitRestoredRuntime(t *testing.T, s *Store, node AgentCredential, task *A
 	return submitReinstallRuntimeResult(t, s, node, task, result, succeeded)
 }
 
-func submitReinstallRuntimeResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, result meridianruntime.Result, succeeded bool) *httptest.ResponseRecorder {
+func submitReinstallRuntimeResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, result meridianruntime.Result, succeeded bool) error {
 	t.Helper()
 	if err := s.StartExecution(context.Background(), node.ID, "package-preparation-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
 		t.Fatal(err)
 	}
 	input, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": "package-preparation-session", "attempt": task.Attempt, "succeeded": succeeded, "result": ApplicationTaskResult{MeridianRuntime: &result}})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(input))
-	request.Header.Set("Authorization", "Bearer "+node.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	NewServer(s, "", false).Handler().ServeHTTP(response, request)
-	return response
+	return completeAgentTaskGRPCTest(context.Background(), s, node, task.ID, input)
 }
 
 func TestAgentReinstallRuntimeRestoresNativeIdentityWithoutPublishing(t *testing.T) {
@@ -145,8 +138,8 @@ func TestAgentReinstallRuntimeRestoresNativeIdentityWithoutPublishing(t *testing
 		t.Fatal("recovery metadata contains runtime secrets")
 	}
 	response := submitRestoredRuntime(t, s, node, task, true, true)
-	if response.Code != http.StatusOK {
-		t.Fatalf("result: %d %s", response.Code, response.Body.String())
+	if response != nil {
+		t.Fatalf("result: %v", response)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
@@ -230,7 +223,7 @@ func TestAgentReinstallRuntimeRejectsChangedAuthorization(t *testing.T) {
 						t.Fatal("changed authority claimed")
 					}
 				} else {
-					if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code == http.StatusOK {
+					if response := submitRestoredRuntime(t, s, node, task, true, true); response == nil {
 						t.Fatal("changed authority projected")
 					}
 				}
@@ -325,8 +318,8 @@ func TestAgentReinstallRuntimeRejectsInvalidAndFailedResults(t *testing.T) {
 				t.Fatal(err)
 			}
 			response := submitRestoredRuntime(t, s, node, task, mode != "invalid", mode != "failed")
-			if mode == "invalid" && response.Code == http.StatusOK || mode == "failed" && response.Code != http.StatusOK {
-				t.Fatalf("unexpected response %d", response.Code)
+			if mode == "invalid" && response == nil || mode == "failed" && response != nil {
+				t.Fatalf("unexpected response %v", response)
 			}
 			plan, err := s.AgentReinstallPlan(ctx, node.ID)
 			if err != nil {
@@ -374,8 +367,8 @@ func TestAgentReinstallRuntimeStartupHeartbeatRefreshesNetworkBeforeApproval(t *
 		t.Fatal(err)
 	}
 	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
-	if response := submitReinstallRuntimeResult(t, s, node, task, result, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	if response := submitReinstallRuntimeResult(t, s, node, task, result, true); response != nil {
+		t.Fatal(response)
 	}
 	var key []byte
 	if err = s.db.QueryRow(`SELECT x25519_public_key FROM agents WHERE id=?`, node.ID).Scan(&key); err != nil {
@@ -421,8 +414,8 @@ func TestAgentReinstallRuntimeReviewedSuccessorPreservesReceipt(t *testing.T) {
 	if err != nil || task == nil {
 		t.Fatal(err)
 	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	if response := submitRestoredRuntime(t, s, node, task, true, true); response != nil {
+		t.Fatal(response)
 	}
 	var originalReceipt []byte
 	if err = s.db.QueryRow(`SELECT sealed_result FROM task_executions WHERE task_id=?`, first.CommandID).Scan(&originalReceipt); err != nil {
@@ -459,8 +452,8 @@ func TestAgentReinstallRuntimeReviewedSuccessorPreservesReceipt(t *testing.T) {
 	if err != nil || task == nil || task.ID != next.CommandID {
 		t.Fatal("claim successor", err)
 	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	if response := submitRestoredRuntime(t, s, node, task, true, true); response != nil {
+		t.Fatal(response)
 	}
 	plan, err = s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil || plan.Recovery.State != "review_required" || plan.Applications[0].Preparation.Runtime.State != "succeeded" {

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -12,10 +11,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
+
+func agentGRPCTestContext(ctx context.Context, credential string) context.Context {
+	return metadata.NewIncomingContext(ctx, metadata.Pairs("authorization", "Bearer "+credential))
+}
+
+func completeAgentTaskGRPCTest(ctx context.Context, store *Store, node AgentCredential, taskID string, payload []byte) error {
+	_, err := newAgentGRPCService(NewServer(store, "", false)).CompleteTask(agentGRPCTestContext(ctx, node.Credential), &agentpb.TaskDocument{AgentId: node.ID, TaskId: taskID, Json: payload})
+	return err
+}
 
 func testAgentPublicKey(t *testing.T) []byte {
 	t.Helper()
@@ -59,13 +71,9 @@ func TestAgentHeartbeatProjectionFailureIsNotReportedAsAuthenticationFailure(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+credential.ID+"/heartbeat", bytes.NewReader(requestBody))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+credential.Credential)
-	response := httptest.NewRecorder()
-	NewServer(store, "", false).Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), `"code":"internal_error"`) {
-		t.Fatalf("valid Agent projection failure was misreported as authentication: status=%d body=%q", response.Code, response.Body.String())
+	_, err = newAgentGRPCService(NewServer(store, "", false)).Heartbeat(agentGRPCTestContext(ctx, credential.Credential), &agentpb.AgentDocument{AgentId: credential.ID, Json: requestBody})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("valid Agent projection failure was misreported as authentication: code=%s err=%v", status.Code(err), err)
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/url"
 	"syscall"
 	"time"
 
@@ -66,7 +65,7 @@ func (c Client) TransferLegacyReceipts(ctx context.Context, store *Store) error 
 			Digest   string `json:"digest"`
 		}
 		requestContext, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err = c.postLimit(requestContext, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/legacy-receipts", input, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &ack, controlplane.LegacyReceiptMaxPayloadBytes)
+		err = c.callAgentRPC(requestContext, connection, rpcLegacyReceipts, "", input, &ack, controlplane.LegacyReceiptMaxPayloadBytes, false)
 		cancel()
 		if err != nil {
 			return err

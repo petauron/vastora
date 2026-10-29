@@ -3,7 +3,6 @@ package center
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 
@@ -52,8 +51,8 @@ func TestAgentReinstallAcceptanceRunsCredentialsSequentially(t *testing.T) {
 			if err != nil || runtime == nil {
 				t.Fatal(err)
 			}
-			if response := submitRestoredRuntime(t, s, node, runtime, true, true); response.Code != http.StatusOK {
-				t.Fatal(response.Body.String())
+			if response := submitRestoredRuntime(t, s, node, runtime, true, true); response != nil {
+				t.Fatal(response)
 			}
 			plan, err = s.AgentReinstallPlan(ctx, node.ID)
 			if err != nil {
@@ -95,8 +94,8 @@ func TestAgentReinstallAcceptanceRunsCredentialsSequentially(t *testing.T) {
 				t.Fatal(err)
 			}
 			raw, _ := json.Marshal(map[string]any{"meridianAcceptance": meridianruntime.AcceptanceResult{TaskDigest: digest}})
-			if response := submitMonitorInspection(t, s, verifier, first, raw, success); response.Code != http.StatusOK {
-				t.Fatal(response.Body.String())
+			if response := submitMonitorInspection(t, s, verifier, first, raw, success); response != nil {
+				t.Fatal(response)
 			}
 			var active, total int
 			if err = s.db.QueryRow(`SELECT COUNT(*),SUM(state IN ('pending','running')) FROM application_commands WHERE kind='meridian.recovery.acceptance'`).Scan(&total, &active); err != nil {
@@ -123,8 +122,8 @@ func TestAgentReinstallAcceptanceRunsCredentialsSequentially(t *testing.T) {
 				t.Fatal(err)
 			}
 			raw, _ = json.Marshal(map[string]any{"meridianAcceptance": meridianruntime.AcceptanceResult{TaskDigest: digest}})
-			if response := submitMonitorInspection(t, s, verifier, second, raw, true); response.Code != http.StatusOK {
-				t.Fatal(response.Body.String())
+			if response := submitMonitorInspection(t, s, verifier, second, raw, true); response != nil {
+				t.Fatal(response)
 			}
 			if err = s.db.QueryRow(`SELECT COUNT(*) FROM application_commands WHERE kind='meridian.recovery.acceptance' AND state IN ('pending','running')`).Scan(&active); err != nil || active != 0 {
 				t.Fatalf("unfinished: %d %v", active, err)

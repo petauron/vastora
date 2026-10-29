@@ -453,19 +453,6 @@ func (s *Server) handleAgentBinary(writer http.ResponseWriter, request *http.Req
 	s.serveAgentBinary(writer, request, request.PathValue("os"), request.PathValue("arch"))
 }
 
-func (s *Server) handleAgentUpdateBinary(writer http.ResponseWriter, request *http.Request) {
-	credential, err := agentCredential(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	if err := s.store.authenticateAgent(request.Context(), request.PathValue("id"), credential); err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	s.serveAgentBinary(writer, request, request.PathValue("os"), request.PathValue("arch"))
-}
-
 func (s *Server) serveAgentBinary(writer http.ResponseWriter, request *http.Request, operatingSystem, architecture string) {
 	target, err := platform.Parse(operatingSystem, architecture)
 	if err != nil {
