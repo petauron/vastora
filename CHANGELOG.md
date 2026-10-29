@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.381](https://github.com/petauron/vastora/compare/v0.1.0-alpha.380...v0.1.0-alpha.381) (2026-10-29)
+
+
+### Bug Fixes
+
+* allow agent updates over slow connections ([c7983ad](https://github.com/petauron/vastora/commit/c7983ad61824f68ebe038c0a07f5dc1a593b5efd)), closes [#1109](https://github.com/petauron/vastora/issues/1109)
+
 ## [0.1.0-alpha.380](https://github.com/petauron/vastora/compare/v0.1.0-alpha.379...v0.1.0-alpha.380) (2026-10-29)
 
 
