@@ -15,6 +15,9 @@ import (
 	"testing"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/agentpb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestLocalCenterStatusReportsVersionAndHealth(t *testing.T) {
@@ -661,15 +664,16 @@ func TestAgentUpdateVerifiesAndPreservesPreviousBinary(t *testing.T) {
 	}
 	newBinary := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then printf '0.2.0\\n'; fi\n")
 	digest := sha256.Sum256(newBinary)
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		wantPath := "/api/v1/agents/node-id/binary/linux/" + runtime.GOARCH
-		if request.URL.Path != wantPath || request.Header.Get("Authorization") != "Bearer node-credential" {
-			t.Fatalf("unexpected update request: %s auth=%q", request.URL.Path, request.Header.Get("Authorization"))
+	server := hostControlFixtureServer(&hostControlGRPCFixture{binary: func(request *agentpb.BinaryRequest, stream agentpb.AgentControl_DownloadAgentBinaryServer) error {
+		requireHostFixtureCredential(t, stream.Context(), "node-credential")
+		if request.AgentId != "node-id" || request.OperatingSystem != "linux" || request.Architecture != runtime.GOARCH {
+			t.Error("unexpected update target")
 		}
-		response.Header().Set("X-Vastora-Version", "0.2.0")
-		response.Header().Set("X-Vastora-SHA256", fmt.Sprintf("%x", digest[:]))
-		_, _ = response.Write(newBinary)
-	}))
+		if err := stream.Send(&agentpb.BinaryFrame{Body: &agentpb.BinaryFrame_Header{Header: &agentpb.BinaryHeader{Version: "0.2.0", Sha256: fmt.Sprintf("%x", digest[:]), Size: int64(len(newBinary))}}}); err != nil {
+			return err
+		}
+		return stream.Send(&agentpb.BinaryFrame{Body: &agentpb.BinaryFrame_Chunk{Chunk: &agentpb.DataChunk{Data: newBinary}}})
+	}})
 	defer server.Close()
 	executable := filepath.Join(t.TempDir(), "vastora")
 	oldBinary := []byte("old-agent-binary")
@@ -677,7 +681,7 @@ func TestAgentUpdateVerifiesAndPreservesPreviousBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	restarts := 0
-	version, err := updateAgentExecutable(context.Background(), server.Client(), agent.Connection{AgentID: "node-id", CenterURL: server.URL, Credential: "node-credential"}, executable, func() error { restarts++; return nil })
+	version, err := updateAgentExecutable(context.Background(), agent.Connection{AgentID: "node-id", CenterURL: server.URL, Credential: "node-credential"}, executable, func() error { restarts++; return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,19 +692,26 @@ func TestAgentUpdateVerifiesAndPreservesPreviousBinary(t *testing.T) {
 	}
 }
 
-func TestAgentUpdateEndpointSupportsBothLinuxArchitectures(t *testing.T) {
-	connection := agent.Connection{AgentID: "node id", CenterURL: "https://center.example.com/"}
+func TestAgentUpdateDownloadSupportsBothLinuxArchitectures(t *testing.T) {
+	server := hostControlFixtureServer(&hostControlGRPCFixture{binary: func(request *agentpb.BinaryRequest, stream agentpb.AgentControl_DownloadAgentBinaryServer) error {
+		if request.AgentId != "node id" || request.OperatingSystem != "linux" {
+			t.Error("unexpected update identity")
+		}
+		if request.Architecture != "amd64" && request.Architecture != "arm64" {
+			return status.Error(codes.NotFound, "unsupported architecture")
+		}
+		return stream.Send(&agentpb.BinaryFrame{Body: &agentpb.BinaryFrame_Header{Header: &agentpb.BinaryHeader{Version: "0.2.0", Sha256: strings.Repeat("0", 64), Size: 1}}})
+	}})
+	defer server.Close()
+	connection := agent.Connection{AgentID: "node id", CenterURL: server.URL, Credential: "credential"}
 	for _, architecture := range []string{"amd64", "arm64"} {
-		endpoint, err := agentUpdateEndpoint(connection, "linux", architecture)
+		reader, _, _, _, err := agent.OpenAgentBinary(context.Background(), connection, "linux", architecture)
 		if err != nil {
-			t.Fatalf("agentUpdateEndpoint(%s): %v", architecture, err)
+			t.Fatalf("Agent binary %s: %v", architecture, err)
 		}
-		want := "https://center.example.com/api/v1/agents/node%20id/binary/linux/" + architecture
-		if endpoint != want {
-			t.Fatalf("endpoint = %q, want %q", endpoint, want)
-		}
+		reader.Close()
 	}
-	if _, err := agentUpdateEndpoint(connection, "linux", "386"); err == nil {
+	if _, _, _, _, err := agent.OpenAgentBinary(context.Background(), connection, "linux", "386"); err == nil {
 		t.Fatal("unsupported update architecture was accepted")
 	}
 }
@@ -711,11 +722,12 @@ func TestAgentUpdateStopsWithoutDowngradeWhenRestartFails(t *testing.T) {
 	}
 	newBinary := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then printf '0.2.0\\n'; fi\n")
 	digest := sha256.Sum256(newBinary)
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		response.Header().Set("X-Vastora-Version", "0.2.0")
-		response.Header().Set("X-Vastora-SHA256", fmt.Sprintf("%x", digest[:]))
-		_, _ = response.Write(newBinary)
-	}))
+	server := hostControlFixtureServer(&hostControlGRPCFixture{binary: func(_ *agentpb.BinaryRequest, stream agentpb.AgentControl_DownloadAgentBinaryServer) error {
+		if err := stream.Send(&agentpb.BinaryFrame{Body: &agentpb.BinaryFrame_Header{Header: &agentpb.BinaryHeader{Version: "0.2.0", Sha256: fmt.Sprintf("%x", digest[:]), Size: int64(len(newBinary))}}}); err != nil {
+			return err
+		}
+		return stream.Send(&agentpb.BinaryFrame{Body: &agentpb.BinaryFrame_Chunk{Chunk: &agentpb.DataChunk{Data: newBinary}}})
+	}})
 	defer server.Close()
 	executable := filepath.Join(t.TempDir(), "vastora")
 	oldBinary := []byte("old-agent-binary")
@@ -723,7 +735,7 @@ func TestAgentUpdateStopsWithoutDowngradeWhenRestartFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	restarts := 0
-	_, err := updateAgentExecutable(context.Background(), server.Client(), agent.Connection{AgentID: "node-id", CenterURL: server.URL, Credential: "node-credential"}, executable, func() error {
+	_, err := updateAgentExecutable(context.Background(), agent.Connection{AgentID: "node-id", CenterURL: server.URL, Credential: "node-credential"}, executable, func() error {
 		restarts++
 		if restarts == 1 {
 			return fmt.Errorf("new service failed")

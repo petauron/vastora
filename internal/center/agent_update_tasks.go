@@ -58,6 +58,33 @@ func isAgentUpdateTaskID(value string) bool {
 	return strings.HasPrefix(value, "agent-update-")
 }
 
+// A Center can queue an update from the previous heartbeat just before a
+// manually migrated Agent reports its new version. Never offer that stale,
+// unclaimed update to the process which is already running the target.
+func (s *Store) retireInstalledUnclaimedAgentUpdate(ctx context.Context, tx *sql.Tx, agentID, version string, now time.Time) error {
+	var id, target string
+	err := tx.QueryRowContext(ctx, `SELECT id,target_version FROM agent_updates u
+		WHERE agent_id=? AND state='pending' AND attempt=0
+		AND NOT EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=u.id)`, agentID).Scan(&id, &target)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil || !agentUpdateFailureSuperseded(version, target) {
+		return err
+	}
+	message := "Superseded before claim: Agent already reports target version " + target
+	result, err := tx.ExecContext(ctx, `UPDATE agent_updates SET state='failed',last_error=?,updated_at=?
+		WHERE id=? AND agent_id=? AND state='pending' AND attempt=0
+		AND NOT EXISTS(SELECT 1 FROM task_executions WHERE task_id=?)`, message, now.UTC().Format(time.RFC3339Nano), id, agentID, id)
+	if err != nil {
+		return err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		return errors.New("center: queued Agent update changed before supersession")
+	}
+	return s.recordTaskEvent(ctx, tx, id, agentID, "agent.update", 1, "failed", message)
+}
+
 type agentUpdateExecutionQueryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }

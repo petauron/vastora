@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/secret"
@@ -111,13 +112,9 @@ func TestLegacyReceiptImportArchivesWithoutExecuting(t *testing.T) {
 				t.Fatalf("authenticated inspection violated response boundary: %d", inspectResponse.Code)
 			}
 			requestBody, _ := json.Marshal(input)
-			r := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/legacy-receipts", bytes.NewReader(requestBody))
-			r.Header.Set("Authorization", "Bearer "+node.Credential)
-			r.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-			NewServer(store, "", false).Handler().ServeHTTP(w, r)
-			if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "synthetic-private-value") {
-				t.Fatalf("archive acknowledgement: %d", w.Code)
+			ack, ackErr := newAgentGRPCService(NewServer(store, "", false)).ImportLegacyReceipts(agentGRPCTestContext(ctx, node.Credential), &agentpb.AgentDocument{AgentId: node.ID, Json: requestBody})
+			if ackErr != nil || ack == nil || strings.Contains(string(ack.Json), "synthetic-private-value") {
+				t.Fatalf("archive acknowledgement: %v", ackErr)
 			}
 			if _, err := store.db.Exec(`UPDATE task_executions SET sealed_task=X'0001' WHERE id=?`, id); err != nil {
 				t.Fatal(err)

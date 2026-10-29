@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -132,7 +131,6 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err != nil {
 		return observeErr, err
 	}
-	heartbeatURL := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/heartbeat"
 	runtimeRecovery, runtimeRecoveryApplications := store.runtimeRecovery()
 	if executor, ok := c.Executor.(interface {
 		PackageCapabilities(bool) (map[string]int, []string)
@@ -181,7 +179,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		payload["runtimeRecovery"] = runtimeRecovery
 		payload["runtimeRecoveryApplications"] = runtimeRecoveryApplications
 	}
-	err = c.post(ctx, heartbeatURL, payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response)
+	err = c.callAgentRPC(ctx, connection, rpcHeartbeat, "", payload, &response, controlplane.MaxJSONPayload, false)
 	if err != nil {
 		return observeErr, err
 	}
@@ -205,7 +203,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 			publicEgressErr = fmt.Errorf("agent: observe public egress: %w", err)
 		} else if publicEgress != nil {
 			payload["publicEgress"] = publicEgress
-			if err := c.post(ctx, heartbeatURL, payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &struct{}{}); err != nil {
+			if err := c.callAgentRPC(ctx, connection, rpcHeartbeat, "", payload, &struct{}{}, controlplane.MaxJSONPayload, false); err != nil {
 				return errors.Join(observeErr, publicEgressErr), err
 			}
 		}

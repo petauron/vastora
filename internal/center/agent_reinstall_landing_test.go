@@ -1,12 +1,9 @@
 package center
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -84,13 +81,8 @@ func applyReinstallLanding(t *testing.T, s *Store, egress AgentCredential, succe
 	}
 	peer := landing.PeerIdentity{ID: "tailnet-" + egress.ID, PublicKey: "nodekey:test-" + egress.ID, Address: "100.64.0.62"}
 	body, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": session, "attempt": task.Attempt, "succeeded": success, "result": map[string]any{"landingPeer": peer}})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+egress.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+egress.Credential)
-	req.Header.Set("Content-Type", "application/json")
-	resp := httptest.NewRecorder()
-	NewServer(s, "", false).Handler().ServeHTTP(resp, req)
-	if resp.Code != http.StatusOK {
-		t.Fatalf("result: %d %s", resp.Code, resp.Body.String())
+	if err := completeAgentTaskGRPCTest(ctx, s, egress, task.ID, body); err != nil {
+		t.Fatalf("result: %v", err)
 	}
 }
 
@@ -146,8 +138,8 @@ func TestAgentReinstallLandingWithdrawalThenAuthorization(t *testing.T) {
 			if !strings.Contains(string(task.MeridianRuntime.Desired.Config), restoreRouteID) || task.MeridianRuntime.Source == nil || task.MeridianRuntime.Source.PublicKey != "nodekey:replacement-entry" || len(task.MeridianRuntime.Peers) != 1 || task.MeridianRuntime.Peers[0].EgressID != egress.ID {
 				t.Fatal("reviewed fixed route or exact replacement identity missing from restored runtime")
 			}
-			if resp := submitRestoredRuntime(t, s, node, task, true, true); resp.Code != http.StatusOK {
-				t.Fatal(resp.Body.String())
+			if resp := submitRestoredRuntime(t, s, node, task, true, true); resp != nil {
+				t.Fatal(resp)
 			}
 			var healthy int
 			if err = s.db.QueryRow(`SELECT runtime_healthy FROM meridian_route_grants WHERE id='restore-grant'`).Scan(&healthy); err != nil || healthy != 0 {
@@ -380,7 +372,7 @@ func TestAgentReinstallLandingRuntimeRejectsChangedAuthorization(t *testing.T) {
 				}
 			} else {
 				response := submitRestoredRuntime(t, s, node, task, true, true)
-				if response.Code == http.StatusOK {
+				if response == nil {
 					t.Fatal("runtime projected with missing landing approval")
 				}
 			}
@@ -414,8 +406,8 @@ func TestAgentReinstallLandingRuntimeRequiresExactHealthyTransport(t *testing.T)
 			}
 			response := submitReinstallRuntimeResult(t, s, node, task, result, true)
 			invalid := mode == "wrong-source" || mode == "missing-peer"
-			if (response.Code != http.StatusOK) != invalid {
-				t.Fatalf("result %s: %d %s", mode, response.Code, response.Body.String())
+			if (response != nil) != invalid {
+				t.Fatalf("result %v: %v", mode, response)
 			}
 			plan, err := s.AgentReinstallPlan(ctx, node.ID)
 			if err != nil {
@@ -461,8 +453,8 @@ func TestAgentReinstallLandingRuntimeRecoversFromStartupTransportFailure(t *test
 	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
 	result.Peers[0].Status.State = "blocked"
 	response := submitReinstallRuntimeResult(t, s, node, task, result, true)
-	if response.Code != http.StatusOK {
-		t.Fatalf("startup result: %d %s", response.Code, response.Body.String())
+	if response != nil {
+		t.Fatalf("startup result: %v", response)
 	}
 	for _, healthy := range []bool{true, false} {
 		result = meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)

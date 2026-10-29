@@ -1,13 +1,10 @@
 package center
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -65,18 +62,13 @@ func reinstallPreparationNetworkFixture(t *testing.T, public bool, publicExit ..
 	return s, node, AgentReinstallApplicationInput{OperationID: plan.Recovery.ID, PlanRevision: plan.Revision, ApplicationID: "retained-meridian"}
 }
 
-func preparationResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, succeeded bool) *httptest.ResponseRecorder {
+func preparationResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, succeeded bool) error {
 	t.Helper()
 	if err := s.StartExecution(context.Background(), node.ID, "package-preparation-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
 		t.Fatal(err)
 	}
 	input, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": "package-preparation-session", "attempt": task.Attempt, "succeeded": succeeded, "applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration, "result": json.RawMessage(`{"services":[]}`)})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(input))
-	request.Header.Set("Authorization", "Bearer "+node.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	NewServer(s, "", false).Handler().ServeHTTP(response, request)
-	return response
+	return completeAgentTaskGRPCTest(context.Background(), s, node, task.ID, input)
 }
 
 func TestAgentReinstallPreparationRoundTripKeepsBusinessFenced(t *testing.T) {
@@ -113,8 +105,8 @@ func TestAgentReinstallPreparationRoundTripKeepsBusinessFenced(t *testing.T) {
 		t.Fatal("queued/claimed progress did not refresh recovery")
 	}
 	response := preparationResult(t, s, node, task, true)
-	if response.Code != http.StatusOK {
-		t.Fatalf("result: %d %s", response.Code, response.Body.String())
+	if response != nil {
+		t.Fatalf("result: %v", response)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
@@ -235,7 +227,7 @@ func TestAgentReinstallPreparationRechecksBeforeClaimAndProjection(t *testing.T)
 					}
 				} else {
 					response := preparationResult(t, s, node, task, true)
-					if response.Code == http.StatusOK {
+					if response == nil {
 						t.Fatal("changed authority projected")
 					}
 				}
@@ -260,8 +252,8 @@ func TestAgentReinstallPreparationFailedOutcomeNeverRetries(t *testing.T) {
 		t.Fatalf("claim: %v", err)
 	}
 	response := preparationResult(t, s, node, task, false)
-	if response.Code != http.StatusOK {
-		t.Fatalf("failure: %d %s", response.Code, response.Body.String())
+	if response != nil {
+		t.Fatalf("failure: %v", response)
 	}
 	replay, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
 	if err != nil || replay.DeploymentID != receipt.DeploymentID || replay.State != "failed" {

@@ -10,10 +10,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/landing"
@@ -53,10 +53,9 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 		if !c.transferLegacyReceiptsBeforeTasks(ctx, store, reportError) {
 			return
 		}
-		for {
-			claimContext, cancel := context.WithTimeout(ctx, 15*time.Second)
-			task, err := c.claimNextTask(claimContext, store, 10*time.Second)
-			cancel()
+		terminal := false
+		for !terminal && ctx.Err() == nil {
+			stream, connection, closeStream, err := c.openTaskStream(ctx, store)
 			if err != nil {
 				reportError(err)
 				if !waitForTaskRetry(ctx) {
@@ -64,22 +63,122 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 				}
 				continue
 			}
-			if task == nil {
-				if ctx.Err() != nil {
-					return
+			for ctx.Err() == nil {
+				if err = stream.Send(&agentpb.AgentFrame{Body: &agentpb.AgentFrame_Ready{Ready: &agentpb.Ready{}}}); err != nil {
+					break
 				}
-				continue
+				frame, recvErr := stream.Recv()
+				if recvErr != nil {
+					err = recvErr
+					break
+				}
+				assignment := frame.GetAssignment()
+				if assignment == nil {
+					err = errors.New("agent: Center sent an invalid task frame")
+					break
+				}
+				task, decodeErr := decryptGRPCAssignment(connection, assignment)
+				if decodeErr != nil {
+					err = decodeErr
+					break
+				}
+				if c.processTaskWithLease(ctx, store, *task, report) {
+					terminal = true
+					break
+				}
 			}
-			if c.processTaskWithLease(ctx, store, *task, report) {
-				// The previous authorization is terminal. A new session fences
-				// that execution at Center before any other task can be claimed.
+			closeStream()
+			if terminal || ctx.Err() != nil {
 				break
+			}
+			reportError(agentGRPCError(err))
+			if !waitForTaskRetry(ctx) {
+				return
 			}
 		}
 		if !waitForTaskRetry(ctx) {
 			return
 		}
 	}
+}
+
+// The stream is retained while a task executes. Reconnection keeps the same
+// execution session; a delivered task is never silently replayed on reconnect.
+func (c Client) openTaskStream(ctx context.Context, store *Store) (agentpb.AgentControl_ConnectClient, Connection, func(), error) {
+	connection, err := store.Connection(ctx)
+	if err != nil {
+		return nil, Connection{}, nil, err
+	}
+	connection, err = c.ensureConnectionPinned(ctx, store, connection)
+	if err != nil {
+		return nil, Connection{}, nil, err
+	}
+	conn, release, err := c.grpcConnection(ctx, connection, false)
+	if err != nil {
+		return nil, Connection{}, nil, err
+	}
+	streamContext, cancel := context.WithCancel(grpcAuthenticatedContext(ctx, connection.Credential))
+	closeStream := func() { cancel(); release() }
+	stream, err := agentGRPCClient(conn).Connect(streamContext)
+	if err != nil {
+		closeStream()
+		return nil, Connection{}, nil, agentGRPCError(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		if err := stream.Send(&agentpb.AgentFrame{Body: &agentpb.AgentFrame_Hello{Hello: &agentpb.Hello{AgentId: connection.AgentID, SessionId: c.executionSession, ExecutionProtocol: int32(controlplane.ExecutionProtocol)}}}); err != nil {
+			result <- err
+			return
+		}
+		frame, err := stream.Recv()
+		if err == nil && (frame.GetWelcome() == nil || frame.GetWelcome().ExecutionProtocol != int32(controlplane.ExecutionProtocol)) {
+			err = errors.New("agent: invalid Center stream welcome")
+		}
+		result <- err
+	}()
+	timer := time.NewTimer(15 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		closeStream()
+		return nil, Connection{}, nil, ctx.Err()
+	case <-timer.C:
+		closeStream()
+		return nil, Connection{}, nil, errors.New("agent: Center stream handshake timed out")
+	case err = <-result:
+		if err != nil {
+			closeStream()
+			return nil, Connection{}, nil, agentGRPCError(err)
+		}
+	}
+	return stream, connection, closeStream, nil
+}
+
+func decryptGRPCAssignment(connection Connection, assignment *agentpb.Assignment) (*DeploymentTask, error) {
+	if assignment == nil {
+		return nil, errors.New("agent: missing encrypted task")
+	}
+	envelope := controlplane.Envelope{Version: int(assignment.EnvelopeVersion), EphemeralPublicKey: assignment.EphemeralPublicKey, Nonce: assignment.Nonce, Ciphertext: assignment.Ciphertext}
+	aad := controlplane.TaskAdditionalData(connection.AgentID, assignment.TaskId, assignment.Attempt)
+	plaintext, err := controlplane.Open(connection.PrivateKey, envelope, aad)
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(plaintext)
+	if assignment.ExecutionProtocol != int32(controlplane.ExecutionProtocol) || assignment.ExecutionId == "" || assignment.Digest != hex.EncodeToString(digest[:]) {
+		return nil, errors.New("agent: invalid execution authorization or content digest")
+	}
+	var task DeploymentTask
+	decoder := json.NewDecoder(bytes.NewReader(plaintext))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&task); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return nil, errors.New("agent: Center returned an invalid encrypted task")
+	}
+	if task.ID != assignment.TaskId || task.Attempt != assignment.Attempt || task.ID == "" || task.Attempt <= 0 {
+		return nil, errors.New("agent: encrypted task identity does not match its envelope")
+	}
+	task.Authorization = controlplane.ExecutionAuthorization{ID: assignment.ExecutionId, Protocol: int(assignment.ExecutionProtocol), Digest: assignment.Digest}
+	return &task, nil
 }
 
 func freshTaskControlContext(parent context.Context) (context.Context, context.CancelFunc) {
@@ -817,52 +916,6 @@ func waitForGateway(ctx context.Context, driver GatewayDriver) error {
 	}
 }
 
-func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Duration) (*DeploymentTask, error) {
-	connection, err := store.Connection(ctx)
-	if err != nil {
-		return nil, err
-	}
-	connection, err = c.ensureConnectionPinned(ctx, store, connection)
-	if err != nil {
-		return nil, err
-	}
-	var response struct {
-		Task *struct {
-			Authorization controlplane.ExecutionAuthorization `json:"authorization"`
-			ID            string                              `json:"id"`
-			Attempt       int64                               `json:"attempt"`
-			Envelope      controlplane.Envelope               `json:"envelope"`
-		} `json:"task"`
-	}
-	endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/tasks/next?wait=" + url.QueryEscape(wait.String())
-	if err := c.get(ctx, endpoint, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response); err != nil {
-		return nil, err
-	}
-	if response.Task == nil {
-		return nil, nil
-	}
-	aad := controlplane.TaskAdditionalData(connection.AgentID, response.Task.ID, response.Task.Attempt)
-	plaintext, err := controlplane.Open(connection.PrivateKey, response.Task.Envelope, aad)
-	if err != nil {
-		return nil, err
-	}
-	digest := sha256.Sum256(plaintext)
-	if response.Task.Authorization.Protocol != controlplane.ExecutionProtocol || response.Task.Authorization.ID == "" || response.Task.Authorization.Digest != hex.EncodeToString(digest[:]) {
-		return nil, errors.New("agent: invalid execution authorization or content digest")
-	}
-	var task DeploymentTask
-	decoder := json.NewDecoder(bytes.NewReader(plaintext))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&task); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
-		return nil, errors.New("agent: Center returned an invalid encrypted task")
-	}
-	if task.ID != response.Task.ID || task.Attempt != response.Task.Attempt || task.ID == "" || task.Attempt <= 0 {
-		return nil, errors.New("agent: encrypted task identity does not match its envelope")
-	}
-	task.Authorization = response.Task.Authorization
-	return &task, nil
-}
-
 func (c Client) completeTask(ctx context.Context, store *Store, taskID string, attempt int64, result ApplicationTaskResult, deploymentErr error, reconciliationRequired bool, applicationRuntimeGeneration int) error {
 	connection, err := store.Connection(ctx)
 	if err != nil {
@@ -878,7 +931,7 @@ func (c Client) completeTask(ctx context.Context, store *Store, taskID string, a
 	if deploymentErr != nil {
 		payload["error"] = deploymentErr.Error()
 	}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+	return c.callAgentRPC(ctx, connection, rpcTaskCompletion, taskID, payload, nil, controlplane.MaxJSONPayload, false)
 }
 
 func (c Client) renewTaskLease(ctx context.Context, store *Store, taskID string, attempt int64) error {
@@ -891,5 +944,5 @@ func (c Client) renewTaskLease(ctx context.Context, store *Store, taskID string,
 		return err
 	}
 	payload := map[string]any{"attempt": attempt}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/lease", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+	return c.callAgentRPC(ctx, connection, rpcTaskLease, taskID, payload, nil, controlplane.MaxJSONPayload, false)
 }

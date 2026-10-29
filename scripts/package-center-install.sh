@@ -79,6 +79,7 @@ install -m 0644 "$project_dir/deploy/center/compose.yaml" "$temporary_dir/compos
 {
   printf 'VASTORA_VERSION=%s\n' "$version"
   printf 'VASTORA_CENTER_IMAGE=%s\n' "$image"
+  printf 'VASTORA_AGENT_CONTROL_PROTOCOL=grpc-v1\n'
 } > "$temporary_dir/release.env"
 chmod 0644 "$temporary_dir/release.env"
 

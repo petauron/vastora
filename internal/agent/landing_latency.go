@@ -2,11 +2,11 @@ package agent
 
 import (
 	"context"
-	"net/url"
 	"slices"
 	"sync"
 	"time"
 
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/landing"
 )
 
@@ -57,8 +57,7 @@ func (c Client) RunLandingLatencyChecks(ctx context.Context, store *Store, repor
 		defer cancel()
 		connection, err := store.Connection(requestContext)
 		if err == nil {
-			endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/landing-latencies"
-			err = c.post(requestContext, endpoint, observation, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+			err = c.callAgentRPC(requestContext, connection, rpcLandingLatency, "", observation, nil, controlplane.MaxJSONPayload, false)
 		}
 		if err != nil && ctx.Err() == nil && report != nil {
 			report(err)

@@ -7,8 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -40,13 +38,8 @@ func reinstallMonitorFixture(t *testing.T) (*Store, AgentCredential, AgentCreden
 	}
 	result, _ := json.Marshal(map[string]any{"pulseEnrollment": senulun.EnrollmentResult{ID: "original-registration", Token: strings.Repeat("test-secret-", 3), ExpiresAtUnixMS: s.now().Add(time.Hour).UnixMilli()}})
 	input, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": session, "attempt": task.Attempt, "succeeded": true, "result": json.RawMessage(result)})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+service.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(input))
-	request.Header.Set("Authorization", "Bearer "+service.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	NewServer(s, "", false).Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("registration result: %d %s", response.Code, response.Body.String())
+	if err := completeAgentTaskGRPCTest(ctx, s, service, task.ID, input); err != nil {
+		t.Fatalf("registration result: %v", err)
 	}
 	completeNextTask(t, s, collector, "application.apply", json.RawMessage(`{"services":[]}`))
 	return s, service, collector, install, task

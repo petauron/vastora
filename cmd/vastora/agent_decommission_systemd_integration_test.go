@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +16,10 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/agentpb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -96,53 +98,42 @@ func TestHostDecommissionRealSystemdEndToEnd(t *testing.T) {
 
 	var handoffs, completions atomic.Int32
 	completed := make(chan struct{}, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/api/v1/agents/" + systemdDecommissionIntegrationAgentID + "/decommission/start":
-			if request.Method != http.MethodPost || request.Header.Get("Authorization") != "Bearer systemd-integration-agent-credential" {
-				http.Error(response, "invalid handoff", http.StatusUnauthorized)
-				return
+	server := hostControlFixtureServer(&hostControlGRPCFixture{
+		beginDecommission: func(ctx context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
+			md, _ := metadata.FromIncomingContext(ctx)
+			if request.AgentId != systemdDecommissionIntegrationAgentID || len(md.Get("authorization")) != 1 || md.Get("authorization")[0] != "Bearer systemd-integration-agent-credential" {
+				return nil, status.Error(codes.Unauthenticated, "invalid handoff")
 			}
 			handoffs.Add(1)
-			writeSystemdIntegrationJSON(response, map[string]bool{"started": true})
-		case "/api/v1/agent-decommission-results/" + systemdDecommissionIntegrationTaskID:
-			if request.Method != http.MethodPost || request.Header.Get("Authorization") != "Bearer systemd-integration-callback-token" {
-				http.Error(response, "invalid completion", http.StatusUnauthorized)
-				return
+			return &agentpb.Document{Json: []byte(`{"started":true}`)}, nil
+		},
+		callback: func(ctx context.Context, request *agentpb.DecommissionRequest) (*agentpb.Document, error) {
+			md, _ := metadata.FromIncomingContext(ctx)
+			if request.TaskId != systemdDecommissionIntegrationTaskID || len(md.Get("authorization")) != 1 || md.Get("authorization")[0] != "Bearer systemd-integration-callback-token" {
+				return nil, status.Error(codes.Unauthenticated, "invalid completion")
 			}
 			var result struct {
 				Attempt int64 `json:"attempt"`
 			}
-			if json.NewDecoder(request.Body).Decode(&result) != nil || result.Attempt != 1 {
-				http.Error(response, "invalid result", http.StatusBadRequest)
-				return
+			if json.Unmarshal(request.Json, &result) != nil || result.Attempt != 1 {
+				return nil, status.Error(codes.InvalidArgument, "invalid result")
 			}
-			for _, path := range []string{
-				systemdDecommissionIntegrationDataDir,
-				systemdDecommissionIntegrationBinary,
-				systemdDecommissionIntegrationPreviousBinary,
-				vastoraAgentUnitPath,
-				systemdDecommissionIntegrationAgentLink,
-			} {
+			for _, path := range []string{systemdDecommissionIntegrationDataDir, systemdDecommissionIntegrationBinary, systemdDecommissionIntegrationPreviousBinary, vastoraAgentUnitPath, systemdDecommissionIntegrationAgentLink} {
 				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-					http.Error(response, "owned host resource remains", http.StatusConflict)
-					return
+					return nil, status.Error(codes.FailedPrecondition, "owned host resource remains")
 				}
 			}
 			if exec.Command("systemctl", "is-active", "--quiet", "vastora-agent.service").Run() == nil {
-				http.Error(response, "Agent service remains active", http.StatusConflict)
-				return
+				return nil, status.Error(codes.FailedPrecondition, "Agent service remains active")
 			}
 			completions.Add(1)
-			writeSystemdIntegrationJSON(response, map[string]bool{"completed": true})
 			select {
 			case completed <- struct{}{}:
 			default:
 			}
-		default:
-			http.NotFound(response, request)
-		}
-	}))
+			return &agentpb.Document{Json: []byte(`{"completed":true}`)}, nil
+		},
+	})
 	defer server.Close()
 
 	operation := hostDecommissionOperation{
@@ -243,11 +234,6 @@ func writeSystemdIntegrationOperation(operation hostDecommissionOperation) error
 		return err
 	}
 	return writeRootFileAtomic(hostDecommissionUnit, []byte(hostDecommissionServiceUnit()), 0o644)
-}
-
-func writeSystemdIntegrationJSON(response http.ResponseWriter, value any) {
-	response.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(response).Encode(value)
 }
 
 func decommissionIntegrationCleanup() {

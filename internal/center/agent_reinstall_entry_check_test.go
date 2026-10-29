@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"net/http"
 	"testing"
 	"time"
 )
@@ -20,8 +19,8 @@ func reinstallEntryCheckFixture(t *testing.T, publicExit ...string) (*Store, Age
 	if err != nil || task == nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if response := submitReinstallListener(t, s, node, task, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	if response := submitReinstallListener(t, s, node, task, true); response != nil {
+		t.Fatal(response)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {

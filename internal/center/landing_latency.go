@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"math"
-	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -118,30 +117,4 @@ func (s *Store) landingLatencyViews(selection LandingSelection) []LandingLatency
 		return strings.Compare(a.LandingNodeID, b.LandingNodeID)
 	})
 	return views
-}
-
-// Results are owned by the authenticated source, not an ID in the request
-// body. Re-resolve allowed peers so a removed or replaced target cannot report.
-func (s *Server) handleAgentLandingLatency(writer http.ResponseWriter, request *http.Request) {
-	credential, ok := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
-	nodeID := request.PathValue("id")
-	if !ok || s.store.authenticateAgent(request.Context(), nodeID, strings.TrimSpace(credential)) != nil {
-		writeError(writer, http.StatusUnauthorized, nil)
-		return
-	}
-	var input landing.LatencyObservation
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	targets, err := s.store.landingLatencyTargets(request.Context(), nodeID)
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, err)
-		return
-	}
-	if !s.store.recordLandingLatency(nodeID, targets, &input) {
-		writeError(writer, http.StatusConflict, nil)
-		return
-	}
-	writer.WriteHeader(http.StatusNoContent)
 }

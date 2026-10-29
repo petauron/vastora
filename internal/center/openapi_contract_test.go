@@ -14,6 +14,11 @@ import (
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/petauron/vastora/internal/agentpb"
+	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/networking"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var centerAPIRoutePattern = regexp.MustCompile(`mux\.HandleFunc\("(GET|POST|PUT|PATCH|DELETE) (/api/v1/[^\"]+)",\s*(?:s\.requireAuth\((true|false),\s*)?s\.(handle[A-Za-z0-9]+)\)?\)`)
@@ -34,14 +39,6 @@ func TestOpenAPIExecutionRequestsRequireAuthorizationAndDisposition(t *testing.T
 		path, payload string
 		valid         bool
 	}{
-		{"/api/v1/agents/{id}/execution-session", `{"sessionId":"session","protocol":2}`, true},
-		{"/api/v1/agents/{id}/execution-session", `{"sessionId":"session","protocol":1}`, false},
-		{"/api/v1/agents/{id}/execution-session", `{"protocol":2}`, false},
-		{"/api/v1/agents/{id}/executions/{executionID}", `{"sessionId":"session","action":"start","digest":"digest"}`, true},
-		{"/api/v1/agents/{id}/executions/{executionID}", `{"sessionId":"session","action":"start"}`, false},
-		{"/api/v1/agents/{id}/executions/{executionID}", `{"sessionId":"session","action":"helper-observe"}`, true},
-		{"/api/v1/agents/{id}/executions/{executionID}", `{"sessionId":"session","action":"helper-step"}`, false},
-		{"/api/v1/agents/{id}/executions/{executionID}", `{"sessionId":"session","action":"replay"}`, false},
 		{"/api/v1/executions/{executionID}/reexecute", `{"action":"reexecute","executionStopped":true,"note":"checked"}`, true},
 		{"/api/v1/executions/{executionID}/reexecute", `{"action":"reexecute","executionStopped":false,"note":"checked"}`, false},
 		{"/api/v1/executions/{executionID}/resolve-helper", `{"action":"abandon","executionStopped":true,"note":"checked"}`, true},
@@ -62,6 +59,58 @@ func TestOpenAPIExecutionRequestsRequireAuthorizationAndDisposition(t *testing.T
 		if (err == nil) != tc.valid {
 			t.Errorf("%s payload %s validity=%v err=%v", tc.path, tc.payload, tc.valid, err)
 		}
+	}
+	// Agent execution requests moved to gRPC; keep the original authorization
+	// and disposition assertions against the real service instead of OpenAPI.
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "grpc-contract", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.19", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.19", LANAddress: "10.0.0.19", EnabledKinds: []string{networking.KindLAN}})
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.123", true)
+	if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.124"); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+	if err != nil || task == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	service := newAgentGRPCService(NewServer(store, "", false))
+	rpcCtx := agentGRPCTestContext(ctx, node.Credential)
+	const session = "grpc-contract-session-0001"
+	for _, payload := range []string{`{"sessionId":"grpc-contract-session-0001","protocol":1}`, `{"protocol":2}`} {
+		if _, err := service.RegisterExecutionSession(rpcCtx, &agentpb.AgentDocument{AgentId: node.ID, Json: []byte(payload)}); err == nil {
+			t.Fatalf("invalid session accepted: %s", payload)
+		}
+	}
+	if _, err := service.RegisterExecutionSession(rpcCtx, &agentpb.AgentDocument{AgentId: node.ID, Json: []byte(`{"sessionId":"grpc-contract-session-0001","protocol":2}`)}); err != nil {
+		t.Fatal(err)
+	}
+	auth, err := store.PersistExecutionAuthorization(ctx, node.ID, session, *task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition := func(input controlplane.ExecutionTransitionRequest) error {
+		body, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = service.TransitionExecution(rpcCtx, &agentpb.ExecutionDocument{AgentId: node.ID, ExecutionId: auth.ID, Json: body})
+		return err
+	}
+	if err := transition(controlplane.ExecutionTransitionRequest{SessionID: session, Action: "start"}); err == nil {
+		t.Fatal("start without digest was accepted")
+	}
+	if err := transition(controlplane.ExecutionTransitionRequest{SessionID: session, Action: "start", Digest: auth.Digest}); err != nil {
+		t.Fatal(err)
+	}
+	if err := transition(controlplane.ExecutionTransitionRequest{SessionID: session, Action: "helper-observe"}); status.Code(err) == codes.InvalidArgument {
+		t.Fatalf("valid helper observation rejected as malformed: %v", err)
+	}
+	if err := transition(controlplane.ExecutionTransitionRequest{SessionID: session, Action: "helper-step"}); err == nil {
+		t.Fatal("helper step without phase was accepted")
+	}
+	if err := transition(controlplane.ExecutionTransitionRequest{SessionID: session, Action: "replay"}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("invalid action accepted: %v", err)
 	}
 }
 
@@ -159,10 +208,6 @@ func securityRequirementNames(route registeredAPIRoute) []string {
 		return []string{"", "AdminSession"}
 	case route.path == "/api/v1/agent-binaries/{os}/{arch}":
 		return []string{"EnrollmentBearer"}
-	case route.path == "/api/v1/agent-decommission-results/{taskID}":
-		return []string{"DecommissionCallbackBearer"}
-	case strings.HasPrefix(route.path, "/api/v1/agents/{id}/") && route.path != "/api/v1/agents/{id}/region-suggestion" && route.path != "/api/v1/agents/{id}/headscale-join" && route.path != "/api/v1/agents/{id}/revoke":
-		return []string{"AgentBearer"}
 	default:
 		return []string{}
 	}
@@ -190,7 +235,16 @@ func TestOpenAPIRepresentativeHandlerCompatibility(t *testing.T) {
 	if err := store.SeedOfficialCatalog(context.Background(), catalogPayload); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewServer(store, "", false).Handler()
+	center := NewServer(store, "", false)
+	handler := center.Handler()
+	if _, err := newAgentGRPCService(center).Heartbeat(context.Background(), &agentpb.AgentDocument{AgentId: "synthetic-agent", Json: []byte(`{}`)}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("unauthenticated gRPC Agent heartbeat accepted: %v", err)
+	}
+	retired := httptest.NewRecorder()
+	handler.ServeHTTP(retired, httptest.NewRequest(http.MethodPost, "/api/v1/agents/synthetic-agent/heartbeat", strings.NewReader(`{}`)))
+	if retired.Code != http.StatusNotFound {
+		t.Fatalf("retired Agent HTTP endpoint remains active: %d", retired.Code)
+	}
 
 	for _, test := range []struct {
 		name   string
@@ -200,7 +254,6 @@ func TestOpenAPIRepresentativeHandlerCompatibility(t *testing.T) {
 		status int
 	}{
 		{name: "administrator", method: http.MethodGet, path: "/api/v1/status", status: http.StatusUnauthorized},
-		{name: "Agent", method: http.MethodPost, path: "/api/v1/agents/synthetic-agent/heartbeat", body: `{}`, status: http.StatusUnauthorized},
 		{name: "catalog administrator", method: http.MethodGet, path: "/api/v1/catalog/sources", status: http.StatusUnauthorized},
 		{name: "publication", method: http.MethodPost, path: "/api/v1/publications", body: `{}`, status: http.StatusUnauthorized},
 		{name: "update", method: http.MethodPost, path: "/api/v1/system/update", status: http.StatusUnauthorized},

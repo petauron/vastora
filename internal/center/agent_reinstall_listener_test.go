@@ -1,13 +1,10 @@
 package center
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -24,8 +21,8 @@ func reinstallListenerFixture(t *testing.T, publicExit ...string) (*Store, Agent
 	if err != nil || task == nil {
 		t.Fatalf("runtime claim: %v", err)
 	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	if response := submitRestoredRuntime(t, s, node, task, true, true); response != nil {
+		t.Fatal(response)
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err = s.db.Exec(`INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,status,created_at,updated_at)
@@ -44,19 +41,14 @@ func reinstallListenerFixture(t *testing.T, publicExit ...string) (*Store, Agent
 	return s, node, input
 }
 
-func submitReinstallListener(t *testing.T, s *Store, node AgentCredential, task *AgentTask, succeeded bool) *httptest.ResponseRecorder {
+func submitReinstallListener(t *testing.T, s *Store, node AgentCredential, task *AgentTask, succeeded bool) error {
 	t.Helper()
 	ctx := context.Background()
 	if err := s.StartExecution(ctx, node.ID, "package-preparation-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
 		t.Fatal(err)
 	}
 	payload, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": "package-preparation-session", "attempt": task.Attempt, "succeeded": succeeded, "result": json.RawMessage(`{}`)})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(payload))
-	req.Header.Set("Authorization", "Bearer "+node.Credential)
-	req.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	NewServer(s, "", false).Handler().ServeHTTP(response, req)
-	return response
+	return completeAgentTaskGRPCTest(context.Background(), s, node, task.ID, payload)
 }
 
 func TestAgentReinstallListenerRestoresOnlyReviewedEntry(t *testing.T) {
@@ -82,8 +74,8 @@ func TestAgentReinstallListenerRestoresOnlyReviewedEntry(t *testing.T) {
 	if task.Revision != 5 || task.Attempt != 3 || state.Listener.Address != "10.0.0.8" || len(state.Listener.Routes) != 1 || state.Listener.Routes[0].ID != "restored-entry" || state.Listener.Routes[0].Hostname != "www.example.com" || state.Listener.Routes[0].Upstreams[0].Address != "10.0.0.8" || state.Listener.Routes[0].ProxyProtocol != "v2" {
 		t.Fatalf("wrong restored listener: %+v", state)
 	}
-	if response := submitReinstallListener(t, s, node, task, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	if response := submitReinstallListener(t, s, node, task, true); response != nil {
+		t.Fatal(response)
 	}
 	plan, err = s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil || plan.Applications[0].Preparation.Listener.State != "succeeded" || plan.Recovery.State != "review_required" {
@@ -167,7 +159,7 @@ func TestAgentReinstallListenerRejectsChangedAuthority(t *testing.T) {
 						t.Fatalf("changed authority claimed: %+v %v", task, err)
 					}
 				} else {
-					if response := submitReinstallListener(t, s, node, task, true); response.Code == http.StatusOK {
+					if response := submitReinstallListener(t, s, node, task, true); response == nil {
 						t.Fatal("changed authority projected")
 					}
 				}
@@ -241,8 +233,8 @@ func TestAgentReinstallListenerFailureAndLostResultNeverReplay(t *testing.T) {
 			expected := "needs_review"
 			if failed {
 				expected = "failed"
-				if response := submitReinstallListener(t, s, node, task, false); response.Code != http.StatusOK {
-					t.Fatal(response.Body.String())
+				if response := submitReinstallListener(t, s, node, task, false); response != nil {
+					t.Fatal(response)
 				}
 			} else {
 				if _, err = s.db.Exec(`UPDATE node_listener_states SET lease_expires_at=''`); err != nil {
@@ -299,8 +291,8 @@ func TestAgentReinstallListenerMissingPublicApprovalStopsBeforeQueue(t *testing.
 	if err != nil || task == nil {
 		t.Fatal(err)
 	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	if response := submitRestoredRuntime(t, s, node, task, true, true); response != nil {
+		t.Fatal(response)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {

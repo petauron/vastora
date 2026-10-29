@@ -2,11 +2,8 @@ package agent
 
 import (
 	"context"
-
 	"errors"
-
 	"net/url"
-
 	"strings"
 
 	"github.com/petauron/vastora/internal/controlplane"
@@ -22,7 +19,7 @@ func (c Client) BeginHostDecommission(ctx context.Context, connection Connection
 	var response struct {
 		Started bool `json:"started"`
 	}
-	if err := c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/decommission/start", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response); err != nil {
+	if err := c.callAgentRPC(ctx, connection, rpcBeginDecommission, "", payload, &response, controlplane.MaxJSONPayload, false); err != nil {
 		return err
 	}
 	if !response.Started {
@@ -42,7 +39,7 @@ func (c Client) CompleteHostDecommission(ctx context.Context, callbackURL, callb
 	var response struct {
 		Completed bool `json:"completed"`
 	}
-	if err := c.post(ctx, callbackURL, payload, callbackToken, "", "", &response); err != nil {
+	if err := c.callAgentRPC(ctx, Connection{CenterURL: callbackURL, Credential: callbackToken}, rpcDecommissionCallback, taskID, payload, &response, controlplane.MaxJSONPayload, true); err != nil {
 		return err
 	}
 	if !response.Completed {
@@ -60,7 +57,7 @@ func (c Client) AuthorizeHostDecommissionStep(ctx context.Context, callbackURL, 
 	var response struct {
 		Recorded bool `json:"recorded"`
 	}
-	if err := c.post(ctx, callbackURL, map[string]any{"action": "step", "attempt": attempt, "sequence": sequence, "phase": phase}, callbackToken, "", "", &response); err != nil {
+	if err := c.callAgentRPC(ctx, Connection{CenterURL: callbackURL, Credential: callbackToken}, rpcDecommissionCallback, taskID, map[string]any{"action": "step", "attempt": attempt, "sequence": sequence, "phase": phase}, &response, controlplane.MaxJSONPayload, true); err != nil {
 		return err
 	}
 	if !response.Recorded {
@@ -78,7 +75,7 @@ func (c Client) ReportHostDecommissionFailure(ctx context.Context, callbackURL, 
 	var response struct {
 		Recorded bool `json:"recorded"`
 	}
-	if err := c.post(ctx, callbackURL, map[string]any{"attempt": attempt, "error": cleanupErr.Error()}, callbackToken, "", "", &response); err != nil {
+	if err := c.callAgentRPC(ctx, Connection{CenterURL: callbackURL, Credential: callbackToken}, rpcDecommissionCallback, taskID, map[string]any{"attempt": attempt, "error": cleanupErr.Error()}, &response, controlplane.MaxJSONPayload, true); err != nil {
 		return err
 	}
 	if !response.Recorded {
@@ -104,7 +101,7 @@ func normalizeHostDecommissionCallbackURL(raw, taskID string) (string, error) {
 // persistent systemd helper before the Agent process is restarted.
 func (c Client) CheckHostUpdateStep(ctx context.Context, connection Connection, executionID, sessionID, phase string) error {
 	input := controlplane.ExecutionTransitionRequest{SessionID: sessionID, Action: "helper-step", Phase: phase}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/executions/"+url.PathEscape(executionID), input, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+	return c.callAgentRPC(ctx, connection, rpcExecutionTransition, executionID, input, nil, controlplane.MaxJSONPayload, false)
 }
 
 func (c Client) HostUpdateObserved(ctx context.Context, connection Connection, executionID, sessionID string) (bool, error) {
@@ -112,7 +109,7 @@ func (c Client) HostUpdateObserved(ctx context.Context, connection Connection, e
 	var result struct {
 		Ready bool `json:"ready"`
 	}
-	err := c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/executions/"+url.PathEscape(executionID), input, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &result)
+	err := c.callAgentRPC(ctx, connection, rpcExecutionTransition, executionID, input, &result, controlplane.MaxJSONPayload, false)
 	return result.Ready, err
 }
 
@@ -121,7 +118,7 @@ func (c Client) BeginHostUpdate(ctx context.Context, connection Connection, task
 		return errors.New("agent: invalid host update handoff")
 	}
 	payload := map[string]any{"attempt": attempt, "executionId": executionID, "sessionId": sessionID}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/updates/"+url.PathEscape(taskID)+"/start", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+	return c.callAgentRPC(ctx, connection, rpcBeginAgentUpdate, taskID, payload, nil, controlplane.MaxJSONPayload, false)
 }
 
 // CompleteHostUpdate reports the persistent helper outcome. Center accepts a
@@ -134,5 +131,5 @@ func (c Client) CompleteHostUpdate(ctx context.Context, connection Connection, t
 		return errors.New("agent: host update recovery requires an error")
 	}
 	payload := map[string]any{"executionId": executionID, "sessionId": sessionID, "hostUpdateHelper": true, "attempt": attempt, "succeeded": updateErr == nil, "error": safeTaskError(updateErr), "result": ApplicationTaskResult{}, "reconciliationRequired": recoveryRequired}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+	return c.callAgentRPC(ctx, connection, rpcTaskCompletion, taskID, payload, nil, controlplane.MaxJSONPayload, false)
 }

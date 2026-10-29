@@ -257,9 +257,9 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 		return nil, err
 	}
 	type caddyRoute struct {
-		Match    []map[string][]string `json:"match"`
-		Handle   []map[string]any      `json:"handle"`
-		Terminal bool                  `json:"terminal"`
+		Match    []map[string]any `json:"match"`
+		Handle   []map[string]any `json:"handle"`
+		Terminal bool             `json:"terminal"`
 	}
 	servers := map[string]any{}
 	localRoutes := make([]caddyRoute, 0)
@@ -284,21 +284,37 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 			if route.Protocol == "https" {
 				proxy["transport"] = map[string]any{"protocol": "http", "tls": map[string]any{}}
 			}
-			matcher := map[string][]string{"host": {route.Hostname}}
+			matcher := map[string]any{"host": []string{route.Hostname}}
 			if route.Path != "" {
 				matcher["path"] = []string{route.Path}
 			}
 			handlers := []map[string]any{proxy}
-			candidate := caddyRoute{Match: []map[string][]string{matcher}, Handle: handlers, Terminal: true}
+			candidate := caddyRoute{Match: []map[string]any{matcher}, Handle: handlers, Terminal: true}
 			if route.LocalTLSOrigin() {
 				localRoutes = append(localRoutes, candidate)
 				localHosts = append(localHosts, route.Hostname)
 			}
 			if route.TLSEnabled {
+				// Only Center control and its task-bound public cleanup callback
+				// need an HTTP/2 upstream; ordinary web routes remain unchanged.
+				if route.System && (strings.HasPrefix(route.ID, "system-center") || strings.HasPrefix(route.ID, "system-agent-decommission-callback")) {
+					grpcMatcher := make(map[string]any, len(matcher)+1)
+					for key, value := range matcher {
+						grpcMatcher[key] = value
+					}
+					grpcMatcher["header"] = map[string][]string{"Content-Type": {"application/grpc*"}}
+					grpcUpstreams := make([]map[string]string, 0, len(route.Upstreams))
+					for _, upstream := range route.Upstreams {
+						grpcUpstreams = append(grpcUpstreams, map[string]string{"dial": net.JoinHostPort(upstream.Address, strconv.Itoa(gatewayruntime.CenterGRPCPort))})
+					}
+					grpcProxy := map[string]any{"handler": "reverse_proxy", "upstreams": grpcUpstreams,
+						"transport": map[string]any{"protocol": "http", "versions": []string{"h2c"}}}
+					httpsRoutes = append(httpsRoutes, caddyRoute{Match: []map[string]any{grpcMatcher}, Handle: []map[string]any{grpcProxy}, Terminal: true})
+				}
 				httpsRoutes = append(httpsRoutes, candidate)
 				if !redirectHosts[route.Hostname] {
 					redirect := map[string]any{"handler": "static_response", "status_code": 308, "headers": map[string][]string{"Location": {"https://{http.request.host}{http.request.uri}"}}}
-					httpRoutes = append(httpRoutes, caddyRoute{Match: []map[string][]string{{"host": {route.Hostname}}}, Handle: []map[string]any{redirect}, Terminal: true})
+					httpRoutes = append(httpRoutes, caddyRoute{Match: []map[string]any{{"host": []string{route.Hostname}}}, Handle: []map[string]any{redirect}, Terminal: true})
 					redirectHosts[route.Hostname] = true
 				}
 			} else {
