@@ -3,20 +3,24 @@ set -eu
 
 source_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 install_dir="/opt/vastora/center"
+coordinated_agent_migration=no
 
 usage() {
   cat <<'EOF'
-Usage: ./upgrade.sh [--install-dir DIR]
+Usage: ./upgrade.sh [--install-dir DIR] [--coordinated-agent-migration]
 
 Replaces only Vastora-managed deployment files, preserves the existing Center
 configuration, pulls the immutable release image, and waits for Center health.
 Database migrations and their backups are handled by Center before it serves.
+The migration option is only for a planned HTTP-to-gRPC cutover after every
+node has a verified independent recovery path and task claims are paused.
 EOF
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --install-dir) install_dir="$2"; shift 2 ;;
+    --coordinated-agent-migration) coordinated_agent_migration=yes; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -65,6 +69,20 @@ if [ "$(awk -f "$source_dir/compare-semver.awk" "$new_version" "$installed_versi
   echo "Refusing to downgrade Center from $installed_version to $new_version; no files were changed." >&2
   exit 1
 fi
+# Old HTTP-only Agents cannot contact this Center after an automatic update.
+# Do not cross the protocol boundary until a coordinated migration is available.
+installed_protocol="$(awk -F= '$1 == "VASTORA_AGENT_CONTROL_PROTOCOL" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
+new_protocol="$(awk -F= '$1 == "VASTORA_AGENT_CONTROL_PROTOCOL" {sub(/^[^=]*=/, ""); print; exit}' "$source_dir/release.env")"
+protocol_transition=no
+if [ "$new_protocol" = "grpc-v1" ] && [ "$installed_protocol" != "grpc-v1" ] && [ "$coordinated_agent_migration" = yes ]; then
+  case "$installed_protocol" in ''|http-v1) protocol_transition=yes ;;
+    *) echo "Unknown installed Agent protocol; refusing migration." >&2; exit 1 ;;
+  esac
+elif [ "$installed_protocol" != "grpc-v1" ] || [ "$new_protocol" != "grpc-v1" ] || [ "$coordinated_agent_migration" = yes ]; then
+  echo "Refusing an uncoordinated Center/Agent protocol transition; no services or deployment files were changed." >&2
+  echo "Existing HTTP Agents need an identity-preserving coordinated migration before this release can be installed." >&2
+  exit 1
+fi
 case "$new_image" in
   *@sha256:????????????????????????????????????????????????????????????????) ;;
   *) echo "The release image is not pinned by a complete sha256 digest." >&2; exit 2 ;;
@@ -81,6 +99,7 @@ agent_container=""
 agent_changed=no
 agent_database_opened=no
 agent_stopped=no
+agent_recovery=""
 files_changed=no
 center_started=no
 layer4_was_running=no
@@ -119,7 +138,7 @@ cleanup() {
     else
       echo "Upgrade stopped before the Agent database was opened; restoring the previous Agent executable." >&2
       agent_staged="$(mktemp "$(dirname "$agent_executable")/.vastora-rollback.XXXXXX")"
-      install -m 0755 "$agent_executable.previous" "$agent_staged"
+      install -m 0755 "$agent_recovery/source-vastora" "$agent_staged"
       mv "$agent_staged" "$agent_executable"
       if ! systemctl restart vastora-agent.service; then
         echo "The previous Agent could not be restarted; operator recovery is required." >&2
@@ -166,7 +185,14 @@ awk -v image="$new_image" -v host_addresses="$host_network_addresses" '
 chmod 0600 "$candidate_env"
 bootstrap_port="$(awk -F= '$1 == "VASTORA_CENTER_BOOTSTRAP_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$candidate_env")"
 if [ -z "$bootstrap_port" ]; then bootstrap_port=8080; fi
-local_center_url="http://127.0.0.1:$bootstrap_port"
+grpc_port="$(awk -F= '$1 == "VASTORA_CENTER_AGENT_GRPC_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$candidate_env")"
+if [ -z "$grpc_port" ]; then grpc_port=18089; fi
+case "$grpc_port" in *[!0-9]*|'') echo "The private Agent gRPC port is invalid." >&2; exit 2 ;; esac
+if [ "$grpc_port" -lt 1 ] || [ "$grpc_port" -gt 65535 ]; then
+  echo "The private Agent gRPC port is invalid." >&2
+  exit 2
+fi
+local_center_url="http://127.0.0.1:$grpc_port"
 
 host_update_status_file="${VASTORA_UPDATE_STATUS_FILE:-}"
 host_update_target_version="${VASTORA_UPDATE_TARGET_VERSION:-}"
@@ -191,12 +217,40 @@ write_host_update_stage() {
 
 write_host_update_stage "Validating the existing installation."
 echo "Validating the new deployment with the existing configuration..."
-migrate_legacy_vastora_runtime_network "$install_dir"
-ensure_vastora_runtime_network_for_upgrade "$install_dir"
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" config --quiet
 write_host_update_stage "Downloading the immutable Center image."
 echo "Downloading the immutable Center image..."
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" pull center deployer
+
+prepare_agent_candidate() {
+  if [ ! -f "$temporary_dir/vastora-agent" ]; then
+    agent_container="$(docker create "$new_image")"
+    docker cp "$agent_container:/usr/local/bin/vastora" "$temporary_dir/vastora-agent"
+    docker rm -f "$agent_container" >/dev/null
+    agent_container=""
+    chmod 0700 "$temporary_dir/vastora-agent"
+  fi
+  if [ "$("$temporary_dir/vastora-agent" version)" != "$new_version" ]; then
+    echo "The Center image contains an unexpected Agent version; the upgrade was not started." >&2
+    exit 1
+  fi
+}
+
+if [ "$protocol_transition" = yes ]; then
+  prepare_agent_candidate
+  current_center="$(docker compose --project-directory "$install_dir" ps -q center)"
+  if [ -z "$current_center" ] || [ "$(docker inspect -f '{{.State.Running}}' "$current_center")" != true ]; then
+    echo "The existing Center must be running for the coordinated migration check." >&2
+    exit 1
+  fi
+  center_data="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/lib/vastora"}}{{.Source}}{{end}}{{end}}' "$current_center")"
+  case "$center_data" in /*) ;; *) echo "Cannot locate the existing Center state." >&2; exit 1 ;; esac
+  "$temporary_dir/vastora-agent" center check-grpc-cutover --data-dir "$center_data"
+  echo "Task claims are paused and active executions are clear. Verify independent access and staged Agents before proceeding."
+fi
+
+migrate_legacy_vastora_runtime_network "$install_dir"
+ensure_vastora_runtime_network_for_upgrade "$install_dir"
 
 agent_executable="${VASTORA_AGENT_EXECUTABLE:-/usr/local/bin/vastora}"
 agent_unit="${VASTORA_AGENT_UNIT:-/etc/systemd/system/vastora-agent.service}"
@@ -208,26 +262,28 @@ if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=V
   fi
   write_host_update_stage "Preparing the co-located Agent."
   echo "Preparing the matching Agent from the immutable Center image..."
-  agent_container="$(docker create "$new_image")"
-  docker cp "$agent_container:/usr/local/bin/vastora" "$temporary_dir/vastora-agent"
-  docker rm -f "$agent_container" >/dev/null
-  agent_container=""
-  chmod 0755 "$temporary_dir/vastora-agent"
-  if [ "$("$temporary_dir/vastora-agent" version)" != "$new_version" ]; then
-    echo "The Center image contains an unexpected Agent version; the upgrade was not started." >&2
-    exit 1
-  fi
+  prepare_agent_candidate
 	echo "Staging the co-located Agent for the host-only Center channel..."
-	if [ -f "$agent_data_dir/agent.db" ]; then
-	  agent_database_backup="$(mktemp "$agent_data_dir/.agent.db.pre-upgrade.$new_version.XXXXXX")"
-	  install -m 0600 "$agent_data_dir/agent.db" "$agent_database_backup"
-	  echo "Protected the pre-migration Agent database at $agent_database_backup"
-	fi
 	systemctl stop vastora-agent.service
 	agent_stopped=yes
+	for helper in vastora-agent-update.service vastora-agent-decommission.service; do
+	  helper_state="$(systemctl show "$helper" --property=ActiveState --value)" || exit 1
+	  case "$helper_state" in
+	    inactive|failed) ;;
+	    *) echo "An Agent lifecycle helper is still active; inspect it before upgrading." >&2; exit 1 ;;
+	  esac
+	done
+	if [ ! -f "$agent_data_dir/agent.db" ]; then
+	  echo "The co-located Agent database is missing; refusing to replace its executable." >&2
+	  exit 1
+	fi
+	source_agent_version="$("$agent_executable" version)"
+	agent_recovery="$("$temporary_dir/vastora-agent" agent prepare-center-upgrade-recovery \
+	  --data-dir "$agent_data_dir" --executable "$agent_executable" \
+	  --source-version "$source_agent_version")"
+	echo "Protected the co-located Agent state and executable at $agent_recovery"
   agent_staged="$(mktemp "$(dirname "$agent_executable")/.vastora-upgrade.XXXXXX")"
   install -m 0755 "$temporary_dir/vastora-agent" "$agent_staged"
-  install -m 0755 "$agent_executable" "$agent_executable.previous"
   mv "$agent_staged" "$agent_executable"
 	agent_changed=yes
 	agent_database_opened=yes
@@ -323,7 +379,7 @@ if [ "$agent_changed" = yes ]; then
       sleep 1
     done
   fi
-	echo "Co-located Agent remained connected through Center reconciliation."
+	echo "Co-located Agent is running; verify its Center heartbeat before proceeding."
 else
   "$install_dir/install-host-cli.sh" \
     --image "$new_image" --version "$new_version" --install-dir "$install_dir"

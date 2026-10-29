@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/meridianruntime"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -126,8 +125,8 @@ func TestAgentReinstallAcceptanceQueuesAndProjectsAuthenticatedResult(t *testing
 	}
 	raw, _ := json.Marshal(map[string]any{"meridianAcceptance": meridianruntime.AcceptanceResult{TaskDigest: digest}})
 	response := submitMonitorInspection(t, s, verifier, task, raw, true)
-	if response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	if response != nil {
+		t.Fatal(response)
 	}
 	var state, metadata, result string
 	if err = s.db.QueryRow(`SELECT c.state,CAST(c.input_json AS TEXT),CAST(a.result_json AS TEXT) FROM application_commands c JOIN agent_reinstall_client_checks a ON a.command_id=c.id WHERE c.id=?`, task.ID).Scan(&state, &metadata, &result); err != nil {

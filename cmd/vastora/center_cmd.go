@@ -22,6 +22,8 @@ func runCenter(arguments []string) error {
 		return errors.New("center command is required")
 	}
 	switch arguments[0] {
+	case "check-grpc-cutover":
+		return runCenterGRPCCutoverCheck(arguments[1:])
 	case "capabilities":
 		if len(arguments) != 1 {
 			return errors.New("center capabilities does not accept arguments")
@@ -118,6 +120,7 @@ func runCenter(arguments []string) error {
 		flags.SetOutput(os.Stderr)
 		dataDir := flags.String("data-dir", "", "Center state directory")
 		listen := flags.String("listen", "127.0.0.1:8080", "listen address")
+		grpcListen := flags.String("agent-grpc-listen", "127.0.0.1:8089", "private Agent gRPC listener")
 		webDir := flags.String("web-dir", "web/dist", "compiled React web directory")
 		officialCatalogOrigin := flags.String("official-catalog-origin", catalog.OfficialOrigin, "official TUF metadata HTTPS origin")
 		officialCatalogRoot := flags.String("official-catalog-root", "", "independently provisioned official TUF root metadata file")
@@ -171,6 +174,11 @@ func runCenter(arguments []string) error {
 		}
 		if *tlsCert == "" && !loopbackAddress(*listen) && !*allowContainerHTTP {
 			return errors.New("refusing a non-loopback HTTP listener; provide TLS certificate and key")
+		}
+		// This plaintext listener is restricted to loopback or the explicitly
+		// enabled official container bridge; remote Agents use TLS at the gateway.
+		if !loopbackAddress(*grpcListen) && !*allowContainerHTTP {
+			return errors.New("refusing a non-loopback Agent gRPC listener outside the container bridge")
 		}
 		var catalogRoot []byte
 		if *officialCatalogRoot != "" {
@@ -260,6 +268,25 @@ func runCenter(arguments []string) error {
 		})
 		handler := centerServer.Handler()
 		server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+		// Keep h2c on a separate private listener. The ordinary web listener
+		// never enables unencrypted HTTP/2; its existing TLS handling is unchanged.
+		privateListener, err := net.Listen("tcp", *grpcListen)
+		if err != nil {
+			return fmt.Errorf("listen for private Agent gRPC: %w", err)
+		}
+		protocols := new(http.Protocols)
+		protocols.SetHTTP1(true)
+		protocols.SetUnencryptedHTTP2(true)
+		privateServer := &http.Server{Handler: handler, Protocols: protocols,
+			HTTP2: &http.HTTP2Config{MaxConcurrentStreams: 32}, ReadHeaderTimeout: 5 * time.Second}
+		defer privateServer.Close()
+		privateError := make(chan error, 1)
+		go func() {
+			if err := privateServer.Serve(privateListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				privateError <- err
+				_ = server.Close()
+			}
+		}()
 		fmt.Printf("Center listening on %s\n", *listen)
 		if *tlsCert != "" {
 			err = server.ListenAndServeTLS(*tlsCert, *tlsKey)
@@ -267,7 +294,12 @@ func runCenter(arguments []string) error {
 			err = server.ListenAndServe()
 		}
 		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+			select {
+			case privateErr := <-privateError:
+				return fmt.Errorf("serve private Agent gRPC: %w", privateErr)
+			default:
+				return nil
+			}
 		}
 		return err
 	case "backup":

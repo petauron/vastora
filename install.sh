@@ -5,11 +5,12 @@ default_release_url="https://vastora.petauron.com/vastora-center-install.tar.gz"
 release_url="$default_release_url"
 release_resolve=""
 install_dir="/opt/vastora/center"
+coordinated_agent_migration=no
 expected_version=""
 
 usage() {
   cat <<'EOF'
-Usage: install.sh center [--release-url HTTPS_URL] [--release-resolve HOST:PORT:ADDRESS] [--install-dir DIR] [--expected-version VERSION] [-- SETUP_OPTIONS]
+Usage: install.sh center [--release-url HTTPS_URL] [--release-resolve HOST:PORT:ADDRESS] [--install-dir DIR] [--expected-version VERSION] [--coordinated-agent-migration] [-- SETUP_OPTIONS]
        install.sh center uninstall [--release-url HTTPS_URL] [--install-dir DIR]
 
 Installs the verified Vastora Center release bundle on loopback, then prints an
@@ -61,6 +62,10 @@ while [ "$#" -gt 0 ]; do
       expected_version="$2"
       shift 2
       ;;
+    --coordinated-agent-migration)
+      coordinated_agent_migration=yes
+      shift
+      ;;
     --) shift; break ;;
     *) break ;;
   esac
@@ -68,6 +73,10 @@ done
 if [ "$operation" = "uninstall" ] && [ "$#" -gt 0 ]; then
   echo "Unknown uninstall argument: $1" >&2
   echo "Run 'center uninstall' without cleanup flags; the terminal menu provides every option." >&2
+  exit 2
+fi
+if [ "$operation" = "uninstall" ] && [ "$coordinated_agent_migration" = yes ]; then
+  echo "The migration option cannot be used for uninstall." >&2
   exit 2
 fi
 
@@ -218,8 +227,16 @@ if [ -d "$install_dir" ]; then
     exit 1
   fi
   echo "Existing Center installation found; upgrading it in place..."
-  "$staging/upgrade.sh" --install-dir "$install_dir"
+  if [ "$coordinated_agent_migration" = yes ]; then
+    "$staging/upgrade.sh" --install-dir "$install_dir" --coordinated-agent-migration
+  else
+    "$staging/upgrade.sh" --install-dir "$install_dir"
+  fi
   exit 0
+fi
+if [ "$coordinated_agent_migration" = yes ]; then
+  echo "The migration option requires an existing Center installation." >&2
+  exit 2
 fi
 if [ -e "$install_dir" ]; then
   echo "$install_dir exists but is not a directory; no files were changed." >&2

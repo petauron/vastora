@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/petauron/vastora/internal/controlplane"
@@ -25,8 +23,8 @@ func monitorRestoreFixture(t *testing.T) (*Store, AgentCredential, AgentCredenti
 	if err != nil || task == nil {
 		t.Fatalf("rotation: %v", err)
 	}
-	if response := submitMonitorInspection(t, s, service, task, successfulMonitorRotationJSON(), true); response.Code != http.StatusOK {
-		t.Fatalf("rotation: %s", response.Body.String())
+	if response := submitMonitorInspection(t, s, service, task, successfulMonitorRotationJSON(), true); response != nil {
+		t.Fatalf("rotation: %v", response)
 	}
 	var key []byte
 	if err = s.db.QueryRow(`SELECT x25519_public_key FROM agents WHERE id=?`, node.ID).Scan(&key); err != nil {
@@ -50,18 +48,13 @@ func monitorRestoreFixture(t *testing.T) (*Store, AgentCredential, AgentCredenti
 	return s, service, node, input
 }
 
-func monitorRestoreResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, raw json.RawMessage) *httptest.ResponseRecorder {
+func monitorRestoreResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, raw json.RawMessage) error {
 	t.Helper()
 	if err := s.StartExecution(context.Background(), node.ID, "monitor-original-restore-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
 		t.Fatal(err)
 	}
 	input, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": "monitor-original-restore-session", "attempt": task.Attempt, "succeeded": true, "applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration, "result": raw})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(input))
-	request.Header.Set("Authorization", "Bearer "+node.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	NewServer(s, "", false).Handler().ServeHTTP(response, request)
-	return response
+	return completeAgentTaskGRPCTest(context.Background(), s, node, task.ID, input)
 }
 
 func TestAgentReinstallMonitorRestoreOriginalCredentialsRoundTrip(t *testing.T) {
@@ -97,8 +90,8 @@ func TestAgentReinstallMonitorRestoreOriginalCredentialsRoundTrip(t *testing.T) 
 		t.Fatal("saved package version changed")
 	}
 	response := monitorRestoreResult(t, s, node, task, json.RawMessage(`{"services":[],"pulseRestored":{"nodeId":"11111111-1111-4111-8111-111111111111"}}`))
-	if response.Code != http.StatusOK {
-		t.Fatalf("restore result: %s", response.Body.String())
+	if response != nil {
+		t.Fatalf("restore result: %v", response)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
@@ -247,7 +240,7 @@ func TestAgentReinstallMonitorRestoreMissingReceiptRemainsFenced(t *testing.T) {
 			}
 			if mode != "expired" {
 				response := monitorRestoreResult(t, s, node, task, raw)
-				if response.Code == http.StatusOK {
+				if response == nil {
 					t.Fatal("bad restore proof accepted")
 				}
 			}

@@ -4,12 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -127,13 +126,9 @@ func TestAgentDecommissionRequiresDurableCleanupHandoff(t *testing.T) {
 	if err := store.completeAgentDecommissionCallback(context.Background(), task.ID, "wrong-token", task.Attempt, ""); err == nil {
 		t.Fatal("invalid callback token was accepted")
 	}
-	request := httptest.NewRequest(http.MethodPost, task.DecommissionCallbackURL, strings.NewReader(fmt.Sprintf(`{"attempt":%d}`, task.Attempt)))
-	request.Header.Set("Authorization", "Bearer "+task.DecommissionCallbackToken)
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	NewServer(store, "", false).Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("public cleanup callback status=%d body=%s", response.Code, response.Body.String())
+	callback := &agentpb.DecommissionRequest{TaskId: task.ID, Json: []byte(fmt.Sprintf(`{"attempt":%d}`, task.Attempt))}
+	if _, err := newAgentGRPCService(NewServer(store, "", false)).DecommissionCallback(agentGRPCTestContext(context.Background(), task.DecommissionCallbackToken), callback); err != nil {
+		t.Fatalf("public cleanup callback: %v", err)
 	}
 	if err := store.completeAgentDecommissionCallback(context.Background(), task.ID, task.DecommissionCallbackToken, task.Attempt, ""); err == nil {
 		t.Fatal("duplicate final callback was accepted")
@@ -150,13 +145,9 @@ func TestAgentDecommissionScheduleFailureRotatesCallback(t *testing.T) {
 	}
 	first := waitForDecommissionTask(t, store, node)
 	executionID, sessionID := authorizeDecommissionForTest(t, store, node, *first)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/tasks/"+first.ID+"/result", strings.NewReader(fmt.Sprintf(`{"attempt":%d,"executionId":%q,"sessionId":%q,"succeeded":false,"error":"persistent helper could not start","result":{}}`, first.Attempt, executionID, sessionID)))
-	request.Header.Set("Authorization", "Bearer "+node.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	NewServer(store, "", false).Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("schedule failure result rejected: %d", response.Code)
+	payload := []byte(fmt.Sprintf(`{"attempt":%d,"executionId":%q,"sessionId":%q,"succeeded":false,"error":"persistent helper could not start","result":{}}`, first.Attempt, executionID, sessionID))
+	if err := completeAgentTaskGRPCTest(context.Background(), store, node, first.ID, payload); err != nil {
+		t.Fatalf("schedule failure result rejected: %v", err)
 	}
 	if err := store.completeAgentDecommissionCallback(context.Background(), first.ID, first.DecommissionCallbackToken, first.Attempt, ""); err == nil {
 		t.Fatal("failed claim retained an active callback token")

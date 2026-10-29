@@ -195,28 +195,6 @@ func (s *Store) beginTailscaleUpdate(ctx context.Context, agentID, credential, t
 	return tx.Commit()
 }
 
-func (s *Server) handleStartTailscaleUpdate(w http.ResponseWriter, r *http.Request) {
-	credential, err := agentCredential(r)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, err)
-		return
-	}
-	var input struct {
-		ExecutionID string `json:"executionId"`
-		SessionID   string `json:"sessionId"`
-		Attempt     int64  `json:"attempt"`
-	}
-	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.store.beginTailscaleUpdate(r.Context(), r.PathValue("id"), credential, r.PathValue("taskID"), input.ExecutionID, input.SessionID, input.Attempt); err != nil {
-		writeError(w, http.StatusConflict, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"started": true})
-}
-
 func (s *Store) activeTailscaleUpdateTask(ctx context.Context, agentID string) (string, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM tailscale_update_tasks WHERE agent_id=? AND state IN ('running','awaiting_decision') ORDER BY created_at DESC LIMIT 1`, agentID).Scan(&id)

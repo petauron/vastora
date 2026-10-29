@@ -10,8 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
@@ -66,54 +69,59 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 				return
 			}
 			handler := NewServer(store, "", false).Handler()
-			post := func(path string, input any, want int) {
+			service := newAgentGRPCService(NewServer(store, "", false))
+			post := func(method string, input any, want codes.Code) {
 				t.Helper()
 				body, err := json.Marshal(input)
 				if err != nil {
 					t.Fatal(err)
 				}
-				r := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
-				r.Header.Set("Authorization", "Bearer "+node.Credential)
-				r.Header.Set("Content-Type", "application/json")
-				w := httptest.NewRecorder()
-				handler.ServeHTTP(w, r)
-				if w.Code != want {
-					t.Fatalf("helper request %s: %d want %d: %s", path, w.Code, want, w.Body.String())
+				rpcCtx := agentGRPCTestContext(ctx, node.Credential)
+				switch method {
+				case "result":
+					_, err = service.CompleteTask(rpcCtx, &agentpb.TaskDocument{AgentId: node.ID, TaskId: task.ID, Json: body})
+				case "start":
+					_, err = service.BeginAgentUpdate(rpcCtx, &agentpb.TaskDocument{AgentId: node.ID, TaskId: task.ID, Json: body})
+				case "step":
+					_, err = service.TransitionExecution(rpcCtx, &agentpb.ExecutionDocument{AgentId: node.ID, ExecutionId: auth.ID, Json: body})
+				default:
+					t.Fatalf("unexpected method %s", method)
+				}
+				if status.Code(err) != want {
+					t.Fatalf("helper request %s: %s want %s: %v", method, status.Code(err), want, err)
 				}
 			}
-			resultPath := "/api/v1/agents/" + node.ID + "/tasks/" + task.ID + "/result"
 			result := map[string]any{"attempt": task.Attempt, "executionId": auth.ID, "sessionId": session, "hostUpdateHelper": true, "succeeded": true, "result": map[string]any{}}
 			// Selecting the helper channel cannot claim an execution it does not own.
-			post(resultPath, result, http.StatusConflict)
+			post("result", result, codes.FailedPrecondition)
 			if mode == "scheduler-failed" {
-				post(resultPath, map[string]any{
+				post("result", map[string]any{
 					"attempt": task.Attempt, "executionId": auth.ID, "sessionId": session,
 					"succeeded": false, "error": "helper could not be scheduled", "result": map[string]any{},
-				}, http.StatusOK)
+				}, codes.OK)
 				if err := begin(auth.ID, session); !errors.Is(err, errExecutionAuthorization) {
 					t.Fatalf("helper took ownership after scheduler failure: %v", err)
 				}
-				post(resultPath, result, http.StatusConflict)
+				post("result", result, codes.FailedPrecondition)
 				return
 			}
-			post("/api/v1/agents/"+node.ID+"/updates/"+task.ID+"/start", map[string]any{"attempt": task.Attempt, "executionId": auth.ID, "sessionId": session}, http.StatusOK)
+			post("start", map[string]any{"attempt": task.Attempt, "executionId": auth.ID, "sessionId": session}, codes.OK)
 			if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), true, false, "", nil, true); !errors.Is(err, errExecutionAuthorization) {
 				t.Fatalf("helper succeeded without authorized start: %v", err)
 			}
-			stepPath := "/api/v1/agents/" + node.ID + "/executions/" + auth.ID
-			post(stepPath, controlplane.ExecutionTransitionRequest{SessionID: session, Action: "helper-step", Phase: "install"}, http.StatusConflict)
+			post("step", controlplane.ExecutionTransitionRequest{SessionID: session, Action: "helper-step", Phase: "install"}, codes.FailedPrecondition)
 			for _, phase := range []string{"stop", "backup", "preserve", "install", "start"} {
 				step := controlplane.ExecutionTransitionRequest{SessionID: session, Action: "helper-step", Phase: phase}
-				post(stepPath, step, http.StatusOK)
-				post(stepPath, step, http.StatusConflict)
+				post("step", step, codes.OK)
+				post("step", step, codes.FailedPrecondition)
 			}
 			if mode == "late-scheduler-error" {
 				// systemd may start the helper successfully before its scheduling
 				// caller is interrupted. That caller no longer owns the outcome.
-				post("/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", map[string]any{
+				post("result", map[string]any{
 					"attempt": task.Attempt, "executionId": auth.ID, "sessionId": session,
 					"succeeded": false, "error": "schedule result interrupted", "result": map[string]any{},
-				}, http.StatusConflict)
+				}, codes.FailedPrecondition)
 			}
 			if err := begin(auth.ID, session); !errors.Is(err, errExecutionAuthorization) {
 				t.Fatalf("double consumption: %v", err)
@@ -205,7 +213,7 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 				if err != nil || views[0].State != "unknown" || views[0].Disposition != mode {
 					t.Fatalf("original evidence overwritten: %v %v", views, err)
 				}
-				post("/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", result, http.StatusConflict)
+				post("result", result, codes.FailedPrecondition)
 				if mode == "abandon" {
 					if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.125"); err != nil || len(queued) != 1 {
 						t.Fatalf("verified abandoned intent was not replaced by a fresh rollout: %v %v", queued, err)
@@ -216,7 +224,7 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 			if mode == "expired" {
 				expired := store.now().Add(31 * time.Minute)
 				store.now = func() time.Time { return expired }
-				post("/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", result, http.StatusConflict)
+				post("result", result, codes.FailedPrecondition)
 				if err := store.executionClaimAllowed(ctx, node.ID, "helper-replacement-agent-session"); !errors.Is(err, errExecutionBlocked) {
 					t.Fatalf("expired helper released fence: %v", err)
 				}
@@ -224,16 +232,16 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 				if err != nil || len(views) != 1 || views[0].State != "unknown" {
 					t.Fatalf("expired helper not unknown: %v %v", views, err)
 				}
-				post(stepPath, controlplane.ExecutionTransitionRequest{SessionID: session, Action: "helper-step", Phase: "start"}, http.StatusConflict)
-				post("/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", result, http.StatusConflict)
+				post("step", controlplane.ExecutionTransitionRequest{SessionID: session, Action: "helper-step", Phase: "start"}, codes.FailedPrecondition)
+				post("result", result, codes.FailedPrecondition)
 				return
 			}
-			post("/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", result, http.StatusOK)
+			post("result", result, codes.OK)
 			views, err = executionViewsForTest(ctx, store)
 			if err != nil || len(views) != 1 || views[0].State != wantState {
 				t.Fatalf("helper result after Agent restart: %v %v", views, err)
 			}
-			post("/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", result, http.StatusConflict)
+			post("result", result, codes.FailedPrecondition)
 		})
 	}
 }

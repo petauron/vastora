@@ -16,11 +16,127 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/networking"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
+
+// These existing control cases use typed gRPC fixtures and do not restore the
+// removed HTTP endpoints.
+type controlGRPCFixture struct {
+	agentpb.UnimplementedAgentControlServer
+	probe             func(context.Context, *agentpb.ProbeRequest) (*agentpb.ProbeResponse, error)
+	heartbeat         func(context.Context, *agentpb.AgentDocument) (*agentpb.Document, error)
+	session           func(context.Context, *agentpb.AgentDocument) (*agentpb.Document, error)
+	transition        func(context.Context, *agentpb.ExecutionDocument) (*agentpb.Document, error)
+	lease             func(context.Context, *agentpb.TaskDocument) (*agentpb.Document, error)
+	complete          func(context.Context, *agentpb.TaskDocument) (*agentpb.Document, error)
+	beginUpdate       func(context.Context, *agentpb.TaskDocument) (*agentpb.Document, error)
+	beginDecommission func(context.Context, *agentpb.AgentDocument) (*agentpb.Document, error)
+	callback          func(context.Context, *agentpb.DecommissionRequest) (*agentpb.Document, error)
+	connect           func(agentpb.AgentControl_ConnectServer) error
+}
+
+func (f *controlGRPCFixture) Probe(ctx context.Context, in *agentpb.ProbeRequest) (*agentpb.ProbeResponse, error) {
+	if f.probe == nil {
+		return nil, status.Error(codes.Unimplemented, "probe")
+	}
+	return f.probe(ctx, in)
+}
+func (f *controlGRPCFixture) Heartbeat(ctx context.Context, in *agentpb.AgentDocument) (*agentpb.Document, error) {
+	if f.heartbeat == nil {
+		return nil, status.Error(codes.Unimplemented, "heartbeat")
+	}
+	return f.heartbeat(ctx, in)
+}
+func (f *controlGRPCFixture) RegisterExecutionSession(ctx context.Context, in *agentpb.AgentDocument) (*agentpb.Document, error) {
+	if f.session == nil {
+		return nil, status.Error(codes.Unimplemented, "session")
+	}
+	return f.session(ctx, in)
+}
+func (f *controlGRPCFixture) TransitionExecution(ctx context.Context, in *agentpb.ExecutionDocument) (*agentpb.Document, error) {
+	if f.transition == nil {
+		return nil, status.Error(codes.Unimplemented, "transition")
+	}
+	return f.transition(ctx, in)
+}
+func (f *controlGRPCFixture) RenewTaskLease(ctx context.Context, in *agentpb.TaskDocument) (*agentpb.Document, error) {
+	if f.lease == nil {
+		return nil, status.Error(codes.Unimplemented, "lease")
+	}
+	return f.lease(ctx, in)
+}
+func (f *controlGRPCFixture) CompleteTask(ctx context.Context, in *agentpb.TaskDocument) (*agentpb.Document, error) {
+	if f.complete == nil {
+		return nil, status.Error(codes.Unimplemented, "complete")
+	}
+	return f.complete(ctx, in)
+}
+func (f *controlGRPCFixture) BeginAgentUpdate(ctx context.Context, in *agentpb.TaskDocument) (*agentpb.Document, error) {
+	if f.beginUpdate == nil {
+		return nil, status.Error(codes.Unimplemented, "update")
+	}
+	return f.beginUpdate(ctx, in)
+}
+func (f *controlGRPCFixture) BeginDecommission(ctx context.Context, in *agentpb.AgentDocument) (*agentpb.Document, error) {
+	if f.beginDecommission == nil {
+		return nil, status.Error(codes.Unimplemented, "decommission")
+	}
+	return f.beginDecommission(ctx, in)
+}
+func (f *controlGRPCFixture) DecommissionCallback(ctx context.Context, in *agentpb.DecommissionRequest) (*agentpb.Document, error) {
+	if f.callback == nil {
+		return nil, status.Error(codes.Unimplemented, "callback")
+	}
+	return f.callback(ctx, in)
+}
+func (f *controlGRPCFixture) Connect(stream agentpb.AgentControl_ConnectServer) error {
+	if f.connect == nil {
+		return status.Error(codes.Unimplemented, "connect")
+	}
+	return f.connect(stream)
+}
+
+// grpcTestHTTPServer serves existing fixtures over HTTP/1 and cleartext HTTP/2.
+func grpcTestHTTPServer(handler http.Handler) *httptest.Server {
+	server := httptest.NewUnstartedServer(handler)
+	server.Config.Protocols = new(http.Protocols)
+	server.Config.Protocols.SetHTTP1(true)
+	server.Config.Protocols.SetUnencryptedHTTP2(true)
+	server.Start()
+	return server
+}
+
+func controlFixtureServer(f *controlGRPCFixture) *httptest.Server {
+	server := grpc.NewServer()
+	agentpb.RegisterAgentControlServer(server, f)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The cleanup helper includes its task-bound path before the method.
+		if strings.HasPrefix(r.URL.Path, "/api/v1/agent-decommission-results/") {
+			if i := strings.Index(r.URL.Path, "/vastora.agent.v1.AgentControl/"); i >= 0 {
+				r = r.Clone(r.Context())
+				r.URL.Path = r.URL.Path[i:]
+			}
+		}
+		server.ServeHTTP(w, r)
+	})
+	return grpcTestHTTPServer(handler)
+}
+func fixtureDocument(t *testing.T, value any) *agentpb.Document {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &agentpb.Document{Json: data}
+}
 
 type executorFunc func(context.Context, DeploymentTask) (ApplicationTaskResult, error)
 
@@ -66,39 +182,27 @@ func (d *fakeHostDecommissioner) ScheduleFinalRemoval(_ context.Context, request
 }
 
 func TestEnrollmentReportsNativePlatform(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		var input struct {
-			Token           string `json:"token"`
-			Version         string `json:"version"`
-			OperatingSystem string `json:"operatingSystem"`
-			Architecture    string `json:"architecture"`
-			PublicKey       []byte `json:"publicKey"`
-		}
-		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/agents/enroll" || json.NewDecoder(request.Body).Decode(&input) != nil {
-			t.Fatalf("unexpected enrollment request: %s %s", request.Method, request.URL.Path)
-		}
+	server := enrollmentFixtureServer(func(_ context.Context, input *agentpb.EnrollRequest) (*agentpb.EnrollResponse, error) {
 		if input.Token != "one-time-token" || input.Version != Version || input.OperatingSystem != runtime.GOOS || input.Architecture != runtime.GOARCH || len(input.PublicKey) != controlplane.KeySize {
 			t.Fatalf("enrollment platform payload = %#v", input)
 		}
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"id":"agent-1","credential":"credential","name":"arm-node","roles":["worker"],"capabilities":{"docker":true}}`))
-	}))
+		return &agentpb.EnrollResponse{AgentId: "agent-1", Credential: "credential", Name: "arm-node", Roles: []string{"worker"}, CapabilitiesJson: []byte(`{"docker":true}`)}, nil
+	})
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := (Client{HTTPClient: server.Client()}).Enroll(context.Background(), store, server.URL, "one-time-token", "", ""); err != nil {
+	if _, err := (Client{}).Enroll(context.Background(), store, server.URL, "one-time-token", "", ""); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestMigrateEnrollmentReplacesOnlyCenterConnection(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"id":"new-agent","credential":"new-credential","name":"moved-node","roles":["worker","gateway"],"capabilities":{"docker":true,"gateway":true}}`))
-	}))
+	server := enrollmentFixtureServer(func(context.Context, *agentpb.EnrollRequest) (*agentpb.EnrollResponse, error) {
+		return &agentpb.EnrollResponse{AgentId: "new-agent", Credential: "new-credential", Name: "moved-node", Roles: []string{"worker", "gateway"}, CapabilitiesJson: []byte(`{"docker":true,"gateway":true}`)}, nil
+	})
 	defer server.Close()
 	directory := t.TempDir()
 	store, err := Open(directory)
@@ -112,7 +216,7 @@ func TestMigrateEnrollmentReplacesOnlyCenterConnection(t *testing.T) {
 	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "existing-app", AppKey: "vastora-official/cpa", Version: "1.0.0", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`), ServiceAddress: "100.64.0.2"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (Client{HTTPClient: server.Client()}).MigrateEnrollment(context.Background(), store, server.URL, "one-time-token", "", ""); err != nil {
+	if _, err := (Client{}).MigrateEnrollment(context.Background(), store, server.URL, "one-time-token", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	connection, err := store.Connection(context.Background())
@@ -177,25 +281,24 @@ func TestObserveProxyRuntimeSynchronizesLegacyEnabledInboundsWithoutChangingThem
 
 func TestHeartbeatAllowsMeridianSubscriptionHostWithoutLocalXrayRuntime(t *testing.T) {
 	heartbeats := 0
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" {
-			t.Fatalf("unexpected request path: %s", request.URL.Path)
+	server := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
+		if request.AgentId != "agent-1" {
+			t.Fatalf("unexpected request path: %s", request.AgentId)
 		}
 		var payload struct {
 			ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
 			ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
 			MeridianRuntime              json.RawMessage                  `json:"meridianRuntime"`
 		}
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		if err := json.Unmarshal(request.Json, &payload); err != nil {
 			t.Fatal(err)
 		}
 		if payload.ApplicationEndpointsObserved || len(payload.ApplicationEndpoints) != 0 || string(payload.MeridianRuntime) != "null" {
 			t.Fatalf("controller-only Glivela package reported a proxy runtime: %#v", payload)
 		}
 		heartbeats++
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{}`))
-	}))
+		return &agentpb.Document{Json: []byte(`{}`)}, nil
+	}})
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -248,31 +351,25 @@ func TestHeartbeatsNeverRestoreGatewayState(t *testing.T) {
 	defer cancel()
 	heartbeats := 0
 	startupHeartbeats := 0
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/api/v1/agents/agent-1/heartbeat":
-			var payload struct {
-				Startup bool `json:"startup"`
-			}
-			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
-			}
-			if payload.Startup {
-				startupHeartbeats++
-			}
-			heartbeats++
-			response.Header().Set("Content-Type", "application/json")
-			_, _ = response.Write([]byte(`{}`))
-			if heartbeats == 2 {
-				cancel()
-			}
-		case "/api/v1/agents/agent-1/tasks/next":
-			response.Header().Set("Content-Type", "application/json")
-			_, _ = response.Write([]byte(`{"task":null}`))
-		default:
-			t.Fatalf("unexpected request path: %s", request.URL.Path)
+	server := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
+		if request.AgentId != "agent-1" {
+			t.Fatalf("unexpected Agent: %s", request.AgentId)
 		}
-	}))
+		var payload struct {
+			Startup bool `json:"startup"`
+		}
+		if err := json.Unmarshal(request.Json, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Startup {
+			startupHeartbeats++
+		}
+		heartbeats++
+		if heartbeats == 2 {
+			cancel()
+		}
+		return &agentpb.Document{Json: []byte(`{}`)}, nil
+	}})
 	defer server.Close()
 
 	store, err := Open(t.TempDir())
@@ -305,14 +402,41 @@ func TestHeartbeatsNeverRestoreGatewayState(t *testing.T) {
 	}
 }
 
-func TestTaskClaimUsesBoundedLongPoll(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/v1/agents/agent-1/tasks/next" || request.URL.Query().Get("wait") != "10s" {
-			t.Fatalf("unexpected task claim request: %s", request.URL.String())
-		}
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"task":null}`))
-	}))
+// The former bounded-long-poll case now checks a single idle task stream.
+type idleTaskStreamFixture struct {
+	agentpb.UnimplementedAgentControlServer
+	ready chan struct{}
+	calls atomic.Int32
+}
+
+func (f *idleTaskStreamFixture) Connect(stream agentpb.AgentControl_ConnectServer) error {
+	first, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	if first.GetHello() == nil {
+		return errors.New("expected hello")
+	}
+	if err := stream.Send(&agentpb.CenterFrame{Body: &agentpb.CenterFrame_Welcome{Welcome: &agentpb.Welcome{ExecutionProtocol: int32(controlplane.ExecutionProtocol)}}}); err != nil {
+		return err
+	}
+	frame, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	if frame.GetReady() == nil {
+		return errors.New("expected ready")
+	}
+	f.calls.Add(1)
+	close(f.ready)
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+func TestTaskStreamWaitsWithoutPolling(t *testing.T) {
+	service := &idleTaskStreamFixture{ready: make(chan struct{})}
+	grpcServer := grpc.NewServer()
+	agentpb.RegisterAgentControlServer(grpcServer, service)
+	server := grpcTestHTTPServer(grpcServer)
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -322,10 +446,32 @@ func TestTaskClaimUsesBoundedLongPoll(t *testing.T) {
 	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
-	task, err := (Client{}).claimNextTask(context.Background(), store, 10*time.Second)
-	if err != nil || task != nil {
-		t.Fatalf("unexpected task claim result: task=%#v err=%v", task, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, _, closeStream, err := (Client{executionSession: "test-session"}).openTaskStream(ctx, store)
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer closeStream()
+	if err := stream.Send(&agentpb.AgentFrame{Body: &agentpb.AgentFrame_Ready{Ready: &agentpb.Ready{}}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-service.ready:
+	case <-time.After(time.Second):
+		t.Fatal("stream did not become ready")
+	}
+	received := make(chan error, 1)
+	go func() { _, err := stream.Recv(); received <- err }()
+	select {
+	case err := <-received:
+		t.Fatalf("idle stream ended unexpectedly: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if service.calls.Load() != 1 {
+		t.Fatalf("unexpected repeated task requests: %d", service.calls.Load())
+	}
+	cancel()
 }
 
 func TestTaskClaimDecryptsEnvelopeBoundToAgentAndAttempt(t *testing.T) {
@@ -342,21 +488,8 @@ func TestTaskClaimDecryptsEnvelopeBoundToAgentAndAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(response).Encode(map[string]any{"task": map[string]any{"id": task.ID, "attempt": task.Attempt, "envelope": envelope, "authorization": authorization}})
-	}))
-	defer server.Close()
-	connection.CenterURL = server.URL
-	store, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if err := store.SaveConnection(context.Background(), connection); err != nil {
-		t.Fatal(err)
-	}
-	claimed, err := (Client{}).claimNextTask(context.Background(), store, 0)
+	assignment := &agentpb.Assignment{TaskId: task.ID, Attempt: task.Attempt, ExecutionId: authorization.ID, ExecutionProtocol: int32(authorization.Protocol), Digest: authorization.Digest, EnvelopeVersion: int32(envelope.Version), EphemeralPublicKey: envelope.EphemeralPublicKey, Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext}
+	claimed, err := decryptGRPCAssignment(connection, assignment)
 	if err != nil || claimed == nil || claimed.ID != task.ID || string(claimed.Secrets) != string(task.Secrets) || claimed.ApplicationCommand == nil || claimed.ApplicationCommand.RegionCode != "US" {
 		t.Fatalf("decrypted task=%#v err=%v", claimed, err)
 	}
@@ -383,29 +516,52 @@ func TestTerminalTaskAuthorityConflictStartsFreshSessionWithoutReplayingTask(t *
 	var sessions atomic.Int64
 	restarted := make(chan struct{})
 	resumed := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		switch request.URL.Path {
-		case "/api/v1/agents/agent-1/execution-session":
+	server := controlFixtureServer(&controlGRPCFixture{
+		session: func(_ context.Context, input *agentpb.AgentDocument) (*agentpb.Document, error) {
+			if input.AgentId != "agent-1" {
+				t.Fatalf("unexpected Agent %q", input.AgentId)
+			}
 			if sessions.Add(1) == 2 {
 				close(restarted)
 			}
-			_, _ = response.Write([]byte(`{"registered":true}`))
-		case "/api/v1/agents/agent-1/tasks/next":
-			if count := claims.Add(1); count == 1 {
-				_ = json.NewEncoder(response).Encode(map[string]any{"task": map[string]any{"id": task.ID, "attempt": task.Attempt, "envelope": envelope, "authorization": authorization}})
-			} else {
-				if count == 2 {
-					close(resumed)
-				}
-				<-request.Context().Done()
+			return &agentpb.Document{Json: []byte(`{"registered":true}`)}, nil
+		},
+		transition: func(_ context.Context, input *agentpb.ExecutionDocument) (*agentpb.Document, error) {
+			if input.ExecutionId != "stale-execution" {
+				t.Fatalf("unexpected execution %q", input.ExecutionId)
 			}
-		case "/api/v1/agents/agent-1/executions/stale-execution":
-			http.Error(response, `{"error":"execution authority expired"}`, http.StatusConflict)
-		default:
-			t.Fatalf("unexpected request: %s", request.URL.Path)
-		}
-	}))
+			return nil, status.Error(codes.FailedPrecondition, "execution authority expired")
+		},
+		connect: func(stream agentpb.AgentControl_ConnectServer) error {
+			frame, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			if frame.GetHello() == nil {
+				return errors.New("hello missing")
+			}
+			if err := stream.Send(&agentpb.CenterFrame{Body: &agentpb.CenterFrame_Welcome{Welcome: &agentpb.Welcome{ExecutionProtocol: int32(controlplane.ExecutionProtocol)}}}); err != nil {
+				return err
+			}
+			frame, err = stream.Recv()
+			if err != nil {
+				return err
+			}
+			if frame.GetReady() == nil {
+				return errors.New("ready missing")
+			}
+			if count := claims.Add(1); count == 1 {
+				assignment := &agentpb.Assignment{TaskId: task.ID, Attempt: task.Attempt, ExecutionId: authorization.ID, ExecutionProtocol: int32(authorization.Protocol), Digest: authorization.Digest, EnvelopeVersion: int32(envelope.Version), EphemeralPublicKey: envelope.EphemeralPublicKey, Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext}
+				if err := stream.Send(&agentpb.CenterFrame{Body: &agentpb.CenterFrame_Assignment{Assignment: assignment}}); err != nil {
+					return err
+				}
+			} else if count == 2 {
+				close(resumed)
+			}
+			<-stream.Context().Done()
+			return stream.Context().Err()
+		},
+	})
 	defer server.Close()
 	connection.CenterURL = server.URL
 	store, err := Open(t.TempDir())
@@ -420,7 +576,7 @@ func TestTerminalTaskAuthorityConflictStartsFreshSessionWithoutReplayingTask(t *
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		(Client{HTTPClient: server.Client()}).RunTasks(ctx, store, func(error) {})
+		(Client{}).RunTasks(ctx, store, func(error) {})
 		close(done)
 	}()
 	select {
@@ -431,7 +587,7 @@ func TestTerminalTaskAuthorityConflictStartsFreshSessionWithoutReplayingTask(t *
 	select {
 	case <-resumed:
 	case <-time.After(5 * time.Second):
-		t.Fatal("task receiver did not resume polling after registration")
+		t.Fatal("task receiver did not resume streaming after registration")
 	}
 	cancel()
 	select {
@@ -446,24 +602,23 @@ func TestTerminalTaskAuthorityConflictStartsFreshSessionWithoutReplayingTask(t *
 
 func TestHeartbeatKeepsCenterConnectedWhenThreeXUIObservationFails(t *testing.T) {
 	heartbeats := 0
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" {
-			t.Fatalf("unexpected request path: %s", request.URL.Path)
+	server := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
+		if request.AgentId != "agent-1" {
+			t.Fatalf("unexpected request path: %s", request.AgentId)
 		}
 		var payload struct {
 			ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
 			ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
 		}
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		if err := json.Unmarshal(request.Json, &payload); err != nil {
 			t.Fatal(err)
 		}
 		if payload.ApplicationEndpointsObserved || len(payload.ApplicationEndpoints) != 0 {
 			t.Fatalf("failed observation was reported as authoritative: %#v", payload)
 		}
 		heartbeats++
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{}`))
-	}))
+		return &agentpb.Document{Json: []byte(`{}`)}, nil
+	}})
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -489,17 +644,16 @@ func TestHeartbeatKeepsCenterConnectedWhenThreeXUIObservationFails(t *testing.T)
 func TestHeartbeatReportsAgentObservedPublicEgress(t *testing.T) {
 	var reported *networking.PublicEgress
 	observations := 0
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	server := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
 		var payload struct {
 			PublicEgress *networking.PublicEgress `json:"publicEgress"`
 		}
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		if err := json.Unmarshal(request.Json, &payload); err != nil {
 			t.Fatal(err)
 		}
 		reported = payload.PublicEgress
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"publicAddressLookupUrl":"https://helper.example.com/network/public-address"}`))
-	}))
+		return &agentpb.Document{Json: []byte(`{"publicAddressLookupUrl":"https://helper.example.com/network/public-address"}`)}, nil
+	}})
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -532,17 +686,16 @@ func TestHeartbeatReportsAgentObservedPublicEgress(t *testing.T) {
 
 func TestInitialHeartbeatRequestsRealityGuardRevalidation(t *testing.T) {
 	startup := false
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	server := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
 		var payload struct {
 			Startup bool `json:"startup"`
 		}
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		if err := json.Unmarshal(request.Json, &payload); err != nil {
 			t.Fatal(err)
 		}
 		startup = payload.Startup
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{}`))
-	}))
+		return &agentpb.Document{Json: []byte(`{}`)}, nil
+	}})
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -562,23 +715,18 @@ func TestInitialHeartbeatRequestsRealityGuardRevalidation(t *testing.T) {
 
 func TestHeartbeatSwitchesToVerifiedCenterURL(t *testing.T) {
 	healthChecks := 0
-	newCenter := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/healthz" {
-			t.Fatalf("unexpected new Center request path: %s", request.URL.Path)
-		}
+	newCenter := controlFixtureServer(&controlGRPCFixture{probe: func(context.Context, *agentpb.ProbeRequest) (*agentpb.ProbeResponse, error) {
 		healthChecks++
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"status":"ok"}`))
-	}))
+		return &agentpb.ProbeResponse{Ready: true}, nil
+	}})
 	defer newCenter.Close()
 
-	oldCenter := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" {
-			t.Fatalf("unexpected old Center request path: %s", request.URL.Path)
+	oldCenter := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
+		if request.AgentId != "agent-1" {
+			t.Fatalf("unexpected Agent %q", request.AgentId)
 		}
-		response.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(response).Encode(map[string]any{"connected": true, "centerUrl": newCenter.URL})
-	}))
+		return fixtureDocument(t, map[string]any{"connected": true, "centerUrl": newCenter.URL}), nil
+	}})
 	defer oldCenter.Close()
 
 	store, err := Open(t.TempDir())
@@ -604,7 +752,10 @@ func TestHeartbeatSwitchesToVerifiedCenterURL(t *testing.T) {
 
 func TestHeartbeatKeepsExplicitHostOnlyCenterChannel(t *testing.T) {
 	healthChecks := 0
-	newCenter := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { healthChecks++ }))
+	newCenter := controlFixtureServer(&controlGRPCFixture{probe: func(context.Context, *agentpb.ProbeRequest) (*agentpb.ProbeResponse, error) {
+		healthChecks++
+		return &agentpb.ProbeResponse{Ready: true}, nil
+	}})
 	defer newCenter.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -628,15 +779,13 @@ func TestHeartbeatKeepsExplicitHostOnlyCenterChannel(t *testing.T) {
 }
 
 func TestHeartbeatKeepsCurrentCenterWhenDesiredURLIsNotReady(t *testing.T) {
-	newCenter := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"status":"reconciling"}`))
-	}))
+	newCenter := controlFixtureServer(&controlGRPCFixture{probe: func(context.Context, *agentpb.ProbeRequest) (*agentpb.ProbeResponse, error) {
+		return &agentpb.ProbeResponse{Ready: false}, nil
+	}})
 	defer newCenter.Close()
-	oldCenter := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(response).Encode(map[string]any{"connected": true, "centerUrl": newCenter.URL})
-	}))
+	oldCenter := controlFixtureServer(&controlGRPCFixture{heartbeat: func(context.Context, *agentpb.AgentDocument) (*agentpb.Document, error) {
+		return fixtureDocument(t, map[string]any{"connected": true, "centerUrl": newCenter.URL}), nil
+	}})
 	defer oldCenter.Close()
 
 	store, err := Open(t.TempDir())
@@ -648,7 +797,7 @@ func TestHeartbeatKeepsCurrentCenterWhenDesiredURLIsNotReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, heartbeatErr := (Client{}).heartbeat(context.Background(), store)
-	if heartbeatErr == nil || !strings.Contains(heartbeatErr.Error(), "health check is not OK") {
+	if heartbeatErr == nil || !strings.Contains(heartbeatErr.Error(), "Center probe is not OK") {
 		t.Fatalf("unready Center URL was not rejected: %v", heartbeatErr)
 	}
 	connection, err := store.Connection(context.Background())
@@ -661,23 +810,22 @@ func TestHeartbeatKeepsCurrentCenterWhenDesiredURLIsNotReady(t *testing.T) {
 }
 
 func TestHeartbeatAppliesCenterTailscaleIsolationState(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" {
-			t.Fatalf("unexpected request path: %s", request.URL.Path)
+	server := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
+		if request.AgentId != "agent-1" {
+			t.Fatalf("unexpected request path: %s", request.AgentId)
 		}
 		var heartbeat struct {
 			TailscaleEnrolled  bool   `json:"tailscaleEnrolled"`
 			TailscaleOwnership string `json:"tailscaleOwnership"`
 		}
-		if err := json.NewDecoder(request.Body).Decode(&heartbeat); err != nil {
+		if err := json.Unmarshal(request.Json, &heartbeat); err != nil {
 			t.Fatal(err)
 		}
 		if !heartbeat.TailscaleEnrolled || heartbeat.TailscaleOwnership != "managed" {
 			t.Fatalf("Tailscale host state was not reported: %#v", heartbeat)
 		}
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"tailscaleIsolation":{"controlUrl":"https://headscale.example.com","controlAddresses":["203.0.113.10"]}}`))
-	}))
+		return &agentpb.Document{Json: []byte(`{"tailscaleIsolation":{"controlUrl":"https://headscale.example.com","controlAddresses":["203.0.113.10"]}}`)}, nil
+	}})
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -718,20 +866,22 @@ func executionAuthorizationForTest() controlplane.ExecutionAuthorization {
 	return controlplane.ExecutionAuthorization{ID: "execution-1", Protocol: controlplane.ExecutionProtocol, Digest: strings.Repeat("a", 64)}
 }
 
-func acknowledgeExecutionForTest(t *testing.T, w http.ResponseWriter, r *http.Request) bool {
+func acknowledgeExecutionForTest(t *testing.T, _ context.Context, request *agentpb.ExecutionDocument) (*agentpb.Document, error) {
 	t.Helper()
-	if r.URL.Path != "/api/v1/agents/agent-1/executions/execution-1" {
-		return false
-	}
 	var input controlplane.ExecutionTransitionRequest
-	if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&input) != nil || input.SessionID != "test-execution-session" {
+	if request.AgentId != "agent-1" || request.ExecutionId != "execution-1" || json.Unmarshal(request.Json, &input) != nil || input.SessionID != "test-execution-session" {
 		t.Error("invalid execution transition")
-		w.WriteHeader(http.StatusBadRequest)
-		return true
+		return nil, status.Error(codes.InvalidArgument, "invalid execution transition")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"recorded":true}`))
-	return true
+	return &agentpb.Document{Json: []byte(`{"recorded":true}`)}, nil
+}
+func requireFixtureAuthorization(t *testing.T, ctx context.Context, expected string) {
+	t.Helper()
+	md, _ := metadata.FromIncomingContext(ctx)
+	values := md.Get("authorization")
+	if len(values) != 1 || values[0] != "Bearer "+expected {
+		t.Error("incorrect lifecycle credential")
+	}
 }
 
 func TestExecutionHostHandoffDoesNotRearmOnRestart(t *testing.T) {
@@ -739,39 +889,30 @@ func TestExecutionHostHandoffDoesNotRearmOnRestart(t *testing.T) {
 		for _, failed := range []bool{false, true} {
 			t.Run(kind+map[bool]string{false: "/scheduled", true: "/schedule-failed"}[failed], func(t *testing.T) {
 				var starts, results atomic.Int64
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					if strings.HasSuffix(r.URL.Path, "/executions/execution-1") {
+				server := controlFixtureServer(&controlGRPCFixture{
+					transition: func(_ context.Context, request *agentpb.ExecutionDocument) (*agentpb.Document, error) {
 						var input controlplane.ExecutionTransitionRequest
-						if json.NewDecoder(r.Body).Decode(&input) != nil || input.SessionID != "test-execution-session" {
+						if request.ExecutionId != "execution-1" || request.AgentId != "agent-1" || json.Unmarshal(request.Json, &input) != nil || input.SessionID != "test-execution-session" {
 							t.Error("invalid authorization")
-							w.WriteHeader(400)
-							return
+							return nil, status.Error(codes.InvalidArgument, "invalid authorization")
 						}
-						if input.Action == "start" {
-							if starts.Add(1) > 1 {
-								w.WriteHeader(http.StatusConflict)
-								return
-							}
+						if input.Action == "start" && starts.Add(1) > 1 {
+							return nil, status.Error(codes.FailedPrecondition, "already started")
 						}
-						_, _ = w.Write([]byte(`{"recorded":true}`))
-						return
-					}
-					if strings.HasSuffix(r.URL.Path, "/tasks/host-task/result") {
+						return &agentpb.Document{Json: []byte(`{"recorded":true}`)}, nil
+					},
+					complete: func(_ context.Context, request *agentpb.TaskDocument) (*agentpb.Document, error) {
 						var result struct {
 							Succeeded        bool `json:"succeeded"`
 							HostUpdateHelper bool `json:"hostUpdateHelper"`
 						}
-						if json.NewDecoder(r.Body).Decode(&result) != nil || result.Succeeded || result.HostUpdateHelper || !failed {
+						if request.TaskId != "host-task" || request.AgentId != "agent-1" || json.Unmarshal(request.Json, &result) != nil || result.Succeeded || result.HostUpdateHelper || !failed {
 							t.Error("scheduling was reported as completed host work")
 						}
 						results.Add(1)
-						_, _ = w.Write([]byte(`{"completed":true}`))
-						return
-					}
-					t.Errorf("unexpected request: %s", r.URL.Path)
-					w.WriteHeader(404)
-				}))
+						return &agentpb.Document{Json: []byte(`{"completed":true}`)}, nil
+					},
+				})
 				defer server.Close()
 				directory := t.TempDir()
 				store, err := Open(directory)
@@ -787,7 +928,7 @@ func TestExecutionHostHandoffDoesNotRearmOnRestart(t *testing.T) {
 					updater.scheduleErr = errors.New("systemd unavailable")
 					remover.scheduleErr = errors.New("systemd unavailable")
 				}
-				client := Client{HTTPClient: server.Client(), executionSession: "test-execution-session", Updater: updater, Decommissioner: remover}
+				client := Client{executionSession: "test-execution-session", Updater: updater, Decommissioner: remover}
 				task := DeploymentTask{Kind: kind, ID: "host-task", Attempt: 1, TargetVersion: "0.1.0-alpha.129", DeleteData: true, Authorization: executionAuthorizationForTest(),
 					DecommissionCallbackURL: server.URL + "/api/v1/agent-decommission-results/host-task", DecommissionCallbackToken: "callback-token"}
 				reports := 0
@@ -831,17 +972,16 @@ func TestExecutionHostHandoffDoesNotRearmOnRestart(t *testing.T) {
 
 func TestAgentHeartbeatAdvertisesRemoteUpdateCapability(t *testing.T) {
 	reported := false
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	server := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
 		var heartbeat struct {
 			RemoteUpdateSupported bool `json:"remoteUpdateSupported"`
 		}
-		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" || json.NewDecoder(request.Body).Decode(&heartbeat) != nil {
-			t.Fatalf("unexpected heartbeat request: %s", request.URL.Path)
+		if request.AgentId != "agent-1" || json.Unmarshal(request.Json, &heartbeat) != nil {
+			t.Fatalf("unexpected heartbeat request: %s", request.AgentId)
 		}
 		reported = heartbeat.RemoteUpdateSupported
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{}`))
-	}))
+		return &agentpb.Document{Json: []byte(`{}`)}, nil
+	}})
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -851,7 +991,7 @@ func TestAgentHeartbeatAdvertisesRemoteUpdateCapability(t *testing.T) {
 	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
-	client := Client{HTTPClient: server.Client(), Updater: &fakeHostUpdater{}}
+	client := Client{Updater: &fakeHostUpdater{}}
 	if _, err := client.heartbeat(context.Background(), store); err != nil {
 		t.Fatal(err)
 	}
@@ -863,30 +1003,27 @@ func TestAgentHeartbeatAdvertisesRemoteUpdateCapability(t *testing.T) {
 func TestHostDecommissionHelperUsesSeparateLifecycleCredentials(t *testing.T) {
 	started := false
 	completed := false
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost {
-			t.Fatalf("unauthenticated host cleanup callback: %s %s", request.Method, request.Header.Get("Authorization"))
-		}
-		switch request.URL.Path {
-		case "/api/v1/agents/agent-1/decommission/start":
-			if request.Header.Get("Authorization") != "Bearer credential" {
-				t.Fatalf("handoff did not use the Agent credential")
+	server := controlFixtureServer(&controlGRPCFixture{
+		beginDecommission: func(ctx context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
+			requireFixtureAuthorization(t, ctx, "credential")
+			if request.AgentId != "agent-1" {
+				t.Error("wrong Agent")
 			}
 			started = true
-		case "/api/v1/agent-decommission-results/agent-decommission-agent-1":
-			if request.Header.Get("Authorization") != "Bearer callback-token" {
-				t.Fatalf("completion did not use its task-bound callback token")
+			return &agentpb.Document{Json: []byte(`{"started":true}`)}, nil
+		},
+		callback: func(ctx context.Context, request *agentpb.DecommissionRequest) (*agentpb.Document, error) {
+			requireFixtureAuthorization(t, ctx, "callback-token")
+			if request.TaskId != "agent-decommission-agent-1" {
+				t.Error("wrong callback task")
 			}
 			completed = true
-		default:
-			t.Fatalf("unexpected host cleanup callback: %s", request.URL.Path)
-		}
-		response.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(response).Encode(map[string]bool{"started": started, "completed": completed})
-	}))
+			return &agentpb.Document{Json: []byte(`{"completed":true}`)}, nil
+		},
+	})
 	defer server.Close()
 	connection := testConnection(t, "agent-1", "node", server.URL, "credential")
-	client := Client{HTTPClient: server.Client()}
+	client := Client{}
 	if err := client.BeginHostDecommission(context.Background(), connection, "agent-decommission-agent-1", 2, "test-execution", "test-session"); err != nil {
 		t.Fatal(err)
 	}
@@ -901,12 +1038,17 @@ func TestHostDecommissionHelperUsesSeparateLifecycleCredentials(t *testing.T) {
 func TestHostDecommissionRejectsSuccessWithoutAcknowledgement(t *testing.T) {
 	for _, body := range []string{`{}`, `{"ok":true}`, `{"started":false,"completed":false}`, `<html>Sign in</html>`, ""} {
 		t.Run(body, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-				_, _ = response.Write([]byte(body))
-			}))
+			server := controlFixtureServer(&controlGRPCFixture{
+				beginDecommission: func(context.Context, *agentpb.AgentDocument) (*agentpb.Document, error) {
+					return &agentpb.Document{Json: []byte(body)}, nil
+				},
+				callback: func(context.Context, *agentpb.DecommissionRequest) (*agentpb.Document, error) {
+					return &agentpb.Document{Json: []byte(body)}, nil
+				},
+			})
 			defer server.Close()
 			connection := testConnection(t, "agent-1", "node", server.URL, "credential")
-			client := Client{HTTPClient: server.Client()}
+			client := Client{}
 			if err := client.BeginHostDecommission(context.Background(), connection, "agent-decommission-agent-1", 2, "test-execution", "test-session"); err == nil {
 				t.Fatal("unacknowledged handoff was accepted")
 			}
@@ -920,30 +1062,30 @@ func TestHostDecommissionRejectsSuccessWithoutAcknowledgement(t *testing.T) {
 func TestHostUpdateHelperUsesAuthenticatedLifecycleCallbacks(t *testing.T) {
 	started := false
 	completed := false
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") != "Bearer credential" || request.Method != http.MethodPost {
-			t.Fatalf("unauthenticated host update callback: %s %s", request.Method, request.Header.Get("Authorization"))
-		}
-		switch request.URL.Path {
-		case "/api/v1/agents/agent-1/updates/agent-update-task-1/start":
+	server := controlFixtureServer(&controlGRPCFixture{
+		beginUpdate: func(ctx context.Context, request *agentpb.TaskDocument) (*agentpb.Document, error) {
+			requireFixtureAuthorization(t, ctx, "credential")
+			if request.AgentId != "agent-1" || request.TaskId != "agent-update-task-1" {
+				t.Error("unexpected update task")
+			}
 			started = true
-		case "/api/v1/agents/agent-1/tasks/agent-update-task-1/result":
+			return &agentpb.Document{Json: []byte(`{"ok":true}`)}, nil
+		},
+		complete: func(ctx context.Context, request *agentpb.TaskDocument) (*agentpb.Document, error) {
+			requireFixtureAuthorization(t, ctx, "credential")
 			var payload struct {
 				HostUpdateHelper bool `json:"hostUpdateHelper"`
 			}
-			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || !payload.HostUpdateHelper {
-				t.Errorf("update result did not identify its helper owner: %+v %v", payload, err)
+			if request.AgentId != "agent-1" || request.TaskId != "agent-update-task-1" || json.Unmarshal(request.Json, &payload) != nil || !payload.HostUpdateHelper {
+				t.Errorf("update result did not identify its helper owner: %+v", payload)
 			}
 			completed = true
-		default:
-			t.Fatalf("unexpected host update callback: %s", request.URL.Path)
-		}
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"ok":true}`))
-	}))
+			return &agentpb.Document{Json: []byte(`{"ok":true}`)}, nil
+		},
+	})
 	defer server.Close()
 	connection := testConnection(t, "agent-1", "node", server.URL, "credential")
-	client := Client{HTTPClient: server.Client()}
+	client := Client{}
 	if err := client.BeginHostUpdate(context.Background(), connection, "agent-update-task-1", 2, "helper-execution", "helper-session"); err != nil {
 		t.Fatal(err)
 	}
@@ -957,10 +1099,11 @@ func TestHostUpdateHelperUsesAuthenticatedLifecycleCallbacks(t *testing.T) {
 
 func TestHostUpdateHelperReportsRecoveryWithoutTerminalFailure(t *testing.T) {
 	calls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := controlFixtureServer(&controlGRPCFixture{complete: func(ctx context.Context, request *agentpb.TaskDocument) (*agentpb.Document, error) {
 		calls++
-		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer credential" || r.URL.Path != "/api/v1/agents/agent-1/tasks/agent-update-task-1/result" {
-			t.Errorf("invalid recovery callback: %s %s", r.Method, r.URL.Path)
+		requireFixtureAuthorization(t, ctx, "credential")
+		if request.AgentId != "agent-1" || request.TaskId != "agent-update-task-1" {
+			t.Error("invalid recovery identity")
 		}
 		var payload struct {
 			Attempt                int64  `json:"attempt"`
@@ -969,15 +1112,14 @@ func TestHostUpdateHelperReportsRecoveryWithoutTerminalFailure(t *testing.T) {
 			ReconciliationRequired bool   `json:"reconciliationRequired"`
 			HostUpdateHelper       bool   `json:"hostUpdateHelper"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Attempt != 2 || payload.Succeeded || !payload.ReconciliationRequired || !payload.HostUpdateHelper || payload.Error == "" {
-			t.Errorf("recovery was not explicitly marked as nonterminal: %#v %v", payload, err)
+		if err := json.Unmarshal(request.Json, &payload); err != nil || payload.Attempt != 2 || payload.Succeeded || !payload.ReconciliationRequired || !payload.HostUpdateHelper || payload.Error == "" {
+			t.Errorf("recovery was not marked nonterminal: %#v %v", payload, err)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"completed":true}`))
-	}))
+		return &agentpb.Document{Json: []byte(`{"completed":true}`)}, nil
+	}})
 	defer server.Close()
 	connection := testConnection(t, "agent-1", "node", server.URL, "credential")
-	client := Client{HTTPClient: server.Client()}
+	client := Client{}
 	if err := client.CompleteHostUpdate(context.Background(), connection, "agent-update-task-1", 2, errors.New("candidate requires recovery"), true, "helper-execution", "helper-session"); err != nil {
 		t.Fatal(err)
 	}
@@ -988,24 +1130,25 @@ func TestHostUpdateHelperReportsRecoveryWithoutTerminalFailure(t *testing.T) {
 
 func TestTaskCompletionUsesFreshContextsAfterExecutionCancellation(t *testing.T) {
 	resultReceived := false
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if acknowledgeExecutionForTest(t, response, request) {
-			return
-		}
-		if request.URL.Path != "/api/v1/agents/agent-1/tasks/deadline-task/result" {
-			t.Fatalf("unexpected request: %s", request.URL.Path)
-		}
-		var result struct {
-			Succeeded bool `json:"succeeded"`
-			Unknown   bool `json:"reconciliationRequired"`
-		}
-		if json.NewDecoder(request.Body).Decode(&result) != nil || result.Succeeded || !result.Unknown {
-			t.Error("cancelled execution did not report uncertainty")
-		}
-		resultReceived = true
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"completed":true}`))
-	}))
+	server := controlFixtureServer(&controlGRPCFixture{
+		transition: func(ctx context.Context, request *agentpb.ExecutionDocument) (*agentpb.Document, error) {
+			return acknowledgeExecutionForTest(t, ctx, request)
+		},
+		complete: func(_ context.Context, request *agentpb.TaskDocument) (*agentpb.Document, error) {
+			if request.AgentId != "agent-1" || request.TaskId != "deadline-task" {
+				t.Error("unexpected task identity")
+			}
+			var result struct {
+				Succeeded bool `json:"succeeded"`
+				Unknown   bool `json:"reconciliationRequired"`
+			}
+			if json.Unmarshal(request.Json, &result) != nil || result.Succeeded || !result.Unknown {
+				t.Error("cancelled execution did not report uncertainty")
+			}
+			resultReceived = true
+			return &agentpb.Document{Json: []byte(`{"completed":true}`)}, nil
+		},
+	})
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -1020,7 +1163,7 @@ func TestTaskCompletionUsesFreshContextsAfterExecutionCancellation(t *testing.T)
 	task := DeploymentTask{Kind: "application.apply", ID: "deadline-task", Attempt: 1, ApplicationID: "application-1", AppKey: cpaKey, Operation: "install", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`)}
 	task.Authorization = executionAuthorizationForTest()
 	task.Manifest.Version = "1.0.0"
-	client := Client{HTTPClient: server.Client(), executionSession: "test-execution-session", Capabilities: Capabilities{Docker: true}, Executor: executorFunc(func(ctx context.Context, _ DeploymentTask) (ApplicationTaskResult, error) {
+	client := Client{executionSession: "test-execution-session", Capabilities: Capabilities{Docker: true}, Executor: executorFunc(func(ctx context.Context, _ DeploymentTask) (ApplicationTaskResult, error) {
 		cancelExecution()
 		return ApplicationTaskResult{}, nil
 	})}
@@ -1036,21 +1179,24 @@ func TestTaskCompletionUsesFreshContextsAfterExecutionCancellation(t *testing.T)
 
 func TestLeaseRenewalFailureCancelsExecutionBeforeReporting(t *testing.T) {
 	resultReceived := false
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if acknowledgeExecutionForTest(t, response, request) {
-			return
-		}
-		switch request.URL.Path {
-		case "/api/v1/agents/agent-1/tasks/lease-failure/lease":
-			http.Error(response, `{"error":"lease unavailable"}`, http.StatusConflict)
-		case "/api/v1/agents/agent-1/tasks/lease-failure/result":
+	server := controlFixtureServer(&controlGRPCFixture{
+		transition: func(ctx context.Context, request *agentpb.ExecutionDocument) (*agentpb.Document, error) {
+			return acknowledgeExecutionForTest(t, ctx, request)
+		},
+		lease: func(_ context.Context, request *agentpb.TaskDocument) (*agentpb.Document, error) {
+			if request.AgentId != "agent-1" || request.TaskId != "lease-failure" {
+				t.Error("unexpected lease identity")
+			}
+			return nil, status.Error(codes.FailedPrecondition, "lease unavailable")
+		},
+		complete: func(_ context.Context, request *agentpb.TaskDocument) (*agentpb.Document, error) {
+			if request.AgentId != "agent-1" || request.TaskId != "lease-failure" {
+				t.Error("unexpected result identity")
+			}
 			resultReceived = true
-			response.Header().Set("Content-Type", "application/json")
-			_, _ = response.Write([]byte(`{"completed":true}`))
-		default:
-			t.Fatalf("unexpected request: %s", request.URL.Path)
-		}
-	}))
+			return &agentpb.Document{Json: []byte(`{"completed":true}`)}, nil
+		},
+	})
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -1062,7 +1208,7 @@ func TestLeaseRenewalFailureCancelsExecutionBeforeReporting(t *testing.T) {
 	}
 	executionCanceled := false
 	reportedRenewalFailure := false
-	client := Client{HTTPClient: server.Client(), executionSession: "test-execution-session", Capabilities: Capabilities{Docker: true}, Executor: executorFunc(func(ctx context.Context, _ DeploymentTask) (ApplicationTaskResult, error) {
+	client := Client{executionSession: "test-execution-session", Capabilities: Capabilities{Docker: true}, Executor: executorFunc(func(ctx context.Context, _ DeploymentTask) (ApplicationTaskResult, error) {
 		<-ctx.Done()
 		executionCanceled = true
 		return ApplicationTaskResult{}, ctx.Err()

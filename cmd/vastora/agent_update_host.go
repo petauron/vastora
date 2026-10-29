@@ -91,12 +91,7 @@ func (u systemHostUpdater) ScheduleUpdate(ctx context.Context, request agent.Hos
 	if err := prepareHostUpdateDirectory(ctx, hostUpdateDir, operation, runHostCommand, executableVersion); err != nil {
 		return err
 	}
-	client, err := agent.CenterHTTPClient(request.Connection, agentUpdateDownloadTimeout)
-	if err != nil {
-		return err
-	}
-	defer client.CloseIdleConnections()
-	candidate, version, err := downloadAgentUpdateCandidate(ctx, client, request.Connection, hostUpdateDir)
+	candidate, version, err := downloadAgentUpdateCandidate(ctx, request.Connection, hostUpdateDir, agent.OpenAgentBinary)
 	if err != nil {
 		return err
 	}

@@ -760,6 +760,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET landing_egress_addresses_json=? WHERE id=?`, egressAddressesJSON, id); err != nil {
 		return err
 	}
+	if heartbeat.Startup {
+		if err := s.retireInstalledUnclaimedAgentUpdate(ctx, tx, id, heartbeat.Version, now); err != nil {
+			return err
+		}
+	}
 	if err := saveRuntimeRecoveryApplications(ctx, tx, id, heartbeat.RuntimeRecoveryApplications); err != nil {
 		return err
 	}

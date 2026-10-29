@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,53 +11,45 @@ import (
 	"testing"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/agentpb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestHostDecommissionPersistsResultAcrossCallbackFailure(t *testing.T) {
 	environment := newAgentUninstallFixture(t)
 	var handoffs, callbacks atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost {
-			t.Error("cleanup callback was not authenticated")
-			http.Error(response, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if strings.HasSuffix(request.URL.Path, "/decommission/start") {
-			if request.Header.Get("Authorization") != "Bearer synthetic-cleanup-credential" {
-				t.Error("cleanup handoff did not use the Agent credential")
-			}
+	server := hostControlFixtureServer(&hostControlGRPCFixture{
+		beginDecommission: func(ctx context.Context, _ *agentpb.AgentDocument) (*agentpb.Document, error) {
+			requireHostFixtureCredential(t, ctx, "synthetic-cleanup-credential")
 			handoffs.Add(1)
-			_ = json.NewEncoder(response).Encode(map[string]bool{"started": true})
-			return
-		}
-		if request.Header.Get("Authorization") != "Bearer synthetic-callback-token" || request.URL.Path != "/api/v1/agent-decommission-results/agent-decommission-fixture" {
-			t.Error("cleanup completion did not use its task-bound callback")
-			http.Error(response, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		var result struct {
-			Attempt int64 `json:"attempt"`
-		}
-		if json.NewDecoder(request.Body).Decode(&result) != nil || result.Attempt != 2 {
-			t.Error("cleanup callback did not contain the successful attempt")
-			http.Error(response, "invalid result", http.StatusBadRequest)
-			return
-		}
-		for _, path := range append([]string{environment.dataDir, environment.unitPath}, environment.binaryPaths...) {
-			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("callback preceded actual resource removal: %s (%v)", path, err)
-				http.Error(response, "cleanup incomplete", http.StatusConflict)
-				return
+			return &agentpb.Document{Json: []byte(`{"started":true}`)}, nil
+		},
+		callback: func(ctx context.Context, request *agentpb.DecommissionRequest) (*agentpb.Document, error) {
+			requireHostFixtureCredential(t, ctx, "synthetic-callback-token")
+			if request.TaskId != "agent-decommission-fixture" {
+				t.Error("cleanup completion did not use its task-bound callback")
+				return nil, status.Error(codes.Unauthenticated, "wrong task")
 			}
-		}
-		if callbacks.Add(1) == 1 {
-			// The result reached Center, but the helper did not receive an
-			// acknowledgement. A restarted helper must only replay the result.
-			http.Error(response, "acknowledgement unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		_ = json.NewEncoder(response).Encode(map[string]bool{"completed": true})
-	}))
+			var result struct {
+				Attempt int64 `json:"attempt"`
+			}
+			if json.Unmarshal(request.Json, &result) != nil || result.Attempt != 2 {
+				t.Error("cleanup callback did not contain the successful attempt")
+				return nil, status.Error(codes.InvalidArgument, "invalid result")
+			}
+			for _, path := range append([]string{environment.dataDir, environment.unitPath}, environment.binaryPaths...) {
+				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("callback preceded actual resource removal: %s (%v)", path, err)
+					return nil, status.Error(codes.FailedPrecondition, "cleanup incomplete")
+				}
+			}
+			if callbacks.Add(1) == 1 {
+				return nil, status.Error(codes.Unavailable, "acknowledgement unavailable")
+			}
+			return &agentpb.Document{Json: []byte(`{"completed":true}`)}, nil
+		},
+	})
 	defer server.Close()
 	operationPath, operation := writeHostDecommissionFixture(t, environment.dataDir, server.URL)
 	cleanups := 0
@@ -67,7 +57,7 @@ func TestHostDecommissionPersistsResultAcrossCallbackFailure(t *testing.T) {
 		cleanups++
 		return uninstallAgentHostWithEnvironment(ctx, operation.DeleteData, false, false, environment)
 	}
-	client := agent.Client{HTTPClient: server.Client()}
+	client := agent.Client{}
 	if err := runHostDecommission(context.Background(), operationPath, client, cleanup); err == nil || !strings.Contains(err.Error(), "report completed host cleanup") {
 		t.Fatalf("callback failure was not reported: %v", err)
 	}
@@ -97,27 +87,27 @@ func TestHostDecommissionRetainsOperationAfterCleanupFailure(t *testing.T) {
 	environment := newAgentUninstallFixture(t)
 	var callbacks atomic.Int32
 	var starts atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if strings.HasPrefix(request.URL.Path, "/api/v1/agent-decommission-results/") {
+	server := hostControlFixtureServer(&hostControlGRPCFixture{
+		callback: func(_ context.Context, request *agentpb.DecommissionRequest) (*agentpb.Document, error) {
 			callbacks.Add(1)
 			var input struct {
 				Error string `json:"error"`
 			}
-			if err := json.NewDecoder(request.Body).Decode(&input); err != nil || input.Error != "host removal interrupted" {
+			if err := json.Unmarshal(request.Json, &input); err != nil || input.Error != "host removal interrupted" {
 				t.Errorf("failure evidence missing: %v %+v", err, input)
 			}
-			_ = json.NewEncoder(response).Encode(map[string]bool{"recorded": true})
-			return
-		}
-		if starts.Add(1) > 1 {
-			response.WriteHeader(http.StatusConflict)
-			return
-		}
-		_ = json.NewEncoder(response).Encode(map[string]bool{"started": true})
-	}))
+			return &agentpb.Document{Json: []byte(`{"recorded":true}`)}, nil
+		},
+		beginDecommission: func(context.Context, *agentpb.AgentDocument) (*agentpb.Document, error) {
+			if starts.Add(1) > 1 {
+				return nil, status.Error(codes.FailedPrecondition, "already started")
+			}
+			return &agentpb.Document{Json: []byte(`{"started":true}`)}, nil
+		},
+	})
 	defer server.Close()
 	operationPath, _ := writeHostDecommissionFixture(t, environment.dataDir, server.URL)
-	client := agent.Client{HTTPClient: server.Client()}
+	client := agent.Client{}
 	cleanupFailure := errors.New("host removal interrupted")
 	if err := runHostDecommission(context.Background(), operationPath, client, func(context.Context, hostDecommissionOperation) error {
 		return cleanupFailure
