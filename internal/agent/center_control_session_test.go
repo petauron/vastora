@@ -61,7 +61,7 @@ func TestManagedUpgradeControlSessionRetainsVerifiedPeerAndSNI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	config, err := pinnedTLSConfig(connection.CAFingerprint, connection.CACertificatePEM)
+	config, err := pinnedTLSConfig(connection.CAFingerprint, connection.CACertificatePEM, "center.example.test")
 	if err != nil {
 		t.Fatal(err)
 	}

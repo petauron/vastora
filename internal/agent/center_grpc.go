@@ -68,7 +68,7 @@ func newAgentGRPCConn(centerURL, fingerprint, certificate string, systemRoots bo
 	case parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname()):
 		transport = insecure.NewCredentials()
 	case parsed.Scheme == "https" && strings.TrimSpace(fingerprint) != "":
-		config, err := pinnedTLSConfig(fingerprint, certificate)
+		config, err := pinnedTLSConfig(fingerprint, certificate, parsed.Hostname())
 		if err != nil {
 			return nil, err
 		}

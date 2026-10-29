@@ -117,10 +117,14 @@ func certificatePublicKeyFingerprint(certificate *x509.Certificate) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func pinnedTLSConfig(fingerprint, certificatePEM string) (*tls.Config, error) {
+func pinnedTLSConfig(fingerprint, certificatePEM, serverName string) (*tls.Config, error) {
 	fingerprint = normalizeCAFingerprint(fingerprint)
 	if _, err := hex.DecodeString(fingerprint); err != nil || len(fingerprint) != sha256.Size*2 {
 		return nil, errors.New("agent: invalid Center CA fingerprint")
+	}
+	serverName = strings.TrimSpace(serverName)
+	if serverName == "" {
+		return nil, errors.New("agent: Center TLS server name is required")
 	}
 	if strings.TrimSpace(certificatePEM) != "" {
 		certificate, err := parseCACertificate(certificatePEM)
@@ -141,20 +145,23 @@ func pinnedTLSConfig(fingerprint, certificatePEM string) (*tls.Config, error) {
 			return errors.New("agent: Center CA fingerprint mismatch")
 		}}, nil
 	}
-	return &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true, // The chain and hostname are verified below against the pinned CA.
-		VerifyConnection: func(state tls.ConnectionState) error { return verifyPinnedCA(state, fingerprint) }}, nil
+	return &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true, // The chain and explicit destination are verified below against the pinned CA.
+		VerifyConnection: func(state tls.ConnectionState) error { return verifyPinnedCA(state, fingerprint, serverName) }}, nil
 }
 
-func verifyPinnedCA(state tls.ConnectionState, fingerprint string) error {
+func verifyPinnedCA(state tls.ConnectionState, fingerprint, serverName string) error {
 	if len(state.PeerCertificates) == 0 {
 		return errors.New("agent: Center did not provide a TLS certificate")
+	}
+	if strings.TrimSpace(serverName) == "" {
+		return errors.New("agent: Center TLS server name is required")
 	}
 	leaf := state.PeerCertificates[0]
 	intermediates := x509.NewCertPool()
 	for _, certificate := range state.PeerCertificates[1:] {
 		intermediates.AddCert(certificate)
 	}
-	options := x509.VerifyOptions{DNSName: state.ServerName, Intermediates: intermediates}
+	options := x509.VerifyOptions{DNSName: serverName, Intermediates: intermediates}
 	if chains, err := leaf.Verify(options); err == nil {
 		for _, chain := range chains {
 			if len(chain) != 0 && certificatePublicKeyFingerprint(chain[len(chain)-1]) == fingerprint {

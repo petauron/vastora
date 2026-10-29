@@ -17,8 +17,8 @@ import (
 )
 
 // Exercise the same certificate verifier used by gRPC with a real TLS handshake.
-func pinnedTLSClientForTest(fingerprint, certificate string, timeout time.Duration) (*http.Client, error) {
-	config, err := pinnedTLSConfig(fingerprint, certificate)
+func pinnedTLSClientForTest(fingerprint, certificate, serverName string, timeout time.Duration) (*http.Client, error) {
+	config, err := pinnedTLSConfig(fingerprint, certificate, serverName)
 	if err != nil {
 		return nil, err
 	}
@@ -29,10 +29,10 @@ func TestPinnedCenterRejectsDifferentCARoot(t *testing.T) {
 	leafA, rootA := testPrivateCenterChain(t, "root-a")
 	leafB, rootB := testPrivateCenterChain(t, "root-b")
 	fingerprint := certificatePublicKeyFingerprint(rootA)
-	if err := verifyPinnedCA(tls.ConnectionState{PeerCertificates: []*x509.Certificate{leafA, rootA}, ServerName: "center.example.test"}, fingerprint); err != nil {
+	if err := verifyPinnedCA(tls.ConnectionState{PeerCertificates: []*x509.Certificate{leafA, rootA}, ServerName: "center.example.test"}, fingerprint, "center.example.test"); err != nil {
 		t.Fatalf("expected CA was rejected: %v", err)
 	}
-	if err := verifyPinnedCA(tls.ConnectionState{PeerCertificates: []*x509.Certificate{leafB, rootB}, ServerName: "center.example.test"}, fingerprint); err == nil || !strings.Contains(err.Error(), "mismatch") {
+	if err := verifyPinnedCA(tls.ConnectionState{PeerCertificates: []*x509.Certificate{leafB, rootB}, ServerName: "center.example.test"}, fingerprint, "center.example.test"); err == nil || !strings.Contains(err.Error(), "mismatch") {
 		t.Fatalf("different CA was accepted: %v", err)
 	}
 }
@@ -46,7 +46,7 @@ func TestPinnedHTTPClientTrustsPresentedPrivateIssuingCA(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 
-	client, err := pinnedTLSClientForTest(certificatePublicKeyFingerprint(issuer), "", time.Second)
+	client, err := pinnedTLSClientForTest(certificatePublicKeyFingerprint(issuer), "", "127.0.0.1", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestPinnedHTTPClientTrustsPresentedPrivateIssuingCA(t *testing.T) {
 	response.Body.Close()
 
 	_, wrongIssuer := testPrivateCenterTLSCertificate(t)
-	wrongClient, err := pinnedTLSClientForTest(certificatePublicKeyFingerprint(wrongIssuer), "", time.Second)
+	wrongClient, err := pinnedTLSClientForTest(certificatePublicKeyFingerprint(wrongIssuer), "", "127.0.0.1", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestPinnedHTTPClientTrustsIndependentlySuppliedPrivateCAWhenServerOmitsIt(t
 	defer server.Close()
 
 	issuerPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Raw}))
-	client, err := pinnedTLSClientForTest(certificatePublicKeyFingerprint(issuer), issuerPEM, time.Second)
+	client, err := pinnedTLSClientForTest(certificatePublicKeyFingerprint(issuer), issuerPEM, "127.0.0.1", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
