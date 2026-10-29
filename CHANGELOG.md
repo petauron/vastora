@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.385](https://github.com/petauron/vastora/compare/v0.1.0-alpha.384...v0.1.0-alpha.385) (2026-10-29)
+
+
+### Features
+
+* expose managed website TLS origins on loopback ([#1120](https://github.com/petauron/vastora/issues/1120)) ([d0c2754](https://github.com/petauron/vastora/commit/d0c27546b74056138dfd92f13d58b30e1847dba9))
+
 ## [0.1.0-alpha.384](https://github.com/petauron/vastora/compare/v0.1.0-alpha.383...v0.1.0-alpha.384) (2026-10-29)
 
 
