@@ -272,7 +272,7 @@ func runAgent(arguments []string) error {
 				}
 			}
 		}
-		httpClient, err := agent.CenterHTTPClient(connection, 2*time.Minute)
+		httpClient, err := agent.CenterHTTPClient(connection, agentUpdateDownloadTimeout)
 		if err != nil {
 			return err
 		}
@@ -779,8 +779,12 @@ func updateAgentExecutable(ctx context.Context, client *http.Client, connection 
 	return expectedVersion, nil
 }
 
+// Allow slow links to download a bounded candidate without relaxing TLS,
+// integrity, version, cancellation, or retry checks.
+const agentUpdateDownloadTimeout = 30 * time.Minute
+
 func downloadAgentUpdateCandidate(ctx context.Context, client *http.Client, connection agent.Connection, directory string) (string, string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, agentUpdateDownloadTimeout)
 	defer cancel()
 	var candidate, version string
 	err := retry.Do(ctx, retry.WithMaxRetries(3, retry.NewExponential(2*time.Second)), func(ctx context.Context) error {
