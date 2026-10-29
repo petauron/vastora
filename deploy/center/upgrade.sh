@@ -379,7 +379,7 @@ if [ "$agent_changed" = yes ]; then
       sleep 1
     done
   fi
-	echo "Co-located Agent remained connected through Center reconciliation."
+	echo "Co-located Agent is running; verify its Center heartbeat before proceeding."
 else
   "$install_dir/install-host-cli.sh" \
     --image "$new_image" --version "$new_version" --install-dir "$install_dir"
