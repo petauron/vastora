@@ -72,7 +72,7 @@ func (r *agentBinaryReader) Close() error {
 // OpenAgentBinary returns an authenticated, bounded binary stream and the
 // metadata required for the caller's existing checksum/version validation.
 func OpenAgentBinary(ctx context.Context, connection Connection, operatingSystem, architecture string) (io.ReadCloser, string, string, int64, error) {
-	conn, release, err := (Client{}).grpcConnection(connection, false)
+	conn, release, err := (Client{}).grpcConnection(ctx, connection, false)
 	if err != nil {
 		return nil, "", "", 0, err
 	}
@@ -111,7 +111,7 @@ func (c Client) grpcUploadThreeXUIBackup(ctx context.Context, connection Connect
 	if len(content) < 16 || len(content) > threeXUIControllerBackupMaxSize {
 		return errors.New("agent: invalid 3x-ui restore point")
 	}
-	conn, release, err := c.grpcConnection(connection, false)
+	conn, release, err := c.grpcConnection(ctx, connection, false)
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func (c Client) grpcUploadThreeXUIBackup(ctx context.Context, connection Connect
 }
 
 func (c Client) grpcDownloadThreeXUIBackup(ctx context.Context, connection Connection, migrationID string) ([]byte, error) {
-	conn, release, err := c.grpcConnection(connection, false)
+	conn, release, err := c.grpcConnection(ctx, connection, false)
 	if err != nil {
 		return nil, err
 	}

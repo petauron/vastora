@@ -113,7 +113,7 @@ func (c Client) openTaskStream(ctx context.Context, store *Store) (agentpb.Agent
 	if err != nil {
 		return nil, Connection{}, nil, err
 	}
-	conn, release, err := c.grpcConnection(connection, false)
+	conn, release, err := c.grpcConnection(ctx, connection, false)
 	if err != nil {
 		return nil, Connection{}, nil, err
 	}

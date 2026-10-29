@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/petauron/vastora/internal/controlplane"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -33,6 +35,56 @@ type grpcPeer struct {
 type grpcPinCredentials struct {
 	credentials.TransportCredentials
 	peer *grpcPeer
+}
+
+// Fingerprint-only private CAs are discovered from a failed, normally verified
+// TLS handshake. No RPC or credential is sent until the next handshake has
+// succeeded using Go's normal certificate and hostname verification.
+type grpcPinnedCAState struct {
+	mu          sync.Mutex
+	certificate *x509.Certificate
+}
+
+type grpcPinnedCACredentials struct {
+	credentials.TransportCredentials
+	config      *tls.Config
+	fingerprint string
+	serverName  string
+	state       *grpcPinnedCAState
+}
+
+func (c grpcPinnedCACredentials) ClientHandshake(ctx context.Context, authority string, raw net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	c.state.mu.Lock()
+	certificate := c.state.certificate
+	c.state.mu.Unlock()
+	config := c.config.Clone()
+	if certificate != nil {
+		roots := x509.NewCertPool()
+		roots.AddCert(certificate)
+		config.RootCAs = roots
+	}
+	conn, info, err := credentials.NewTLS(config).ClientHandshake(ctx, authority, raw)
+	if err != nil && certificate == nil {
+		var verification *tls.CertificateVerificationError
+		if errors.As(err, &verification) {
+			if candidate := verifiedPresentedCA(verification.UnverifiedCertificates, c.fingerprint, c.serverName); candidate != nil {
+				c.state.mu.Lock()
+				c.state.certificate = candidate
+				c.state.mu.Unlock()
+			}
+		}
+	}
+	return conn, info, err
+}
+
+func (c grpcPinnedCACredentials) Clone() credentials.TransportCredentials {
+	return grpcPinnedCACredentials{TransportCredentials: c.TransportCredentials.Clone(), config: c.config.Clone(), fingerprint: c.fingerprint, serverName: c.serverName, state: c.state}
+}
+
+func (s *grpcPinnedCAState) hasCertificate() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.certificate != nil
 }
 
 func (c grpcPinCredentials) ClientHandshake(ctx context.Context, authority string, raw net.Conn) (net.Conn, credentials.AuthInfo, error) {
@@ -58,12 +110,13 @@ func (c grpcPinCredentials) Clone() credentials.TransportCredentials {
 // newAgentGRPCConn never permits plaintext remote traffic. Only the existing
 // co-located loopback Center may use h2c. Public cleanup callbacks use normal
 // system-root TLS because their private network is intentionally already gone.
-func newAgentGRPCConn(centerURL, fingerprint, certificate string, systemRoots bool, peer *grpcPeer) (*grpc.ClientConn, error) {
+func newAgentGRPCConn(ctx context.Context, centerURL, fingerprint, certificate string, systemRoots bool, peer *grpcPeer) (*grpc.ClientConn, error) {
 	parsed, err := url.Parse(strings.TrimSpace(centerURL))
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, errors.New("agent: invalid Center gRPC origin")
 	}
 	var transport credentials.TransportCredentials
+	var privateCA *grpcPinnedCAState
 	switch {
 	case parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname()):
 		transport = insecure.NewCredentials()
@@ -73,6 +126,10 @@ func newAgentGRPCConn(centerURL, fingerprint, certificate string, systemRoots bo
 			return nil, err
 		}
 		transport = credentials.NewTLS(config)
+		if strings.TrimSpace(certificate) == "" {
+			privateCA = &grpcPinnedCAState{}
+			transport = grpcPinnedCACredentials{TransportCredentials: transport, config: config, fingerprint: normalizeCAFingerprint(fingerprint), serverName: parsed.Hostname(), state: privateCA}
+		}
 	case parsed.Scheme == "https" && systemRoots:
 		transport = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
 	default:
@@ -132,7 +189,30 @@ func newAgentGRPCConn(centerURL, fingerprint, certificate string, systemRoots bo
 	if peer != nil {
 		target = "passthrough:///" + net.JoinHostPort(parsed.Hostname(), port)
 	}
-	return grpc.NewClient(target, options...)
+	conn, err := grpc.NewClient(target, options...)
+	if err != nil || privateCA == nil {
+		return conn, err
+	}
+	// Wait for the first authenticated connection: an untrusted private CA may
+	// require a second connection after the presented chain was validated.
+	// No application request is sent during this process.
+	readyContext, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	conn.Connect()
+	for {
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			return conn, nil
+		}
+		if state == connectivity.Shutdown || (state == connectivity.TransientFailure && !privateCA.hasCertificate()) {
+			_ = conn.Close()
+			return nil, errors.New("agent: Center TLS connection or CA verification failed")
+		}
+		if !conn.WaitForStateChange(readyContext, state) {
+			_ = conn.Close()
+			return nil, fmt.Errorf("agent: Center TLS connection: %w", readyContext.Err())
+		}
+	}
 }
 
 func grpcAuthenticatedContext(ctx context.Context, credential string) context.Context {
@@ -193,7 +273,7 @@ func newGRPCControlSession(connection Connection) (*grpcControlSession, error) {
 		return nil, err
 	}
 	peer := &grpcPeer{}
-	conn, err := newAgentGRPCConn(connection.CenterURL, connection.CAFingerprint, connection.CACertificatePEM, false, peer)
+	conn, err := newAgentGRPCConn(context.Background(), connection.CenterURL, connection.CAFingerprint, connection.CACertificatePEM, false, peer)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +298,7 @@ func (c *Client) UseCenterGRPCSession() func() {
 	return session.close
 }
 
-func (c Client) grpcConnection(connection Connection, systemRoots bool) (*grpc.ClientConn, func(), error) {
+func (c Client) grpcConnection(ctx context.Context, connection Connection, systemRoots bool) (*grpc.ClientConn, func(), error) {
 	if c.centerRPC != nil && !systemRoots {
 		session := c.centerRPC
 		session.mu.Lock()
@@ -234,7 +314,7 @@ func (c Client) grpcConnection(connection Connection, systemRoots bool) (*grpc.C
 			return nil, nil, errors.New("agent: Center gRPC request changed its origin or trust")
 		}
 		if session.conn == nil || changed {
-			conn, err := newAgentGRPCConn(connection.CenterURL, fingerprint, certificate, false, nil)
+			conn, err := newAgentGRPCConn(ctx, connection.CenterURL, fingerprint, certificate, false, nil)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -245,7 +325,7 @@ func (c Client) grpcConnection(connection Connection, systemRoots bool) (*grpc.C
 		}
 		return session.conn, func() {}, nil
 	}
-	conn, err := newAgentGRPCConn(connection.CenterURL, connection.CAFingerprint, connection.CACertificatePEM, systemRoots, nil)
+	conn, err := newAgentGRPCConn(ctx, connection.CenterURL, connection.CAFingerprint, connection.CACertificatePEM, systemRoots, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -277,7 +357,7 @@ func (c Client) callAgentRPC(ctx context.Context, connection Connection, operati
 	if len(body) > limit {
 		return errors.New("agent: Center request exceeds the allowed size")
 	}
-	conn, release, err := c.grpcConnection(connection, systemRoots)
+	conn, release, err := c.grpcConnection(ctx, connection, systemRoots)
 	if err != nil {
 		return err
 	}
@@ -330,7 +410,7 @@ func (c Client) callAgentRPC(ctx context.Context, connection Connection, operati
 }
 
 func (c Client) probeAgentRPC(ctx context.Context, connection Connection) error {
-	conn, release, err := (Client{}).grpcConnection(connection, false)
+	conn, release, err := (Client{}).grpcConnection(ctx, connection, false)
 	if err != nil {
 		return err
 	}

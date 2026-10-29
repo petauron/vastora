@@ -87,7 +87,7 @@ func TestManagedUpgradeControlSessionRetainsVerifiedPeerAndSNI(t *testing.T) {
 	_ = client.centerRPC.conn.Close()
 	client.centerRPC.conn = connectionForTest
 	probe := func(candidate Connection) error {
-		conn, done, err := client.grpcConnection(candidate, false)
+		conn, done, err := client.grpcConnection(context.Background(), candidate, false)
 		if err != nil {
 			return err
 		}
@@ -144,7 +144,7 @@ func TestManagedUpgradeControlSessionRejectsRedirectAndUntrustedTLS(t *testing.T
 				t.Fatal(err)
 			}
 			defer release()
-			conn, done, err := client.grpcConnection(connection, false)
+			conn, done, err := client.grpcConnection(context.Background(), connection, false)
 			if err != nil {
 				t.Fatal(err)
 			}

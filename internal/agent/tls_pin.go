@@ -83,7 +83,7 @@ func (c Client) probeCenterCAFingerprint(ctx context.Context, centerURL string) 
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
 		return "", errors.New("agent: invalid Center TLS identity")
 	}
-	conn, err := newAgentGRPCConn(centerURL, "", "", true, nil)
+	conn, err := newAgentGRPCConn(ctx, centerURL, "", "", true, nil)
 	if err != nil {
 		return "", fmt.Errorf("agent: prepare Center TLS identity probe: %w", err)
 	}
@@ -126,6 +126,7 @@ func pinnedTLSConfig(fingerprint, certificatePEM, serverName string) (*tls.Confi
 	if serverName == "" {
 		return nil, errors.New("agent: Center TLS server name is required")
 	}
+	config := &tls.Config{MinVersion: tls.VersionTLS12}
 	if strings.TrimSpace(certificatePEM) != "" {
 		certificate, err := parseCACertificate(certificatePEM)
 		if err != nil {
@@ -136,51 +137,51 @@ func pinnedTLSConfig(fingerprint, certificatePEM, serverName string) (*tls.Confi
 		}
 		roots := x509.NewCertPool()
 		roots.AddCert(certificate)
-		return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, VerifyConnection: func(state tls.ConnectionState) error {
-			for _, chain := range state.VerifiedChains {
-				if len(chain) != 0 && certificatePublicKeyFingerprint(chain[len(chain)-1]) == fingerprint {
+		config.RootCAs = roots
+	}
+	config.VerifyConnection = func(state tls.ConnectionState) error {
+		if len(state.PeerCertificates) == 0 || state.PeerCertificates[0].VerifyHostname(serverName) != nil {
+			return errors.New("agent: Center certificate does not match its destination")
+		}
+		for _, chain := range state.VerifiedChains {
+			for index, certificate := range chain {
+				if index == 0 && len(chain) > 1 {
+					continue
+				}
+				if certificate.IsCA && certificatePublicKeyFingerprint(certificate) == fingerprint {
 					return nil
 				}
 			}
-			return errors.New("agent: Center CA fingerprint mismatch")
-		}}, nil
+		}
+		return errors.New("agent: Center CA fingerprint mismatch")
 	}
-	return &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true, // The chain and explicit destination are verified below against the pinned CA.
-		VerifyConnection: func(state tls.ConnectionState) error { return verifyPinnedCA(state, fingerprint, serverName) }}, nil
+	return config, nil
 }
 
-func verifyPinnedCA(state tls.ConnectionState, fingerprint, serverName string) error {
-	if len(state.PeerCertificates) == 0 {
-		return errors.New("agent: Center did not provide a TLS certificate")
+// A fingerprint-only enrollment may trust a private CA that is not in the
+// system store. A failed, normally verified handshake can expose the presented
+// chain without sending application credentials. Only retain a CA from that
+// chain after verifying both its fingerprint and the full leaf chain and name.
+func verifiedPresentedCA(certificates []*x509.Certificate, fingerprint, serverName string) *x509.Certificate {
+	if len(certificates) < 2 || strings.TrimSpace(serverName) == "" {
+		return nil
 	}
-	if strings.TrimSpace(serverName) == "" {
-		return errors.New("agent: Center TLS server name is required")
-	}
-	leaf := state.PeerCertificates[0]
 	intermediates := x509.NewCertPool()
-	for _, certificate := range state.PeerCertificates[1:] {
+	for _, certificate := range certificates[1:] {
 		intermediates.AddCert(certificate)
 	}
-	options := x509.VerifyOptions{DNSName: serverName, Intermediates: intermediates}
-	if chains, err := leaf.Verify(options); err == nil {
-		for _, chain := range chains {
-			if len(chain) != 0 && certificatePublicKeyFingerprint(chain[len(chain)-1]) == fingerprint {
-				return nil
-			}
-		}
-	}
-	for _, certificate := range state.PeerCertificates[1:] {
+	for _, certificate := range certificates[1:] {
 		if !certificate.IsCA || certificatePublicKeyFingerprint(certificate) != fingerprint {
 			continue
 		}
 		roots := x509.NewCertPool()
 		roots.AddCert(certificate)
-		options.Roots = roots
-		if _, err := leaf.Verify(options); err == nil {
-			return nil
+		_, err := certificates[0].Verify(x509.VerifyOptions{DNSName: serverName, Intermediates: intermediates, Roots: roots})
+		if err == nil {
+			return certificate
 		}
 	}
-	return errors.New("agent: Center CA fingerprint mismatch")
+	return nil
 }
 
 func (c Client) ensureConnectionPinned(ctx context.Context, store *Store, connection Connection) (Connection, error) {

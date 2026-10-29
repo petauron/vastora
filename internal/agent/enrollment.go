@@ -55,7 +55,7 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 		return Enrollment{}, errors.New("agent: stored enrollment identity is invalid")
 	}
 	connection := Connection{CenterURL: baseURL, CAFingerprint: caFingerprint, CACertificatePEM: caCertificatePEM}
-	conn, release, err := c.grpcConnection(connection, false)
+	conn, release, err := c.grpcConnection(ctx, connection, false)
 	if err != nil {
 		return Enrollment{}, err
 	}
