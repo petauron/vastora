@@ -1215,26 +1215,26 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		byID[agents[index].ID] = index
 		agents[index].NetworkCandidates = []networking.Candidate{}
 	}
-	updateRows, err := s.db.QueryContext(ctx, `SELECT t.agent_id,t.id,t.target_version,t.state,t.error,t.updated_at FROM tailscale_update_tasks t WHERE t.id=(SELECT newest.id FROM tailscale_update_tasks newest WHERE newest.agent_id=t.agent_id ORDER BY newest.created_at DESC,newest.rowid DESC LIMIT 1)`)
+	tailscaleUpdateRows, err := s.db.QueryContext(ctx, `SELECT t.agent_id,t.id,t.target_version,t.state,t.error,t.updated_at FROM tailscale_update_tasks t WHERE t.id=(SELECT newest.id FROM tailscale_update_tasks newest WHERE newest.agent_id=t.agent_id ORDER BY newest.created_at DESC,newest.rowid DESC LIMIT 1)`)
 	if err != nil {
 		return nil, err
 	}
-	for updateRows.Next() {
+	for tailscaleUpdateRows.Next() {
 		var node string
 		var v TailscaleUpdateView
-		if err := updateRows.Scan(&node, &v.ID, &v.TargetVersion, &v.State, &v.Error, &v.UpdatedAt); err != nil {
-			updateRows.Close()
+		if err := tailscaleUpdateRows.Scan(&node, &v.ID, &v.TargetVersion, &v.State, &v.Error, &v.UpdatedAt); err != nil {
+			tailscaleUpdateRows.Close()
 			return nil, err
 		}
 		if index, ok := byID[node]; ok {
 			agents[index].TailscaleUpdateTask = &v
 		}
 	}
-	if err := updateRows.Err(); err != nil {
-		updateRows.Close()
+	if err := tailscaleUpdateRows.Err(); err != nil {
+		tailscaleUpdateRows.Close()
 		return nil, err
 	}
-	if err := updateRows.Close(); err != nil {
+	if err := tailscaleUpdateRows.Close(); err != nil {
 		return nil, err
 	}
 	recoveryRows, err := s.db.QueryContext(ctx, `SELECT agent_id,id,plan_revision,state,private_isolation,attempt,authorized_by,previous_fingerprint,replacement_fingerprint,last_error,created_at,updated_at FROM agent_reinstall_operations WHERE state NOT IN ('superseded','completed')`)
