@@ -12,10 +12,11 @@ export function isBackgroundApplication(app: AppView | undefined) {
 export function desktopApplications(data: AppData, language: Language): DesktopApplication[] {
   if (data.desktopDataUnavailable) return [];
   const catalog = new Map(data.apps.map((app) => [app.key, app]));
+  const managementApplications = new Set(data.services.filter((service) => service.management && ["http", "https"].includes(service.protocol)).map((service) => service.applicationId));
   const groups = new Map<string, DesktopApplication>();
   for (const application of data.applications.filter(isInstalledApplication)) {
     const app = catalog.get(application.appKey);
-    if (isBackgroundApplication(app)) continue;
+    if (isBackgroundApplication(app) || (!app && application.runtime === "host" && !managementApplications.has(application.id))) continue;
     const group = groups.get(application.appKey);
     if (group) group.count++;
     else {
