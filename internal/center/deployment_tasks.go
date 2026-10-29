@@ -25,12 +25,14 @@ import (
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 	"github.com/petauron/vastora/internal/senulun"
+	"github.com/petauron/vastora/internal/tailscalehost"
 	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
 type AgentTask struct {
 	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
+	TailscaleUpdate           *tailscalehost.UpdateTask            `json:"tailscaleUpdate,omitempty"`
 	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
 	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
@@ -109,6 +111,13 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return nil, err
 	}
+	var tailscaleWaiting bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tailscale_update_tasks WHERE agent_id=? AND state='awaiting_decision')`, agentID).Scan(&tailscaleWaiting); err != nil {
+		return nil, err
+	}
+	if tailscaleWaiting {
+		return nil, nil
+	}
 	commitAuthorized := commitTask
 	commitTask = func(tx *sql.Tx, task *AgentTask) error {
 		// A discarded unauthorized command commits its rejection with no task.
@@ -121,7 +130,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			return err
 		}
 		nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
-		if landingOnly && !nativeLifecycle && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind {
+		if landingOnly && !nativeLifecycle && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind && task.Kind != tailscalehost.UpdateKind {
 			return errors.New("center: task is not authorized for a landing-only node")
 		}
 		return commitAuthorized(tx, task)
@@ -172,6 +181,13 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	}
 	if authorized != 1 {
 		return nil, errors.New("center: invalid Agent credential")
+	}
+	var tailscalePending bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tailscale_update_tasks WHERE agent_id=? AND state='awaiting_decision')`, agentID).Scan(&tailscalePending); err != nil {
+		return nil, err
+	}
+	if tailscalePending {
+		return nil, nil
 	}
 	executionBlocked, err := unresolvedExecutionBlocksAgentWork(ctx, tx, agentID, agentVersion)
 	if err != nil {
@@ -378,6 +394,16 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 							return nil, err
 						}
 						return recovery, nil
+					}
+					updateTask, updateErr := s.claimTailscaleUpdate(ctx, tx, agentID)
+					if updateErr != nil {
+						return nil, updateErr
+					}
+					if updateTask != nil {
+						if err := commitTask(tx, updateTask); err != nil {
+							return nil, err
+						}
+						return updateTask, nil
 					}
 					securityTask, securityErr := s.claimNodeSecurity(ctx, tx, agentID)
 					if securityErr != nil {
@@ -708,6 +734,9 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 			return errInvalidReconciliationDisposition
 		}
 		return s.completeIPQuality(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
+	}
+	if strings.HasPrefix(taskID, tailscalehost.UpdateTaskPrefix) {
+		return s.completeTailscaleUpdate(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, reconciliationRequired)
 	}
 	if strings.HasPrefix(taskID, "node-security-") {
 		if reconciliationRequired {

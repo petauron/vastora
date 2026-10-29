@@ -31,6 +31,8 @@ func (s *Store) releaseClaimedTask(ctx context.Context, agentID string, task Age
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	var result sql.Result
 	switch task.Kind {
+	case "tailscale.update":
+		result, err = tx.ExecContext(ctx, `UPDATE tailscale_update_tasks SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
 	case "node.security":
 		result, err = tx.ExecContext(ctx, `UPDATE node_security_tasks SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
 	case "node.ip-quality":
@@ -131,6 +133,8 @@ func (s *Store) RenewTaskLease(ctx context.Context, agentID, credential, taskID 
 		result, err = s.db.ExecContext(ctx, `UPDATE application_commands SET lease_expires_at = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ? AND lease_expires_at > ?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case taskID == agentDecommissionTaskID(agentID):
 		result, err = s.db.ExecContext(ctx, `UPDATE agent_decommissions SET lease_expires_at = ?, updated_at = ? WHERE agent_id = ? AND state = 'running' AND attempt = ? AND lease_expires_at > ?`, append(values, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	case strings.HasPrefix(taskID, "tailscale-update-"):
+		result, err = s.db.ExecContext(ctx, `UPDATE tailscale_update_tasks SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=? AND lease_expires_at>?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case isAgentUpdateTaskID(taskID):
 		result, err = s.db.ExecContext(ctx, `UPDATE agent_updates SET lease_expires_at = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ? AND lease_expires_at > ?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case func() bool { _, ok := gatewayTaskRevision(taskID); return ok }():
@@ -232,6 +236,7 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		query string
 		kind  string
 	}{
+		{`SELECT id, 1 FROM tailscale_update_tasks WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "tailscale.update"},
 		{`SELECT id, 1 FROM node_security_tasks WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.security"},
 		{`SELECT id, 1 FROM ip_quality_checks WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.ip-quality"},
 		{`SELECT id, target_revision FROM node_diagnostic_checks WHERE agent_id=? AND kind='node.network-quality' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.network-quality"},
@@ -312,6 +317,9 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 	// action instead of leaving the entry permanently "applying". A retirement
 	// command is the exception because the live Meridian revision was already
 	// verified before legacy cleanup started.
+	if _, err := tx.ExecContext(ctx, `UPDATE tailscale_update_tasks SET state='failed',lease_expires_at='',error='Update dispatch interrupted; inspect the host before retrying',updated_at=? WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
 	interrupted := "Execution interrupted; manual verification required"
 	stamp := now.Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET status='failed',last_error=?,updated_at=?

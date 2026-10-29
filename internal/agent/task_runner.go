@@ -23,6 +23,7 @@ import (
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/senulun"
+	"github.com/petauron/vastora/internal/tailscalehost"
 	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
@@ -188,6 +189,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	decommissionHandedOff := false
 	updateHandedOff := false
+	tailscaleUpdateHandedOff := false
 	nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
 	if len(publicRules) > 0 {
 		err = nodesecurity.NewHost().CheckPorts(publicRules)
@@ -228,6 +230,21 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			c.Executor = ApplicationExecutor{Host: SystemdHostApplicationManager{}, Store: store}
 		}
 		switch task.Kind {
+		case tailscalehost.UpdateKind:
+			if !c.TailscaleEnrolled || task.TailscaleUpdate == nil {
+				err = errors.New("agent: Tailscale update is unavailable")
+			} else if err = prepareTailscaleUpdate(ctx, task.ID, *task.TailscaleUpdate); err == nil {
+				err = c.executionTransition(ctx, store, "step", "handoff", false, "")
+				if err == nil {
+					err = c.beginTailscaleUpdate(ctx, store, task)
+				}
+				if err == nil {
+					tailscaleUpdateHandedOff = true
+					dispatchContext, cancelDispatch := freshTaskControlContext(ctx)
+					err = startTailscaleUpdate(dispatchContext, task.ID, *task.TailscaleUpdate)
+					cancelDispatch()
+				}
+			}
 		case nodesecurity.Kind:
 			if !c.Capabilities.NodeSecurity || task.NodeSecurity == nil {
 				err = errors.New("agent: node security capability is not configured")
@@ -656,6 +673,14 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		default:
 			err = errors.New("agent: unsupported task kind")
 		}
+	}
+	if tailscaleUpdateHandedOff {
+		if err != nil && report != nil {
+			report(errors.New(safeTaskError(err)))
+		}
+		// Center keeps the execution open until a heartbeat proves the service
+		// result and actual running version; it must never replay this attempt.
+		return nil
 	}
 	if decommissionHandedOff {
 		// The persistent host helper owns the terminal result. A successful

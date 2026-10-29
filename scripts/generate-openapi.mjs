@@ -818,6 +818,25 @@ for (const route of routes) {
     operation.responses["200"].headers = noStoreHeaders;
     operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/ApplicationCredentialRotation" };
   }
+  if (route.handler === "handleCheckTailscaleUpdates") {
+    operation.description = "Request a version-only check from online Tailscale nodes on their next heartbeat. Never installs packages.";
+    operation.responses[status].content["application/json"].schema = { type: "object", required: ["requested"], properties: { requested: { type: "boolean" } } };
+  } else if (route.handler === "handleQueueTailscaleUpdate") {
+    operation.description = "Queue one administrator-approved node update. Accepted means queued; verify the helper result and running version after reconnect.";
+    operation.responses[status].content["application/json"].schema = schemaForGoType("TailscaleUpdateView");
+  } else if (route.handler === "handleStartTailscaleUpdate") {
+    operation.description = "Transfer one authenticated Agent execution to the Tailscale update helper. A successful handoff is not an update result.";
+    const schema = operation.requestBody.content["application/json"].schema;
+    schema.required = ["executionId", "sessionId", "attempt"];
+    schema.properties.attempt.minimum = 1;
+  } else if (route.handler === "handleAcknowledgeTailscaleUpdate") {
+    operation.description = "After verifying the host update stopped, record an administrator's explicit review. Does not undo package changes.";
+    const schema = operation.requestBody.content["application/json"].schema;
+    schema.required = ["confirmStopped", "note"];
+    schema.properties.confirmStopped.const = true;
+    schema.properties.note.minLength = 1;
+    schema.properties.note.maxLength = 500;
+  }
   if (route.handler === "handleNodeSecurity" || route.handler === "handleQueueNodeSecurity") {
     const status = route.handler === "handleNodeSecurity" ? "200" : "202";
     operation.summary = route.handler === "handleNodeSecurity" ? "Read last node security evidence" : "Queue an explicitly approved node security operation";

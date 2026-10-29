@@ -306,7 +306,7 @@ export type AgentView = {
   credentialRevoked: boolean;
   siteId: string;
   roles: string[];
-  capabilities: { landingOnly?: boolean; meridianAcceptance?: boolean; executorVersions?: Record<string, number>; runtimeCapabilities?: string[]; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean; nodeSecurity?: boolean };
+  capabilities: { tailscaleUpdate?: TailscaleUpdateStatus; landingOnly?: boolean; meridianAcceptance?: boolean; executorVersions?: Record<string, number>; runtimeCapabilities?: string[]; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean; nodeSecurity?: boolean };
   networkCandidates: NetworkCandidate[];
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;
@@ -320,8 +320,12 @@ export type AgentView = {
   tailscaleOwnership?: "managed" | "external" | "";
   remoteUpdateSupported: boolean;
   update?: AgentUpdate;
+  tailscaleUpdateTask?: TailscaleUpdateTask;
   removal?: { state: "pending" | "failed"; reason?: "shared_service" | "controller_unavailable" | "cleanup_failed" };
 };
+
+export type TailscaleUpdateStatus = { installedVersion?: string; runningVersion?: string; latestVersion?: string; checkedAt?: string; error?: string; updateAvailable: boolean; upgradeReady: boolean };
+export type TailscaleUpdateTask = { id: string; targetVersion: string; state: "pending" | "running" | "awaiting_decision" | "succeeded" | "failed" | "abandoned"; error?: string; updatedAt: string };
 
 export type AgentUpdate = {
   id: string;

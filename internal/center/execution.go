@@ -250,6 +250,13 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 	if err := tx.QueryRowContext(ctx, `SELECT session_id FROM agent_execution_sessions WHERE agent_id=?`, agentID).Scan(&current); err != nil || current != sessionID {
 		return errExecutionAuthorization
 	}
+	var tailscalePending bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tailscale_update_tasks WHERE agent_id=? AND state='awaiting_decision')`, agentID).Scan(&tailscalePending); err != nil {
+		return err
+	}
+	if tailscalePending {
+		return tx.Commit()
+	}
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return err
 	} else if blocked {
