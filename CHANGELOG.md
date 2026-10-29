@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.378](https://github.com/petauron/vastora/compare/v0.1.0-alpha.377...v0.1.0-alpha.378) (2026-10-29)
+
+
+### Bug Fixes
+
+* **ui:** hide retired background apps from desktop ([d305d65](https://github.com/petauron/vastora/commit/d305d6590f81978eb64ed6108ad48ef85fd9737d)), closes [#1100](https://github.com/petauron/vastora/issues/1100)
+
 ## [0.1.0-alpha.377](https://github.com/petauron/vastora/compare/v0.1.0-alpha.376...v0.1.0-alpha.377) (2026-10-28)
 
 
