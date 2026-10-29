@@ -64,9 +64,11 @@ func (c grpcPinnedCACredentials) ClientHandshake(ctx context.Context, authority 
 		config.RootCAs = roots
 	}
 	conn, info, err := credentials.NewTLS(config).ClientHandshake(ctx, authority, raw)
-	if err != nil && certificate == nil {
+	if err != nil {
 		var verification *tls.CertificateVerificationError
 		if errors.As(err, &verification) {
+			// A private CA can be reissued with the same pinned key. Recheck the
+			// presented chain even after an earlier CA certificate was cached.
 			if candidate := verifiedPresentedCA(verification.UnverifiedCertificates, c.fingerprint, c.serverName); candidate != nil {
 				c.state.mu.Lock()
 				c.state.certificate = candidate
