@@ -282,6 +282,11 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.activateAgentGRPCRoute(context.Background()); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
 	if err := store.activateMigratedNodeListeners(context.Background()); err != nil {
 		backgroundCancel()
 		_ = db.Close()
