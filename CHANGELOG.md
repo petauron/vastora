@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.379](https://github.com/petauron/vastora/compare/v0.1.0-alpha.378...v0.1.0-alpha.379) (2026-10-29)
+
+
+### Features
+
+* manage Tailscale updates ([5698064](https://github.com/petauron/vastora/commit/56980645df27b1b52490b3d7f9d58ccb5cff2dcf)), closes [#1103](https://github.com/petauron/vastora/issues/1103)
+
 ## [0.1.0-alpha.378](https://github.com/petauron/vastora/compare/v0.1.0-alpha.377...v0.1.0-alpha.378) (2026-10-29)
 
 
