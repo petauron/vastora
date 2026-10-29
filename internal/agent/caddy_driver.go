@@ -262,6 +262,8 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 		Terminal bool                  `json:"terminal"`
 	}
 	servers := map[string]any{}
+	localRoutes := make([]caddyRoute, 0)
+	localHosts := make([]string, 0)
 	for _, listener := range desired.Listeners {
 		internalHTTPPort, internalHTTPSPort, ok := gatewayruntime.CaddyListenerPorts(listener.Kind)
 		if !ok {
@@ -288,6 +290,10 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 			}
 			handlers := []map[string]any{proxy}
 			candidate := caddyRoute{Match: []map[string][]string{matcher}, Handle: handlers, Terminal: true}
+			if route.LocalTLSOrigin() {
+				localRoutes = append(localRoutes, candidate)
+				localHosts = append(localHosts, route.Hostname)
+			}
 			if route.TLSEnabled {
 				httpsRoutes = append(httpsRoutes, candidate)
 				if !redirectHosts[route.Hostname] {
@@ -309,6 +315,13 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 		if len(httpsRoutes) != 0 {
 			servers["vastora-"+listener.Kind+"-https"] = map[string]any{"listen": []string{net.JoinHostPort("0.0.0.0", strconv.Itoa(internalHTTPSPort))}, "routes": httpsRoutes, "tls_connection_policies": []map[string]any{{}}}
 		}
+	}
+	if len(localRoutes) != 0 {
+		policies := []map[string]any{
+			{"match": map[string]any{"sni": localHosts}, "protocol_min": "tls1.3"},
+			{"drop": true},
+		}
+		servers["vastora-local-tls-origin"] = map[string]any{"listen": []string{net.JoinHostPort("0.0.0.0", strconv.Itoa(gatewayruntime.LocalTLSOriginPort))}, "routes": localRoutes, "protocols": []string{"h1", "h2"}, "strict_sni_host": true, "automatic_https": map[string]any{"disable_redirects": true}, "tls_connection_policies": policies}
 	}
 	apps := map[string]any{"http": map[string]any{"servers": servers}}
 	if len(certificates) != 0 {

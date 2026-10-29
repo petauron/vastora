@@ -7,6 +7,7 @@ const (
 	CaddyContainer       = "vastora-gateway-caddy"
 	CaddyAdminSocket     = "/run/vastora/caddy-admin.sock"
 	CaddyComponentLabel  = "gateway"
+	LocalTLSOriginPort   = 24483
 	HAProxyContainer     = "vastora-gateway-haproxy"
 	Layer4ComponentLabel = "layer4-gateway"
 
