@@ -238,6 +238,13 @@ type DesiredState struct {
 	SharedHTTPS *SharedHTTPS `json:"sharedHttps,omitempty"`
 }
 
+// LocalTLSOrigin is available only for complete, already-public HTTPS sites.
+// Private listeners and platform administration/bootstrap routes must never be
+// exposed through a REALITY fallback origin.
+func (route Route) LocalTLSOrigin() bool {
+	return route.ListenerKind == "public" && route.TLSEnabled && !route.System && route.Path == ""
+}
+
 func (state DesiredState) Validate() error {
 	if state.Revision < 1 {
 		return errors.New("gateway: revision must be positive")

@@ -8,6 +8,7 @@ const (
 	CaddyAdminSocket     = "/run/vastora/caddy-admin.sock"
 	CenterGRPCPort       = 8089 // private container-network listener
 	CaddyComponentLabel  = "gateway"
+	LocalTLSOriginPort   = 24483
 	HAProxyContainer     = "vastora-gateway-haproxy"
 	Layer4ComponentLabel = "layer4-gateway"
 
