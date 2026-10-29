@@ -190,6 +190,7 @@ test -f "$FAKE_CENTER_STARTED"
 EOF
 cat > "$fake_bin/systemctl" <<'EOF'
 #!/bin/sh
+if [ "${1:-}" = "show" ]; then printf '%s\n' inactive; fi
 exit 0
 EOF
 cat > "$fake_bin/id" <<'EOF'
@@ -222,6 +223,12 @@ case "${1:-}" in
   help) printf '%s\n' 'Vastora control-plane tools' ;;
   agent)
     shift
+    if [ "${1:-}" = "prepare-center-upgrade-recovery" ]; then
+      mkdir -p "$FAKE_AGENT_RECOVERY"
+      cp "$FAKE_VASTORA_BINARY" "$FAKE_AGENT_RECOVERY/source-vastora"
+      printf '%s\n' "$FAKE_AGENT_RECOVERY"
+      exit 0
+    fi
     if [ "${1:-}" = "configure-center" ]; then
       printf '%s\n' "$*" >"$FAKE_AGENT_CONFIGURE_LOG"
       exit 0
@@ -238,12 +245,14 @@ agent_data_dir="$temporary_dir/agent-data"
 install -m 0755 "$temporary_dir/fake-vastora" "$agent_executable"
 printf '%s\n' 'Description=Vastora Agent' >"$agent_unit"
 mkdir -p "$agent_data_dir"
+touch "$agent_data_dir/agent.db"
 VASTORA_SYSTEMD_UNIT_DIR="$temporary_dir/systemd" \
 VASTORA_HOST_CLI_PATH="$temporary_dir/host-bin/vastora" \
 VASTORA_AGENT_EXECUTABLE="$agent_executable" \
 VASTORA_AGENT_UNIT="$agent_unit" \
 VASTORA_AGENT_DATA_DIR="$agent_data_dir" \
 FAKE_AGENT_CONFIGURE_LOG="$temporary_dir/agent-configure.log" \
+FAKE_AGENT_RECOVERY="$temporary_dir/agent-recovery" \
 FAKE_VASTORA_BINARY="$temporary_dir/fake-vastora" \
 FAKE_CENTER_STARTED="$temporary_dir/center-started" \
 PATH="$fake_bin:$PATH" \

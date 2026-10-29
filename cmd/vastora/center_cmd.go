@@ -22,6 +22,8 @@ func runCenter(arguments []string) error {
 		return errors.New("center command is required")
 	}
 	switch arguments[0] {
+	case "check-grpc-cutover":
+		return runCenterGRPCCutoverCheck(arguments[1:])
 	case "capabilities":
 		if len(arguments) != 1 {
 			return errors.New("center capabilities does not accept arguments")

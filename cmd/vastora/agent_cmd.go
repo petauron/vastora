@@ -32,6 +32,8 @@ func runAgent(arguments []string) error {
 		return errors.New("agent command is required")
 	}
 	switch arguments[0] {
+	case "prepare-center-upgrade-recovery":
+		return runPrepareCenterUpgradeRecovery(arguments[1:])
 	case "retire-legacy-execution":
 		return runRetireLegacyExecution(arguments[1:])
 	case "retire-landing-execution":
