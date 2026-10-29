@@ -301,6 +301,12 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		if !found {
 			return DeploymentView{}, errors.New("center: app not found in a verified catalog")
 		}
+		if renameSenlunAgent {
+			manifest, err = s.senlunNativeIdentityManifest(ctx, request, manifest)
+			if err != nil {
+				return DeploymentView{}, err
+			}
+		}
 	} else if len(active.Manifest) == 0 || json.Unmarshal(active.Manifest, &manifest) != nil {
 		return DeploymentView{}, errors.New("center: installed application manifest is invalid")
 	} else if !strings.HasSuffix(request.AppKey, "/"+manifest.ID) {
@@ -539,17 +545,28 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, errors.New("center: agent not found")
 	}
 	if strings.HasPrefix(request.AppKey, OfficialCatalogSourceID+"/") && (request.Operation == "install" || request.Operation == "upgrade") {
-		if err := authorizeOfficialManifest(ctx, tx, "stable", manifest, s.now().UTC()); err != nil {
-			return DeploymentView{}, err
+		var authorizationErr error
+		if renameSenlunAgent {
+			authorizationErr = authorizeSenlunNativeIdentity(ctx, tx, request.ReplaceApplicationID, request.SourceReceiptSHA256, manifest, s.now().UTC(), false)
+		} else {
+			authorizationErr = authorizeOfficialManifest(ctx, tx, "stable", manifest, s.now().UTC())
+		}
+		if authorizationErr != nil {
+			return DeploymentView{}, authorizationErr
 		}
 	}
 	// Preserve the last confirmed state before prepareApplication locks the
-	// instance as pending. It can be restored only if the upgrade is rejected
+	// instance as pending. It can be restored only if the operation is rejected
 	// before any Agent has had the opportunity to change the instance.
 	preDispatchApplicationStatus := "failed"
-	if request.Operation == "upgrade" && strings.HasPrefix(request.AppKey, OfficialCatalogSourceID+"/") {
-		if err := tx.QueryRowContext(ctx, `SELECT status FROM applications WHERE node_id = ? AND app_key = ?`, request.AgentID, request.AppKey).Scan(&preDispatchApplicationStatus); err != nil {
-			return DeploymentView{}, fmt.Errorf("center: read pre-upgrade application state: %w", err)
+	if renameSenlun || request.Operation == "upgrade" && strings.HasPrefix(request.AppKey, OfficialCatalogSourceID+"/") {
+		if renameSenlun {
+			err = tx.QueryRowContext(ctx, `SELECT status FROM applications WHERE node_id=? AND id=?`, request.AgentID, request.ReplaceApplicationID).Scan(&preDispatchApplicationStatus)
+		} else {
+			err = tx.QueryRowContext(ctx, `SELECT status FROM applications WHERE node_id=? AND app_key=?`, request.AgentID, request.AppKey).Scan(&preDispatchApplicationStatus)
+		}
+		if err != nil {
+			return DeploymentView{}, fmt.Errorf("center: read pre-deployment application state: %w", err)
 		}
 		if preDispatchApplicationStatus != "running" && preDispatchApplicationStatus != "failed" && preDispatchApplicationStatus != "stopped" {
 			return DeploymentView{}, errors.New("center: confirm the existing application state before upgrading")

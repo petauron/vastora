@@ -572,7 +572,13 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	// Recheck only work that has never reached an Agent. Recovery of an
 	// already-issued operation must remain possible without a live catalog.
 	if !preparation && attempt == 0 && reconciliationRequested == 0 && strings.HasPrefix(task.AppKey, OfficialCatalogSourceID+"/") && (task.Operation == "install" || task.Operation == "upgrade") {
-		if err := authorizeOfficialManifest(ctx, tx, "stable", task.Manifest, s.now().UTC()); err != nil {
+		var authorizationErr error
+		if task.Operation == "install" && task.AppKey == senlunNativeIdentityKey && task.SourceReceiptSHA256 != "" {
+			authorizationErr = authorizeSenlunNativeIdentity(ctx, tx, task.ApplicationID, task.SourceReceiptSHA256, task.Manifest, s.now().UTC(), true)
+		} else {
+			authorizationErr = authorizeOfficialManifest(ctx, tx, "stable", task.Manifest, s.now().UTC())
+		}
+		if authorizationErr != nil {
 			now := s.now().UTC().Format(time.RFC3339Nano)
 			const message = "Refresh the app catalog and retry this operation."
 			if _, updateErr := tx.ExecContext(ctx, `UPDATE deployments SET state = 'failed', error = ?, updated_at = ? WHERE id = ?`, message, now, task.ID); updateErr != nil {
