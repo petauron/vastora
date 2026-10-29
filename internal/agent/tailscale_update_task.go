@@ -21,11 +21,11 @@ const tailscaleAptSource = "/etc/apt/sources.list.d/tailscale.list"
 // is added, no key is replaced, and no custom source or shell is executed.
 func tailscaleAptSourceValid() error {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		return errors.New("Tailscale updates require a root Linux Agent")
+		return errors.New("tailscale updates require a root Linux Agent")
 	}
 	for _, executable := range []string{"apt-get", "apt-cache", "dpkg-query", "systemd-run", "systemctl", "tailscale"} {
 		if _, err := exec.LookPath(executable); err != nil {
-			return errors.New("Tailscale update tools are unavailable")
+			return errors.New("tailscale update tools are unavailable")
 		}
 	}
 	raw, err := os.ReadFile(tailscaleAptSource)
@@ -43,7 +43,7 @@ func tailscaleAptSourceValid() error {
 		fields := strings.Fields(line)
 		if len(fields) != 5 || fields[0] != "deb" || fields[1] != "[signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg]" ||
 			(fields[2] != "https://pkgs.tailscale.com/stable/debian" && fields[2] != "https://pkgs.tailscale.com/stable/ubuntu") || fields[4] != "main" {
-			return errors.New("Tailscale APT source is not the supported official stable source")
+			return errors.New("tailscale APT source is not the supported official stable source")
 		}
 		for _, ch := range fields[3] {
 			if ch < 'a' || ch > 'z' {
@@ -55,11 +55,11 @@ func tailscaleAptSourceValid() error {
 		}
 	}
 	if entries != 1 {
-		return errors.New("Tailscale APT source is ambiguous")
+		return errors.New("tailscale APT source is ambiguous")
 	}
 	key, err := os.Stat("/usr/share/keyrings/tailscale-archive-keyring.gpg")
 	if err != nil || !key.Mode().IsRegular() {
-		return errors.New("Tailscale APT signing key is unavailable")
+		return errors.New("tailscale APT signing key is unavailable")
 	}
 	return nil
 }
