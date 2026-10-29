@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.380](https://github.com/petauron/vastora/compare/v0.1.0-alpha.379...v0.1.0-alpha.380) (2026-10-29)
+
+
+### Features
+
+* unify Glivela application store entry ([99a242e](https://github.com/petauron/vastora/commit/99a242e6b54f21f11c8115fa0d63c8ffb4e2be8b)), closes [#1106](https://github.com/petauron/vastora/issues/1106)
+
 ## [0.1.0-alpha.379](https://github.com/petauron/vastora/compare/v0.1.0-alpha.378...v0.1.0-alpha.379) (2026-10-29)
 
 
