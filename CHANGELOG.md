@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.384](https://github.com/petauron/vastora/compare/v0.1.0-alpha.383...v0.1.0-alpha.384) (2026-10-29)
+
+
+### Bug Fixes
+
+* **agent:** refresh pinned CA after certificate renewal ([48236e5](https://github.com/petauron/vastora/commit/48236e5acd3fe907132e771e103202dc366c14da))
+
 ## [0.1.0-alpha.383](https://github.com/petauron/vastora/compare/v0.1.0-alpha.382...v0.1.0-alpha.383) (2026-10-29)
 
 
