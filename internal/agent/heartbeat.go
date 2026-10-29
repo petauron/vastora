@@ -120,6 +120,8 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		landingClientRuntime = store.observeLandingClientRuntime(ctx)
 	}
 	var response struct {
+		TailscaleCheckGeneration int64                           `json:"tailscaleCheckGeneration"`
+		TailscaleUpdateTaskID    string                          `json:"tailscaleUpdateTaskId"`
 		LandingLatencyTargets    []landing.LatencyTarget         `json:"landingLatencyTargets"`
 		CenterURL                string                          `json:"centerUrl"`
 		TailscaleIsolation       *TailscaleIsolationDesiredState `json:"tailscaleIsolation,omitempty"`
@@ -141,6 +143,10 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		// runner constructs an executor only for a reviewed native lifecycle.
 		c.Capabilities.ExecutorVersions = map[string]int{"systemd": 2}
 		c.Capabilities.RuntimeCapabilities = []string{"native-services", "root"}
+	}
+	if c.TailscaleEnrolled {
+		store.scheduleTailscaleUpdateCheck(0, connection.AgentID)
+		c.Capabilities.TailscaleUpdate = store.tailscaleUpdateStatus()
 	}
 	// The host ownership journal uses "none"; the wire schema represents
 	// absence with the empty string, not a third ownership type.
@@ -167,6 +173,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"remoteUpdateSupported":        c.Updater != nil,
 		"tailscaleEnrolled":            c.TailscaleEnrolled,
 		"tailscaleOwnership":           tailscaleOwnership,
+		"tailscaleUpdateObservation":   store.observeTailscaleUpdateTask(ctx),
 		"startup":                      startup,
 		"publicEgress":                 nil,
 	}
@@ -182,6 +189,10 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		return observeErr, err
 	}
 	store.setLandingLatencyTargets(response.LandingLatencyTargets)
+	store.setTailscaleUpdateTask(response.TailscaleUpdateTaskID)
+	if c.TailscaleEnrolled && response.TailscaleCheckGeneration > 0 {
+		store.scheduleTailscaleUpdateCheck(response.TailscaleCheckGeneration, connection.AgentID)
+	}
 	if response.TailscaleIsolation != nil && c.TailscaleIsolation != nil {
 		if err := c.TailscaleIsolation(ctx, *response.TailscaleIsolation); err != nil {
 			return observeErr, fmt.Errorf("agent: apply Tailscale isolation: %w", err)

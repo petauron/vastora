@@ -5936,6 +5936,40 @@
                             "type": "object",
                             "additionalProperties": false,
                             "properties": {
+                              "tailscaleUpdate": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "installedVersion": {
+                                        "type": "string"
+                                      },
+                                      "runningVersion": {
+                                        "type": "string"
+                                      },
+                                      "latestVersion": {
+                                        "type": "string"
+                                      },
+                                      "checkedAt": {
+                                        "type": "string"
+                                      },
+                                      "error": {
+                                        "type": "string"
+                                      },
+                                      "updateAvailable": {
+                                        "type": "boolean"
+                                      },
+                                      "upgradeReady": {
+                                        "type": "boolean"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
                               "landingOnly": {
                                 "type": "boolean"
                               },
@@ -6177,6 +6211,34 @@
                               }
                             ]
                           },
+                          "tailscaleUpdateTask": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "targetVersion": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  },
+                                  "error": {
+                                    "type": "string"
+                                  },
+                                  "updatedAt": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "removal": {
                             "anyOf": [
                               {
@@ -6220,6 +6282,310 @@
             "$ref": "#/components/responses/Error"
           }
         }
+      }
+    },
+    "/api/v1/tailscale-updates/check": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Check Tailscale Updates",
+        "operationId": "checkTailscaleUpdates_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "requested"
+                  ],
+                  "properties": {
+                    "requested": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "description": "Request a version-only check from online Tailscale nodes on their next heartbeat. Never installs packages."
+      }
+    },
+    "/api/v1/agents/{id}/tailscale-updates": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Queue Tailscale Update",
+        "operationId": "queueTailscaleUpdate_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "targetVersion": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Queue one administrator-approved node update. Accepted means queued; verify the helper result and running version after reconnect."
+      }
+    },
+    "/api/v1/agents/{id}/tailscale-updates/{taskID}/start": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Start Tailscale Update",
+        "operationId": "startTailscaleUpdate_post",
+        "x-vastora-audience": "agent",
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "taskID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "executionId": {
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "type": "string"
+                  },
+                  "attempt": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "executionId",
+                  "sessionId",
+                  "attempt"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Transfer one authenticated Agent execution to the Tailscale update helper. A successful handoff is not an update result."
+      }
+    },
+    "/api/v1/agents/{id}/tailscale-updates/{taskID}/acknowledge": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Acknowledge Tailscale Update",
+        "operationId": "acknowledgeTailscaleUpdate_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "taskID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "confirmStopped": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "confirmStopped",
+                  "note"
+                ]
+              }
+            }
+          }
+        },
+        "description": "After verifying the host update stopped, record an administrator's explicit review. Does not undo package changes."
       }
     },
     "/api/v1/ip-quality": {
@@ -11692,6 +12058,31 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "tailscaleUpdateObservation": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "taskId": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "installedVersion": {
+                            "type": "string"
+                          },
+                          "runningVersion": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "landingEgressAddresses": {
                     "type": "array",
                     "items": {
@@ -11727,6 +12118,40 @@
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
+                      "tailscaleUpdate": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "installedVersion": {
+                                "type": "string"
+                              },
+                              "runningVersion": {
+                                "type": "string"
+                              },
+                              "latestVersion": {
+                                "type": "string"
+                              },
+                              "checkedAt": {
+                                "type": "string"
+                              },
+                              "error": {
+                                "type": "string"
+                              },
+                              "updateAvailable": {
+                                "type": "boolean"
+                              },
+                              "upgradeReady": {
+                                "type": "boolean"
+                              }
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "landingOnly": {
                         "type": "boolean"
                       },

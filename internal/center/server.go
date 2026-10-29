@@ -44,6 +44,7 @@ type Server struct {
 	assistantResumeOnce      sync.Once
 	loginMu                  sync.Mutex
 	startupReady             atomic.Bool
+	tailscaleCheckGeneration atomic.Int64
 }
 
 func (s *Server) WithInfrastructureManager(manager deployapi.InfrastructureManager) *Server {
@@ -191,6 +192,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/headscale-join", s.requireAuth(true, s.handleCreateHeadscaleJoin))
 	mux.HandleFunc("GET /api/v1/actions", s.requireAuth(false, s.handleListActions))
 	mux.HandleFunc("GET /api/v1/agents", s.requireAuth(false, s.handleListAgents))
+	mux.HandleFunc("POST /api/v1/tailscale-updates/check", s.requireAuth(true, s.handleCheckTailscaleUpdates))
+	mux.HandleFunc("POST /api/v1/agents/{id}/tailscale-updates", s.requireAuth(true, s.handleQueueTailscaleUpdate))
+	mux.HandleFunc("POST /api/v1/agents/{id}/tailscale-updates/{taskID}/start", s.handleStartTailscaleUpdate)
+	mux.HandleFunc("POST /api/v1/agents/{id}/tailscale-updates/{taskID}/acknowledge", s.requireAuth(true, s.handleAcknowledgeTailscaleUpdate))
 	mux.HandleFunc("GET /api/v1/ip-quality", s.requireAuth(false, s.handleListIPQuality))
 	mux.HandleFunc("POST /api/v1/agents/{id}/ip-quality", s.requireAuth(true, s.handleStartIPQuality))
 	mux.HandleFunc("GET /api/v1/agents/{id}/security", s.requireAuth(false, s.handleNodeSecurity))

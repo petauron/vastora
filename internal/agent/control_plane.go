@@ -18,6 +18,7 @@ import (
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/realitytarget"
 	"github.com/petauron/vastora/internal/senulun"
+	"github.com/petauron/vastora/internal/tailscalehost"
 	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
@@ -113,29 +114,30 @@ func taskOutcomeIsUncertain(err error) bool {
 }
 
 type Capabilities struct {
-	LandingOnly           bool           `json:"landingOnly,omitempty"`
-	ExecutorVersions      map[string]int `json:"executorVersions,omitempty"`
-	RuntimeCapabilities   []string       `json:"runtimeCapabilities,omitempty"`
-	NativeEgress          bool           `json:"nativeEgress"`
-	SenulunRestore        bool           `json:"pulseRestore"`
-	MeridianAcceptance    bool           `json:"meridianAcceptance"`
-	SenulunReporting      bool           `json:"pulseReporting"`
-	SenulunRotation       bool           `json:"pulseRotation"`
-	SenulunInspection     bool           `json:"pulseInspection"`
-	IPQuality             bool           `json:"ipQuality"`
-	NetworkDiagnostics    bool           `json:"networkDiagnostics"`
-	ReturnRoute           bool           `json:"returnRoute"`
-	BandwidthDiagnostics  bool           `json:"bandwidthDiagnostics"`
-	LandingEgressIP       bool           `json:"landingEgressIP"`
-	MeridianLinkBandwidth bool           `json:"meridianLinkBandwidth"`
-	MeridianLinkRevision  int            `json:"meridianLinkRevision"`
-	HostProfile           bool           `json:"hostProfile"`
-	NodeSecurity          bool           `json:"nodeSecurity"`
-	Docker                bool           `json:"docker"`
-	Gateway               bool           `json:"gateway"`
-	Tunnel                bool           `json:"tunnel"`
-	Metrics               bool           `json:"metrics"`
-	Logs                  bool           `json:"logs"`
+	TailscaleUpdate       *tailscalehost.UpdateStatus `json:"tailscaleUpdate,omitempty"`
+	LandingOnly           bool                        `json:"landingOnly,omitempty"`
+	ExecutorVersions      map[string]int              `json:"executorVersions,omitempty"`
+	RuntimeCapabilities   []string                    `json:"runtimeCapabilities,omitempty"`
+	NativeEgress          bool                        `json:"nativeEgress"`
+	SenulunRestore        bool                        `json:"pulseRestore"`
+	MeridianAcceptance    bool                        `json:"meridianAcceptance"`
+	SenulunReporting      bool                        `json:"pulseReporting"`
+	SenulunRotation       bool                        `json:"pulseRotation"`
+	SenulunInspection     bool                        `json:"pulseInspection"`
+	IPQuality             bool                        `json:"ipQuality"`
+	NetworkDiagnostics    bool                        `json:"networkDiagnostics"`
+	ReturnRoute           bool                        `json:"returnRoute"`
+	BandwidthDiagnostics  bool                        `json:"bandwidthDiagnostics"`
+	LandingEgressIP       bool                        `json:"landingEgressIP"`
+	MeridianLinkBandwidth bool                        `json:"meridianLinkBandwidth"`
+	MeridianLinkRevision  int                         `json:"meridianLinkRevision"`
+	HostProfile           bool                        `json:"hostProfile"`
+	NodeSecurity          bool                        `json:"nodeSecurity"`
+	Docker                bool                        `json:"docker"`
+	Gateway               bool                        `json:"gateway"`
+	Tunnel                bool                        `json:"tunnel"`
+	Metrics               bool                        `json:"metrics"`
+	Logs                  bool                        `json:"logs"`
 }
 
 type Enrollment struct {
@@ -149,6 +151,7 @@ type Enrollment struct {
 type DeploymentTask struct {
 	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
+	TailscaleUpdate           *tailscalehost.UpdateTask            `json:"tailscaleUpdate,omitempty"`
 	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
 	PackageMaintenance        *PackageMaintenanceTask              `json:"packageMaintenance,omitempty"`
 	HistoricalManifest        json.RawMessage                      `json:"historicalManifest,omitempty"`

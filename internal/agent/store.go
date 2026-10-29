@@ -17,6 +17,7 @@ import (
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/tailscalehost"
 )
 
 var errApplicationNotInstalled = errors.New("agent: application is not installed")
@@ -24,6 +25,13 @@ var errNoAppliedGatewayState = errors.New("agent: no applied gateway state")
 var errNoAppliedNodeListenerState = errors.New("agent: no applied node listener state")
 
 type Store struct {
+	tailscaleUpdateMu          sync.Mutex
+	tailscaleUpdate            *tailscalehost.UpdateStatus
+	tailscaleUpdateNext        time.Time
+	tailscaleUpdateRunning     bool
+	tailscaleUpdateRequested   int64
+	tailscaleUpdateCompleted   int64
+	tailscaleUpdateTaskID      string
 	executionMu                sync.Mutex
 	activeExecution            *activeExecution
 	linkChecker                *landing.LinkChecker

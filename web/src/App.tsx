@@ -16,6 +16,7 @@ import { systemApplications, workspaceFromURL, workspacePath } from "@/component
 import { localized } from "./views/appAccess";
 import { desktopApplications } from "./views/applicationLaunch";
 import { Spinner } from "@/components/ui/spinner";
+import { freshTailscaleUpdate } from "./tailscale-update";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 export type { AppData, Screen } from "./types";
@@ -50,6 +51,7 @@ export function App() {
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [addFirstNode, setAddFirstNode] = useState(false);
   const [notice, setNotice] = useState<{ message: string; detail?: string; error?: boolean } | null>(null);
+  const [tailscaleNotice, setTailscaleNotice] = useState<string[]>([]);
   const [connection, setConnection] = useState<"connected" | "reconnecting">("connected");
   const [connectionError, setConnectionError] = useState<unknown>(null);
   const [lastSync, setLastSync] = useState<Date | null>(null);
@@ -247,6 +249,15 @@ export function App() {
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [phase, screen, loadScreen]);
 
+  useEffect(() => {
+    if (phase !== "ready" || !data) return;
+    const versions = [...new Set(data.agents.map(freshTailscaleUpdate).filter((value): value is string => value !== null))];
+    const unseen = versions.filter((version) => window.localStorage.getItem(`vastora.tailscale-update-notified.${version}`) !== "1");
+    if (unseen.length === 0) return;
+    for (const version of unseen) window.localStorage.setItem(`vastora.tailscale-update-notified.${version}`, "1");
+    setTailscaleNotice(unseen);
+  }, [phase, data]);
+
   const mutate = useCallback<Mutate>(async (operation, success, options) => {
     setNotice(null);
     try {
@@ -334,6 +345,7 @@ export function App() {
   const statusAlerts = <>
     {data.desktopDataUnavailable ? <Alert aria-live="polite"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{copy(language, "桌面应用数据暂不可用", "Desktop application data is unavailable")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, "应用快捷方式及安装数量暂不显示；节点状态、活动记录与执行恢复仍可使用。节点用途修改及依赖应用清单的恢复操作暂不可用。", "Application shortcuts and installation counts are hidden; node status, activity and execution recovery remain available. Node purpose changes and application-inventory-dependent recovery are unavailable.")}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
     {connection === "reconnecting" ? <Alert aria-live="assertive" variant="destructive"><CircleAlertIcon /><AlertTitle>{copy(language, "与 Center 的连接已中断", "Connection to Center was interrupted")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, `${userError(language, connectionError)} 页面保留的是上次成功同步的数据${lastSync ? `（${lastSync.toLocaleTimeString(language)}）` : ""}。`, `${userError(language, connectionError)} This page is showing the last successful data${lastSync ? ` from ${lastSync.toLocaleTimeString(language)}` : ""}.`)}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
+    {tailscaleNotice.length > 0 ? <Alert aria-live="polite"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{copy(language, `发现 Tailscale 新版本 ${tailscaleNotice.join(", ")}`, `Tailscale update available: ${tailscaleNotice.join(", ")}`)}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3"><span>{copy(language, "可在软件更新中查看节点状态。", "Review node status in Software Update.")}</span><Button onClick={() => { setTailscaleNotice([]); navigate("settings"); window.history.replaceState({}, "", "/settings#updates"); window.dispatchEvent(new HashChangeEvent("hashchange")); }} size="sm" variant="outline">{copy(language, "查看更新", "View updates")}</Button><Button onClick={() => setTailscaleNotice([])} size="sm" variant="ghost">{copy(language, "关闭", "Dismiss")}</Button></AlertDescription></Alert> : null}
     {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}>{notice.error ? <CircleAlertIcon /> : <CircleCheckIcon />}<AlertTitle className="flex items-start justify-between gap-3"><span>{notice.message}</span><Button aria-label={copy(language, "关闭提示", "Dismiss notice")} onClick={() => setNotice(null)} size="xs" variant="ghost">{copy(language, "关闭", "Dismiss")}</Button></AlertTitle>{notice.detail && notice.detail !== notice.message ? <AlertDescription><details><summary className="cursor-pointer">{copy(language, "查看技术详情", "Technical details")}</summary><code className="mt-2 block break-all text-xs">{notice.detail}</code></details></AlertDescription> : null}</Alert> : null}
   </>;
   return (

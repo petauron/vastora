@@ -17,6 +17,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { CenterUpdateCard } from "./CenterUpdateCard";
+import { TailscaleUpdateCard } from "./TailscaleUpdateCard";
 import { isInstalledApplication } from "./appAccess";
 import { SystemDomainSettings } from "./SystemDomainSettings";
 import { AppIcon } from "@/components/desktop/AppIcon";
@@ -77,8 +78,9 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
         </div>
       </section>
       <section className="mac-settings-panel" id="settings-updates" hidden={section !== "updates"} aria-label={copy(language, "软件更新", "Software Update")}>
-        <PageHeading title={copy(language, "软件更新", "Software Update")} description={copy(language, "检查与管理 Center 和 Agent 更新。", "Check and manage Center and Agent updates.")} />
+        <PageHeading title={copy(language, "软件更新", "Software Update")} description={copy(language, "检查与管理 Center、Agent 和节点核心软件更新。", "Check and manage Center, Agent and node core software updates.")} />
       <CenterUpdateCard language={language} onRefresh={onRefresh} onStatusChange={onCenterUpdateStatus} onViewActivity={onNavigate ? () => onNavigate("activity") : undefined} status={data.centerUpdate} />
+      <TailscaleUpdateCard agents={data.agents} language={language} onRefresh={onRefresh} />
       </section>
       <section className="mac-settings-panel" id="settings-data" hidden={section !== "data"} aria-label={copy(language, "数据与诊断", "Data & Diagnostics")}>
         <PageHeading title={copy(language, "数据与诊断", "Data & Diagnostics")} />
