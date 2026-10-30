@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.388](https://github.com/petauron/vastora/compare/v0.1.0-alpha.387...v0.1.0-alpha.388) (2026-10-30)
+
+
+### Features
+
+* **certificates:** manage node website certificates with CertMagic ([#1129](https://github.com/petauron/vastora/issues/1129)) ([34326b4](https://github.com/petauron/vastora/commit/34326b4c8ec01582e616fd58fba1aba548979b57))
+
 ## [0.1.0-alpha.387](https://github.com/petauron/vastora/compare/v0.1.0-alpha.386...v0.1.0-alpha.387) (2026-10-30)
 
 
