@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.386](https://github.com/petauron/vastora/compare/v0.1.0-alpha.385...v0.1.0-alpha.386) (2026-10-30)
+
+
+### Bug Fixes
+
+* avoid false warnings for superseded agent updates ([#1122](https://github.com/petauron/vastora/issues/1122)) ([5787b29](https://github.com/petauron/vastora/commit/5787b2989ee07efa9dc62eb830d2c1efe11711d2))
+
 ## [0.1.0-alpha.385](https://github.com/petauron/vastora/compare/v0.1.0-alpha.384...v0.1.0-alpha.385) (2026-10-29)
 
 
