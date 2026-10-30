@@ -387,7 +387,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			if renameSenlun {
 				previousKey, _ = senlunIdentitySource(request.AppKey)
 			}
-			deploymentConfig, err = s.mergePreviousDeploymentConfig(ctx, request.AgentID, previousKey, request.Config)
+			deploymentConfig, err = s.mergePreviousDeploymentConfig(ctx, request.AgentID, previousKey, request.Config, manifest.Config)
 			if err != nil {
 				return DeploymentView{}, err
 			}

@@ -81,7 +81,7 @@ func decodeJSONObject(raw json.RawMessage, message string) (map[string]json.RawM
 	return values, nil
 }
 
-func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appKey string, updates json.RawMessage) (json.RawMessage, error) {
+func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appKey string, updates json.RawMessage, fields []catalog.ConfigField) (json.RawMessage, error) {
 	var deploymentID string
 	var configJSON []byte
 	var secretID sql.NullString
@@ -113,6 +113,19 @@ func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appK
 		}
 		for key, value := range secretValues {
 			merged[key] = value
+		}
+	}
+	// Carry forward only settings declared by the selected signed recipe.
+	// Removed inputs remain in historical deployment records, but must not
+	// prevent a package from replacing configuration-owned content with assets.
+	// Apply caller changes afterwards so unknown new fields still fail validation.
+	declared := make(map[string]bool, len(fields))
+	for _, field := range fields {
+		declared[field.Key] = true
+	}
+	for key := range merged {
+		if !declared[key] {
+			delete(merged, key)
 		}
 	}
 	if len(updates) != 0 {
