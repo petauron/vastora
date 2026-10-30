@@ -16,7 +16,7 @@ require (
 	github.com/moby/moby/client v0.6.2
 	github.com/petauron/catalog v0.4.1-0.20261019081100-736a82671387
 	github.com/petauron/glivela v0.1.0-alpha.24.0.20261018115648-011a0efc9777
-	github.com/pressly/goose/v3 v3.28.0
+	github.com/pressly/goose/v3 v3.29.0
 	github.com/projectdiscovery/cdncheck v1.3.1
 	github.com/sethvargo/go-retry v0.5.0
 	github.com/sigstore/sigstore v1.10.11
@@ -38,7 +38,7 @@ require (
 	github.com/mholt/acmez/v3 v3.1.7 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260831171406-18b4a7587f8a // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
 )
 
 require (
@@ -88,13 +88,13 @@ require (
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
+	golang.org/x/exp v0.0.0-20261011100332-faecfb24eb49 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260817212433-ac3dfec99bb1 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20261005182115-fad411399dd8 // indirect
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
-	modernc.org/libc v1.77.1 // indirect
+	modernc.org/libc v1.78.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
