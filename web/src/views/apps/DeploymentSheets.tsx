@@ -802,7 +802,7 @@ export function PublicationSheet({ data, language, onClose, onSubmit, service }:
                 <FieldLegend>{copy(language, "谁需要访问？", "Who needs access?")}</FieldLegend>
                 {intents.map((option) => (
                   <label className="flex min-h-11 items-start gap-3 rounded-xl border p-3 has-checked:border-primary has-checked:bg-primary/5" data-disabled={!option.enabled} key={option.intent}>
-                    <input checked={intent === option.intent} className="mt-1" disabled={!option.enabled} name="publication-intent" onChange={() => selectIntent(option.intent)} type="radio" value={option.intent} />
+                    <input checked={intent === option.intent} className="mt-1 size-4 shrink-0 appearance-none rounded-full border border-input bg-background checked:border-[5px] checked:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50" disabled={!option.enabled} name="publication-intent" onChange={() => selectIntent(option.intent)} type="radio" value={option.intent} />
                     <span className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
                       <span className="font-medium">{option.title}</span>
                       <span className="text-muted-foreground">{option.description}</span>
