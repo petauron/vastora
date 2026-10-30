@@ -1292,7 +1292,8 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 	if removalErr != nil {
 		return nil, removalErr
 	}
-	updateRows, err := s.db.QueryContext(ctx, `SELECT u.id, u.agent_id, u.target_version, u.state, u.last_error, u.updated_at
+	updateRows, err := s.db.QueryContext(ctx, `SELECT u.id, u.agent_id, u.target_version, u.state, u.last_error, u.updated_at, u.attempt,
+		EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=u.id)
 		FROM agent_updates u WHERE u.rowid = (SELECT latest.rowid FROM agent_updates latest WHERE latest.agent_id = u.agent_id ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1)
 		AND NOT (u.state='failed' AND EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=u.id AND e.agent_id=u.agent_id AND e.kind='agent.update' AND e.attempt=u.attempt AND e.disposition='abandon'))`)
 	if err != nil {
@@ -1301,7 +1302,9 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 	for updateRows.Next() {
 		var update AgentUpdateView
 		var agentID, updatedAt string
-		if err := updateRows.Scan(&update.ID, &agentID, &update.TargetVersion, &update.State, &update.LastError, &updatedAt); err != nil {
+		var attempt int64
+		var hasExecution bool
+		if err := updateRows.Scan(&update.ID, &agentID, &update.TargetVersion, &update.State, &update.LastError, &updatedAt, &attempt, &hasExecution); err != nil {
 			updateRows.Close()
 			return nil, fmt.Errorf("center: scan Agent update: %w", err)
 		}
@@ -1311,6 +1314,9 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 			return nil, errors.New("center: invalid stored Agent update timestamp")
 		}
 		if index, ok := byID[agentID]; ok {
+			if unclaimedAgentUpdateSuperseded(agents[index].Version, update.TargetVersion, update.State, update.LastError, attempt, hasExecution) {
+				continue
+			}
 			agents[index].Update = &update
 		}
 	}

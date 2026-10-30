@@ -58,6 +58,14 @@ func isAgentUpdateTaskID(value string) bool {
 	return strings.HasPrefix(value, "agent-update-")
 }
 
+// An update retired before it was claimed is audit evidence, not a failed
+// installation, when the same Agent has already reported the target version.
+func unclaimedAgentUpdateSuperseded(currentVersion, targetVersion, state, lastError string, attempt int64, hasExecution bool) bool {
+	return state == "failed" && attempt == 0 && !hasExecution &&
+		lastError == "Superseded before claim: Agent already reports target version "+targetVersion &&
+		agentUpdateFailureSuperseded(currentVersion, targetVersion)
+}
+
 // A Center can queue an update from the previous heartbeat just before a
 // manually migrated Agent reports its new version. Never offer that stale,
 // unclaimed update to the process which is already running the target.
@@ -402,6 +410,8 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 		COALESCE((SELECT update_task.target_version FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
 		COALESCE((SELECT update_task.last_error FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
 		COALESCE((SELECT update_task.updated_at FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
+		COALESCE((SELECT update_task.attempt FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), 0),
+		COALESCE((SELECT EXISTS(SELECT 1 FROM task_executions execution WHERE execution.task_id=update_task.id) FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), 0),
 		agent.runtime_recovery<>''
 		FROM agents agent
 		WHERE agent.status = 'active' AND agent.credential_revoked_at = ''
@@ -411,12 +421,13 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 	}
 	type rolloutAgent struct {
 		id, currentVersion, lastSeenAt, updateState, updateTarget, updateError, updateUpdatedAt string
-		supported, runtimeRecovery                                                              bool
+		updateAttempt                                                                           int64
+		supported, runtimeRecovery, updateHasExecution                                          bool
 	}
 	agents := []rolloutAgent{}
 	for rows.Next() {
 		var agent rolloutAgent
-		if err := rows.Scan(&agent.id, &agent.currentVersion, &agent.lastSeenAt, &agent.supported, &agent.updateState, &agent.updateTarget, &agent.updateError, &agent.updateUpdatedAt, &agent.runtimeRecovery); err != nil {
+		if err := rows.Scan(&agent.id, &agent.currentVersion, &agent.lastSeenAt, &agent.supported, &agent.updateState, &agent.updateTarget, &agent.updateError, &agent.updateUpdatedAt, &agent.updateAttempt, &agent.updateHasExecution, &agent.runtimeRecovery); err != nil {
 			rows.Close()
 			return status, err
 		}
@@ -446,7 +457,8 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 			continue
 		}
 		status.Total++
-		if !activeUpdate && strings.TrimPrefix(strings.TrimSpace(agent.currentVersion), "v") == targetVersion && !(agent.updateTarget == targetVersion && agent.updateState == "failed") {
+		superseded := unclaimedAgentUpdateSuperseded(agent.currentVersion, agent.updateTarget, agent.updateState, agent.updateError, agent.updateAttempt, agent.updateHasExecution)
+		if !activeUpdate && strings.TrimPrefix(strings.TrimSpace(agent.currentVersion), "v") == targetVersion && (!(agent.updateTarget == targetVersion && agent.updateState == "failed") || superseded) {
 			status.Updated++
 			continue
 		}
