@@ -4,6 +4,7 @@ import type { AgentReinstallPlan, ReinstallCurrentMaterial, ReinstallCurrentVeri
 import type { Language } from "../translations";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { copy, userError } from "./shared";
 
@@ -75,7 +76,7 @@ function CurrentApplication({ app, plan, busy, language, onChanged, onBusy }: { 
         <Input ref={fileInput} type="file" accept=".json,application/json" disabled={busy} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setConfirmed(false); setError(""); }} />
       </label>
       <p className="text-xs text-muted-foreground">{verification ? copy(language, "仅导入实际完成后的验收记录。记录需包含原身份、凭据轮换记录、访问或上报证据摘要及真实验证时间；系统不会代替人工业务验收。", "Import only completed verification, including original identity, rotation reference, evidence digest and actual time. This records operator verification, not an automated business check.") : copy(language, "导入原应用配置及已轮换的新凭据。材料仅用于本次请求，不保存到浏览器；不要导入旧凭据。", "Import original application settings and newly rotated credentials. Material is used only for this request and is not persisted in the browser. Do not import old credentials.")}</p>
-      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />{verification ? copy(language, "已核对原业务身份，并完成实际访问或新数据上报验证", "Original business identity and real access or fresh reporting have been verified") : copy(language, "已核对原应用配置，旧凭据已撤销，材料使用新凭据", "Original configuration reviewed; old credentials revoked and new credentials supplied")}</label>
+      <label className="flex items-start gap-2 text-sm"><Checkbox checked={confirmed} disabled={busy} onCheckedChange={setConfirmed} />{verification ? copy(language, "已核对原业务身份，并完成实际访问或新数据上报验证", "Original business identity and real access or fresh reporting have been verified") : copy(language, "已核对原应用配置，旧凭据已撤销，材料使用新凭据", "Original configuration reviewed; old credentials revoked and new credentials supplied")}</label>
       <Button className="self-start" variant="outline" disabled={busy || !file || !confirmed || !plan.networkReview?.approvalCurrent} onClick={() => void submit()}>{copy(language, verification ? `记录 ${app.name} 验收` : `恢复 ${app.name}`, verification ? `Record ${app.name} verification` : `Restore ${app.name}`)}</Button>
     </> : null}
     {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
