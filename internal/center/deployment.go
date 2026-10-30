@@ -387,7 +387,19 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			if renameSenlun {
 				previousKey, _ = senlunIdentitySource(request.AppKey)
 			}
-			deploymentConfig, err = s.mergePreviousDeploymentConfig(ctx, request.AgentID, previousKey, request.Config)
+			var retiredFields []string
+			if request.Operation == "upgrade" {
+				var previous catalog.AppManifest
+				if json.Unmarshal(active.Manifest, &previous) != nil {
+					return DeploymentView{}, errors.New("center: installed application manifest is invalid")
+				}
+				for _, field := range previous.Config {
+					if !slices.ContainsFunc(manifest.Config, func(current catalog.ConfigField) bool { return current.Key == field.Key }) {
+						retiredFields = append(retiredFields, field.Key)
+					}
+				}
+			}
+			deploymentConfig, err = s.mergePreviousDeploymentConfig(ctx, request.AgentID, previousKey, request.Config, retiredFields)
 			if err != nil {
 				return DeploymentView{}, err
 			}

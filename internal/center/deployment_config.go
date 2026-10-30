@@ -81,7 +81,7 @@ func decodeJSONObject(raw json.RawMessage, message string) (map[string]json.RawM
 	return values, nil
 }
 
-func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appKey string, updates json.RawMessage) (json.RawMessage, error) {
+func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appKey string, updates json.RawMessage, retiredFields []string) (json.RawMessage, error) {
 	var deploymentID string
 	var configJSON []byte
 	var secretID sql.NullString
@@ -114,6 +114,12 @@ func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appK
 		for key, value := range secretValues {
 			merged[key] = value
 		}
+	}
+	// Only remove inputs declared by the old recipe and retired by the new one.
+	// Product-owned metadata and historical deployment records stay intact.
+	// Merge new caller values afterwards so unknown inputs still fail validation.
+	for _, key := range retiredFields {
+		delete(merged, key)
 	}
 	if len(updates) != 0 {
 		changed, decodeErr := decodeJSONObject(updates, "center: deployment configuration must be a JSON object")
