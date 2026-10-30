@@ -38,6 +38,8 @@ type Store struct {
 	landingLatencies               map[landingLatencyKey]landingLatencySample
 	backgroundClosed               bool
 	backgroundWG                   sync.WaitGroup
+	nodeSiteMu                     sync.Mutex
+	nodeSiteEngines                map[string]*nodeSiteEngine
 	headscaleAllowedEndpoints      []string
 	headscaleHTTPClient            *http.Client
 	cloudflareOAuth                cloudflareOAuthConfig
@@ -376,6 +378,7 @@ func (s *Store) Close() error {
 	}
 	s.backgroundMu.Unlock()
 	s.backgroundWG.Wait()
+	s.stopNodeSiteEngines()
 	return s.db.Close()
 }
 

@@ -103,6 +103,11 @@ func (s *Store) disposeTaskExecution(ctx context.Context, executionID, adminID s
 			return errors.New("center: task changed; verify its current state")
 		}
 	}
+	if kind == "node.site.certificate" && input.Action == "abandon" {
+		if _, err := tx.ExecContext(ctx, `UPDATE node_sites SET state='action_required',error='Abandoned; inspect recovered website state',updated_at=? WHERE application_id=(SELECT application_id FROM node_site_tasks WHERE id=?)`, now, taskID); err != nil {
+			return err
+		}
+	}
 	if kind == "application.apply" {
 		applicationStatus := "pending"
 		if input.Action == "abandon" {
@@ -128,6 +133,8 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 	switch task.Kind {
 	case "tailscale.update":
 		return `UPDATE tailscale_update_tasks SET state='abandoned',lease_expires_at='',error='abandoned after operator review',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
+	case "node.site.certificate":
+		return `UPDATE node_site_tasks SET state='failed',lease_expires_at='',error='Abandoned; inspect recovered website state',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.security":
 		return `UPDATE node_security_tasks SET state='failed',lease_expires_at='',error='abandoned; inspect host rollback state',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.ip-quality":
@@ -164,6 +171,10 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 // These statements only reset the exact task revision observed by the operator.
 // They never increment attempt; claiming after the decision does that once.
 func executionRequeueStatement(task AgentTask, agentID, now string) (string, []any, error) {
+	if task.Kind == "node.site.certificate" {
+		return "", nil, errors.New("center: inspect the restored website after abandoning the uncertain execution; request a fresh revision")
+	}
+
 	if task.Kind == "tailscale.update" {
 		return "", nil, errors.New("center: inspect the Tailscale update before issuing a fresh operation")
 	}

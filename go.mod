@@ -5,10 +5,12 @@ go 1.26.0
 toolchain go1.26.10
 
 require (
+	github.com/caddyserver/certmagic v0.25.6
 	github.com/containerd/errdefs v1.0.0
 	github.com/distribution/reference v0.6.0
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/google/uuid v1.6.0
+	github.com/libdns/cloudflare v0.2.2
 	github.com/miekg/dns v1.1.73
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
@@ -19,6 +21,7 @@ require (
 	github.com/sethvargo/go-retry v0.5.0
 	github.com/sigstore/sigstore v1.10.11
 	github.com/theupdateframework/go-tuf/v2 v2.4.2
+	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/mod v0.42.0
 	golang.org/x/net v0.61.0
@@ -28,7 +31,15 @@ require (
 	modernc.org/sqlite v1.60.1
 )
 
-require google.golang.org/genproto/googleapis/rpc v0.0.0-20260831171406-18b4a7587f8a // indirect
+require (
+	github.com/caddyserver/zerossl v0.1.6 // indirect
+	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
+	github.com/libdns/libdns v1.1.1 // indirect
+	github.com/mholt/acmez/v3 v3.1.7 // indirect
+	github.com/zeebo/blake3 v0.2.4 // indirect
+	go.uber.org/zap/exp v0.3.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260831171406-18b4a7587f8a // indirect
+)
 
 require (
 	github.com/Microsoft/go-winio v0.6.3 // indirect

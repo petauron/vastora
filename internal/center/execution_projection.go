@@ -22,6 +22,8 @@ func validateExecutionProjection(ctx context.Context, tx *sql.Tx, id string, suc
 	switch kind {
 	case "tailscale.update":
 		query = `SELECT state FROM tailscale_update_tasks WHERE id=? AND agent_id=? AND attempt=?`
+	case "node.site.certificate":
+		query = `SELECT state FROM node_site_tasks WHERE id=? AND agent_id=? AND attempt=?`
 	case "node.security":
 		query = `SELECT state FROM node_security_tasks WHERE id=? AND agent_id=? AND attempt=?`
 	case "node.ip-quality":

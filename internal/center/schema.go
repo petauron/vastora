@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 126
+const centerSchemaVersion = 127
 
 //go:embed schema_retirement.sql
 var currentRetirementSchema string
@@ -1078,6 +1078,9 @@ CREATE TABLE agent_reinstall_access_activations (
 	}
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX tailscale_update_tasks_agent_idx ON tailscale_update_tasks(agent_id, created_at DESC)`); err != nil {
 		return fmt.Errorf("center: initialize Tailscale update index: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, nodeSiteSchema); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, nodeSecuritySchema); err != nil {
 		return fmt.Errorf("center: initialize node security schema: %w", err)

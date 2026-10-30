@@ -19,7 +19,7 @@ func TestMeridianStateMigrationPreservesLegacyJournal(t *testing.T) {
 		INSERT INTO xray_worker_state(id,sealed_state) VALUES(1,?);
 		DROP TABLE meridian_runtime_state;
 		ALTER TABLE control_plane_connection DROP COLUMN landing_only;
-		PRAGMA user_version=20`, legacy); err != nil {
+		DROP TABLE node_site_journal; PRAGMA user_version=20`, legacy); err != nil {
 		t.Fatal(err)
 	}
 	if err := old.Close(); err != nil {

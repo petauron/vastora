@@ -130,6 +130,8 @@ func (s *Store) projectRetainedExecutionResult(ctx context.Context, id string, r
 		return nil
 	}
 	switch kind {
+	case "node.site.certificate":
+		err = s.projectNodeSite(ctx, tx, commit, agentID, taskID, attempt, true, "", evidence.Result)
 	case "application.command":
 		err = s.projectApplicationCommand(ctx, tx, commit, agentID, taskID, attempt, true, "", evidence.Result, false)
 	case "application.adopt":
@@ -182,7 +184,7 @@ func retainedResultSupportsConfirmation(kind string, evidence executionResultEvi
 	switch kind {
 	case "application.apply":
 		return evidence.ApplicationRuntimeGeneration != nil
-	case "application.maintenance", "application.adopt", "application.command", "landing.server.apply", "landing.proxy.apply", "gateway.routes.apply", "gateway.component.apply", "node.listener.apply", "tunnel.state.apply":
+	case "node.site.certificate", "application.maintenance", "application.adopt", "application.command", "landing.server.apply", "landing.proxy.apply", "gateway.routes.apply", "gateway.component.apply", "node.listener.apply", "tunnel.state.apply":
 		return true
 	default:
 		return false
@@ -190,6 +192,9 @@ func retainedResultSupportsConfirmation(kind string, evidence executionResultEvi
 }
 
 func executionConfirmationStatement(task AgentTask, agentID string) (string, []any, error) {
+	if task.Kind == "node.site.certificate" {
+		return `UPDATE node_site_tasks SET state='running' WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed') AND revision=(SELECT revision FROM node_sites WHERE application_id=node_site_tasks.application_id)`, []any{task.ID, agentID, task.Attempt}, nil
+	}
 	if task.Kind == "application.maintenance" {
 		return `UPDATE application_maintenance SET state='running' WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed') AND NOT EXISTS(SELECT 1 FROM application_maintenance newer WHERE newer.application_id=application_maintenance.application_id AND newer.rowid>application_maintenance.rowid) AND NOT EXISTS(SELECT 1 FROM deployments newer WHERE newer.application_id=application_maintenance.application_id AND newer.rowid>(SELECT rowid FROM deployments WHERE id=application_maintenance.deployment_id))`, []any{task.ID, agentID, task.Attempt}, nil
 	}
