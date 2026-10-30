@@ -15,6 +15,7 @@ import (
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
+	"github.com/petauron/vastora/internal/nodesite"
 	"github.com/petauron/vastora/internal/realitytarget"
 	"github.com/petauron/vastora/internal/senulun"
 	"github.com/petauron/vastora/internal/tailscalehost"
@@ -149,6 +150,7 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	NodeSite                  *nodesite.Task                       `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
 	TailscaleUpdate           *tailscalehost.UpdateTask            `json:"tailscaleUpdate,omitempty"`
@@ -225,6 +227,7 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	NodeSite             *nodesite.Result                    `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256  string                              `json:"sourceReceiptSha256,omitempty"`
 	SourceResources      json.RawMessage                     `json:"sourceResources,omitempty"`
 	NodeSecurity         *nodesecurity.View                  `json:"nodeSecurity,omitempty"`

@@ -837,6 +837,10 @@ for (const route of routes) {
     schema.properties.note.minLength = 1;
     schema.properties.note.maxLength = 500;
   }
+  if (["handleNodeSite", "handleConfigureNodeSite", "handleNodeSiteAction"].includes(route.handler)) {
+    const status = route.handler === "handleNodeSite" ? "200" : "202";
+    operation.responses[status] = { description: "Managed node website certificate state", headers: noStoreHeaders, content: { "application/json": { schema: schemaForGoType("NodeSiteView") } } };
+  }
   if (route.handler === "handleNodeSecurity" || route.handler === "handleQueueNodeSecurity") {
     const status = route.handler === "handleNodeSecurity" ? "200" : "202";
     operation.summary = route.handler === "handleNodeSecurity" ? "Read last node security evidence" : "Queue an explicitly approved node security operation";

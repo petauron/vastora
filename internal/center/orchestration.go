@@ -15,6 +15,7 @@ import (
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/nodesite"
 	"github.com/petauron/vastora/internal/senulun"
 	"golang.org/x/mod/semver"
 )
@@ -28,6 +29,7 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	NodeSite             *nodesite.Result                    `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256  string                              `json:"sourceReceiptSha256,omitempty"`
 	SourceResources      json.RawMessage                     `json:"sourceResources,omitempty"`
 	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
@@ -68,6 +70,13 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 	var applicationID string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE node_id = ? AND app_key = ?`, request.AgentID, request.AppKey).Scan(&applicationID)
 	if err == nil {
+		var siteBusy bool
+		if e := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_site_tasks WHERE application_id=? AND state IN ('pending','running')) OR EXISTS(SELECT 1 FROM node_sites WHERE application_id=? AND state IN ('pending','issuing'))`, applicationID, applicationID).Scan(&siteBusy); e != nil {
+			return "", e
+		}
+		if siteBusy {
+			return "", errors.New("center: finish the managed website certificate operation before changing this application")
+		}
 		var changes map[string]json.RawMessage
 		programOnly := len(request.Config) == 0 || json.Unmarshal(request.Config, &changes) == nil && len(changes) == 0
 		var ownerErr error

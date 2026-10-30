@@ -21,6 +21,7 @@ import (
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
+	"github.com/petauron/vastora/internal/nodesite"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/senulun"
 	"github.com/petauron/vastora/internal/tailscalehost"
@@ -28,6 +29,11 @@ import (
 )
 
 func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) {
+	if err := store.recoverNodeSites(ctx); err != nil {
+		if report != nil {
+			report(err)
+		}
+	}
 	reportError := func(err error) {
 		if err != nil && report != nil && ctx.Err() == nil {
 			report(err)
@@ -343,6 +349,13 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 					err = startTailscaleUpdate(dispatchContext, task.ID, *task.TailscaleUpdate)
 					cancelDispatch()
 				}
+			}
+		case nodesite.Kind:
+			if task.NodeSite == nil {
+				err = errors.New("agent: missing node site task")
+			} else {
+				value, siteErr := store.executeNodeSite(ctx, *task.NodeSite)
+				result.NodeSite, err = &value, siteErr
 			}
 		case nodesecurity.Kind:
 			if !c.Capabilities.NodeSecurity || task.NodeSecurity == nil {

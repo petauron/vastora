@@ -170,6 +170,44 @@ func verifyCenterEncryptedState(ctx context.Context, db *sql.DB, key []byte) err
 }
 
 func verifyCenterDirectCiphertexts(ctx context.Context, db *sql.DB, key []byte) error {
+	for _, spec := range []struct {
+		table         string
+		columns       []string
+		query, prefix string
+	}{
+		{"node_sites", []string{"application_id", "sealed_key"}, `SELECT application_id,sealed_key FROM node_sites WHERE length(sealed_key)>0`, "node-site-certificate:"},
+		{"node_site_certmagic_storage", []string{"key", "sealed"}, `SELECT key,sealed FROM node_site_certmagic_storage`, "node-site-certmagic:"},
+	} {
+		exists, err := tableHasColumns(ctx, db, spec.table, spec.columns...)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			continue
+		}
+		rows, err := db.QueryContext(ctx, spec.query)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id string
+			var sealed []byte
+			if err = rows.Scan(&id, &sealed); err != nil {
+				rows.Close()
+				return err
+			}
+			if _, err = secret.Open(key, sealed, []byte(spec.prefix+id)); err != nil {
+				rows.Close()
+				return fmt.Errorf("center: encrypted certificate state in %s does not match the root key", spec.table)
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+
 	if exists, err := tableHasColumns(ctx, db, "three_x_ui_backups", "application_id", "revision", "sealed"); err != nil {
 		return err
 	} else if exists {

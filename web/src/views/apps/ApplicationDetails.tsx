@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { NodeSiteCertificateCard } from "./NodeSiteCertificateCard";
 import { ServiceHandover } from "./ServiceHandover";
 import { GlivelaNativeRegistration } from "./GlivelaNativeRegistration";
 import { GlivelaPilotActivation } from "./GlivelaPilotActivation";
@@ -78,6 +79,7 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
       {application.status === "failed" ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "最近一次操作失败，应用仍保留", "The last operation failed; the app is still installed")}</AlertTitle><AlertDescription>{copy(language, "原有安装记录和数据仍保留；请查看最近操作，修正后重试或卸载。", "The installed record and data remain available. Review the recent operation, then retry or uninstall.")}</AlertDescription></Alert> : null}
       {application.appKey === "vastora-official/senlun" ? <SenlunSetupNotice language={language} /> : null}
       {app ? <AppHostAccessNote app={app} language={language} /> : null}
+      {application.appKey === "vastora-official/daylight" || application.appKey === "vastora-official/daylight-https" ? <NodeSiteCertificateCard key={application.id} applicationId={application.id} language={language} mutate={mutate} disabled={serviceAccessLocked || application.status !== "running" || !agent?.connected} /> : null}
       {application.appKey === "vastora-official/glivela-entry" && pilotEndpoints.length === 0 ? <GlivelaNativeRegistration applicationId={application.id} language={language} mutate={mutate} disabled={serviceAccessLocked || application.status !== "running" || !agent?.connected} /> : null}
       {pilotEndpoints.length === 1 ? <GlivelaPilotActivation key={pilotEndpoints[0].id} endpoint={pilotEndpoints[0]} language={language} mutate={mutate} disabled={serviceAccessLocked || application.status !== "running" || !agent?.connected} /> : null}
       {isController ? <p aria-atomic="true" className="text-sm text-muted-foreground" role="status">{managedVLESSNodeCount > 0 ? copy(language, `当前订阅包含 ${managedVLESSNodeCount} 个节点，由此订阅主机统一管理。`, `The current subscription includes ${managedVLESSNodeCount} node(s), managed by this subscription controller.`) : copy(language, "尚未创建 VLESS 节点；创建后会自动加入统一订阅。", "No VLESS nodes yet. New nodes are added to the shared subscription automatically.")}</p> : null}

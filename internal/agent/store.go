@@ -111,7 +111,7 @@ type Connection struct {
 	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = 22
+const agentSchemaVersion = 23
 
 // CurrentSchemaVersion is the highest Agent database schema this executable
 // can open. The persistent host updater records it before a candidate can

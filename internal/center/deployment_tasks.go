@@ -22,6 +22,7 @@ import (
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
+	"github.com/petauron/vastora/internal/nodesite"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 	"github.com/petauron/vastora/internal/senulun"
@@ -30,6 +31,7 @@ import (
 )
 
 type AgentTask struct {
+	NodeSite                  *nodesite.Task                       `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
 	TailscaleUpdate           *tailscalehost.UpdateTask            `json:"tailscaleUpdate,omitempty"`
@@ -130,7 +132,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			return err
 		}
 		nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
-		if landingOnly && !nativeLifecycle && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind && task.Kind != tailscalehost.UpdateKind {
+		if landingOnly && !nativeLifecycle && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind && task.Kind != nodesite.Kind && task.Kind != tailscalehost.UpdateKind {
 			return errors.New("center: task is not authorized for a landing-only node")
 		}
 		return commitAuthorized(tx, task)
@@ -404,6 +406,16 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 							return nil, err
 						}
 						return updateTask, nil
+					}
+					siteTask, siteErr := s.claimNodeSite(ctx, tx, agentID)
+					if siteErr != nil {
+						return nil, siteErr
+					}
+					if siteTask != nil {
+						if err := commitTask(tx, siteTask); err != nil {
+							return nil, err
+						}
+						return siteTask, nil
 					}
 					securityTask, securityErr := s.claimNodeSecurity(ctx, tx, agentID)
 					if securityErr != nil {
@@ -743,6 +755,12 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 	}
 	if strings.HasPrefix(taskID, tailscalehost.UpdateTaskPrefix) {
 		return s.completeTailscaleUpdate(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, reconciliationRequired)
+	}
+	if strings.HasPrefix(taskID, nodesite.TaskPrefix) {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeNodeSite(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
 	}
 	if strings.HasPrefix(taskID, "node-security-") {
 		if reconciliationRequired {

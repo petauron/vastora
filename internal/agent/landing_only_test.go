@@ -44,7 +44,7 @@ func TestLandingOnlySchemaMigrationPreservesOrdinaryPurpose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; PRAGMA user_version=21`); err != nil {
+	if _, err = s.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; DROP TABLE node_site_journal; PRAGMA user_version=21`); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Close(); err != nil {
@@ -56,7 +56,7 @@ func TestLandingOnlySchemaMigrationPreservesOrdinaryPurpose(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 22 {
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != agentSchemaVersion {
 		t.Fatalf("migration: %d %v", version, err)
 	}
 	backups, err := filepath.Glob(filepath.Join(dir, "schema-21-backup-*", "agent.db"))

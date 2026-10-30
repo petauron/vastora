@@ -46,6 +46,7 @@
     { "value": "fmprc.gov.cn", "reason": "Reviewed public locale reference" },
     { "value": "ghcr.io", "reason": "Reviewed public container registry" },
     { "value": "github.com", "reason": "Reviewed public source and dependency host" },
+    { "value": "go.uber.org", "reason": "Reviewed public Zap logging dependency namespace" },
     { "value": "github.io", "reason": "Reviewed public documentation host" },
     { "value": "githubusercontent.com", "reason": "Reviewed public pinned source host" },
     { "value": "golang.org", "reason": "Reviewed public Go project reference" },

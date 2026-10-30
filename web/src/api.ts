@@ -1,3 +1,4 @@
+import type { NodeSiteCertificate, NodeSiteCertificateInput } from "./node-site-types";
 import type { SSHProtectionInventory } from "./node-ssh-protection-types";
 import type { ReinstallCurrentMaterial, ReinstallCurrentVerification } from "./types";
 import type { ReinstallClientCheck, ReinstallClientCheckInput } from "./reinstall-acceptance-types";
@@ -91,6 +92,10 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
+  nodeSiteCertificate: (id: string, signal?: AbortSignal) => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate`, { signal }),
+  configureNodeSiteCertificate: (id: string, input: NodeSiteCertificateInput) => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate`, { method: "PUT", body: JSON.stringify(input) }),
+  nodeSiteCertificateAction: (id: string, action: "inspect" | "rollback" | "cancel") => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate/actions`, { method: "POST", body: JSON.stringify({ action }) }),
+
   nodeSSHProtection(applicationId: string, signal?: AbortSignal) {
     return request<SSHProtectionInventory>(`/api/v1/applications/${encodeURIComponent(applicationId)}/panel/v1/admin/business`, { method: "POST", body: "{}", signal });
   },

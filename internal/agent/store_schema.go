@@ -645,6 +645,23 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 22
 		}
+		if version == 22 {
+			backupDir, migrateErr := os.MkdirTemp(dataDir, "schema-22-backup-")
+			if migrateErr == nil {
+				_, migrateErr = db.Exec(`VACUUM INTO ?`, filepath.Join(backupDir, "agent.db"))
+			}
+			if migrateErr == nil {
+				_, migrateErr = db.Exec(`BEGIN;
+					CREATE TABLE node_site_journal (application_id TEXT PRIMARY KEY, sealed_state BLOB NOT NULL);
+					PRAGMA user_version=23; COMMIT;`)
+			}
+			if migrateErr != nil {
+				_, _ = db.Exec(`ROLLBACK`)
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 22 to 23: %w", migrateErr)
+			}
+			version = 23
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -772,7 +789,8 @@ func Open(dataDir string) (*Store, error) {
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed_state BLOB NOT NULL
 		);
-		` + taskReceiptIndexesSQL + `PRAGMA user_version = 22;`); err != nil {
+		CREATE TABLE node_site_journal (application_id TEXT PRIMARY KEY, sealed_state BLOB NOT NULL);
+		` + taskReceiptIndexesSQL + `PRAGMA user_version = 23;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
