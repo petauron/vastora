@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.387](https://github.com/petauron/vastora/compare/v0.1.0-alpha.386...v0.1.0-alpha.387) (2026-10-30)
+
+
+### Bug Fixes
+
+* **apps:** omit retired recipe inputs during upgrades ([#1124](https://github.com/petauron/vastora/issues/1124)) ([dbe5870](https://github.com/petauron/vastora/commit/dbe5870b70d0dbaf9811be39a921d9c2f9e97ba2))
+
 ## [0.1.0-alpha.386](https://github.com/petauron/vastora/compare/v0.1.0-alpha.385...v0.1.0-alpha.386) (2026-10-30)
 
 
