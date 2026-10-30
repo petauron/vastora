@@ -8,7 +8,7 @@ require (
 	github.com/caddyserver/certmagic v0.25.6
 	github.com/containerd/errdefs v1.0.0
 	github.com/distribution/reference v0.6.0
-	github.com/getkin/kin-openapi v0.149.0
+	github.com/getkin/kin-openapi v0.152.0
 	github.com/google/uuid v1.6.0
 	github.com/libdns/cloudflare v0.2.2
 	github.com/miekg/dns v1.1.73
