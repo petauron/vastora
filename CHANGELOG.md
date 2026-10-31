@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.389](https://github.com/petauron/vastora/compare/v0.1.0-alpha.388...v0.1.0-alpha.389) (2026-10-31)
+
+
+### Features
+
+* **node:** reinstall Debian 13 from the web and restore node identity ([#1134](https://github.com/petauron/vastora/issues/1134)) ([e5f6881](https://github.com/petauron/vastora/commit/e5f6881fdca661ac55ddd27e28287255802e2be0))
+
+
+### Bug Fixes
+
+* **ui:** 统一服务恢复表单控件 ([a533ceb](https://github.com/petauron/vastora/commit/a533cebf45f4e145e2cb0bdbf591f0692b895f8b))
+
 ## [0.1.0-alpha.388](https://github.com/petauron/vastora/compare/v0.1.0-alpha.387...v0.1.0-alpha.388) (2026-10-30)
 
 
