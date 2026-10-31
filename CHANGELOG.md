@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.391](https://github.com/petauron/vastora/compare/v0.1.0-alpha.390...v0.1.0-alpha.391) (2026-10-31)
+
+
+### Bug Fixes
+
+* allow shared Caddy on native-only nodes ([#1137](https://github.com/petauron/vastora/issues/1137)) ([0196ed9](https://github.com/petauron/vastora/commit/0196ed9cb1156a303de4e17207fe4959194b6f7b))
+* wire shared Caddy for native-only Agent lifecycle ([#1139](https://github.com/petauron/vastora/issues/1139)) ([3ebcf7c](https://github.com/petauron/vastora/commit/3ebcf7c8d5cb4a01896a9a7d3e0b95789988ceca))
+
 ## [0.1.0-alpha.390](https://github.com/petauron/vastora/compare/v0.1.0-alpha.389...v0.1.0-alpha.390) (2026-10-31)
 
 
