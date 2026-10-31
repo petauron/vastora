@@ -3,6 +3,7 @@ package osreinstall
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"errors"
 	"os"
 	"os/exec"
@@ -155,7 +156,7 @@ func MissingPrerequisites() []string {
 		}
 	}
 	roots, err := loadSystemRoots()
-	if err != nil || roots == nil || len(roots.Subjects()) == 0 {
+	if err != nil || roots == nil || roots.Equal(x509.NewCertPool()) {
 		missing = append(missing, "ca-certificates")
 	}
 	return missing

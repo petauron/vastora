@@ -164,12 +164,12 @@ func (s *Store) claimOSReinstall(ctx context.Context, tx *sql.Tx, agentID string
 	var attempt int64
 	var installed int
 	var applications, gateway bool
-	err := tx.QueryRowContext(ctx, `SELECT q.id,q.input_json,q.sealed_password,q.attempt,a.last_seen_at,a.tailscale_ownership,
+	err := tx.QueryRowContext(ctx, `SELECT q.id,q.input_json,q.attempt,a.last_seen_at,a.tailscale_ownership,
         a.runtime_recovery,a.version,a.status,a.credential_revoked_at,a.x25519_public_key,a.roles_json,a.capabilities_json,a.applied_installations,
         COALESCE((SELECT checked_at FROM node_diagnostic_checks WHERE id=q.inspection_id AND agent_id=q.agent_id),''),
         EXISTS(SELECT 1 FROM applications WHERE node_id=q.agent_id),EXISTS(SELECT 1 FROM site_gateways WHERE agent_id=q.agent_id)
         FROM os_reinstall_tasks q JOIN agents a ON a.id=q.agent_id WHERE q.agent_id=? AND q.state='pending' AND q.attempt=0`, agentID).
-		Scan(&id, &raw, &sealed, &attempt, &seen, &ownership, &runtimeRecovery, &version, &status, &revoked, &publicKey, &rolesJSON, &capabilitiesJSON, &installed, &checked, &applications, &gateway)
+		Scan(&id, &raw, &attempt, &seen, &ownership, &runtimeRecovery, &version, &status, &revoked, &publicKey, &rolesJSON, &capabilitiesJSON, &installed, &checked, &applications, &gateway)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -179,6 +179,10 @@ func (s *Store) claimOSReinstall(ctx context.Context, tx *sql.Tx, agentID string
 	var payload osreinstall.Task
 	var roles []string
 	var capabilities NodeCapabilities
+	// Read recovery material separately from public identity metadata.
+	if err := tx.QueryRowContext(ctx, "SELECT sealed_password FROM os_reinstall_tasks WHERE id=? AND agent_id=?", id, agentID).Scan(&sealed); err != nil {
+		return nil, false, err
+	}
 	password, openErr := secret.Open(s.key, sealed, []byte("os-reinstall-password:"+id))
 	parseErr := json.Unmarshal([]byte(raw), &payload)
 	payload.RecoveryPassword = string(password)
