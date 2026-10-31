@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.390](https://github.com/petauron/vastora/compare/v0.1.0-alpha.389...v0.1.0-alpha.390) (2026-10-31)
+
+
+### Features
+
+* share Caddy between gateways and managed websites ([#1135](https://github.com/petauron/vastora/issues/1135)) ([9cff92a](https://github.com/petauron/vastora/commit/9cff92afd238b087d656bdbb39894283c4e4b1df))
+
 ## [0.1.0-alpha.389](https://github.com/petauron/vastora/compare/v0.1.0-alpha.388...v0.1.0-alpha.389) (2026-10-31)
 
 
