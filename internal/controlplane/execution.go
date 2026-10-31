@@ -1,5 +1,7 @@
 package controlplane
 
+import "github.com/petauron/vastora/internal/osreinstall"
+
 // ExecutionProtocol is deliberately not negotiated down. Center and Agent must
 // be upgraded in a task-claim pause before changing the execution contract.
 const ExecutionProtocol = 2
@@ -10,12 +12,15 @@ type ExecutionSessionRequest struct {
 }
 
 type ExecutionTransitionRequest struct {
-	SessionID string `json:"sessionId"`
-	Action    string `json:"action"`
-	Digest    string `json:"digest,omitempty"`
-	Phase     string `json:"phase,omitempty"`
-	Unknown   bool   `json:"unknown,omitempty"`
-	Error     string `json:"error,omitempty"`
+	SessionID          string                       `json:"sessionId"`
+	Action             string                       `json:"action"`
+	Digest             string                       `json:"digest,omitempty"`
+	Phase              string                       `json:"phase,omitempty"`
+	Unknown            bool                         `json:"unknown,omitempty"`
+	Error              string                       `json:"error,omitempty"`
+	ReinstallBackup    *osreinstall.BackupEvidence  `json:"reinstallBackup,omitempty"`
+	ReinstallArm       *osreinstall.ArmEvidence     `json:"reinstallArm,omitempty"`
+	ReinstallReconnect *osreinstall.ReconnectReport `json:"reinstallReconnect,omitempty"`
 }
 
 // ExecutionAuthorization identifies a single Center-persisted permission to

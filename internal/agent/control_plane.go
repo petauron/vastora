@@ -16,6 +16,7 @@ import (
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/nodesite"
+	"github.com/petauron/vastora/internal/osreinstall"
 	"github.com/petauron/vastora/internal/realitytarget"
 	"github.com/petauron/vastora/internal/senulun"
 	"github.com/petauron/vastora/internal/tailscalehost"
@@ -43,6 +44,7 @@ type Client struct {
 	TunnelProvisioner  TunnelProvisioner
 	Decommissioner     HostDecommissioner
 	Updater            HostUpdater
+	OSReinstaller      HostOSReinstaller
 	TailscaleIsolation func(context.Context, TailscaleIsolationDesiredState) error
 	TailscaleEnrolled  bool
 	TailscaleOwnership string
@@ -71,6 +73,20 @@ type HostDecommissionRequest struct {
 	CallbackURL   string
 	CallbackToken string
 	Connection    Connection
+}
+
+// HostOSReinstaller supplies the strictly bounded, host-specific preparation.
+// Center acknowledges the encrypted backup before any install is armed.
+type HostOSReinstaller interface {
+	Backup(context.Context, HostOSReinstallRequest) (osreinstall.BackupEvidence, error)
+	Stage(context.Context, HostOSReinstallRequest, osreinstall.BackupEvidence) (osreinstall.PreparedStage, error)
+	Activate(context.Context, HostOSReinstallRequest, osreinstall.PreparedStage) error
+}
+type HostOSReinstallRequest struct {
+	TaskID      string
+	ExecutionID string
+	Connection  Connection
+	Task        osreinstall.Task
 }
 
 type HostUpdater interface {
@@ -133,6 +149,8 @@ type Capabilities struct {
 	MeridianLinkBandwidth bool                        `json:"meridianLinkBandwidth"`
 	MeridianLinkRevision  int                         `json:"meridianLinkRevision"`
 	HostProfile           bool                        `json:"hostProfile"`
+	OSReinstallPreflight  bool                        `json:"osReinstallPreflight"`
+	OSReinstall           bool                        `json:"osReinstall"`
 	NodeSecurity          bool                        `json:"nodeSecurity"`
 	Docker                bool                        `json:"docker"`
 	Gateway               bool                        `json:"gateway"`
@@ -165,6 +183,7 @@ type DeploymentTask struct {
 	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
+	OSReinstall               *osreinstall.Task                    `json:"osReinstall,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
 	SenulunRestore            *senulun.RestoreCredentials          `json:"pulseRestore,omitempty"`
 	SenulunReporting          *senulun.ReportingTask               `json:"pulseReporting,omitempty"`

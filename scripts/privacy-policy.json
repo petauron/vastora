@@ -41,6 +41,7 @@
     { "value": "cloudflarestorage.com", "reason": "Reviewed public R2 endpoint fixture" },
     { "value": "cfargotunnel.com", "reason": "Reviewed public Cloudflare Tunnel endpoint" },
     { "value": "cymru.com", "reason": "Reviewed public Team Cymru lookup endpoint" },
+    { "value": "debian.org", "reason": "Official Debian installer and signed package repositories for the reviewed OS reinstall flow" },
     { "value": "docker.com", "reason": "Reviewed public dependency source" },
     { "value": "docker.io", "reason": "Reviewed public container registry" },
     { "value": "fmprc.gov.cn", "reason": "Reviewed public locale reference" },

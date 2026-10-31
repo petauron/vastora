@@ -47,6 +47,8 @@ type NodeCapabilities struct {
 	MeridianLinkBandwidth bool                        `json:"meridianLinkBandwidth"`
 	MeridianLinkRevision  int                         `json:"meridianLinkRevision"`
 	HostProfile           bool                        `json:"hostProfile"`
+	OSReinstallPreflight  bool                        `json:"osReinstallPreflight"`
+	OSReinstall           bool                        `json:"osReinstall"`
 	NodeSecurity          bool                        `json:"nodeSecurity"`
 	Docker                bool                        `json:"docker"`
 	Gateway               bool                        `json:"gateway"`

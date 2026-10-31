@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/petauron/vastora/internal/nodediagnostics"
+	"github.com/petauron/vastora/internal/osreinstall"
 )
 
 // CheckHostProfile reads kernel and filesystem state only. It never invokes
@@ -43,6 +44,14 @@ func (ApplicationExecutor) CheckHostProfile(ctx context.Context, task nodediagno
 		TCPRMem:           readKernelValue("/proc/sys/net/ipv4/tcp_rmem"),
 		TCPWMem:           readKernelValue("/proc/sys/net/ipv4/tcp_wmem"),
 		TCPSlowStart:      readKernelValue("/proc/sys/net/ipv4/tcp_slow_start_after_idle"),
+	}
+	if task.OSReinstallPreflight {
+		inspection, inspectErr := osreinstall.InspectHost(ctx)
+		if inspectErr != nil {
+			profile.OSReinstallError = osreinstall.ErrorCode(inspectErr)
+		} else {
+			profile.OSReinstall = &inspection
+		}
 	}
 	_, err = os.Stat("/etc/sysctl.d/99-tcpfit.conf")
 	profile.PersistentConfig = err == nil

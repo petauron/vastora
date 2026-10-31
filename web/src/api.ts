@@ -1,4 +1,5 @@
 import type { NodeSiteCertificate, NodeSiteCertificateInput } from "./node-site-types";
+type OSReinstallTask = { id: string; agentId: string; state: "pending" | "running" | "backup_ready" | "armed" | "succeeded" | "failed" | "unknown" | "cancelled"; error?: string; canRecheck: boolean; updatedAt: string };
 import type { SSHProtectionInventory } from "./node-ssh-protection-types";
 import type { ReinstallCurrentMaterial, ReinstallCurrentVerification } from "./types";
 import type { ReinstallClientCheck, ReinstallClientCheckInput } from "./reinstall-acceptance-types";
@@ -110,6 +111,11 @@ export const api = {
   },
   checkIPQuality: (id: string, address: string, signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/ip-quality`, { method: "POST", body: JSON.stringify({ address }), signal }),
   nodeDiagnostics: (signal?: AbortSignal) => request<{ checks: NodeDiagnosticCheck[] }>("/api/v1/node-diagnostics", { signal }),
+  osReinstallInspection: (id: string, signal?: AbortSignal) => request<{ check: NodeDiagnosticCheck | null }>(`/api/v1/agents/${encodeURIComponent(id)}/os-reinstall/inspection`, { signal }),
+  startOSReinstallInspection: (id: string) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/os-reinstall/inspect`, { method: "POST", body: "{}" }),
+  osReinstallTask: (id: string, signal?: AbortSignal) => request<{ task: OSReinstallTask | null }>(`/api/v1/agents/${encodeURIComponent(id)}/os-reinstall`, { signal }),
+  recheckOSReinstall: (id: string) => request<{ retired: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/os-reinstall/recheck`, { method: "POST", body: "{}" }),
+  startOSReinstall: (id: string, input: { inspectionId: string; confirmDisk: string; username: string; sshPort: number; confirmErase: boolean }) => request<OSReinstallTask>(`/api/v1/agents/${encodeURIComponent(id)}/os-reinstall`, { method: "POST", body: JSON.stringify(input) }),
   checkNodeDiagnostic: (id: string, kind: NodeDiagnosticCheck["kind"], signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/node-diagnostics/${encodeURIComponent(kind)}`, { method: "POST", body: "{}", signal }),
   checkMeridianLinkBandwidth: (sourceNodeId: string, landingNodeId: string, signal?: AbortSignal) => request<{ queued: boolean }>("/api/v1/meridian/link-bandwidth", { method: "POST", body: JSON.stringify({ sourceNodeId, landingNodeId }), signal }),
   xrayConfigurationRecovery: (id: string, signal?: AbortSignal) => request<{ recovery: XrayConfigurationRecovery | null }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery`, { signal }),

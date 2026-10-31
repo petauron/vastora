@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 127
+const centerSchemaVersion = 128
 
 //go:embed schema_retirement.sql
 var currentRetirementSchema string
@@ -1084,6 +1084,9 @@ CREATE TABLE agent_reinstall_access_activations (
 	}
 	if _, err := tx.ExecContext(ctx, nodeSecuritySchema); err != nil {
 		return fmt.Errorf("center: initialize node security schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, osReinstallSchema); err != nil {
+		return fmt.Errorf("center: initialize OS reinstall schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, nodeDiagnosticsSchemaSQL); err != nil {
 		return fmt.Errorf("center: initialize node diagnostics schema: %w", err)
