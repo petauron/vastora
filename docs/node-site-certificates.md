@@ -121,7 +121,8 @@ disable is refused before changing routes or clearing its recorded base; migrate
 or uninstall those website contributions first. This prevents later website
 updates from reconstructing a disabled gateway's previous application routes.
 
-Center schema 127 and Agent schema 24 use forward-only migrations. The Agent
+The node-site Center migration (127) remains unchanged; Agent schema 24 adds a
+forward-only website migration. The Agent
 23-to-24 change reuses one consistent, key-verified recovery point while its
 logical state is unchanged; a changed source requires review. Production deployment, catalog
 publication, proxy migration and public acceptance remain separate operations.

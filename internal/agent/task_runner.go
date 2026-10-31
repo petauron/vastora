@@ -22,6 +22,7 @@ import (
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/nodesite"
+	"github.com/petauron/vastora/internal/osreinstall"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/senulun"
 	"github.com/petauron/vastora/internal/tailscalehost"
@@ -48,6 +49,18 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 		c.executionSession = session
 		for {
 			if err := c.registerExecutionSession(ctx, store); err == nil {
+				break
+			} else {
+				reportError(err)
+			}
+			if !waitForTaskRetry(ctx) {
+				return
+			}
+		}
+		// Do not claim unrelated work until a restored Agent has reported its
+		// authenticated post-install identity and network to Center.
+		for {
+			if err := c.reinstallReconnect(ctx, store); err == nil {
 				break
 			} else {
 				reportError(err)
@@ -295,6 +308,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	decommissionHandedOff := false
 	updateHandedOff := false
 	tailscaleUpdateHandedOff := false
+	osReinstallHandedOff := false
 	nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
 	if len(publicRules) > 0 {
 		err = nodesecurity.NewHost().CheckPorts(publicRules)
@@ -335,6 +349,43 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			c.Executor = ApplicationExecutor{Host: SystemdHostApplicationManager{}, Store: store}
 		}
 		switch task.Kind {
+		case osreinstall.TaskKind:
+			if !c.Capabilities.OSReinstall || c.OSReinstaller == nil || task.OSReinstall == nil || task.OSReinstall.Validate() != nil {
+				err = errors.New("agent: OS reinstall is not available")
+				break
+			}
+			var connection Connection
+			connection, err = store.Connection(ctx)
+			if err != nil {
+				break
+			}
+			request := HostOSReinstallRequest{TaskID: task.ID, ExecutionID: task.Authorization.ID, Connection: connection, Task: *task.OSReinstall}
+			var backup osreinstall.BackupEvidence
+			backup, err = c.OSReinstaller.Backup(ctx, request)
+			if err != nil {
+				break
+			}
+			err = c.RecordOSReinstallBackup(ctx, connection, c.execution.ID, c.executionSession, backup)
+			if err != nil {
+				err = uncertainTaskOutcome(err)
+				break
+			}
+			var stage osreinstall.PreparedStage
+			stage, err = c.OSReinstaller.Stage(ctx, request, backup)
+			if err != nil {
+				break
+			}
+			err = c.ArmOSReinstall(ctx, connection, c.execution.ID, c.executionSession, osreinstall.ArmEvidence{BackupDigest: backup.Digest, PreparedDigest: stage.Digest})
+			if err != nil {
+				err = uncertainTaskOutcome(err)
+				break
+			}
+			// Center now owns a one-use irreversible grant. It must never be
+			// replayed even if helper startup or its acknowledgment fails.
+			osReinstallHandedOff = true
+			activationContext, cancelActivation := freshTaskControlContext(ctx)
+			err = c.OSReinstaller.Activate(activationContext, request, stage)
+			cancelActivation()
 		case tailscalehost.UpdateKind:
 			if !c.TailscaleEnrolled || task.TailscaleUpdate == nil {
 				err = errors.New("agent: Tailscale update is unavailable")
@@ -785,6 +836,12 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		default:
 			err = errors.New("agent: unsupported task kind")
 		}
+	}
+	if osReinstallHandedOff {
+		if err != nil && report != nil {
+			report(errors.New(safeTaskError(err)))
+		}
+		return nil
 	}
 	if tailscaleUpdateHandedOff {
 		if err != nil && report != nil {

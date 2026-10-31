@@ -131,6 +131,15 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 	identity := []any{now, task.ID, agentID, task.Attempt}
 	revision := []any{now, agentID, task.Revision, task.Attempt}
 	switch task.Kind {
+	case "node.os-reinstall":
+		// Retire only a reported failure, or an uncertain attempt without saved
+		// backup/network, and never an attempt that obtained a boot grant.
+		// It never replays the task; a fresh inspection and new request are required.
+		return `UPDATE os_reinstall_tasks SET state='cancelled',lease_expires_at='',updated_at=?
+            WHERE id=? AND agent_id=? AND attempt=? AND (state='failed' OR (state='unknown' AND COALESCE(length(encrypted_backup),0)=0 AND COALESCE(length(sealed_network),0)=0))
+            AND NOT EXISTS (SELECT 1 FROM task_executions e JOIN execution_events ev ON ev.execution_id=e.id
+                WHERE e.task_id=os_reinstall_tasks.id AND e.agent_id=os_reinstall_tasks.agent_id AND e.attempt=os_reinstall_tasks.attempt
+                AND (ev.phase='reinstall_armed' OR ev.state='helper_running'))`, identity, nil
 	case "tailscale.update":
 		return `UPDATE tailscale_update_tasks SET state='abandoned',lease_expires_at='',error='abandoned after operator review',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.site.certificate":

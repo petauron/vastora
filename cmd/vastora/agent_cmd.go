@@ -32,6 +32,8 @@ func runAgent(arguments []string) error {
 		return errors.New("agent command is required")
 	}
 	switch arguments[0] {
+	case "execute-os-reinstall":
+		return executeOSReinstall(arguments[1:])
 	case "prepare-center-upgrade-recovery":
 		return runPrepareCenterUpgradeRecovery(arguments[1:])
 	case "retire-legacy-execution":
@@ -577,6 +579,9 @@ func runAgent(arguments []string) error {
 		client.Decommissioner = systemHostDecommissioner{dataDir: *dataDir, executable: executable}
 		if runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			client.Updater = systemHostUpdater{dataDir: *dataDir, executable: executable}
+			if !capabilities.LandingOnly && !hostState.TailscaleEnrolled && hostState.TailscaleOwnership == "none" {
+				client.OSReinstaller = osReinstallerForHost(*dataDir, executable)
+			}
 			client.LandingServer = agent.NativeLandingServer{}
 		}
 		if !capabilities.LandingOnly {
@@ -597,6 +602,8 @@ func runAgent(arguments []string) error {
 		client.Capabilities.SenulunReporting = client.Capabilities.SenulunInspection
 		client.Capabilities.SenulunRestore = capabilities.Docker && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.HostProfile = !capabilities.LandingOnly && runtime.GOOS == "linux"
+		client.Capabilities.OSReinstallPreflight = !capabilities.LandingOnly && runtime.GOOS == "linux" && os.Geteuid() == 0
+		client.Capabilities.OSReinstall = client.OSReinstaller != nil
 		client.Capabilities.NodeSecurity = runtime.GOOS == "linux" && os.Geteuid() == 0
 		if capabilities.Docker {
 			client.NodeListener = agent.DockerLayer4Provisioner{Image: *haproxyImage}

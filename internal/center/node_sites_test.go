@@ -206,7 +206,7 @@ func TestNodeSiteCenterMigration127PreservesSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.db.Exec(`INSERT INTO settings(key,value) VALUES('node-site-preserved','original'); DROP TABLE node_site_certmagic_storage; DROP TABLE node_site_tasks; DROP TABLE node_sites; DELETE FROM goose_db_version WHERE version_id=127; PRAGMA user_version=126;`)
+	_, err = s.db.Exec(`INSERT INTO settings(key,value) VALUES('node-site-preserved','original'); DROP TABLE node_site_certmagic_storage; DROP TABLE node_site_tasks; DROP TABLE node_sites; DROP TABLE os_reinstall_tasks; DELETE FROM goose_db_version WHERE version_id>=127; PRAGMA user_version=126;`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,10 +222,10 @@ func TestNodeSiteCenterMigration127PreservesSettings(t *testing.T) {
 	}
 	var version int
 	s.db.QueryRow(`PRAGMA user_version`).Scan(&version)
-	if version != 127 {
+	if version != centerSchemaVersion {
 		t.Fatal("wrong migrated version", version)
 	}
-	backups, _ := filepath.Glob(filepath.Join(dir, "migration-backups", "center-v126-before-v127-*.db"))
+	backups, _ := filepath.Glob(filepath.Join(dir, "migration-backups", "center-v126-before-v*-*.db"))
 	if len(backups) != 1 {
 		t.Fatal("expected one consistent backup", len(backups))
 	}

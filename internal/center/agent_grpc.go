@@ -294,7 +294,8 @@ func (s *agentGRPCService) TransitionExecution(ctx context.Context, input *agent
 	if input == nil {
 		return nil, status.Error(codes.InvalidArgument, "execution is required")
 	}
-	if _, err := s.authenticate(ctx, input.AgentId); err != nil {
+	credential, err := s.authenticate(ctx, input.AgentId)
+	if err != nil {
 		return nil, err
 	}
 	var value controlplane.ExecutionTransitionRequest
@@ -309,7 +310,6 @@ func (s *agentGRPCService) TransitionExecution(ctx context.Context, input *agent
 		}
 		return grpcDocument(map[string]bool{"ready": ready})
 	}
-	var err error
 	switch value.Action {
 	case "start":
 		err = store.StartExecution(ctx, input.AgentId, value.SessionID, input.ExecutionId, value.Digest)
@@ -317,6 +317,21 @@ func (s *agentGRPCService) TransitionExecution(ctx context.Context, input *agent
 		err = store.CheckExecutionStep(ctx, input.AgentId, value.SessionID, input.ExecutionId, value.Phase)
 	case "renew":
 		err = store.RenewExecution(ctx, input.AgentId, value.SessionID, input.ExecutionId)
+	case "os-reinstall-backup":
+		if value.ReinstallBackup == nil {
+			return nil, status.Error(codes.InvalidArgument, "reinstall backup is required")
+		}
+		err = store.RecordOSReinstallBackup(ctx, input.AgentId, value.SessionID, input.ExecutionId, *value.ReinstallBackup)
+	case "os-reinstall-arm":
+		if value.ReinstallArm == nil {
+			return nil, status.Error(codes.InvalidArgument, "reinstall arming evidence is required")
+		}
+		err = store.ArmOSReinstall(ctx, input.AgentId, value.SessionID, input.ExecutionId, *value.ReinstallArm)
+	case "os-reinstall-reconnect":
+		if value.ReinstallReconnect == nil {
+			return nil, status.Error(codes.InvalidArgument, "reinstall reconnect evidence is required")
+		}
+		err = store.CompleteOSReinstall(ctx, input.AgentId, credential, value.SessionID, input.ExecutionId, *value.ReinstallReconnect)
 	case "helper-step":
 		err = store.CheckUpdateHelperStep(ctx, input.AgentId, value.SessionID, input.ExecutionId, value.Phase)
 	case "stop":

@@ -588,8 +588,9 @@ func (s *Store) CheckExecutionStep(ctx context.Context, agentID, sessionID, id, 
 	now := s.now().UTC()
 	result, err := s.db.ExecContext(ctx, `UPDATE task_executions SET phase=?,updated_at=?,expires_at=?
 		WHERE id=? AND agent_id=? AND session_id=? AND state='running' AND phase<>'result_received' AND disposition='' AND expires_at>?
-		AND EXISTS(SELECT 1 FROM agent_execution_sessions WHERE agent_id=? AND session_id=?)`, phase,
-		now.Format(time.RFC3339Nano), now.Add(taskLeaseDuration).Format(time.RFC3339Nano), id, agentID, sessionID, now.Format(time.RFC3339Nano), agentID, sessionID)
+		AND EXISTS(SELECT 1 FROM agent_execution_sessions WHERE agent_id=? AND session_id=?)
+		AND (kind<>'node.os-reinstall' OR (phase='started' AND ?='apply'))`, phase,
+		now.Format(time.RFC3339Nano), now.Add(taskLeaseDuration).Format(time.RFC3339Nano), id, agentID, sessionID, now.Format(time.RFC3339Nano), agentID, sessionID, phase)
 	if err != nil {
 		return err
 	}

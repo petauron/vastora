@@ -24,6 +24,8 @@ func validateExecutionProjection(ctx context.Context, tx *sql.Tx, id string, suc
 		query = `SELECT state FROM tailscale_update_tasks WHERE id=? AND agent_id=? AND attempt=?`
 	case "node.site.certificate":
 		query = `SELECT state FROM node_site_tasks WHERE id=? AND agent_id=? AND attempt=?`
+	case "node.os-reinstall":
+		query = "SELECT state FROM os_reinstall_tasks WHERE id=? AND agent_id=? AND attempt=?"
 	case "node.security":
 		query = `SELECT state FROM node_security_tasks WHERE id=? AND agent_id=? AND attempt=?`
 	case "node.ip-quality":
@@ -89,6 +91,9 @@ func validateExecutionProjection(ctx context.Context, tx *sql.Tx, id string, suc
 		return err
 	}
 	if succeeded && (state == "succeeded" || state == "awaiting_decision" || state == "ready" || state == "stopped") || !succeeded && state == "failed" {
+		return nil
+	}
+	if !succeeded && kind == "node.os-reinstall" && state == "unknown" {
 		return nil
 	}
 	if succeeded && kind == "application.command" && state == "failed" {

@@ -23,6 +23,7 @@ import (
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/nodesite"
+	"github.com/petauron/vastora/internal/osreinstall"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 	"github.com/petauron/vastora/internal/senulun"
@@ -39,6 +40,7 @@ type AgentTask struct {
 	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
+	OSReinstall               *osreinstall.Task                    `json:"osReinstall,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
 	SenulunRestore            *senulun.RestoreCredentials          `json:"pulseRestore,omitempty"`
 	SenulunReporting          *senulun.ReportingTask               `json:"pulseReporting,omitempty"`
@@ -224,6 +226,33 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 				}
 			}
 		}
+		return nil, errExecutionBlocked
+	}
+	// A destructive OS task exclusively owns this fresh node until it has
+	// finished or an operator explicitly resolves an uncertain outcome.
+	if requiredTaskID == "" {
+		reinstall, rejected, reinstallErr := s.claimOSReinstall(ctx, tx, agentID)
+		if reinstallErr != nil {
+			return nil, reinstallErr
+		}
+		if rejected {
+			if err := commitTask(tx, nil); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+		if reinstall != nil {
+			if err := commitTask(tx, reinstall); err != nil {
+				return nil, err
+			}
+			return reinstall, nil
+		}
+	}
+	var osReinstallBlocked bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM os_reinstall_tasks WHERE agent_id=? AND state NOT IN ('succeeded','cancelled'))", agentID).Scan(&osReinstallBlocked); err != nil {
+		return nil, err
+	}
+	if osReinstallBlocked {
 		return nil, errExecutionBlocked
 	}
 	// Self-update is the first ordinary task so older Agents cannot consume
@@ -761,6 +790,9 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 			return errInvalidReconciliationDisposition
 		}
 		return s.completeNodeSite(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
+	}
+	if strings.HasPrefix(taskID, "os-reinstall-") {
+		return s.completeOSReinstallFailure(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, reconciliationRequired)
 	}
 	if strings.HasPrefix(taskID, "node-security-") {
 		if reconciliationRequired {

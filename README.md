@@ -189,3 +189,4 @@ Existing Glivela business installations require the [final data handover](docs/G
 安全基线仍单独管理。读取失败或缺少节点映射时显示未知，可手动刷新。
 
 Node-local Daylight certificates and shared Caddy ownership: [configuration, handover and recovery](docs/node-site-certificates.md) (#1128).
+新购 KVM VPS 的网页重装条件、网络恢复边界与操作步骤见 [KVM Debian 13 网页重装](docs/os-reinstall.md)。系统盘将被清空，生产重装仍须单独确认。
