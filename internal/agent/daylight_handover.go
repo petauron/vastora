@@ -308,6 +308,8 @@ func (h *daylightHandover) rollback(ctx context.Context, receipt *InstanceResour
 		}
 	}
 	*receipt = j.BeforeReceipt
+	// Restore resources, but keep the failed operation as the review owner.
+	receipt.TaskID = j.TaskID
 	if err := persist(); err != nil {
 		return err
 	}
@@ -475,7 +477,7 @@ func (s *Store) recoverDaylightHandovers(ctx context.Context) error {
 	}
 	for _, state := range states {
 		j := state.Handover
-		if j == nil || j.State == "completed" || j.State == "rolled_back" {
+		if j == nil || j.State == "completed" {
 			continue
 		}
 		id := state.ApplicationID
@@ -487,6 +489,16 @@ func (s *Store) recoverDaylightHandovers(ctx context.Context) error {
 		receipt, err := executor.ReadResources(id)
 		if err != nil {
 			return err
+		}
+		if j.State == "rolled_back" {
+			if receipt.State != "review-required" || receipt.TaskID == j.TaskID {
+				continue
+			}
+			// Repair only the exact previous task identity recorded by this
+			// rollback. Revalidate its resources below; never replay the upgrade.
+			if receipt.TaskID != j.BeforeReceipt.TaskID {
+				return errors.New("agent: rolled-back website review ownership changed")
+			}
 		}
 		installed, err := s.AppliedInstallation(ctx, j.BeforeReceipt.AppKey)
 		if err != nil {
