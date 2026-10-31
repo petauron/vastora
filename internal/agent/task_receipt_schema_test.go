@@ -28,7 +28,7 @@ func TestTaskReceiptSchemaV19BacksUpWALAndPreservesArchive(t *testing.T) {
 	}
 	defer old.Close()
 	dropTaskReceiptIndexesForFixture(t, old.db)
-	if _, err := old.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; DROP TABLE meridian_runtime_state; DROP TABLE node_site_journal; PRAGMA user_version = 18; PRAGMA wal_autocheckpoint = 0`); err != nil {
+	if _, err := old.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; DROP TABLE meridian_runtime_state; DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version = 18; PRAGMA wal_autocheckpoint = 0`); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -105,7 +105,7 @@ func TestTaskReceiptSchemaV19FailsClosed(t *testing.T) {
 			}
 			defer store.Close()
 			dropTaskReceiptIndexesForFixture(t, store.db)
-			if _, err := store.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; DROP TABLE meridian_runtime_state; DROP TABLE node_site_journal; PRAGMA user_version = 18`); err != nil {
+			if _, err := store.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; DROP TABLE meridian_runtime_state; DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version = 18`); err != nil {
 				t.Fatal(err)
 			}
 			if failure == "backup" {

@@ -31,8 +31,9 @@ type nativePreparedFile struct {
 }
 
 type nativePreparedPackage struct {
-	Plan  nativePackagePlan
-	Files map[string]nativePreparedFile
+	BeforeReplace func(context.Context) error
+	Plan          nativePackagePlan
+	Files         map[string]nativePreparedFile
 }
 
 type nativeInstallationService struct {

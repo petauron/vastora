@@ -100,7 +100,7 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 			}
 		}
 		if version == 2 {
-			bundle := &NativeServicesPackageBackend{Manager: manager, StateDirectory: e.packageDirectory()}
+			bundle := &NativeServicesPackageBackend{Manager: manager, StateDirectory: e.packageDirectory(), Store: e.Store}
 			return (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: bundle}).Deploy(ctx, task)
 		}
 		if version != 1 {
@@ -148,6 +148,9 @@ func (e ApplicationExecutor) PackageCapabilities(dockerAvailable bool) (map[stri
 	capabilities := []string{"root", "host-network", "host-path", "devices"}
 	if versions["systemd"] == 2 {
 		capabilities = append(capabilities, "native-services")
+		if e.Store != nil && e.Store.sharedCaddy != nil {
+			capabilities = append(capabilities, "shared-caddy")
+		}
 	}
 	return versions, capabilities
 }

@@ -92,6 +92,11 @@ func (b *NativeServicesPackageBackend) Remove(ctx context.Context, task Deployme
 	if err := b.Backup(ctx, task, receipt); err != nil {
 		return err
 	}
+	if b.Store != nil && daylightKey(task.AppKey) {
+		if err := b.Store.removeSharedDaylight(ctx, task.ApplicationID, task.DeleteData); err != nil {
+			return err
+		}
+	}
 	for _, unit := range plan.Units {
 		if resourceNamed(receipt, "unit", unit.LogicalName) == nil {
 			continue

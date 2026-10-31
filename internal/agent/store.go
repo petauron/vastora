@@ -40,6 +40,8 @@ type Store struct {
 	dataDir                    string
 	now                        func() time.Time
 	gatewayMutationMu          sync.Mutex
+	sharedCaddy                *CaddyGatewayDriver
+	reloadSharedCaddy          func(context.Context) error
 	landingMutationMu          sync.Mutex
 	landingCancel              context.CancelFunc
 	landingDone                chan struct{}
@@ -111,7 +113,7 @@ type Connection struct {
 	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = 23
+const agentSchemaVersion = 24
 
 // CurrentSchemaVersion is the highest Agent database schema this executable
 // can open. The persistent host updater records it before a candidate can

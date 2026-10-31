@@ -27,6 +27,12 @@ type CaddyGatewayDriver struct {
 	AdminSocketPath string
 	HTTPClient      *http.Client
 	SystemGateway   SystemGatewayInspector
+	// Sites is the Agent-owned, durable set of website contributions. Every
+	// gateway reload includes it; a website never owns a separate /load writer.
+	Sites         func(context.Context) ([]CaddySite, error)
+	SiteRuntime   func(context.Context, gateway.DesiredState, []CaddySite) error
+	SiteIdle      func(context.Context) error
+	SiteContainer bool
 
 	mutationMu   sync.Mutex
 	mu           sync.RWMutex
@@ -89,6 +95,27 @@ func (driver *CaddyGatewayDriver) applyConfiguration(ctx context.Context, desire
 	if err != nil {
 		return err
 	}
+	if driver.Sites != nil {
+		sites, err := driver.Sites(ctx)
+		if err != nil {
+			return err
+		}
+		configuration, err = composeCaddySites(configuration, desired, sites, driver.SiteContainer)
+		if err != nil {
+			return err
+		}
+	}
+	if err := driver.load(ctx, configuration); err != nil {
+		return err
+	}
+	driver.mu.Lock()
+	driver.state = desired.Sorted()
+	driver.certificates = append([]gateway.Certificate(nil), certificates...)
+	driver.mu.Unlock()
+	return nil
+}
+
+func (driver *CaddyGatewayDriver) load(ctx context.Context, configuration []byte) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, driver.AdminURL+"/load", bytes.NewReader(configuration))
 	if err != nil {
 		return err
@@ -107,10 +134,6 @@ func (driver *CaddyGatewayDriver) applyConfiguration(ctx context.Context, desire
 		}
 		return fmt.Errorf("caddy rejected configuration: %s", message)
 	}
-	driver.mu.Lock()
-	driver.state = desired.Sorted()
-	driver.certificates = append([]gateway.Certificate(nil), certificates...)
-	driver.mu.Unlock()
 	return nil
 }
 

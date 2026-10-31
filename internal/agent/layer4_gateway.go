@@ -97,6 +97,15 @@ func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desi
 	return nil
 }
 
+func (driver *ManagedGatewayDriver) ReloadWebsites(ctx context.Context) error {
+	driver.mutationMu.Lock()
+	defer driver.mutationMu.Unlock()
+	if driver.Caddy == nil {
+		return errors.New("agent: managed Caddy is unavailable")
+	}
+	return driver.Caddy.ReloadSites(ctx)
+}
+
 func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -684,6 +693,15 @@ func (provisioner ManagedGatewayProvisioner) Remove(ctx context.Context) error {
 		return errors.New("agent: managed gateway provisioner is not configured")
 	}
 	if provisioner.Driver != nil {
+		if provisioner.Driver.Caddy != nil && provisioner.Driver.Caddy.Sites != nil {
+			sites, err := provisioner.Driver.Caddy.Sites(ctx)
+			if err != nil {
+				return err
+			}
+			if len(sites) != 0 {
+				return errors.New("agent: the shared gateway still serves websites; migrate or uninstall those websites before disabling it")
+			}
+		}
 		retained, err := provisioner.Driver.RetainSystemRoutes(ctx)
 		if err != nil || retained {
 			return err

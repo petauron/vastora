@@ -44,7 +44,7 @@ func TestLandingOnlySchemaMigrationPreservesOrdinaryPurpose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; DROP TABLE node_site_journal; PRAGMA user_version=21`); err != nil {
+	if _, err = s.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version=21`); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Close(); err != nil {

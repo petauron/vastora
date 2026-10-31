@@ -139,7 +139,7 @@ func TestAgentSchemaV2MigratesResetJournalForward(t *testing.T) {
 		);
 		DROP TABLE applied_installations_v5_test;
 		ALTER TABLE control_plane_connection DROP COLUMN landing_only;
-		DROP TABLE node_site_journal; PRAGMA user_version = 2`); err != nil {
+		DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version = 2`); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestAgentSchemaV8PurgesOnlyUnrestorableLegacyState(t *testing.T) {
 		ALTER TABLE control_plane_connection DROP COLUMN ca_certificate_pem;
 		ALTER TABLE task_receipts DROP COLUMN runtime_generation;
 		ALTER TABLE control_plane_connection DROP COLUMN landing_only;
-		DROP TABLE node_site_journal; PRAGMA user_version = 7`); err != nil {
+		DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version = 7`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -251,7 +251,7 @@ func TestAgentSchemaV10PreservesCompletionForArchival(t *testing.T) {
 	DROP TABLE landing_runtime_state;
 	DROP TABLE node_listener_applied_state;
 	ALTER TABLE control_plane_connection DROP COLUMN landing_only;
-	DROP TABLE node_site_journal; PRAGMA user_version = 9`); err != nil {
+	DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version = 9`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

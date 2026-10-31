@@ -9,6 +9,8 @@ import (
 )
 
 type NativeServicesPackageBackend struct {
+	Store          *Store
+	website        *daylightHandover
 	Manager        SystemdHostApplicationManager
 	StateDirectory string
 	CheckHealth    func(context.Context, string, int, catalog.Service) error
@@ -33,6 +35,13 @@ func (b *NativeServicesPackageBackend) Prepare(ctx context.Context, task Deploym
 		}
 	}
 	b.prepared = &prepared
+	if b.Store != nil && daylightKey(task.AppKey) && task.Operation != "configure" {
+		website, err := b.prepareWebsite(ctx, task, receipt)
+		if err != nil {
+			return err
+		}
+		b.website = website
+	}
 	return nil
 }
 
@@ -50,6 +59,9 @@ func (b *NativeServicesPackageBackend) Apply(ctx context.Context, task Deploymen
 	}
 	if task.Operation == "configure" {
 		return errors.New("agent: native service port updates must use the metadata-only executor")
+	}
+	if b.website != nil {
+		return b.website.apply(ctx, task, receipt, persist)
 	}
 	return applyNativePackage(ctx, b.Manager, task, *b.prepared, receipt, persist)
 }

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/petauron/vastora/internal/secret"
 )
 
 func TestMeridianStateMigrationPreservesLegacyJournal(t *testing.T) {
@@ -14,12 +16,15 @@ func TestMeridianStateMigrationPreservesLegacyJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := []byte("sealed-legacy-xray-worker-state")
+	legacy, err := secret.Seal(old.key, []byte("legacy-xray-worker-state"), []byte("agent-xray-worker"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := old.db.Exec(`DELETE FROM xray_worker_state;
 		INSERT INTO xray_worker_state(id,sealed_state) VALUES(1,?);
 		DROP TABLE meridian_runtime_state;
 		ALTER TABLE control_plane_connection DROP COLUMN landing_only;
-		DROP TABLE node_site_journal; PRAGMA user_version=20`, legacy); err != nil {
+		DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version=20`, legacy); err != nil {
 		t.Fatal(err)
 	}
 	if err := old.Close(); err != nil {

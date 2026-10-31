@@ -39,6 +39,7 @@ type SystemGatewayInspector interface {
 }
 
 type DockerGatewayProvisioner struct {
+	Sites           func(context.Context) ([]CaddySite, error)
 	Socket          string
 	Image           string
 	Container       string
@@ -91,7 +92,7 @@ func (provisioner DockerGatewayProvisioner) Reconcile(ctx context.Context, desir
 	return provisioner.reconcile(ctx, &desired)
 }
 
-func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desired *gateway.DesiredState) error {
+func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desired *gateway.DesiredState, websiteOverride ...[]CaddySite) error {
 	settings, err := provisioner.settings()
 	if err != nil {
 		return err
@@ -128,6 +129,18 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	if desired != nil {
 		exposedPorts, portBindings, err = gatewayruntime.DockerPorts(*desired)
 		if err != nil {
+			return err
+		}
+		var sites []CaddySite
+		if len(websiteOverride) != 0 {
+			sites = websiteOverride[0]
+		} else if provisioner.Sites != nil {
+			sites, err = provisioner.Sites(ctx)
+			if err != nil {
+				return err
+			}
+		}
+		if err := addWebsiteDockerPorts(exposedPorts, portBindings, *desired, sites); err != nil {
 			return err
 		}
 	}
@@ -189,7 +202,7 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:        settings.Image,
-			Cmd:          []string{"caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"},
+			Cmd:          []string{"caddy", "run", "--resume", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"},
 			ExposedPorts: exposedPorts,
 			Labels:       labels,
 		},
@@ -293,6 +306,15 @@ func gatewayMounts(settings DockerGatewayProvisioner) []mount.Mount {
 }
 
 func (provisioner DockerGatewayProvisioner) Remove(ctx context.Context) error {
+	if provisioner.Sites != nil {
+		sites, err := provisioner.Sites(ctx)
+		if err != nil {
+			return err
+		}
+		if len(sites) != 0 {
+			return errors.New("agent: shared Caddy still serves managed websites")
+		}
+	}
 	docker, err := provisioner.client()
 	if err != nil {
 		return err
