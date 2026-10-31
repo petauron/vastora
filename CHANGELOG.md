@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.393](https://github.com/petauron/vastora/compare/v0.1.0-alpha.392...v0.1.0-alpha.393) (2026-10-31)
+
+
+### Bug Fixes
+
+* **agent:** report configured shared Caddy on native hosts ([8447454](https://github.com/petauron/vastora/commit/8447454391ce5ff667a00e6a639f2ec2f7487863))
+
 ## [0.1.0-alpha.392](https://github.com/petauron/vastora/compare/v0.1.0-alpha.391...v0.1.0-alpha.392) (2026-10-31)
 
 
