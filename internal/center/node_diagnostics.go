@@ -13,6 +13,8 @@ import (
 )
 
 const carrierTargetRevision = 1
+const osReinstallInspectionTargets = `["os-reinstall-inspect-v1"]`
+const osReinstallInspectionPairKey = "os-reinstall-inspect-v1"
 
 const nodeDiagnosticsSchema80SQL = `CREATE TABLE node_diagnostic_checks (
  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -54,7 +56,7 @@ type NodeDiagnosticView struct {
 }
 
 func (s *Store) ListNodeDiagnostics(ctx context.Context) ([]NodeDiagnosticView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT agent_id,kind,id,state,error,target_revision,targets_json,result_json,checked_at,updated_at,lease_expires_at FROM node_diagnostic_checks ORDER BY agent_id,kind`)
+	rows, err := s.db.QueryContext(ctx, `SELECT agent_id,kind,id,state,error,target_revision,targets_json,result_json,checked_at,updated_at,lease_expires_at FROM node_diagnostic_checks WHERE pair_key<>? ORDER BY agent_id,kind`, osReinstallInspectionPairKey)
 	if err != nil {
 		return nil, err
 	}
@@ -136,6 +138,43 @@ func (s *Store) ListNodeDiagnostics(ctx context.Context) ([]NodeDiagnosticView, 
 }
 
 func (s *Store) StartNodeDiagnostic(ctx context.Context, agentID, kind string) error {
+	return s.startNodeDiagnostic(ctx, agentID, kind, false)
+}
+
+func (s *Store) StartOSReinstallInspection(ctx context.Context, agentID string) error {
+	return s.startNodeDiagnostic(ctx, agentID, nodediagnostics.HostProfileKind, true)
+}
+
+// OSReinstallInspection returns only the latest preflight for this Agent.
+// It is separate from the ordinary host profile, which remains visible to
+// existing diagnostic and network-optimization views.
+func (s *Store) OSReinstallInspection(ctx context.Context, agentID string) (*NodeDiagnosticView, error) {
+	var value NodeDiagnosticView
+	var raw, lease string
+	err := s.db.QueryRowContext(ctx, `SELECT agent_id,kind,id,state,error,target_revision,result_json,checked_at,updated_at,lease_expires_at FROM node_diagnostic_checks WHERE agent_id=? AND kind=? AND pair_key=? AND targets_json=?`, agentID, nodediagnostics.HostProfileKind, osReinstallInspectionPairKey, osReinstallInspectionTargets).Scan(&value.AgentID, &value.Kind, &value.ID, &value.State, &value.Error, &value.TargetRevision, &raw, &value.CheckedAt, &value.UpdatedAt, &lease)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if raw != "null" {
+		var result nodediagnostics.Result
+		if json.Unmarshal([]byte(raw), &result) != nil || result.Validate(value.Kind) != nil || result.Host == nil || (result.Host.OSReinstall == nil && result.Host.OSReinstallError == "") {
+			return nil, errors.New("center: invalid stored reinstall inspection")
+		}
+		value.Host = result.Host
+	}
+	if value.State == "running" {
+		expires, err := time.Parse(time.RFC3339Nano, lease)
+		if err != nil || !expires.After(s.now()) {
+			value.State, value.Error = "failed", "interrupted"
+		}
+	}
+	return &value, nil
+}
+
+func (s *Store) startNodeDiagnostic(ctx context.Context, agentID, kind string, reinstallInspection bool) error {
 	if kind != nodediagnostics.NetworkKind && kind != nodediagnostics.ReturnRouteKind && kind != nodediagnostics.BandwidthKind && kind != nodediagnostics.HostProfileKind {
 		return errors.New("node_diagnostics_invalid_kind")
 	}
@@ -153,7 +192,7 @@ func (s *Store) StartNodeDiagnostic(ctx context.Context, agentID, kind string) e
 		return errors.New("node_diagnostics_node_offline")
 	}
 	var capabilities NodeCapabilities
-	if json.Unmarshal([]byte(capabilitiesJSON), &capabilities) != nil || kind == nodediagnostics.NetworkKind && !capabilities.NetworkDiagnostics || kind == nodediagnostics.ReturnRouteKind && !capabilities.ReturnRoute || kind == nodediagnostics.BandwidthKind && !capabilities.BandwidthDiagnostics || kind == nodediagnostics.HostProfileKind && !capabilities.HostProfile {
+	if json.Unmarshal([]byte(capabilitiesJSON), &capabilities) != nil || reinstallInspection && !capabilities.OSReinstallPreflight || kind == nodediagnostics.NetworkKind && !capabilities.NetworkDiagnostics || kind == nodediagnostics.ReturnRouteKind && !capabilities.ReturnRoute || kind == nodediagnostics.BandwidthKind && !capabilities.BandwidthDiagnostics || kind == nodediagnostics.HostProfileKind && !capabilities.HostProfile {
 		return errors.New("node_diagnostics_agent_upgrade_required")
 	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
@@ -168,7 +207,7 @@ func (s *Store) StartNodeDiagnostic(ctx context.Context, agentID, kind string) e
 	if busy {
 		return errors.New("node_diagnostics_node_busy")
 	}
-	input := nodediagnostics.Task{}
+	input := nodediagnostics.Task{OSReinstallPreflight: reinstallInspection}
 	if kind != nodediagnostics.HostProfileKind {
 		egress, err := agentPublicEgress(ctx, tx, agentID)
 		if err != nil {
@@ -182,6 +221,9 @@ func (s *Store) StartNodeDiagnostic(ctx context.Context, agentID, kind string) e
 	var targetsJSON []byte
 	if kind == nodediagnostics.HostProfileKind {
 		targetsJSON = []byte("[]")
+		if reinstallInspection {
+			targetsJSON = []byte(osReinstallInspectionTargets)
+		}
 	} else if kind == nodediagnostics.BandwidthKind {
 		input.BandwidthTargets = append([]nodediagnostics.BandwidthTarget(nil), nodediagnostics.BandwidthTargets...)
 		targetsJSON, err = json.Marshal(input.BandwidthTargets)
@@ -198,8 +240,14 @@ func (s *Store) StartNodeDiagnostic(ctx context.Context, agentID, kind string) e
 	}
 	id = "node-diagnostic-" + id
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err = tx.ExecContext(ctx, `INSERT INTO node_diagnostic_checks(agent_id,kind,id,bind_address,target_revision,targets_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)
- ON CONFLICT(agent_id,kind,pair_key) DO UPDATE SET id=excluded.id,bind_address=excluded.bind_address,target_revision=excluded.target_revision,targets_json=excluded.targets_json,state='pending',attempt=0,lease_expires_at='',error='',created_at=excluded.created_at,updated_at=excluded.updated_at`, agentID, kind, id, input.BindAddress, carrierTargetRevision, string(targetsJSON), now, now)
+	pairKey := ""
+	if reinstallInspection {
+		pairKey = osReinstallInspectionPairKey
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO node_diagnostic_checks(agent_id,kind,id,bind_address,target_revision,targets_json,pair_key,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'pending',?,?)
+ ON CONFLICT(agent_id,kind,pair_key) DO UPDATE SET id=excluded.id,bind_address=excluded.bind_address,target_revision=excluded.target_revision,targets_json=excluded.targets_json,state='pending',attempt=0,lease_expires_at='',error='',created_at=excluded.created_at,updated_at=excluded.updated_at,
+ result_json=CASE WHEN excluded.targets_json='["os-reinstall-inspect-v1"]' OR node_diagnostic_checks.targets_json='["os-reinstall-inspect-v1"]' THEN 'null' ELSE node_diagnostic_checks.result_json END,
+ checked_at=CASE WHEN excluded.targets_json='["os-reinstall-inspect-v1"]' OR node_diagnostic_checks.targets_json='["os-reinstall-inspect-v1"]' THEN '' ELSE node_diagnostic_checks.checked_at END`, agentID, kind, id, input.BindAddress, carrierTargetRevision, string(targetsJSON), pairKey, now, now)
 	if err != nil {
 		return err
 	}
@@ -216,7 +264,7 @@ func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID str
 	var id, kind, bindAddress, targetsJSON string
 	var attempt, revision int64
 	err := tx.QueryRowContext(ctx, `SELECT q.id,q.kind,q.bind_address,q.targets_json,q.attempt,q.target_revision FROM node_diagnostic_checks q JOIN agents a ON a.id=q.agent_id
- WHERE q.agent_id=? AND q.state='pending' AND ((q.kind='node.network-quality' AND json_extract(a.capabilities_json,'$.networkDiagnostics')=1) OR (q.kind='node.return-route' AND json_extract(a.capabilities_json,'$.returnRoute')=1) OR (q.kind='node.international-bandwidth' AND json_extract(a.capabilities_json,'$.bandwidthDiagnostics')=1) OR (q.kind='node.host-profile' AND json_extract(a.capabilities_json,'$.hostProfile')=1) OR (q.kind IN ('meridian.link-bandwidth','meridian.link-bandwidth-server') AND json_extract(a.capabilities_json,'$.meridianLinkBandwidth')=1 AND json_extract(a.capabilities_json,'$.meridianLinkRevision')=2))
+ WHERE q.agent_id=? AND q.state='pending' AND ((q.kind='node.network-quality' AND json_extract(a.capabilities_json,'$.networkDiagnostics')=1) OR (q.kind='node.return-route' AND json_extract(a.capabilities_json,'$.returnRoute')=1) OR (q.kind='node.international-bandwidth' AND json_extract(a.capabilities_json,'$.bandwidthDiagnostics')=1) OR (q.kind='node.host-profile' AND json_extract(a.capabilities_json,'$.hostProfile')=1 AND (q.targets_json='[]' OR (q.targets_json='["os-reinstall-inspect-v1"]' AND json_extract(a.capabilities_json,'$.osReinstallPreflight')=1))) OR (q.kind IN ('meridian.link-bandwidth','meridian.link-bandwidth-server') AND json_extract(a.capabilities_json,'$.meridianLinkBandwidth')=1 AND json_extract(a.capabilities_json,'$.meridianLinkRevision')=2))
  ORDER BY q.created_at,q.kind LIMIT 1`, agentID).Scan(&id, &kind, &bindAddress, &targetsJSON, &attempt, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -232,7 +280,11 @@ func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID str
 			input.LinkAuth, err = s.openMeridianLinkAuth(id, targetsJSON)
 		}
 	} else if kind == nodediagnostics.HostProfileKind {
-		if targetsJSON != "[]" {
+		switch targetsJSON {
+		case "[]":
+		case osReinstallInspectionTargets:
+			input.OSReinstallPreflight = true
+		default:
 			return nil, errors.New("center: invalid host profile targets")
 		}
 	} else if kind == nodediagnostics.BandwidthKind {
@@ -288,6 +340,14 @@ func (s *Store) completeNodeDiagnostic(ctx context.Context, commit projectionCom
 	if succeeded {
 		if len(raw) > nodediagnostics.MaxResultBytes || json.Unmarshal(raw, &envelope) != nil || envelope.NodeDiagnostics == nil || envelope.NodeDiagnostics.Validate(kind) != nil {
 			return errors.New("center: invalid node diagnostic result")
+		}
+		if kind == nodediagnostics.HostProfileKind && envelope.NodeDiagnostics.Error == "" {
+			host := envelope.NodeDiagnostics.Host
+			requested := targetsJSON == osReinstallInspectionTargets
+			hasEvidence := host != nil && (host.OSReinstall != nil || host.OSReinstallError != "")
+			if requested != hasEvidence {
+				return errors.New("center: host inspection does not match its task")
+			}
 		}
 		if kind == nodediagnostics.LinkBandwidthKind && envelope.NodeDiagnostics.Link != nil {
 			var target nodediagnostics.LinkBandwidthTask
@@ -348,4 +408,64 @@ func (s *Server) handleStartNodeDiagnostic(writer http.ResponseWriter, request *
 		return
 	}
 	writeJSON(writer, http.StatusAccepted, map[string]bool{"queued": true})
+}
+
+func (s *Server) handleStartOSReinstallInspection(writer http.ResponseWriter, request *http.Request) {
+	if err := s.store.StartOSReinstallInspection(request.Context(), request.PathValue("id")); err != nil {
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
+	writeJSON(writer, http.StatusAccepted, map[string]bool{"queued": true})
+}
+
+func (s *Server) handleGetOSReinstallInspection(writer http.ResponseWriter, request *http.Request) {
+	value, err := s.store.OSReinstallInspection(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, errors.New("node_diagnostics_read_failed"))
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"check": value})
+}
+
+func (s *Server) handleQueueOSReinstall(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	admin, err := s.requestAdminID(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	var input OSReinstallRequest
+	if err = decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	task, err := s.store.QueueOSReinstall(r.Context(), r.PathValue("id"), admin, input)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, task)
+}
+func (s *Server) handleGetOSReinstall(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	task, err := s.store.OSReinstallTask(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("os_reinstall_read_failed"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": task})
+}
+
+func (s *Server) handleRetireFailedOSReinstall(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	admin, err := s.requestAdminID(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	if err = s.store.RetireFailedOSReinstall(r.Context(), r.PathValue("id"), admin); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"retired": true})
 }

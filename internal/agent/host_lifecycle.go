@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/osreinstall"
 )
 
 // BeginHostDecommission transfers responsibility for a claimed cleanup from
@@ -132,4 +133,55 @@ func (c Client) CompleteHostUpdate(ctx context.Context, connection Connection, t
 	}
 	payload := map[string]any{"executionId": executionID, "sessionId": sessionID, "hostUpdateHelper": true, "attempt": attempt, "succeeded": updateErr == nil, "error": safeTaskError(updateErr), "result": ApplicationTaskResult{}, "reconciliationRequired": recoveryRequired}
 	return c.callAgentRPC(ctx, connection, rpcTaskCompletion, taskID, payload, nil, controlplane.MaxJSONPayload, false)
+}
+
+// RecordOSReinstallBackup returns only after Center has authenticated and
+// durably stored the encrypted backup and reviewed network evidence.
+func (c Client) RecordOSReinstallBackup(ctx context.Context, connection Connection, executionID, sessionID string, backup osreinstall.BackupEvidence) error {
+	if executionID == "" || sessionID == "" || connection.AgentID == "" || connection.Credential == "" {
+		return errors.New("agent: invalid reinstall backup receipt")
+	}
+	input := controlplane.ExecutionTransitionRequest{SessionID: sessionID, Action: "os-reinstall-backup", ReinstallBackup: &backup}
+	var result struct{ Recorded bool }
+	if err := c.callAgentRPC(ctx, connection, rpcExecutionTransition, executionID, input, &result, controlplane.MaxJSONPayload, false); err != nil {
+		return err
+	}
+	if !result.Recorded {
+		return errors.New("agent: Center did not confirm reinstall recovery")
+	}
+	return nil
+}
+
+// ArmOSReinstall consumes the one-time Center grant. The caller must not
+// proceed or automatically retry when the acknowledgment is lost.
+func (c Client) ArmOSReinstall(ctx context.Context, connection Connection, executionID, sessionID string, evidence osreinstall.ArmEvidence) error {
+	if executionID == "" || sessionID == "" || connection.AgentID == "" || connection.Credential == "" {
+		return errors.New("agent: invalid reinstall arming request")
+	}
+	input := controlplane.ExecutionTransitionRequest{SessionID: sessionID, Action: "os-reinstall-arm", ReinstallArm: &evidence}
+	var result struct{ Recorded bool }
+	if err := c.callAgentRPC(ctx, connection, rpcExecutionTransition, executionID, input, &result, controlplane.MaxJSONPayload, false); err != nil {
+		return err
+	}
+	if !result.Recorded {
+		return errors.New("agent: Center did not confirm reinstall arming")
+	}
+	return nil
+}
+
+// CompleteOSReinstall sends post-boot evidence under the newly registered
+// Agent session. The original authenticated identity remains unchanged.
+func (c Client) CompleteOSReinstall(ctx context.Context, connection Connection, executionID, sessionID string, report osreinstall.ReconnectReport) error {
+	if executionID == "" || sessionID == "" || connection.AgentID == "" || connection.Credential == "" {
+		return errors.New("agent: invalid reinstall reconnect")
+	}
+	input := controlplane.ExecutionTransitionRequest{SessionID: sessionID, Action: "os-reinstall-reconnect", ReinstallReconnect: &report}
+	var result struct{ Recorded bool }
+	if err := c.callAgentRPC(ctx, connection, rpcExecutionTransition, executionID, input, &result, controlplane.MaxJSONPayload, false); err != nil {
+		return err
+	}
+	if !result.Recorded {
+		return errors.New("agent: Center did not confirm reinstall reconnect")
+	}
+	return nil
 }

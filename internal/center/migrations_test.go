@@ -41,8 +41,8 @@ func TestFreshAndMigratedDatabasesHaveEquivalentSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A schema-122 fixture predates the Tailscale update table introduced by migration 125.
-	if _, err := old.db.Exec(`DROP TABLE node_site_certmagic_storage; DROP TABLE node_site_tasks; DROP TABLE node_sites; DROP TABLE tailscale_update_tasks; DELETE FROM goose_db_version; INSERT INTO goose_db_version(version_id,is_applied) VALUES(0,1),(122,1); PRAGMA user_version=122;`); err != nil {
+	// Reconstruct schema 122 before the tables introduced by migrations 125, 127 and 128.
+	if _, err := old.db.Exec(`DROP TABLE node_site_certmagic_storage; DROP TABLE node_site_tasks; DROP TABLE node_sites; DROP TABLE tailscale_update_tasks; DROP TABLE os_reinstall_tasks; DELETE FROM goose_db_version; INSERT INTO goose_db_version(version_id,is_applied) VALUES(0,1),(122,1); PRAGMA user_version=122;`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := old.db.Exec(`INSERT INTO secrets(id,sealed,created_at,updated_at) VALUES('baseline-preserved',X'0001FF','before','before')`); err != nil {

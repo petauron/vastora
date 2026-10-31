@@ -208,6 +208,9 @@ func verifyCenterDirectCiphertexts(ctx context.Context, db *sql.DB, key []byte) 
 		}
 	}
 
+	if err := verifyOSReinstallKeyBinding(ctx, db, key); err != nil {
+		return err
+	}
 	if exists, err := tableHasColumns(ctx, db, "three_x_ui_backups", "application_id", "revision", "sealed"); err != nil {
 		return err
 	} else if exists {
