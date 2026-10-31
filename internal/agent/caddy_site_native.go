@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/petauron/vastora/internal/gateway"
 )
@@ -180,7 +183,7 @@ func (runtime NativeCaddySiteRuntime) ReconcileWebsites(ctx context.Context, des
 	if err := runtime.Manager.run(ctx, "systemctl", "start", "vastora-caddy.service"); err != nil {
 		return err
 	}
-	return waitForCaddyAdminSocket(ctx, runtime.Manager.path(nativeCaddySocket))
+	return waitForNativeCaddyAdmin(ctx, runtime.Manager.path(nativeCaddySocket))
 }
 
 func readOwnedCaddyFile(path, digest string, maximum int64) ([]byte, error) {
@@ -196,4 +199,40 @@ func readOwnedCaddyFile(path, digest string, maximum int64) ([]byte, error) {
 		return nil, errors.New("agent: shared Caddy runtime file differs from its receipt")
 	}
 	return raw, nil
+}
+
+// A socket pathname can appear before Caddy accepts HTTP requests. Wait for the
+// actual private admin listener before the first combined configuration load.
+func waitForNativeCaddyAdmin(ctx context.Context, socketPath string) error {
+	if err := waitForCaddyAdminSocket(ctx, socketPath); err != nil {
+		return err
+	}
+	driver, err := NewCaddyGatewayDriver("unix://" + socketPath)
+	if err != nil {
+		return err
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		request, err := http.NewRequestWithContext(waitCtx, http.MethodGet, driver.AdminURL+"/config/admin/listen", nil)
+		if err != nil {
+			return err
+		}
+		response, err := driver.client().Do(request)
+		if err == nil {
+			var listen string
+			err = json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&listen)
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK && err == nil && listen == driver.AdminListen {
+				return nil
+			}
+		}
+		select {
+		case <-waitCtx.Done():
+			return errors.New("agent: native Caddy Admin API did not become ready")
+		case <-ticker.C:
+		}
+	}
 }

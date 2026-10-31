@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 )
@@ -231,7 +232,7 @@ func runSharedCaddyRuntimeLab(t *testing.T, failHandover bool) {
 			t.Fatal("failed handover did not restore the real old website", err, deployErr)
 		}
 		receipt, err := executor.ReadResources(id)
-		if err != nil || receipt.State != "review-required" || receipt.PackageVersion != manifest.Version {
+		if err != nil || receipt.State != "review-required" || receipt.PackageVersion != manifest.Version || receipt.TaskID != task.ID {
 			t.Fatal("failed handover lost the source receipt or review fence", err)
 		}
 		if err := inspectNativeOwnership(ctx, manager, id, plan, receipt); err != nil {
@@ -241,7 +242,32 @@ func runSharedCaddyRuntimeLab(t *testing.T, failHandover bool) {
 		if err != nil || state.Site != nil || state.Handover == nil || state.Handover.State != "rolled_back" {
 			t.Fatal("failed handover was not durably rolled back", err)
 		}
-		t.Log("PASS failed shared-runtime handover restores the real old website, owned program/unit and receipt while requiring operator review")
+		// Reproduce an already-rolled-back receipt from the affected release.
+		// Startup recovery repairs only the exact journal-owned task identity.
+		receipt.TaskID = state.Handover.BeforeReceipt.TaskID
+		if err := executor.save(receipt); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.recoverDaylightHandovers(ctx); err != nil {
+			t.Fatal("recover rolled-back review ownership", err)
+		}
+		receipt, err = executor.ReadResources(id)
+		if err != nil || receipt.TaskID != task.ID || receipt.State != "review-required" {
+			t.Fatal("rollback recovery lost the review fence", err)
+		}
+		if _, err := executor.Deploy(ctx, task); err == nil {
+			t.Fatal("unreviewed retry was accepted")
+		}
+		task.Kind, task.Attempt = "application.apply", 2
+		task.Authorization = controlplane.ExecutionAuthorization{ID: "new-lab-execution", Protocol: controlplane.ExecutionProtocol, Digest: strings.Repeat("a", 64)}
+		task.PackageRecovery = &controlplane.PackageRecovery{ExecutionID: "reviewed-lab-execution", TaskID: task.ID, Attempt: 1}
+		if _, err := executor.Deploy(ctx, task); err != nil {
+			t.Fatal("operator-reviewed retry of rolled-back handover", err)
+		}
+		if err := probeCaddySite(ctx, CaddySite{Hostname: "us1.example.com", Address: "127.0.0.1", HTTPPort: port, HTML: "<!doctype html><title>shared website</title>shared page"}); err != nil {
+			t.Fatal("reviewed retry website", err)
+		}
+		t.Log("PASS failure restores the old website and ownership; startup retains the review fence; only an explicitly reviewed retry completes the handover")
 		return
 	}
 	if deployErr != nil {
