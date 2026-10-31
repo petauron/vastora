@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.392](https://github.com/petauron/vastora/compare/v0.1.0-alpha.391...v0.1.0-alpha.392) (2026-10-31)
+
+
+### Bug Fixes
+
+* **web:** allow reviewed shared Caddy on native hosts ([57b05a7](https://github.com/petauron/vastora/commit/57b05a74b2d9090c9fb9097bc73e6973a671c3a8))
+
 ## [0.1.0-alpha.391](https://github.com/petauron/vastora/compare/v0.1.0-alpha.390...v0.1.0-alpha.391) (2026-10-31)
 
 
