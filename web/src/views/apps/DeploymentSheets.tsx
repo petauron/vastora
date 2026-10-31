@@ -70,6 +70,7 @@ function capabilityLabel(capability: string, language: Language) {
   const labels: Record<string, [string, string]> = {
     root: ["以 root 用户运行", "Run as root"],
     "host-network": ["使用宿主机网络", "Use host networking"],
+  "shared-caddy": ["使用共享网站与网关服务", "Use the shared website and gateway service"],
     "host-path": ["挂载声明的宿主机路径", "Mount declared host paths"],
     devices: ["访问声明的宿主机设备", "Access declared host devices"],
   };

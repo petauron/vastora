@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/nodesite"
 )
 
@@ -98,7 +99,7 @@ func TestNodeSiteAgentMigrationPreservesExistingState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`DROP TABLE node_site_journal; PRAGMA user_version=22;`); err != nil {
+	if _, err = s.db.Exec(`DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version=22;`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -108,7 +109,7 @@ func TestNodeSiteAgentMigrationPreservesExistingState(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 23 {
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != agentSchemaVersion {
 		t.Fatal("migration version", version, err)
 	}
 	keyAfter, _ := os.ReadFile(filepath.Join(dir, "agent.key"))
@@ -134,46 +135,57 @@ func TestNodeSiteAgentMigrationPreservesExistingState(t *testing.T) {
 
 type nodeSiteRuntimeFixture struct {
 	host            nodeSiteHost
+	path            string
 	mu              sync.Mutex
-	listener        net.Listener
 	restarts        int
 	rejectCandidate bool
-	running         bool
+	certificate     *tls.Certificate
+	admin           *httptest.Server
+	https           *httptest.Server
 }
 
 func newNodeSiteRuntimeFixture(t *testing.T) *nodeSiteRuntimeFixture {
 	t.Helper()
-	f := &nodeSiteRuntimeFixture{running: true}
-	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.mu.Lock()
-		up := f.running
-		f.mu.Unlock()
-		if up {
-			w.WriteHeader(204)
-		} else {
-			w.WriteHeader(503)
+	f := &nodeSiteRuntimeFixture{path: filepath.Join(t.TempDir(), "caddy.json")}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != "us1.example.com" {
+			http.NotFound(w, r)
+			return
 		}
-	}))
-	t.Cleanup(health.Close)
-	f.host = nodeSiteHost{path: filepath.Join(t.TempDir(), "caddy.json"), unit: "only-test-site.service", executable: "verified-daylight", healthURL: health.URL}
-	f.host.manager.RunInputCommand = func(ctx context.Context, in io.Reader, name string, args ...string) error {
-		if name != f.host.executable || len(args) != 3 || args[0] != "validate" {
-			return errors.New("unexpected validation command")
-		}
-		var v map[string]any
-		return json.NewDecoder(in).Decode(&v)
-	}
-	f.host.manager.RunCommand = func(ctx context.Context, name string, args ...string) error {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, "packaged page")
+	})
+	private := httptest.NewServer(handler)
+	t.Cleanup(private.Close)
+	_, portText, _ := net.SplitHostPort(private.Listener.Addr().String())
+	port, _ := strconv.Atoi(portText)
+	f.host.site = CaddySite{ApplicationID: "site-instance", Hostname: "us1.example.com", Address: "127.0.0.1", HTTPPort: port, HTML: "packaged page"}
+	f.https = httptest.NewUnstartedServer(handler)
+	f.https.EnableHTTP2 = true
+	f.https.TLS = &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		if name != "systemctl" || len(args) != 2 || args[0] != "restart" || args[1] != f.host.unit {
-			return errors.New("attempted to control another service")
+		if f.certificate == nil {
+			return nil, errors.New("no configured certificate")
 		}
-		f.restarts++
-		raw, err := os.ReadFile(f.host.path)
+		return f.certificate, nil
+	}}
+	f.https.StartTLS()
+	t.Cleanup(f.https.Close)
+	f.admin = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/load" {
+			http.NotFound(w, r)
+			return
+		}
+		raw, err := io.ReadAll(r.Body)
 		if err != nil {
-			return err
+			t.Error(err)
+			w.WriteHeader(400)
+			return
 		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.restarts++
 		var c struct {
 			Apps struct {
 				TLS struct {
@@ -189,51 +201,47 @@ func newNodeSiteRuntimeFixture(t *testing.T) *nodeSiteRuntimeFixture {
 			} `json:"apps"`
 		}
 		if err = json.Unmarshal(raw, &c); err != nil {
-			return err
+			t.Error(err)
+			w.WriteHeader(400)
+			return
 		}
 		if len(c.Apps.TLS.Certificates.Load) > 0 && f.rejectCandidate {
-			return errors.New("injected candidate restart failure")
+			w.WriteHeader(400)
+			return
 		}
-		if f.listener != nil {
-			f.listener.Close()
-			f.listener = nil
-		}
-		f.running = true
-		if len(c.Apps.TLS.Certificates.Load) == 0 {
-			return nil
-		}
-		pair, err := tls.X509KeyPair([]byte(c.Apps.TLS.Certificates.Load[0].Certificate), []byte(c.Apps.TLS.Certificates.Load[0].Key))
-		if err != nil {
-			return err
-		}
-		address := c.Apps.HTTP.Servers["vastora-node-site"].Listen[0]
-		listener, err := tls.Listen("tcp", address, &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13, NextProtos: []string{"h2"}})
-		if err != nil {
-			return err
-		}
-		f.listener = listener
-		go func() {
-			for {
-				conn, e := listener.Accept()
-				if e != nil {
-					return
-				}
-				go func() { defer conn.Close(); _ = conn.(*tls.Conn).Handshake() }()
+		if len(c.Apps.TLS.Certificates.Load) > 0 {
+			pair, err := tls.X509KeyPair([]byte(c.Apps.TLS.Certificates.Load[0].Certificate), []byte(c.Apps.TLS.Certificates.Load[0].Key))
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(400)
+				return
 			}
-		}()
-		return nil
-	}
-	t.Cleanup(func() {
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		if f.listener != nil {
-			f.listener.Close()
+			f.certificate = &pair
 		}
-	})
-	if err := os.WriteFile(f.host.path, nodeSiteTestConfig(), 0600); err != nil {
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(f.admin.Close)
+	if err := os.WriteFile(f.path, nodeSiteTestConfig(), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return f
+}
+
+func (f *nodeSiteRuntimeFixture) attach(t *testing.T, store *Store) {
+	t.Helper()
+	driver, err := NewCaddyGatewayDriver(f.admin.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver.SiteRuntime = func(context.Context, gateway.DesiredState, []CaddySite) error { return nil }
+	if err := store.ConfigureSharedCaddy(driver); err != nil {
+		t.Fatal(err)
+	}
+}
+func (f *nodeSiteRuntimeFixture) loads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.restarts
 }
 func freeNodeSitePort(t *testing.T) int {
 	t.Helper()
@@ -256,9 +264,10 @@ func TestNodeSiteActivationReplayAndRollback(t *testing.T) {
 			defer s.Close()
 			ctx := context.Background()
 			f := newNodeSiteRuntimeFixture(t)
+			f.attach(t, s)
 			f.rejectCandidate = failure
 			task := nodeSiteTestTask()
-			task.Port = freeNodeSitePort(t)
+			task.Port = f.https.Listener.Addr().(*net.TCPAddr).Port
 			key, privateKey := nodeSiteTestKey(t)
 			task.PrivateKeyPEM = privateKey
 			task.CertificatePEM = nodeSiteTestChain(t, key, task.Hostname)
@@ -271,8 +280,8 @@ func TestNodeSiteActivationReplayAndRollback(t *testing.T) {
 				if err != nil || result.State != "applied" {
 					t.Fatal("activation", result.State, err)
 				}
-				before := f.restarts
-				if _, err = s.executeNodeSiteOnHost(ctx, task, f.host); err != nil || f.restarts != before {
+				before := f.loads()
+				if _, err = s.executeNodeSiteOnHost(ctx, task, f.host); err != nil || f.loads() != before {
 					t.Fatal("response replay restarted website", err)
 				}
 				task.Action = "rollback"
@@ -283,7 +292,7 @@ func TestNodeSiteActivationReplayAndRollback(t *testing.T) {
 					t.Fatal("explicit rollback", err)
 				}
 			}
-			raw, _ := os.ReadFile(f.host.path)
+			raw, _ := os.ReadFile(f.path)
 			if !bytes.Equal(raw, nodeSiteTestConfig()) {
 				t.Fatal("previous configuration not restored exactly")
 			}
@@ -306,11 +315,16 @@ func TestNodeSiteInterruptedJournalRecoveryAndConflict(t *testing.T) {
 			ctx := context.Background()
 			f := newNodeSiteRuntimeFixture(t)
 			task := nodeSiteTestTask()
+			task.Port = f.https.Listener.Addr().(*net.TCPAddr).Port
 			key, privateKey := nodeSiteTestKey(t)
 			task.CertificatePEM = nodeSiteTestChain(t, key, task.Hostname)
 			task.PrivateKeyPEM = privateKey
-			candidate := []byte(`{"interrupted":true}`)
-			j := nodeSiteJournal{Task: task, State: "applying", Previous: nodeSiteTestConfig(), Candidate: candidate}
+			previous := f.host.site
+			site := previous
+			site.TLSPort, site.Certificate = task.Port, gateway.Certificate{Hostname: task.Hostname, CertificatePEM: task.CertificatePEM, PrivateKeyPEM: task.PrivateKeyPEM}
+			before, _ := json.Marshal(previous)
+			candidate, _ := json.Marshal(site)
+			j := nodeSiteJournal{Runtime: 2, Task: task, State: "applying", Previous: before, Candidate: candidate}
 			if err = s.saveNodeSiteJournal(ctx, j); err != nil {
 				t.Fatal(err)
 			}
@@ -321,11 +335,10 @@ func TestNodeSiteInterruptedJournalRecoveryAndConflict(t *testing.T) {
 			if bytes.Contains(sealed, j.Previous) {
 				t.Fatal("recovery configuration is not encrypted")
 			}
-			current := candidate
 			if conflict {
-				current = []byte(`{"independent-change":true}`)
+				site.ApplicationID = "another-owner"
 			}
-			if err = os.WriteFile(f.host.path, current, 0600); err != nil {
+			if err = s.saveCaddySite(ctx, caddySiteJournal{ApplicationID: task.ApplicationID, State: "applied", Site: &site}); err != nil {
 				t.Fatal(err)
 			}
 			s.Close()
@@ -334,26 +347,27 @@ func TestNodeSiteInterruptedJournalRecoveryAndConflict(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
+			f.attach(t, s)
 			err = s.recoverNodeSiteJournals(ctx, func(ctx context.Context, saved nodesite.Task) (nodeSiteHost, error) {
 				if saved.ApplicationID != task.ApplicationID {
 					t.Fatal("wrong recovery owner")
 				}
 				return f.host, nil
 			})
-			raw, _ := os.ReadFile(f.host.path)
 			if conflict {
-				if err == nil || !bytes.Equal(raw, current) || f.restarts != 0 {
+				if err == nil || f.loads() != 0 {
 					t.Fatal("independent change overwritten")
 				}
 			} else {
-				if err != nil || !bytes.Equal(raw, j.Previous) || f.restarts != 1 {
+				state, stateErr := s.readCaddySite(ctx, task.ApplicationID)
+				if err != nil || stateErr != nil || state.Site == nil || state.Site.TLSPort != 0 || f.loads() != 1 {
 					t.Fatal("interrupted recovery failed", err)
 				}
-				again := f.restarts
+				again := f.loads()
 				if err = s.recoverNodeSiteJournals(ctx, func(context.Context, nodesite.Task) (nodeSiteHost, error) {
 					t.Fatal("completed recovery was rerun")
 					return f.host, nil
-				}); err != nil || f.restarts != again {
+				}); err != nil || f.loads() != again {
 					t.Fatal(err)
 				}
 			}
@@ -363,7 +377,10 @@ func TestNodeSiteInterruptedJournalRecoveryAndConflict(t *testing.T) {
 
 func TestNodeSiteConfigurationPreservesPrivateAndPublicListeners(t *testing.T) {
 	task := nodeSiteTestTask()
-	raw, err := nodeSiteConfiguration(nodeSiteTestConfig(), task, "chain", "key")
+	key, privateKey := nodeSiteTestKey(t)
+	chain := nodeSiteTestChain(t, key, task.Hostname)
+	site := CaddySite{ApplicationID: task.ApplicationID, Hostname: task.Hostname, Address: "127.0.0.1", HTTPPort: 25481, TLSPort: task.Port, HTML: "packaged page", Certificate: gateway.Certificate{Hostname: task.Hostname, CertificatePEM: chain, PrivateKeyPEM: privateKey}}
+	raw, err := composeCaddySites(nodeSiteTestConfig(), gateway.DesiredState{}, []CaddySite{site}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,14 +390,14 @@ func TestNodeSiteConfigurationPreservesPrivateAndPublicListeners(t *testing.T) {
 	servers := apps["http"].(map[string]any)["servers"].(map[string]any)
 	private := servers["private"].(map[string]any)
 	public := servers["public"].(map[string]any)
-	origin := servers["vastora-node-site"].(map[string]any)
+	origin := servers["site-"+packageIdentity(task.ApplicationID)+"-tls"].(map[string]any)
 	if private["listen"].([]any)[0] != "127.0.0.1:24481" || public["listen"].([]any)[0] != "[::1]:443" || origin["listen"].([]any)[0] != "127.0.0.1:24482" {
 		t.Fatal("listener ownership changed")
 	}
 	if !bytes.Contains(raw, []byte("old page")) {
 		t.Fatal("page routes lost")
 	}
-	if _, ok := apps["tls"].(map[string]any)["automation"]; ok {
-		t.Fatal("node ACME automation retained")
+	if _, ok := apps["tls"].(map[string]any)["automation"]; !ok {
+		t.Fatal("website update removed gateway certificate automation")
 	}
 }

@@ -211,11 +211,14 @@ func validatePackageTask(task DeploymentTask) error {
 		return errors.New("agent: unsupported package executor protocol")
 	}
 	for _, capability := range runtime.RequiredCapabilities {
-		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services"}, capability) {
+		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy"}, capability) {
 			return errors.New("agent: unsupported runtime capability")
 		}
 		if capability == "meridian-runtime" && task.AppKey != meridianKey {
 			return errors.New("agent: Glivela integration capability is reserved for its reviewed package")
+		}
+		if capability == "shared-caddy" && !daylightKey(task.AppKey) {
+			return errors.New("agent: shared Caddy is reserved for its reviewed website packages")
 		}
 		if !slices.Contains(task.AuthorizedCapabilities, capability) {
 			return errors.New("agent: runtime capability requires explicit administrator authorization: " + capability)

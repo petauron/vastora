@@ -607,14 +607,42 @@ func runAgent(arguments []string) error {
 				return err
 			}
 			caddyProvisioner := agent.DockerGatewayProvisioner{Image: *caddyImage, AdminListen: caddyDriver.AdminListen, AdminSocketPath: caddyDriver.AdminSocketPath}
+			caddyProvisioner.Sites = store.SharedCaddySites
 			caddyDriver.SystemGateway = caddyProvisioner
+			caddyDriver.SiteContainer = true
+			caddyDriver.SiteRuntime = caddyProvisioner.ReconcileWebsites
 			layer4 := agent.DockerLayer4Provisioner{Image: *haproxyImage}
 			managedDriver := &agent.ManagedGatewayDriver{Caddy: caddyDriver, Layer4: layer4, Runtime: caddyProvisioner}
+			if err := store.ConfigureManagedCaddy(managedDriver); err != nil {
+				return err
+			}
 			client.GatewayDriver = managedDriver
 			client.GatewayProvisioner = agent.ManagedGatewayProvisioner{
 				Caddy:  caddyProvisioner,
 				Layer4: layer4,
 				Driver: managedDriver,
+			}
+		}
+		if !capabilities.Gateway && !capabilities.LandingOnly && runtime.GOOS == "linux" && os.Geteuid() == 0 {
+			admin := *caddyAdmin
+			if !capabilities.Docker {
+				admin = "unix:///run/vastora-caddy/admin.sock"
+			}
+			driver, err := agent.NewCaddyGatewayDriver(admin)
+			if err != nil {
+				return err
+			}
+			if capabilities.Docker {
+				provisioner := agent.DockerGatewayProvisioner{Image: *caddyImage, AdminListen: driver.AdminListen, AdminSocketPath: driver.AdminSocketPath, Sites: store.SharedCaddySites}
+				driver.SystemGateway, driver.SiteRuntime, driver.SiteContainer = provisioner, provisioner.ReconcileWebsites, true
+				driver.SiteIdle = provisioner.Remove
+			} else {
+				provisioner := agent.NativeCaddySiteRuntime{StateDirectory: *dataDir}
+				driver.SiteRuntime = provisioner.ReconcileWebsites
+				driver.SiteIdle = provisioner.Idle
+			}
+			if err := store.ConfigureSharedCaddy(driver); err != nil {
+				return err
 			}
 		}
 		if capabilities.Tunnel {

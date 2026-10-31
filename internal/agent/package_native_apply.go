@@ -55,6 +55,11 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 			}
 		}
 	}
+	if prepared.BeforeReplace != nil {
+		if err := prepared.BeforeReplace(ctx); err != nil {
+			return err
+		}
+	}
 	record := func(resource RuntimeResource) error {
 		if old := resourceNamed(receipt, resource.Kind, resource.LogicalName); old != nil {
 			*old = resource

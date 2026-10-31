@@ -117,7 +117,7 @@ func TestAgentSchemaV16AddsLandingStateForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	dropTaskReceiptIndexesForFixture(t, store.db)
-	if _, err := store.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; DROP TABLE meridian_runtime_state; DROP TABLE landing_controller_state; DROP TABLE landing_runtime_state; DROP TABLE node_site_journal; PRAGMA user_version = 16`); err != nil {
+	if _, err := store.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; DROP TABLE meridian_runtime_state; DROP TABLE landing_controller_state; DROP TABLE landing_runtime_state; DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version = 16`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

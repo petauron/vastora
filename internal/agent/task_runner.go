@@ -826,6 +826,20 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				if err == nil {
 					err = store.completeNativeReplacement(ctx, task)
 				}
+				if err == nil && daylightKey(task.AppKey) {
+					installed, readErr := store.AppliedInstallation(ctx, task.AppKey)
+					if readErr != nil {
+						err = readErr
+					} else {
+						err = store.syncSharedDaylight(ctx, installed)
+					}
+					if err == nil {
+						err = store.completeSharedDaylight(ctx, task)
+					}
+					if err != nil {
+						err = uncertainTaskOutcome(err)
+					}
+				}
 			}
 		}
 		if err != nil && task.SourceReceiptSHA256 != "" {

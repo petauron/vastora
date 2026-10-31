@@ -9,11 +9,11 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"fmt"
+	"io"
 	"net"
 	"net/http"
-	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -22,6 +22,7 @@ import (
 )
 
 type nodeSiteJournal struct {
+	Runtime     int           `json:"runtime,omitempty"`
 	Task        nodesite.Task `json:"task"`
 	State       string        `json:"state"`
 	Previous    []byte        `json:"previous"`
@@ -29,137 +30,132 @@ type nodeSiteJournal struct {
 	Fingerprint string        `json:"fingerprint"`
 	NotAfter    string        `json:"notAfter"`
 }
+type nodeSiteHost struct{ site CaddySite }
 
-type nodeSiteHost struct {
-	manager                SystemdHostApplicationManager
-	path, unit, executable string
-	healthURL              string
+func daylightKey(key string) bool {
+	return key == "vastora-official/daylight" || key == "vastora-official/daylight-https"
 }
 
-func (s *Store) nodeSiteHost(ctx context.Context, t nodesite.Task) (nodeSiteHost, error) {
-	var h nodeSiteHost
-	if err := t.Validate(); err != nil {
-		return h, err
+func (s *Store) nodeSiteHost(ctx context.Context, task nodesite.Task) (nodeSiteHost, error) {
+	if err := task.Validate(); err != nil {
+		return nodeSiteHost{}, err
 	}
-	installed, err := s.AppliedInstallation(ctx, t.AppKey)
-	if err != nil || installed.ApplicationID != t.ApplicationID {
-		return h, errors.New("agent: node site application identity changed")
+	installed, err := s.AppliedInstallation(ctx, task.AppKey)
+	if err != nil || installed.ApplicationID != task.ApplicationID {
+		return nodeSiteHost{}, errors.New("agent: node site application identity changed")
+	}
+	return s.nodeSiteInstallationHost(ctx, installed)
+}
+
+func (s *Store) nodeSiteInstallationHost(ctx context.Context, installed AppliedInstallation) (nodeSiteHost, error) {
+	var host nodeSiteHost
+	if !daylightKey(installed.AppKey) {
+		return host, errors.New("agent: website content must belong to Daylight")
 	}
 	var config struct {
-		Hostname string `json:"hostname"`
-		HTTPPort int    `json:"http_port"`
+		Hostname    string `json:"hostname"`
+		HTTPPort    int    `json:"http_port"`
+		HTTPSListen string `json:"https_listen"`
 	}
-	if json.Unmarshal(installed.Config, &config) != nil || config.Hostname != t.Hostname {
-		return h, errors.New("agent: node site hostname differs from the installed application")
+	if json.Unmarshal(installed.Config, &config) != nil || !nodesite.ValidHostname(config.Hostname) {
+		return host, errors.New("agent: invalid installed website identity")
 	}
-	plan, err := planNativePackage(t.ApplicationID, installed.Manifest)
+	if installed.AppKey == "vastora-official/daylight" && config.HTTPSListen != "" {
+		return host, errors.New("agent: public HTTPS is not declared by this website package")
+	}
+	if installed.AppKey == "vastora-official/daylight-https" && config.HTTPSListen == "" {
+		return host, errors.New("agent: exact public HTTPS listener is missing")
+	}
+	plan, err := planNativePackage(installed.ApplicationID, installed.Manifest)
 	if err != nil {
-		return h, err
+		return host, err
 	}
-	receipt, err := (PackageExecutor{StateDirectory: s.dataDir}).ReadResources(t.ApplicationID)
+	receipt, err := (PackageExecutor{StateDirectory: s.dataDir}).ReadResources(installed.ApplicationID)
 	if err != nil {
-		return h, err
+		return host, err
 	}
-	if err = inspectNativeOwnership(ctx, h.manager, t.ApplicationID, plan, receipt); err != nil {
-		return h, err
+	if err := inspectNativeOwnership(ctx, SystemdHostApplicationManager{}, installed.ApplicationID, plan, receipt); err != nil {
+		return host, err
 	}
-	if len(plan.Units) != 1 || plan.Units[0].LogicalName != "web" || plan.Units[0].Process.Executable != "daylight" {
-		return h, errors.New("agent: unsupported node site runtime")
+	if len(plan.Units) != 1 || plan.Units[0].LogicalName != "web" || plan.Units[0].Process.Executable != "daylight" || plan.Units[0].Automatic || !slices.Contains(installed.Manifest.Runtime.RequiredCapabilities, "shared-caddy") || !slices.Contains(receipt.AuthorizedCapabilities, "shared-caddy") {
+		return host, errors.New("agent: upgrade Daylight to the authorized shared Caddy content package first")
 	}
-	u := plan.Units[0]
+	artifact := plan.Units[0].Process.Artifact
+	root := filepath.Join("/opt/vastora/packages", packageIdentity(installed.ApplicationID), "artifacts", artifact)
+	page := resourceNamed(receipt, "file", "artifact:"+artifact+":site/index.html")
+	core := resourceNamed(receipt, "file", "artifact:"+artifact+":caddy")
+	if page == nil || page.Path != filepath.Join(root, "site/index.html") || core == nil || core.Path != filepath.Join(root, "caddy") {
+		return host, errors.New("agent: website content is not owned by its signed package")
+	}
+	content, err := readOwnedCaddyFile(page.Path, page.SHA256, 512<<10)
+	if err != nil {
+		return host, err
+	}
 	address := installed.ServiceAddress
 	if address == "" {
 		address = "127.0.0.1"
 	}
-	if config.HTTPPort < 1 || config.HTTPPort > 65535 {
-		return h, errors.New("agent: invalid private Daylight health port")
-	}
-	h.healthURL = "http://" + net.JoinHostPort(address, strconv.Itoa(config.HTTPPort)) + "/healthz"
-	h.path = filepath.Join(u.ConfigDirectory, "config", "caddy.json")
-	h.unit = u.Name
-	h.executable = filepath.Join("/opt/vastora/packages", packageIdentity(t.ApplicationID), "artifacts", u.Process.Artifact, "daylight")
-	r := resourceNamed(receipt, "file", "web:config:caddy.json")
-	if r == nil || r.Path != h.path {
-		return h, errors.New("agent: node site configuration is not owned")
-	}
-	return h, nil
+	host.site = CaddySite{ApplicationID: installed.ApplicationID, Hostname: config.Hostname, Address: address, HTTPPort: config.HTTPPort, PublicListen: config.HTTPSListen, HTML: string(content), CaddyPath: core.Path, CaddySHA256: core.SHA256}
+	return host, host.site.validate()
 }
 
 func (s *Store) readNodeSiteJournal(ctx context.Context, id string) (nodeSiteJournal, error) {
-	var j nodeSiteJournal
+	var journal nodeSiteJournal
 	var sealed []byte
 	if err := s.db.QueryRowContext(ctx, `SELECT sealed_state FROM node_site_journal WHERE application_id=?`, id).Scan(&sealed); err != nil {
-		return j, err
+		return journal, err
 	}
 	raw, err := secret.Open(s.key, sealed, []byte("node-site-journal:"+id))
 	if err != nil {
-		return j, err
+		return journal, err
 	}
-	if json.Unmarshal(raw, &j) != nil || j.Task.ApplicationID != id || j.Task.Validate() != nil {
-		return j, errors.New("agent: invalid node site journal")
+	if json.Unmarshal(raw, &journal) != nil || journal.Task.ApplicationID != id || journal.Task.Validate() != nil {
+		return journal, errors.New("agent: invalid node site journal")
 	}
-	return j, nil
+	return journal, nil
 }
-func (s *Store) saveNodeSiteJournal(ctx context.Context, j nodeSiteJournal) error {
-	raw, err := json.Marshal(j)
+func (s *Store) saveNodeSiteJournal(ctx context.Context, journal nodeSiteJournal) error {
+	raw, err := json.Marshal(journal)
 	if err != nil {
 		return err
 	}
-	sealed, err := secret.Seal(s.key, raw, []byte("node-site-journal:"+j.Task.ApplicationID))
+	sealed, err := secret.Seal(s.key, raw, []byte("node-site-journal:"+journal.Task.ApplicationID))
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO node_site_journal(application_id,sealed_state) VALUES(?,?) ON CONFLICT(application_id) DO UPDATE SET sealed_state=excluded.sealed_state`, j.Task.ApplicationID, sealed)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO node_site_journal(application_id,sealed_state) VALUES(?,?) ON CONFLICT(application_id) DO UPDATE SET sealed_state=excluded.sealed_state`, journal.Task.ApplicationID, sealed)
 	return err
 }
-func (s *Store) rollbackNodeSite(ctx context.Context, h nodeSiteHost, j *nodeSiteJournal) error {
-	current, err := captureApplicationConfiguration(h.path)
-	if err != nil {
-		return err
-	}
-	// Never overwrite an independent application configuration change.
-	if !current.Exists || (!bytes.Equal(current.Data, j.Candidate) && !bytes.Equal(current.Data, j.Previous)) {
-		return errors.New("agent: node site configuration changed; manual recovery required")
-	}
-	if err = writeHostFileAtomic(h.path, j.Previous, 0600); err != nil {
-		return err
-	}
-	if err = h.manager.run(ctx, "systemctl", "restart", h.unit); err != nil {
-		return errors.New("agent: node site rollback restart failed")
-	}
-	healthCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 2 * time.Second}
-	defer client.CloseIdleConnections()
-	for {
-		req, e := http.NewRequestWithContext(healthCtx, http.MethodGet, h.healthURL, nil)
-		if e != nil {
-			return e
-		}
-		response, e := client.Do(req)
-		healthy := e == nil && response.StatusCode == 204
-		if response != nil {
-			response.Body.Close()
-		}
-		if healthy {
-			break
-		}
-		select {
-		case <-healthCtx.Done():
-			return errors.New("agent: restored Daylight health check failed")
-		case <-time.After(250 * time.Millisecond):
-		}
-	}
-	j.State = "rolled_back"
-	return s.saveNodeSiteJournal(ctx, *j)
-}
 
-// recoverNodeSites restores an interrupted replacement before accepting work.
-// A completed replacement is retained, including when its response was lost.
+func (s *Store) rollbackNodeSite(ctx context.Context, _ nodeSiteHost, journal *nodeSiteJournal) error {
+	if journal.Runtime != 2 {
+		return errors.New("agent: interrupted standalone website requires explicit migration review")
+	}
+	var previous CaddySite
+	if json.Unmarshal(journal.Previous, &previous) != nil || previous.ApplicationID != journal.Task.ApplicationID {
+		return errors.New("agent: invalid website recovery ownership")
+	}
+	current, err := s.readCaddySite(ctx, previous.ApplicationID)
+	if err != nil || current.Site == nil {
+		return errors.New("agent: website recovery state is unavailable")
+	}
+	// Certificate recovery must not undo a later verified content update.
+	previous.HTML, previous.CaddyPath, previous.CaddySHA256 = current.Site.HTML, current.Site.CaddyPath, current.Site.CaddySHA256
+	if err := s.updateCaddySite(ctx, previous.ApplicationID, &previous, func(ctx context.Context) error { return probeCaddySite(ctx, previous) }); err != nil {
+		return err
+	}
+	journal.State = "rolled_back"
+	return s.saveNodeSiteJournal(ctx, *journal)
+}
 func (s *Store) recoverNodeSites(ctx context.Context) error {
+	if err := s.recoverDaylightHandovers(ctx); err != nil {
+		return err
+	}
+	if err := s.restoreSharedCaddySites(ctx); err != nil {
+		return err
+	}
 	return s.recoverNodeSiteJournals(ctx, s.nodeSiteHost)
 }
-
 func (s *Store) recoverNodeSiteJournals(ctx context.Context, resolve func(context.Context, nodesite.Task) (nodeSiteHost, error)) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT application_id FROM node_site_journal`)
 	if err != nil {
@@ -168,7 +164,7 @@ func (s *Store) recoverNodeSiteJournals(ctx context.Context, resolve func(contex
 	var ids []string
 	for rows.Next() {
 		var id string
-		if err = rows.Scan(&id); err != nil {
+		if err := rows.Scan(&id); err != nil {
 			rows.Close()
 			return err
 		}
@@ -180,213 +176,165 @@ func (s *Store) recoverNodeSiteJournals(ctx context.Context, resolve func(contex
 		return err
 	}
 	for _, id := range ids {
-		j, err := s.readNodeSiteJournal(ctx, id)
+		journal, err := s.readNodeSiteJournal(ctx, id)
 		if err != nil {
 			return err
 		}
-		if j.State != "applying" {
+		if journal.State != "applying" {
 			continue
 		}
-		h, err := resolve(ctx, j.Task)
+		if journal.Runtime != 2 {
+			return errors.New("agent: review the interrupted standalone website before migration")
+		}
+		host, err := resolve(ctx, journal.Task)
 		if err != nil {
 			return err
 		}
-		if err = s.rollbackNodeSite(ctx, h, &j); err != nil {
+		if err := s.rollbackNodeSite(ctx, host, &journal); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Store) executeNodeSite(ctx context.Context, t nodesite.Task) (nodesite.Result, error) {
+func (s *Store) executeNodeSite(ctx context.Context, task nodesite.Task) (nodesite.Result, error) {
 	s.landingMutationMu.Lock()
 	defer s.landingMutationMu.Unlock()
-	h, err := s.nodeSiteHost(ctx, t)
+	host, err := s.nodeSiteHost(ctx, task)
 	if err != nil {
 		return nodesite.Result{}, err
 	}
-	return s.executeNodeSiteOnHost(ctx, t, h)
+	if host.site.Hostname != task.Hostname {
+		return nodesite.Result{}, errors.New("agent: website hostname differs from the installed package")
+	}
+	return s.executeNodeSiteOnHost(ctx, task, host)
 }
-
-// The host is resolved and ownership-checked before entering the transaction.
-func (s *Store) executeNodeSiteOnHost(ctx context.Context, t nodesite.Task, h nodeSiteHost) (nodesite.Result, error) {
-	var err error
-	result := nodesite.Result{Action: t.Action, Revision: t.Revision, Hostname: t.Hostname}
-	j, jerr := s.readNodeSiteJournal(ctx, t.ApplicationID)
-	if jerr != nil && !errors.Is(jerr, sql.ErrNoRows) {
-		return result, jerr
+func (s *Store) executeNodeSiteOnHost(ctx context.Context, task nodesite.Task, host nodeSiteHost) (nodesite.Result, error) {
+	result := nodesite.Result{Action: task.Action, Revision: task.Revision, Hostname: task.Hostname}
+	journal, journalErr := s.readNodeSiteJournal(ctx, task.ApplicationID)
+	if journalErr != nil && !errors.Is(journalErr, sql.ErrNoRows) {
+		return result, journalErr
 	}
-	if jerr == nil && j.State == "applying" {
-		if err = s.rollbackNodeSite(ctx, h, &j); err != nil {
-			return result, err
-		}
+	if journalErr == nil && (journal.Task.Revision > task.Revision || journal.State == "applying") {
+		return result, errors.New("agent: review the existing website revision first")
 	}
-	if jerr == nil && j.Task.Revision > t.Revision {
-		return result, errors.New("agent: stale node site revision")
-	}
-	switch t.Action {
-	case "rollback":
-		if jerr != nil || j.Task.Revision != t.Revision {
-			return result, errors.New("agent: node site rollback revision unavailable")
+	if task.Action == "rollback" {
+		if journalErr != nil || journal.Task.Revision != task.Revision {
+			return result, errors.New("agent: website rollback revision is unavailable")
 		}
-		err = s.rollbackNodeSite(ctx, h, &j)
-		result.State = j.State
-		return result, err
-	case "inspect":
-		if jerr != nil {
-			return result, jerr
-		}
-		if j.Task.Revision != t.Revision || j.Task.Port != t.Port {
-			return result, errors.New("agent: node site inspection revision is not installed")
-		}
-		result.State = j.State
-		result.Fingerprint = j.Fingerprint
-		result.NotAfter = j.NotAfter
-		if j.State == "applied" {
-			err = probeNodeSite(ctx, j.Task, j.Fingerprint)
-		}
+		err := s.rollbackNodeSite(ctx, host, &journal)
+		result.State = journal.State
 		return result, err
 	}
-	certificate, err := nodeSiteCertificate(t.Hostname, t.CertificatePEM, t.PrivateKeyPEM)
+	if task.Action == "inspect" {
+		if journalErr != nil || journal.Task.Revision != task.Revision || journal.Task.Port != task.Port {
+			return result, errors.New("agent: website inspection revision is not installed")
+		}
+		result.State, result.Fingerprint, result.NotAfter = journal.State, journal.Fingerprint, journal.NotAfter
+		if journal.State != "applied" {
+			return result, nil
+		}
+		state, err := s.readCaddySite(ctx, task.ApplicationID)
+		if err != nil || state.Site == nil || state.State != "applied" {
+			return result, errors.New("agent: website has not migrated to shared Caddy")
+		}
+		return result, probeCaddySite(ctx, *state.Site)
+	}
+	certificate, err := nodeSiteCertificate(task.Hostname, task.CertificatePEM, task.PrivateKeyPEM)
 	if err != nil {
 		return result, err
 	}
-	block, _ := pem.Decode([]byte(t.CertificatePEM))
+	block, _ := pem.Decode([]byte(task.CertificatePEM))
 	leaf, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		return result, err
 	}
 	fingerprint := nodesite.Fingerprint(leaf.Raw)
-	if jerr == nil && j.Task.Revision == t.Revision {
-		if j.Fingerprint != fingerprint {
-			return result, errors.New("agent: node site revision content changed")
-		}
-		if j.State == "applied" {
-			result.State = "applied"
-			result.Fingerprint = fingerprint
-			result.NotAfter = j.NotAfter
-			return result, probeNodeSite(ctx, t, fingerprint)
-		}
-		return result, errors.New("agent: node site revision was rolled back; request a new revision")
+	if journalErr == nil && journal.Task.Revision == task.Revision && journal.Fingerprint != fingerprint {
+		return result, errors.New("agent: node site revision content changed")
 	}
-	previous, err := captureApplicationConfiguration(h.path)
-	if err != nil || !previous.Exists {
-		return result, errors.New("agent: node site configuration unavailable")
+	if journalErr == nil && journal.Runtime == 2 && journal.Task.Revision == task.Revision {
+		if journal.State != "applied" {
+			return result, errors.New("agent: request a new website revision after rollback")
+		}
+		result.State, result.Fingerprint, result.NotAfter = "applied", fingerprint, journal.NotAfter
+		site := host.site
+		site.TLSPort, site.Certificate = task.Port, certificate
+		return result, probeCaddySite(ctx, site)
 	}
-	candidate, err := nodeSiteConfiguration(previous.Data, t, certificate.CertificatePEM, certificate.PrivateKeyPEM)
-	if err != nil {
+	previous := host.site
+	if state, err := s.readCaddySite(ctx, task.ApplicationID); err == nil && state.Site != nil {
+		previous = *state.Site
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return result, err
 	}
-	// Validate the exact candidate using the installed, receipt-verified launcher.
-	if h.manager.RunInputCommand != nil {
-		err = h.manager.RunInputCommand(ctx, bytes.NewReader(candidate), h.executable, "validate", "--config", "/dev/stdin")
-	} else {
-		command := exec.CommandContext(ctx, h.executable, "validate", "--config", "/dev/stdin")
-		command.Stdin = bytes.NewReader(candidate)
-		err = command.Run()
-	}
-	if err != nil {
-		return result, errors.New("agent: Daylight certificate configuration validation failed")
-	}
-	j = nodeSiteJournal{Task: t, State: "applying", Previous: previous.Data, Candidate: candidate, Fingerprint: fingerprint, NotAfter: leaf.NotAfter.UTC().Format(time.RFC3339Nano)}
-	if err = s.saveNodeSiteJournal(ctx, j); err != nil {
+	candidate := host.site
+	candidate.TLSPort, candidate.Certificate = task.Port, certificate
+	previousBytes, _ := json.Marshal(previous)
+	candidateBytes, _ := json.Marshal(candidate)
+	journal = nodeSiteJournal{Runtime: 2, Task: task, State: "applying", Previous: previousBytes, Candidate: candidateBytes, Fingerprint: fingerprint, NotAfter: leaf.NotAfter.UTC().Format(time.RFC3339Nano)}
+	if err := s.saveNodeSiteJournal(ctx, journal); err != nil {
 		return result, err
 	}
-	if err = writeHostFileAtomic(h.path, candidate, 0600); err == nil {
-		err = h.manager.run(ctx, "systemctl", "restart", h.unit)
-	}
-	if err == nil {
-		err = probeNodeSite(ctx, t, fingerprint)
-	}
+	err = s.updateCaddySite(ctx, task.ApplicationID, &candidate, func(ctx context.Context) error { return probeCaddySite(ctx, candidate) })
 	if err != nil {
-		recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		rollbackErr := s.rollbackNodeSite(recovery, h, &j)
-		result.State = j.State
-		return result, errors.Join(errors.New("agent: Daylight activation failed"), rollbackErr)
+		state, readErr := s.readCaddySite(ctx, task.ApplicationID)
+		if readErr == nil && state.State == "applied" {
+			journal.State = "rolled_back"
+			_ = s.saveNodeSiteJournal(context.WithoutCancel(ctx), journal)
+		}
+		result.State = journal.State
+		return result, err
 	}
-	j.State = "applied"
-	if err = s.saveNodeSiteJournal(ctx, j); err != nil {
-		recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		rollbackErr := s.rollbackNodeSite(recovery, h, &j)
-		result.State = j.State
-		return result, errors.Join(errors.New("agent: could not persist Daylight activation"), rollbackErr)
+	journal.State = "applied"
+	if err := s.saveNodeSiteJournal(ctx, journal); err != nil {
+		return result, uncertainTaskOutcome(err)
 	}
-	result.State = "applied"
-	result.Fingerprint = fingerprint
-	result.NotAfter = j.NotAfter
+	result.State, result.Fingerprint, result.NotAfter = "applied", fingerprint, journal.NotAfter
 	return result, nil
 }
 
-func nodeSiteConfiguration(raw []byte, t nodesite.Task, chain, key string) ([]byte, error) {
-	var config map[string]any
-	if json.Unmarshal(raw, &config) != nil {
-		return nil, errors.New("agent: invalid Daylight configuration")
-	}
-	admin, _ := config["admin"].(map[string]any)
-	if admin["disabled"] != true {
-		return nil, errors.New("agent: Daylight admin API must be disabled")
-	}
-	apps, _ := config["apps"].(map[string]any)
-	httpApp, _ := apps["http"].(map[string]any)
-	servers, _ := httpApp["servers"].(map[string]any)
-	private, _ := servers["private"].(map[string]any)
-	if private == nil {
-		return nil, errors.New("agent: Daylight private server is unavailable")
-	}
-	// Preserve the signed page routes, private HTTP listener and existing public
-	// listener. A separate loopback endpoint avoids the shared public 443 loop.
-	origin := map[string]any{}
-	for k, v := range private {
-		origin[k] = v
-	}
-	origin["listen"] = []string{net.JoinHostPort("127.0.0.1", strconv.Itoa(t.Port))}
-	origin["automatic_https"] = map[string]any{"disable": true}
-	origin["strict_sni_host"] = true
-	origin["tls_connection_policies"] = []any{map[string]any{"match": map[string]any{"sni": []string{t.Hostname}}, "protocol_min": "tls1.3"}, map[string]any{"drop": true}}
-	servers["vastora-node-site"] = origin
-	// Certificate automation belongs exclusively to Center for this application.
-	for _, v := range servers {
-		if server, ok := v.(map[string]any); ok {
-			server["automatic_https"] = map[string]any{"disable": true}
+func probeCaddySite(ctx context.Context, site CaddySite) error {
+	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: true}
+	url := "http://" + net.JoinHostPort(site.Address, strconv.Itoa(site.HTTPPort)) + "/"
+	if site.TLSPort != 0 {
+		roots := x509.NewCertPool()
+		block, _ := pem.Decode([]byte(site.Certificate.CertificatePEM))
+		if block == nil {
+			return errors.New("agent: website probe certificate is missing")
 		}
+		leaf, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return err
+		}
+		roots.AddCert(leaf)
+		transport.TLSClientConfig = &tls.Config{RootCAs: roots, ServerName: site.Hostname, MinVersion: tls.VersionTLS13}
+		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(site.TLSPort)))
+		}
+		url = "https://" + site.Hostname + "/"
 	}
-	apps["tls"] = map[string]any{"certificates": map[string]any{"load_pem": []any{map[string]any{"certificate": chain, "key": key}}}}
-	return json.Marshal(config)
-}
-
-func probeNodeSite(ctx context.Context, t nodesite.Task, fingerprint string) error {
-	deadline, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	var last error
-	roots := x509.NewCertPool()
-	block, _ := pem.Decode([]byte(t.CertificatePEM))
-	if block == nil {
-		return errors.New("agent: missing pinned node site certificate")
-	}
-	leaf, err := x509.ParseCertificate(block.Bytes)
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	roots.AddCert(leaf)
-	for {
-		dialer := tls.Dialer{NetDialer: &net.Dialer{Timeout: 2 * time.Second}, Config: &tls.Config{RootCAs: roots, ServerName: t.Hostname, MinVersion: tls.VersionTLS13, NextProtos: []string{"h2"}}}
-		conn, err := dialer.DialContext(deadline, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(t.Port)))
-		if err == nil {
-			c := conn.(*tls.Conn)
-			state := c.ConnectionState()
-			conn.Close()
-			if len(state.PeerCertificates) == 0 || nodesite.Fingerprint(state.PeerCertificates[0].Raw) != fingerprint || state.NegotiatedProtocol != "h2" {
-				return errors.New("agent: Daylight did not load the requested certificate and HTTP/2")
-			}
-			return nil
-		}
-		last = err
-		select {
-		case <-deadline.Done():
-			return fmt.Errorf("agent: Daylight TLS probe failed: %w", last)
-		case <-time.After(250 * time.Millisecond):
+	request.Host = site.Hostname
+	response, err := client.Do(request)
+	if err != nil {
+		return errors.New("agent: shared website request failed")
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, int64(len(site.HTML))+1))
+	if err != nil || response.StatusCode != http.StatusOK || !bytes.Equal(body, []byte(site.HTML)) {
+		return errors.New("agent: shared website content did not match its signed package")
+	}
+	if site.TLSPort != 0 {
+		block, _ := pem.Decode([]byte(site.Certificate.CertificatePEM))
+		if response.TLS == nil || response.TLS.NegotiatedProtocol != "h2" || len(response.TLS.PeerCertificates) == 0 || block == nil || nodesite.Fingerprint(response.TLS.PeerCertificates[0].Raw) != nodesite.Fingerprint(block.Bytes) {
+			return errors.New("agent: shared website did not load its pinned certificate and HTTP/2")
 		}
 	}
+	return nil
 }

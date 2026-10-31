@@ -57,6 +57,13 @@ func (s *Store) initializeDatabaseKeyBinding(ctx context.Context) error {
 }
 
 func verifyAgentEncryptedState(ctx context.Context, db *sql.DB, key []byte) error {
+	if exists, err := agentTableHasColumns(ctx, db, "shared_caddy_sites", "application_id", "sealed_state"); err != nil {
+		return err
+	} else if exists {
+		if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT application_id,sealed_state FROM shared_caddy_sites`, func(id string) []byte { return []byte("shared-caddy-site:" + id) }, "shared website"); err != nil {
+			return err
+		}
+	}
 	if exists, err := agentTableHasColumns(ctx, db, "node_site_journal", "application_id", "sealed_state"); err != nil {
 		return err
 	} else if exists {

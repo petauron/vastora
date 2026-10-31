@@ -188,4 +188,4 @@ Existing Glivela business installations require the [final data handover](docs/G
 地址的保护配置、运行修订与最后上报。该只读快照不代表 SSH 登录验证；宿主登录
 安全基线仍单独管理。读取失败或缺少节点映射时显示未知，可手动刷新。
 
-Node-local Daylight certificate lifecycle: [configuration and recovery](docs/node-site-certificates.md) (#1128).
+Node-local Daylight certificates and shared Caddy ownership: [configuration, handover and recovery](docs/node-site-certificates.md) (#1128).

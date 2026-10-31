@@ -662,6 +662,26 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 23
 		}
+		if version == 23 {
+			// Older forward migrations may just have created the binding table.
+			// Initial legacy decryption was verified before any migration; bind
+			// that key before taking the new independently verifiable snapshot.
+			migrateErr := store.initializeDatabaseKeyBinding(context.Background())
+			if migrateErr == nil {
+				migrateErr = prepareSharedCaddyMigrationBackup(context.Background(), db, dataDir, key)
+			}
+			if migrateErr == nil {
+				_, migrateErr = db.Exec(`BEGIN;
+					CREATE TABLE shared_caddy_sites (application_id TEXT PRIMARY KEY, sealed_state BLOB NOT NULL);
+					PRAGMA user_version=24; COMMIT;`)
+			}
+			if migrateErr != nil {
+				_, _ = db.Exec(`ROLLBACK`)
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 23 to 24: %w", migrateErr)
+			}
+			version = 24
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -790,7 +810,8 @@ func Open(dataDir string) (*Store, error) {
 			sealed_state BLOB NOT NULL
 		);
 		CREATE TABLE node_site_journal (application_id TEXT PRIMARY KEY, sealed_state BLOB NOT NULL);
-		` + taskReceiptIndexesSQL + `PRAGMA user_version = 23;`); err != nil {
+		CREATE TABLE shared_caddy_sites (application_id TEXT PRIMARY KEY, sealed_state BLOB NOT NULL);
+		` + taskReceiptIndexesSQL + `PRAGMA user_version = 24;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
