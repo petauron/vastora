@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.394](https://github.com/petauron/vastora/compare/v0.1.0-alpha.393...v0.1.0-alpha.394) (2026-10-31)
+
+
+### Bug Fixes
+
+* **agent:** preserve reviewed recovery for shared website handovers ([#1144](https://github.com/petauron/vastora/issues/1144)) ([9d94ee5](https://github.com/petauron/vastora/commit/9d94ee547d262e7b67366fcf1c7e7a69c7478a2d)), closes [#1128](https://github.com/petauron/vastora/issues/1128)
+
 ## [0.1.0-alpha.393](https://github.com/petauron/vastora/compare/v0.1.0-alpha.392...v0.1.0-alpha.393) (2026-10-31)
 
 
