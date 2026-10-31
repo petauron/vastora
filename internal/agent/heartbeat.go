@@ -141,6 +141,9 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		// runner constructs an executor only for a reviewed native lifecycle.
 		c.Capabilities.ExecutorVersions = map[string]int{"systemd": 2}
 		c.Capabilities.RuntimeCapabilities = []string{"native-services", "root"}
+		if store.sharedCaddy != nil {
+			c.Capabilities.RuntimeCapabilities = append(c.Capabilities.RuntimeCapabilities, "shared-caddy")
+		}
 	}
 	if c.TailscaleEnrolled {
 		store.scheduleTailscaleUpdateCheck(0, connection.AgentID)
