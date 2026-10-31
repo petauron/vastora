@@ -630,7 +630,7 @@ func runAgent(arguments []string) error {
 				Driver: managedDriver,
 			}
 		}
-		if !capabilities.Gateway && !capabilities.LandingOnly && runtime.GOOS == "linux" && os.Geteuid() == 0 {
+		if !capabilities.Gateway && runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			admin := *caddyAdmin
 			if !capabilities.Docker {
 				admin = "unix:///run/vastora-caddy/admin.sock"
