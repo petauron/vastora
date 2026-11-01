@@ -84,6 +84,13 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 		if !ok {
 			return ApplicationTaskResult{}, errors.New("agent: generic systemd executor is unavailable")
 		}
+		if task.AppKey == senulun.AgentKey && task.Operation != "uninstall" && task.Manifest.Runtime != nil && task.Manifest.Runtime.Version == 2 {
+			backend, err := e.senlunNativeBackend(ctx, task, manager)
+			if err != nil {
+				return ApplicationTaskResult{}, err
+			}
+			return (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: backend}).Deploy(ctx, task)
+		}
 		version := 1
 		if task.Manifest.Runtime != nil {
 			version = task.Manifest.Runtime.Version

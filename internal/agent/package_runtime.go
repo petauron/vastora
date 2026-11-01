@@ -328,7 +328,10 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 			installedVersion = 1
 		}
 		if installedVersion != task.Manifest.Runtime.Version {
-			return result, errors.New("agent: runtime contract change requires explicit instance migration")
+			migration, ok := e.Backend.(*senlunNativePackageBackend)
+			if !ok || !migration.permitsMigration(task, receipt) {
+				return result, errors.New("agent: runtime contract change requires explicit instance migration")
+			}
 		}
 	}
 	if task.Operation == "uninstall" && (receipt.ManifestSHA256 != task.ManifestSHA256 || receipt.PackageRevision != task.PackageRevision || receipt.PackageVersion != task.Manifest.Version) {
