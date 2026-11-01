@@ -445,9 +445,25 @@ func validateHistoricalPackageTask(task DeploymentTask) error {
 
 func reviewedPackageRecovery(task DeploymentTask, receipt *InstanceResources) bool {
 	recovery := task.PackageRecovery
-	return receipt.State == "review-required" && len(receipt.Resources) > 0 &&
-		task.Kind == "application.apply" && (task.Operation == "upgrade" || task.Operation == "configure") &&
-		task.Authorization.ID != "" && task.Authorization.Protocol == controlplane.ExecutionProtocol && len(task.Authorization.Digest) == 64 &&
-		recovery != nil && recovery.ExecutionID != "" && recovery.ExecutionID != task.Authorization.ID &&
-		recovery.TaskID == task.ID && receipt.TaskID == task.ID && recovery.Attempt > 0 && recovery.Attempt == task.Attempt-1
+	if receipt.State != "review-required" || len(receipt.Resources) == 0 ||
+		task.Kind != "application.apply" || (task.Operation != "upgrade" && task.Operation != "configure") ||
+		task.Authorization.ID == "" || task.Authorization.Protocol != controlplane.ExecutionProtocol || len(task.Authorization.Digest) != 64 ||
+		recovery == nil || recovery.ExecutionID == "" || recovery.ExecutionID == task.Authorization.ID || recovery.Attempt <= 0 {
+		return false
+	}
+	if recovery.ReceiptSHA256 == "" {
+		return recovery.TaskID == task.ID && receipt.TaskID == task.ID && recovery.Attempt == task.Attempt-1
+	}
+	// A new task is not a replay of the abandoned task. Its authority binds the
+	// complete old receipt; normal ownership, manifest and health checks follow.
+	if task.Operation != "upgrade" || task.Attempt != 1 || recovery.TaskID == task.ID ||
+		receipt.TaskID != recovery.TaskID || receipt.ApplicationID != task.ApplicationID || receipt.AppKey != task.AppKey {
+		return false
+	}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		return false
+	}
+	digest, err := controlplane.PackageReceiptDigest(raw)
+	return err == nil && digest == recovery.ReceiptSHA256
 }
