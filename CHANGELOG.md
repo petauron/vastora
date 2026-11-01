@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.396](https://github.com/petauron/vastora/compare/v0.1.0-alpha.395...v0.1.0-alpha.396) (2026-11-01)
+
+
+### Bug Fixes
+
+* retain Senlun identities during native recipe handover ([#1149](https://github.com/petauron/vastora/issues/1149)) ([e98bea2](https://github.com/petauron/vastora/commit/e98bea2e9faba30766790626485abac27a526c56))
+
 ## [0.1.0-alpha.395](https://github.com/petauron/vastora/compare/v0.1.0-alpha.394...v0.1.0-alpha.395) (2026-11-01)
 
 
