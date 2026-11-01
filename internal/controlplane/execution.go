@@ -1,6 +1,14 @@
 package controlplane
 
-import "github.com/petauron/vastora/internal/osreinstall"
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+
+	"github.com/petauron/vastora/internal/osreinstall"
+)
 
 // ExecutionProtocol is deliberately not negotiated down. Center and Agent must
 // be upgraded in a task-claim pause before changing the execution contract.
@@ -41,7 +49,28 @@ type ExecutionDisposition struct {
 // PackageRecovery binds a reviewed failed attempt to the next one-use task.
 // It is included in the encrypted task payload and its execution digest.
 type PackageRecovery struct {
-	ExecutionID string `json:"executionId"`
-	TaskID      string `json:"taskId"`
-	Attempt     int64  `json:"attempt"`
+	ExecutionID   string `json:"executionId"`
+	TaskID        string `json:"taskId"`
+	Attempt       int64  `json:"attempt"`
+	ReceiptSHA256 string `json:"receiptSha256,omitempty"`
+}
+
+// PackageReceiptDigest binds recovery to the complete retained ownership receipt,
+// independent of JSON formatting. Numbers retain their original precision.
+func PackageReceiptDigest(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || len(raw) > 2<<20 || !json.Valid(raw) {
+		return "", errors.New("invalid package receipt evidence")
+	}
+	var receipt map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&receipt); err != nil || receipt == nil {
+		return "", errors.New("invalid package receipt evidence")
+	}
+	canonical, err := json.Marshal(receipt)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:]), nil
 }

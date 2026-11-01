@@ -296,7 +296,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		if err := s.attachPackageRecovery(ctx, tx, agentID, &reviewed); err != nil {
 			return nil, err
 		}
-		if reviewed.PackageRecovery == nil {
+		if reviewed.PackageRecovery == nil || reviewed.PackageRecovery.ReceiptSHA256 != "" {
 			return nil, nil
 		}
 		return s.claimApplicationDeployment(ctx, tx, agentID, agentRuntimeGeneration, pending, commitTask)
