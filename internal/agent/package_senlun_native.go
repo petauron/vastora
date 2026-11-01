@@ -123,7 +123,9 @@ func (b *senlunNativePackageBackend) Prepare(ctx context.Context, task Deploymen
 			return errors.New("agent: retained Senlun identity is unavailable")
 		}
 		b.identity = raw
-		receipt = nil // New resources have their own names and ownership checks.
+		// No destination is owned yet. An empty v2 receipt keeps collision
+		// checks active without inspecting the unrelated v1 resource paths.
+		receipt = &InstanceResources{Version: 1, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Runtime: "systemd", RuntimeVersion: 2}
 	} else if supplied := secrets["existing_identity"]; supplied != "" {
 		if task.Operation != "install" || receipt != nil && len(receipt.Resources) != 0 {
 			return errors.New("agent: identity import is only allowed for a new Senlun installation")
