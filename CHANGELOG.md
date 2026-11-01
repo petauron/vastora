@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.395](https://github.com/petauron/vastora/compare/v0.1.0-alpha.394...v0.1.0-alpha.395) (2026-11-01)
+
+
+### Bug Fixes
+
+* recover reviewed package failures with a newer upgrade ([#1147](https://github.com/petauron/vastora/issues/1147)) ([2bc6c52](https://github.com/petauron/vastora/commit/2bc6c52e0bec3827c936d3e9cf92abf9ee1dcd61))
+
 ## [0.1.0-alpha.394](https://github.com/petauron/vastora/compare/v0.1.0-alpha.393...v0.1.0-alpha.394) (2026-10-31)
 
 
