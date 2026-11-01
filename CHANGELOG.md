@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.398](https://github.com/petauron/vastora/compare/v0.1.0-alpha.397...v0.1.0-alpha.398) (2026-11-01)
+
+
+### Bug Fixes
+
+* verify operator-staged native archives before handover ([#1153](https://github.com/petauron/vastora/issues/1153)) ([91f9772](https://github.com/petauron/vastora/commit/91f9772c2fb93b8e36d7572634bbd9e2caf7dca1))
+
 ## [0.1.0-alpha.397](https://github.com/petauron/vastora/compare/v0.1.0-alpha.396...v0.1.0-alpha.397) (2026-11-01)
 
 
