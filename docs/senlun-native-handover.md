@@ -33,3 +33,15 @@ recovery records. Source/CI success alone is not monitoring acceptance.
 Do not publish the matching v2 catalog recipe before delivering this executor.
 For a rollout, verify each probe's actual binary version, monitoring identity,
 continued samples and retained historical samples; offline nodes remain untouched.
+
+For an operator-reviewed delivery when the release origin is unreachable, place
+only the exact signed archive at
+`<Agent data>/packages/<instance identity>/incoming/<archive SHA256>`.
+The directory must be owned by the Agent operator and private (0700), and the
+regular archive file must have that same owner with 0600 or 0400 permissions.
+The executor rejects symlinks, changed files, oversize data and digest mismatches
+without falling back to another input. The signed URL and digest remain required;
+normal extraction, declared-member, ELF/architecture, resource ownership and
+identity checks still run. No manifest or resource receipt is edited. Remove the
+staged distribution archive after actual installation acceptance; it is not a
+recovery backup. With no staged archive, normal verified HTTPS download applies.

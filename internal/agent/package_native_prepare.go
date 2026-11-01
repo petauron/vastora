@@ -108,7 +108,7 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		if err != nil {
 			return nativePreparedPackage{}, err
 		}
-		raw, err := catalog.DownloadArtifact(ctx, client, artifact)
+		raw, err := readNativePackageArchive(ctx, client, stateDirectory, task.ApplicationID, artifact)
 		if err != nil {
 			return nativePreparedPackage{}, errors.New("agent: native bundle download verification failed")
 		}
