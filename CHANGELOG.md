@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.397](https://github.com/petauron/vastora/compare/v0.1.0-alpha.396...v0.1.0-alpha.397) (2026-11-01)
+
+
+### Bug Fixes
+
+* validate empty Senlun migration destination ownership ([#1151](https://github.com/petauron/vastora/issues/1151)) ([abf94d8](https://github.com/petauron/vastora/commit/abf94d8ae015f121cb8a0a0e538cdb95706d27b1))
+
 ## [0.1.0-alpha.396](https://github.com/petauron/vastora/compare/v0.1.0-alpha.395...v0.1.0-alpha.396) (2026-11-01)
 
 
