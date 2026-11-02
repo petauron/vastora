@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.402](https://github.com/petauron/vastora/compare/v0.1.0-alpha.401...v0.1.0-alpha.402) (2026-11-02)
+
+
+### Bug Fixes
+
+* **runtime:** manage runtime directories across reboot and uninstall ([#1168](https://github.com/petauron/vastora/issues/1168)) ([73d8db9](https://github.com/petauron/vastora/commit/73d8db915369b998c57593c5635a3c949409c5b4))
+
 ## [0.1.0-alpha.401](https://github.com/petauron/vastora/compare/v0.1.0-alpha.400...v0.1.0-alpha.401) (2026-11-02)
 
 
