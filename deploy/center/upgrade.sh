@@ -315,6 +315,8 @@ files_changed=yes
 write_host_update_stage "Restarting Center."
 echo "Starting the updated Center..."
 cd "$install_dir"
+"$install_dir/install-host-cli.sh" --prepare-runtime-only \
+  --image "$new_image" --version "$new_version" --install-dir "$install_dir"
 center_started=yes
 docker compose up -d --remove-orphans deployer center
 validate_vastora_runtime_network

@@ -442,9 +442,14 @@ if [ "$managed_install" = yes ] && [ -f "$install_dir/.host-cli-installed" ]; th
   if [ -f "$agent_unit" ] && grep -Fq 'Description=Vastora Agent' "$agent_unit"; then
     say "Keeping the Vastora command because this host still runs an Agent." "此主机仍在运行 Agent，因此保留 Vastora 命令。"
   elif [ -f "$host_cli" ] && [ ! -L "$host_cli" ] && "$host_cli" help 2>&1 | grep -Fq 'Vastora control-plane tools'; then
-    rm -f "$host_cli"
-    if [ -f "$host_cli.previous" ] && "$host_cli.previous" help 2>&1 | grep -Fq 'Vastora control-plane tools'; then
-      rm -f "$host_cli.previous"
+    runtime_unit="$systemd_unit_dir/vastora-runtime-directories.service"
+    if { [ -e "$runtime_unit" ] || [ -L "$runtime_unit" ]; } && ! "$host_cli" agent uninstall-runtime-directories; then
+      say "Keeping the host command and shared runtime prerequisites still in use." "保留仍被使用的共享运行资源及其主机程序。"
+    else
+      rm -f "$host_cli"
+      if [ -f "$host_cli.previous" ] && "$host_cli.previous" help 2>&1 | grep -Fq 'Vastora control-plane tools'; then
+        rm -f "$host_cli.previous"
+      fi
     fi
   else
     say "Keeping the unrecognized command at $host_cli." "无法识别 $host_cli，因此予以保留。" >&2

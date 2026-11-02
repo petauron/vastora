@@ -32,6 +32,8 @@ func runAgent(arguments []string) error {
 		return errors.New("agent command is required")
 	}
 	switch arguments[0] {
+	case "prepare-runtime-directories", "install-runtime-directories", "uninstall-runtime-directories":
+		return runRuntimeDirectories(arguments)
 	case "execute-os-reinstall":
 		return executeOSReinstall(arguments[1:])
 	case "prepare-center-upgrade-recovery":
@@ -656,6 +658,19 @@ func runAgent(arguments []string) error {
 			client.TunnelProvisioner = agent.DockerTunnelProvisioner{}
 		}
 		controlLogger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		// Upgrade existing managed installations too. This is local platform
+		// setup before any Center contact, never a replay of a queued task.
+		if runtime.GOOS == "linux" && os.Geteuid() == 0 {
+			if unit, err := os.ReadFile(vastoraAgentUnitPath); err == nil && strings.Contains(string(unit), "Description=Vastora Agent") && strings.Contains(string(unit), " agent serve ") {
+				executable, err := os.Executable()
+				if err != nil {
+					return err
+				}
+				if err := installRuntimeDirectoriesUnit(executable); err != nil {
+					return fmt.Errorf("prepare managed runtime directories: %w", err)
+				}
+			}
+		}
 		// Reconnection is observation only. A failed heartbeat must not trigger
 		// offline application restoration or replay a management operation.
 		go func() {
