@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.401](https://github.com/petauron/vastora/compare/v0.1.0-alpha.400...v0.1.0-alpha.401) (2026-11-02)
+
+
+### Bug Fixes
+
+* **senlun:** exclude one-time identity from runtime upgrades ([#1166](https://github.com/petauron/vastora/issues/1166)) ([80119bd](https://github.com/petauron/vastora/commit/80119bdef0908d34bb34dc5cffdfa0074516a008))
+
 ## [0.1.0-alpha.400](https://github.com/petauron/vastora/compare/v0.1.0-alpha.399...v0.1.0-alpha.400) (2026-11-02)
 
 
