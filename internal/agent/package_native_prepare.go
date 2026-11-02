@@ -12,12 +12,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/platform"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 type nativePreparedFile struct {
@@ -239,7 +241,8 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 			return nativePreparedPackage{}, err
 		}
 		executable := filepath.Join("/opt/vastora/packages", base, "artifacts", unit.Process.Artifact, unit.Process.Executable)
-		raw, err := compileNativeProcessUnit(task.ApplicationID, task.Manifest.ID, &unit.Process, unit.RuntimeDirectory, statePaths, writable, executable, environmentPath, credentials, config, secrets, values)
+		icmp := task.AppKey == senulun.AgentKey && unit.Process.Executable == "senlun-agent" && slices.Contains(task.Manifest.Runtime.RequiredCapabilities, "senlun-icmp") && slices.Contains(task.AuthorizedCapabilities, "senlun-icmp")
+		raw, err := compileNativeProcessUnit(task.ApplicationID, task.Manifest.ID, &unit.Process, unit.RuntimeDirectory, statePaths, writable, executable, environmentPath, credentials, config, secrets, values, icmp)
 		if err != nil {
 			return nativePreparedPackage{}, err
 		}
