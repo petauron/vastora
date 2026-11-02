@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.400](https://github.com/petauron/vastora/compare/v0.1.0-alpha.399...v0.1.0-alpha.400) (2026-11-02)
+
+
+### Bug Fixes
+
+* **senlun:** scope ICMP repair without a Center protocol change ([#1163](https://github.com/petauron/vastora/issues/1163)) ([9e24a47](https://github.com/petauron/vastora/commit/9e24a47ea1c3d0620503ac8212dd45326bc06dc2))
+
 ## [0.1.0-alpha.399](https://github.com/petauron/vastora/compare/v0.1.0-alpha.398...v0.1.0-alpha.399) (2026-11-02)
 
 
