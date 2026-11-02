@@ -18,7 +18,11 @@ exact configured Service URL and bounded credential fields before installing
 anything. Stop an independently installed collector first. Native resources are
 installed without activation, the existing identity is placed in the newly owned
 state directory, then the collector starts. No new monitoring node is created.
-An import cannot replace an identity in an existing installation.
+An import cannot replace an identity in an existing installation. On later
+upgrades or configuration changes, both one-time initialization inputs are omitted
+from the runtime projection. The collector keeps its verified private on-node
+identity; historical installation evidence is not replayed as ordinary
+configuration.
 
 An authorized upgrade from a managed v1 Senlun Agent verifies the current
 application ID, local historical manifest digest and owned resource receipt.

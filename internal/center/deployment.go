@@ -444,7 +444,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				if _, _, err := normalizeDeploymentConfig(input, request.Config); err != nil {
 					return DeploymentView{}, err
 				}
-				config, err = removeJSONObjectKeys(deploymentConfig, "enrollment_token")
+				// Retain the verified on-node identity; initialization secrets are not runtime settings.
+				config, err = removeJSONObjectKeys(deploymentConfig, "enrollment_token", "existing_identity")
 				secrets = []byte(`{}`)
 			}
 			var collectorConfig senulun.AgentConfig
