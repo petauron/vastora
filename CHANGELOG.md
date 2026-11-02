@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.399](https://github.com/petauron/vastora/compare/v0.1.0-alpha.398...v0.1.0-alpha.399) (2026-11-02)
+
+
+### Bug Fixes
+
+* **senlun:** authorize ICMP for managed non-root probes ([#1161](https://github.com/petauron/vastora/issues/1161)) ([41f289c](https://github.com/petauron/vastora/commit/41f289c91583c901ca15722b699d6b6c05c7118d))
+
 ## [0.1.0-alpha.398](https://github.com/petauron/vastora/compare/v0.1.0-alpha.397...v0.1.0-alpha.398) (2026-11-01)
 
 
