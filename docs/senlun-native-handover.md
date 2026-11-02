@@ -4,6 +4,13 @@ The systemd v2 Senlun Agent recipe uses one application-owned account, one
 collector and one persistent `agent-state` directory. The landing-only execution
 boundary is unchanged; a v1 recipe is not made executable there.
 
+The ICMP-capable recipe explicitly requires `senlun-icmp`, advertised only by
+executors that support it. Administrator authorization grants `CAP_NET_RAW` only
+to the reviewed native Senlun collector. Its application-owned non-root user,
+`NoNewPrivileges` and other sandbox restrictions remain in place; no host-wide
+ping group or firewall setting is changed. Deliver the executor before updating
+that recipe, and confirm successful probe samples rather than telemetry alone.
+
 A first installation requires either a one-time enrollment token or explicitly
 provided private `existing_identity` JSON. Import checks protocol version, the
 exact configured Service URL and bounded credential fields before installing

@@ -275,10 +275,10 @@ func compilePackageUnit(task DeploymentTask, receipt *InstanceResources, executa
 			statePaths[name] = old.Path
 		}
 	}
-	return compileNativeProcessUnit(task.ApplicationID, task.Manifest.ID, spec, packageIdentity(task.ApplicationID), statePaths, nil, executable, environmentPath, credentials, config, secrets, runtimeValues)
+	return compileNativeProcessUnit(task.ApplicationID, task.Manifest.ID, spec, packageIdentity(task.ApplicationID), statePaths, nil, executable, environmentPath, credentials, config, secrets, runtimeValues, false)
 }
 
-func compileNativeProcessUnit(applicationID, appName string, spec *catalog.SystemdRuntime, runtimeDirectory string, statePaths map[string]string, writablePaths []string, executable, environmentPath string, credentials map[string]string, config map[string]any, secrets map[string]string, runtimeValues map[string]string) ([]byte, error) {
+func compileNativeProcessUnit(applicationID, appName string, spec *catalog.SystemdRuntime, runtimeDirectory string, statePaths map[string]string, writablePaths []string, executable, environmentPath string, credentials map[string]string, config map[string]any, secrets map[string]string, runtimeValues map[string]string, icmp bool) ([]byte, error) {
 	arguments, err := runtimeStrings(spec.Arguments, config, secrets, runtimeValues)
 	if err != nil {
 		return nil, err
@@ -297,8 +297,17 @@ func compileNativeProcessUnit(applicationID, appName string, spec *catalog.Syste
 		}
 	}
 	unit.WriteString("NoNewPrivileges=yes\nPrivateTmp=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\nProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectControlGroups=yes\nRestrictSUIDSGID=yes\nUMask=0077\nRestart=on-failure\nRestartSec=5s\n")
+	var capabilities []string
 	if spec.BindService {
-		unit.WriteString("CapabilityBoundingSet=CAP_NET_BIND_SERVICE\nAmbientCapabilities=CAP_NET_BIND_SERVICE\n")
+		capabilities = append(capabilities, "CAP_NET_BIND_SERVICE")
+	}
+	if icmp {
+		// Only the explicitly authorized Senlun probe needs raw ICMP. Keep
+		// NoNewPrivileges and avoid changing the host-wide ping group range.
+		capabilities = append(capabilities, "CAP_NET_RAW")
+	}
+	if len(capabilities) > 0 {
+		fmt.Fprintf(&unit, "CapabilityBoundingSet=%s\nAmbientCapabilities=%s\n", strings.Join(capabilities, " "), strings.Join(capabilities, " "))
 	} else if user := strings.SplitN(spec.User, ":", 2)[0]; user != "root" && user != "0" {
 		unit.WriteString("CapabilityBoundingSet=\nAmbientCapabilities=\n")
 	}

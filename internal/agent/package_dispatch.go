@@ -154,7 +154,7 @@ func (e ApplicationExecutor) PackageCapabilities(dockerAvailable bool) (map[stri
 	}
 	capabilities := []string{"root", "host-network", "host-path", "devices"}
 	if versions["systemd"] == 2 {
-		capabilities = append(capabilities, "native-services")
+		capabilities = append(capabilities, "native-services", "senlun-icmp")
 		if e.Store != nil && e.Store.sharedCaddy != nil {
 			capabilities = append(capabilities, "shared-caddy")
 		}
