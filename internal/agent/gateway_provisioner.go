@@ -97,7 +97,7 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	if err != nil {
 		return err
 	}
-	if err := prepareAdminSocketDirectory(settings.AdminSocketPath); err != nil {
+	if err := gatewayruntime.PrepareAdminDirectory(settings.AdminSocketPath); err != nil {
 		return err
 	}
 	docker, err := provisioner.client()
@@ -182,7 +182,7 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	}
 	mounts := gatewayMounts(settings)
 	if settings.AdminSocketPath != "" {
-		if err := prepareAdminSocketDirectory(settings.AdminSocketPath); err != nil {
+		if err := gatewayruntime.PrepareAdminDirectory(settings.AdminSocketPath); err != nil {
 			return err
 		}
 		if err := os.Remove(settings.AdminSocketPath); err != nil && !os.IsNotExist(err) {

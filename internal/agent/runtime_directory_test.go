@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
 func TestAdminRuntimeDirectoryRecoversAfterReboot(t *testing.T) {
@@ -13,7 +15,7 @@ func TestAdminRuntimeDirectoryRecoversAfterReboot(t *testing.T) {
 	}
 	socket := filepath.Join(root, "volatile", "vastora", "admin.sock")
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := prepareAdminSocketDirectory(socket); err != nil {
+		if err := gatewayruntime.PrepareAdminDirectory(socket); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -46,7 +48,7 @@ func TestAdminRuntimeDirectoryRejectsUnsafeExistingPaths(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := prepareAdminSocketDirectory(socket); err == nil {
+			if err := gatewayruntime.PrepareAdminDirectory(socket); err == nil {
 				t.Fatal("unsafe path was adopted")
 			}
 		})

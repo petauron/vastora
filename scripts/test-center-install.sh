@@ -223,6 +223,14 @@ case "${1:-}" in
   help) printf '%s\n' 'Vastora control-plane tools' ;;
   agent)
     shift
+    if [ "${1:-}" = "prepare-runtime-directories" ]; then
+      exit 0
+    fi
+    if [ "${1:-}" = "install-runtime-directories" ]; then
+      mkdir -p "$VASTORA_SYSTEMD_UNIT_DIR"
+      printf '%s\n' '# Managed by Vastora' '# Resource: runtime-directories' > "$VASTORA_SYSTEMD_UNIT_DIR/vastora-runtime-directories.service"
+      exit 0
+    fi
     if [ "${1:-}" = "prepare-center-upgrade-recovery" ]; then
       mkdir -p "$FAKE_AGENT_RECOVERY"
       cp "$FAKE_VASTORA_BINARY" "$FAKE_AGENT_RECOVERY/source-vastora"

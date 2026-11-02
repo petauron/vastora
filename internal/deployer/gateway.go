@@ -51,6 +51,10 @@ type gatewayReplacement struct {
 }
 
 func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, docker *client.Client, caddyfile []byte, centerBindAddresses, publicBindAddresses []string) (gatewayReplacement, error) {
+	// Validate the shared host resource before stopping any healthy container.
+	if err := gatewayruntime.PrepareAdminDirectory(installer.CaddyAdminSocket); err != nil {
+		return gatewayReplacement{}, err
+	}
 	if err := installer.recoverGatewayBackup(ctx, docker); err != nil {
 		return gatewayReplacement{}, err
 	}
@@ -97,10 +101,6 @@ func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, do
 			cause := fmt.Errorf("deployer: preserve existing unified gateway: %w", err)
 			return gatewayReplacement{}, errors.Join(cause, replacement.rollback(context.WithoutCancel(ctx), docker))
 		}
-	}
-	if err := os.MkdirAll(filepath.Dir(installer.CaddyAdminSocket), 0o700); err != nil {
-		_ = replacement.rollback(ctx, docker)
-		return gatewayReplacement{}, fmt.Errorf("deployer: create Caddy Admin socket directory: %w", err)
 	}
 	if err := os.Remove(installer.CaddyAdminSocket); err != nil && !os.IsNotExist(err) {
 		_ = replacement.rollback(ctx, docker)

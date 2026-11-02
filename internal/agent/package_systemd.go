@@ -317,9 +317,8 @@ func compileNativeProcessUnit(applicationID, appName string, spec *catalog.Syste
 	}
 	sort.Strings(credentialNames)
 	baseName := runtimeDirectory
-	if len(credentialNames) > 0 {
-		fmt.Fprintf(&unit, "RuntimeDirectory=%s\nRuntimeDirectoryMode=0700\n", baseName)
-	}
+	// Every native service owns its runtime namespace, even without credentials.
+	fmt.Fprintf(&unit, "RuntimeDirectory=%s\nRuntimeDirectoryMode=0700\n", baseName)
 	for _, name := range credentialNames {
 		path, err := unitCredentialPath(credentials[name])
 		if err != nil {

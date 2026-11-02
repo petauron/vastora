@@ -1,4 +1,4 @@
-package agent
+package gatewayruntime
 
 import (
 	"errors"
@@ -9,10 +9,10 @@ import (
 	"syscall"
 )
 
-// prepareAdminSocketDirectory runs before both container creation and restart:
+// PrepareAdminDirectory runs before both container creation and restart:
 // /run is volatile even when Docker's container metadata survives a reboot.
 // Do not follow symlinks, fix ownership, or delete an unexpected existing file.
-func prepareAdminSocketDirectory(socketPath string) error {
+func PrepareAdminDirectory(socketPath string) error {
 	if socketPath == "" {
 		return nil
 	}
