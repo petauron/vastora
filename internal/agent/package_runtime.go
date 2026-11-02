@@ -17,7 +17,6 @@ import (
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
-	"github.com/petauron/vastora/internal/senulun"
 )
 
 // InstanceResources is durable ownership evidence, not a deployment recipe.
@@ -212,7 +211,7 @@ func validatePackageTask(task DeploymentTask) error {
 		return errors.New("agent: unsupported package executor protocol")
 	}
 	for _, capability := range runtime.RequiredCapabilities {
-		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy", "senlun-icmp"}, capability) {
+		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy"}, capability) {
 			return errors.New("agent: unsupported runtime capability")
 		}
 		if capability == "meridian-runtime" && task.AppKey != meridianKey {
@@ -220,9 +219,6 @@ func validatePackageTask(task DeploymentTask) error {
 		}
 		if capability == "shared-caddy" && !daylightKey(task.AppKey) {
 			return errors.New("agent: shared Caddy is reserved for its reviewed website packages")
-		}
-		if capability == "senlun-icmp" && (task.AppKey != senulun.AgentKey || task.Manifest.ID != "senlun-agent" || runtime.Kind != "systemd" || runtime.Version != 2) {
-			return errors.New("agent: Senlun ICMP is reserved for its reviewed native probe")
 		}
 		if !slices.Contains(task.AuthorizedCapabilities, capability) {
 			return errors.New("agent: runtime capability requires explicit administrator authorization: " + capability)

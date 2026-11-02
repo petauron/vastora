@@ -140,7 +140,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		// Availability is observation, not a host-wide executor grant. The task
 		// runner constructs an executor only for a reviewed native lifecycle.
 		c.Capabilities.ExecutorVersions = map[string]int{"systemd": 2}
-		c.Capabilities.RuntimeCapabilities = []string{"native-services", "root", "senlun-icmp"}
+		c.Capabilities.RuntimeCapabilities = []string{"native-services", "root"}
 		if store.sharedCaddy != nil {
 			c.Capabilities.RuntimeCapabilities = append(c.Capabilities.RuntimeCapabilities, "shared-caddy")
 		}
