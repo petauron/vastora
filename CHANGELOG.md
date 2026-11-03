@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.405](https://github.com/petauron/vastora/compare/v0.1.0-alpha.404...v0.1.0-alpha.405) (2026-11-03)
+
+
+### Bug Fixes
+
+* **runtime:** complete co-located control boot recovery ([67cc121](https://github.com/petauron/vastora/commit/67cc121f02d9f668d6ec7483605128d501860092))
+
 ## [0.1.0-alpha.404](https://github.com/petauron/vastora/compare/v0.1.0-alpha.403...v0.1.0-alpha.404) (2026-11-03)
 
 
