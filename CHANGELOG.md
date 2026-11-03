@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.407](https://github.com/petauron/vastora/compare/v0.1.0-alpha.406...v0.1.0-alpha.407) (2026-11-03)
+
+
+### Bug Fixes
+
+* **agent:** recover Docker application networks after reboot ([#1178](https://github.com/petauron/vastora/issues/1178)) ([6d248e3](https://github.com/petauron/vastora/commit/6d248e36c69c88555b4b4e28c8af70f1d0886727)), closes [#356](https://github.com/petauron/vastora/issues/356)
+
 ## [0.1.0-alpha.406](https://github.com/petauron/vastora/compare/v0.1.0-alpha.405...v0.1.0-alpha.406) (2026-11-03)
 
 
