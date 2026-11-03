@@ -101,9 +101,10 @@ case "${ID:-}:${VERSION_ID:-}" in
     exit 1 ;;
 esac
 
-for required in curl systemctl sha256sum awk dpkg; do
+for required in curl systemctl sha256sum awk dpkg ip; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
+    if [ "$required" = ip ]; then echo "Install iproute2 before continuing." >&2; fi
     exit 1
   fi
 done

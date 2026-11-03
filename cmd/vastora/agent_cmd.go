@@ -674,12 +674,11 @@ func runAgent(arguments []string) error {
 		// Reconnection is observation only. A failed heartbeat must not trigger
 		// offline application restoration or replay a management operation.
 		go func() {
-			// Repair only an existing running gateway's Docker attachment, once
-			// before any Center contact or task claim. Never replay saved routes
-			// or restart an application as part of heartbeat/reconnect handling.
+			// Restore owned local startup resources before Center contact or task
+			// claims. Heartbeat/reconnect handling never replays this recovery.
 			if capabilities.Docker {
-				startup, cancel := context.WithTimeout(context.Background(), time.Minute)
-				err := store.RecoverGatewayAttachments(startup)
+				startup, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+				err := store.RecoverStartupRuntime(startup)
 				cancel()
 				if err != nil {
 					controlLogger.Error("Gateway startup network recovery failed", "event", "gateway.startup_network", "error", controlplane.SafeError(err.Error()))

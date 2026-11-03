@@ -18,11 +18,10 @@ type gatewayAttachmentEngine interface {
 	ContainerStart(context.Context, string, client.ContainerStartOptions) (client.ContainerStartResult, error)
 }
 
-// RecoverGatewayAttachments repairs an existing owned gateway's attachment.
-// It also resumes an automatically restarted gateway whose Docker start failed
-// because an original bind address was not ready. No container is replaced or
-// configured and no saved revision is replayed. Call before the control loops.
-func (s *Store) RecoverGatewayAttachments(ctx context.Context) error {
+// RecoverStartupRuntime restores committed local runtime resources once,
+// before control loops. It does not replace containers, advance a revision,
+// replay tasks or change existing application configuration.
+func (s *Store) RecoverStartupRuntime(ctx context.Context) error {
 	s.gatewayMutationMu.Lock()
 	defer s.gatewayMutationMu.Unlock()
 	docker, err := (DockerGatewayProvisioner{}).client()
@@ -30,6 +29,11 @@ func (s *Store) RecoverGatewayAttachments(ctx context.Context) error {
 		return err
 	}
 	defer docker.Close()
+	bootstrap, err := s.beginCohostPrivateBootstrap(ctx, docker)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = bootstrap.close(context.WithoutCancel(ctx)) }()
 	var failures []error
 	for _, runtime := range []struct{ name, component, alias string }{
 		{defaultCaddyContainer, gatewayruntime.CaddyComponentLabel, dockerruntime.CaddyAlias},
@@ -37,6 +41,32 @@ func (s *Store) RecoverGatewayAttachments(ctx context.Context) error {
 	} {
 		if err := recoverGatewayAttachment(ctx, docker, runtime.name, runtime.component, runtime.alias); err != nil {
 			failures = append(failures, fmt.Errorf("agent: recover %s network attachment: %w", runtime.name, err))
+		}
+	}
+	if len(failures) == 0 {
+		current, inspectErr := docker.ContainerInspect(ctx, defaultCaddyContainer, client.ContainerInspectOptions{})
+		if inspectErr != nil && !errdefs.IsNotFound(inspectErr) {
+			failures = append(failures, inspectErr)
+		}
+		if inspectErr == nil && current.Container.State != nil && current.Container.State.Running {
+			if err := s.restoreGatewayConfiguration(ctx); err != nil {
+				failures = append(failures, err)
+			}
+		}
+	}
+	if len(failures) == 0 {
+		if bootstrap != nil && s.linkChecker == nil {
+			failures = append(failures, errors.New("agent: private control identity checker is unavailable"))
+		} else if err := bootstrap.waitForTailscale(ctx, s.linkChecker); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	if err := bootstrap.close(context.WithoutCancel(ctx)); err != nil {
+		failures = append(failures, err)
+	}
+	if len(failures) == 0 {
+		if err := s.recoverPackageNetworks(ctx, docker); err != nil {
+			failures = append(failures, err)
 		}
 	}
 	return errors.Join(failures...)
@@ -102,7 +132,7 @@ func recoverGatewayAttachment(ctx context.Context, docker gatewayAttachmentEngin
 
 func gatewayBindStartFailed(current client.ContainerInspectResult) bool {
 	value := current.Container
-	if value.State == nil || value.State.Running || value.State.Status != "exited" || value.State.ExitCode != 128 ||
+	if value.State == nil || value.State.Running || value.State.Status != "exited" || value.State.OOMKilled ||
 		value.HostConfig == nil || value.HostConfig.AutoRemove || value.HostConfig.RestartPolicy.Name != "unless-stopped" ||
 		!strings.Contains(value.State.Error, "cannot assign requested address") {
 		return false
