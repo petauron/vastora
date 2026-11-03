@@ -42,7 +42,7 @@ case "$target" in
     exit 2
     ;;
 esac
-for required in docker grep install mktemp mv awk; do
+for required in docker grep install mktemp mv awk ip; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     exit 1

@@ -76,34 +76,9 @@ func (driver *CaddyGatewayDriver) ApplyConfiguration(ctx context.Context, desire
 }
 
 func (driver *CaddyGatewayDriver) applyConfiguration(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
-	if err := desired.Validate(); err != nil {
-		return err
-	}
-	if err := gateway.ValidateCertificatesForState(desired, certificates); err != nil {
-		return err
-	}
-	if driver.SystemGateway != nil {
-		services, err := driver.SystemGateway.ProtectedSystemServices(ctx)
-		if err != nil {
-			return fmt.Errorf("agent: inspect protected system gateway: %w", err)
-		}
-		if err := validateProtectedSystemRoutes(desired, services); err != nil {
-			return err
-		}
-	}
-	configuration, err := caddyConfiguration(desired.Sorted(), certificates, driver.AdminListen)
+	configuration, err := driver.configuration(ctx, desired, certificates)
 	if err != nil {
 		return err
-	}
-	if driver.Sites != nil {
-		sites, err := driver.Sites(ctx)
-		if err != nil {
-			return err
-		}
-		configuration, err = composeCaddySites(configuration, desired, sites, driver.SiteContainer)
-		if err != nil {
-			return err
-		}
 	}
 	if err := driver.load(ctx, configuration); err != nil {
 		return err
@@ -113,6 +88,39 @@ func (driver *CaddyGatewayDriver) applyConfiguration(ctx context.Context, desire
 	driver.certificates = append([]gateway.Certificate(nil), certificates...)
 	driver.mu.Unlock()
 	return nil
+}
+
+func (driver *CaddyGatewayDriver) configuration(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) ([]byte, error) {
+	if err := desired.Validate(); err != nil {
+		return nil, err
+	}
+	if err := gateway.ValidateCertificatesForState(desired, certificates); err != nil {
+		return nil, err
+	}
+	if driver.SystemGateway != nil {
+		services, err := driver.SystemGateway.ProtectedSystemServices(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("agent: inspect protected system gateway: %w", err)
+		}
+		if err := validateProtectedSystemRoutes(desired, services); err != nil {
+			return nil, err
+		}
+	}
+	configuration, err := caddyConfiguration(desired.Sorted(), certificates, driver.AdminListen)
+	if err != nil {
+		return nil, err
+	}
+	if driver.Sites != nil {
+		sites, err := driver.Sites(ctx)
+		if err != nil {
+			return nil, err
+		}
+		configuration, err = composeCaddySites(configuration, desired, sites, driver.SiteContainer)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return configuration, nil
 }
 
 func (driver *CaddyGatewayDriver) load(ctx context.Context, configuration []byte) error {
@@ -257,18 +265,15 @@ func (driver *CaddyGatewayDriver) Health(ctx context.Context) error {
 			return err
 		}
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, driver.AdminURL+"/config/", nil)
+	loaded, err := driver.runtimeConfigurationLoaded(ctx)
 	if err != nil {
 		return err
 	}
-	response, err := driver.client().Do(request)
-	if err != nil {
-		return fmt.Errorf("agent: Caddy health: %w", err)
-	}
-	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("agent: Caddy health: %s", response.Status)
+	driver.mu.RLock()
+	expected := len(driver.state.Routes) != 0
+	driver.mu.RUnlock()
+	if expected && !loaded {
+		return errors.New("agent: Caddy has only its Admin bootstrap; gateway configuration is missing")
 	}
 	return nil
 }

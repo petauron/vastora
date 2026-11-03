@@ -385,7 +385,7 @@ func (installer DockerHeadscaleInstaller) headscaleContainerConfig() (*container
 			ExposedPorts: dockernetwork.PortSet{dockernetwork.MustParsePort("8081/tcp"): struct{}{}, stunPort: struct{}{}},
 		}, &container.HostConfig{
 			NetworkMode:    container.NetworkMode(dockerruntime.NetworkName),
-			RestartPolicy:  container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
+			RestartPolicy:  container.RestartPolicy{Name: container.RestartPolicyMode("always")},
 			ReadonlyRootfs: true,
 			Tmpfs:          map[string]string{"/var/run/headscale": "rw,noexec,nosuid,size=16m,mode=1777"},
 			PortBindings: dockernetwork.PortMap{
