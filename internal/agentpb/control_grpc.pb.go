@@ -23,6 +23,7 @@ const (
 	AgentControl_Enroll_FullMethodName                   = "/vastora.agent.v1.AgentControl/Enroll"
 	AgentControl_Connect_FullMethodName                  = "/vastora.agent.v1.AgentControl/Connect"
 	AgentControl_Heartbeat_FullMethodName                = "/vastora.agent.v1.AgentControl/Heartbeat"
+	AgentControl_PrepareGatewayPromotion_FullMethodName  = "/vastora.agent.v1.AgentControl/PrepareGatewayPromotion"
 	AgentControl_ReportLandingLatency_FullMethodName     = "/vastora.agent.v1.AgentControl/ReportLandingLatency"
 	AgentControl_ImportLegacyReceipts_FullMethodName     = "/vastora.agent.v1.AgentControl/ImportLegacyReceipts"
 	AgentControl_RegisterExecutionSession_FullMethodName = "/vastora.agent.v1.AgentControl/RegisterExecutionSession"
@@ -49,6 +50,7 @@ type AgentControlClient interface {
 	Enroll(ctx context.Context, in *EnrollRequest, opts ...grpc.CallOption) (*EnrollResponse, error)
 	Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentFrame, CenterFrame], error)
 	Heartbeat(ctx context.Context, in *AgentDocument, opts ...grpc.CallOption) (*Document, error)
+	PrepareGatewayPromotion(ctx context.Context, in *AgentDocument, opts ...grpc.CallOption) (*Document, error)
 	ReportLandingLatency(ctx context.Context, in *AgentDocument, opts ...grpc.CallOption) (*Document, error)
 	ImportLegacyReceipts(ctx context.Context, in *AgentDocument, opts ...grpc.CallOption) (*Document, error)
 	RegisterExecutionSession(ctx context.Context, in *AgentDocument, opts ...grpc.CallOption) (*Document, error)
@@ -109,6 +111,16 @@ func (c *agentControlClient) Heartbeat(ctx context.Context, in *AgentDocument, o
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Document)
 	err := c.cc.Invoke(ctx, AgentControl_Heartbeat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentControlClient) PrepareGatewayPromotion(ctx context.Context, in *AgentDocument, opts ...grpc.CallOption) (*Document, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Document)
+	err := c.cc.Invoke(ctx, AgentControl_PrepareGatewayPromotion_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -277,6 +289,7 @@ type AgentControlServer interface {
 	Enroll(context.Context, *EnrollRequest) (*EnrollResponse, error)
 	Connect(grpc.BidiStreamingServer[AgentFrame, CenterFrame]) error
 	Heartbeat(context.Context, *AgentDocument) (*Document, error)
+	PrepareGatewayPromotion(context.Context, *AgentDocument) (*Document, error)
 	ReportLandingLatency(context.Context, *AgentDocument) (*Document, error)
 	ImportLegacyReceipts(context.Context, *AgentDocument) (*Document, error)
 	RegisterExecutionSession(context.Context, *AgentDocument) (*Document, error)
@@ -311,6 +324,9 @@ func (UnimplementedAgentControlServer) Connect(grpc.BidiStreamingServer[AgentFra
 }
 func (UnimplementedAgentControlServer) Heartbeat(context.Context, *AgentDocument) (*Document, error) {
 	return nil, status.Error(codes.Unimplemented, "method Heartbeat not implemented")
+}
+func (UnimplementedAgentControlServer) PrepareGatewayPromotion(context.Context, *AgentDocument) (*Document, error) {
+	return nil, status.Error(codes.Unimplemented, "method PrepareGatewayPromotion not implemented")
 }
 func (UnimplementedAgentControlServer) ReportLandingLatency(context.Context, *AgentDocument) (*Document, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportLandingLatency not implemented")
@@ -429,6 +445,24 @@ func _AgentControl_Heartbeat_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AgentControlServer).Heartbeat(ctx, req.(*AgentDocument))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentControl_PrepareGatewayPromotion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentDocument)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentControlServer).PrepareGatewayPromotion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentControl_PrepareGatewayPromotion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentControlServer).PrepareGatewayPromotion(ctx, req.(*AgentDocument))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -660,6 +694,10 @@ var AgentControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Heartbeat",
 			Handler:    _AgentControl_Heartbeat_Handler,
+		},
+		{
+			MethodName: "PrepareGatewayPromotion",
+			Handler:    _AgentControl_PrepareGatewayPromotion_Handler,
 		},
 		{
 			MethodName: "ReportLandingLatency",

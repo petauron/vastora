@@ -27,9 +27,12 @@ Existing stopped Docker services are not started or removed.
   listeners are unavailable. The Center rejects application deployment and
   disallowed task delivery; the Agent also rejects tasks outside its landing,
   update and decommission lifecycle.
-- Purpose survives enrollment replay, restart and reconnect. Heartbeats cannot
+- Purpose survives enrollment replay, restart and reconnect. Ordinary heartbeats cannot
   convert a landing-only node to an application node, or vice versa. The local
   configure command cannot override the Center-issued purpose.
+  An explicitly authorized existing host can use the separate
+  [worker/gateway promotion procedure](node-gateway-promotion.md); it retains
+  the original identity and requires an authenticated startup confirmation.
 - Private SOCKS binding, authorized-source firewall policy, destination
   restrictions and egress address selection remain in the existing landing
   implementation. No new route source of truth is introduced.

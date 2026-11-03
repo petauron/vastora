@@ -661,7 +661,15 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if err := json.Unmarshal(authorizedJSON, &authorized); err != nil {
 		return err
 	}
-	if authorized.LandingOnly != heartbeat.Capabilities.LandingOnly || (authorized.LandingOnly && (heartbeat.Capabilities.Docker || heartbeat.Capabilities.Gateway || heartbeat.Capabilities.Tunnel || containsString(heartbeat.Roles, "gateway"))) {
+	promotingGateway := false
+	if authorized.LandingOnly && !heartbeat.Capabilities.LandingOnly {
+		allowed, promotionErr := s.acceptsGatewayPromotionHeartbeat(ctx, id, heartbeat)
+		if promotionErr != nil {
+			return promotionErr
+		}
+		promotingGateway = allowed
+	}
+	if !promotingGateway && (authorized.LandingOnly != heartbeat.Capabilities.LandingOnly || (authorized.LandingOnly && (heartbeat.Capabilities.Docker || heartbeat.Capabilities.Gateway || heartbeat.Capabilities.Tunnel || containsString(heartbeat.Roles, "gateway")))) {
 		return errors.New("center: heartbeat cannot change the authorized landing-only purpose")
 	}
 	heartbeat.Roles = uniqueStrings(heartbeat.Roles)
@@ -759,6 +767,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET landing_egress_addresses_json=? WHERE id=?`, egressAddressesJSON, id); err != nil {
 		return err
+	}
+	if promotingGateway {
+		if err := s.confirmGatewayPromotion(ctx, tx, id, credential); err != nil {
+			return err
+		}
 	}
 	if heartbeat.Startup {
 		if err := s.retireInstalledUnclaimedAgentUpdate(ctx, tx, id, heartbeat.Version, now); err != nil {
