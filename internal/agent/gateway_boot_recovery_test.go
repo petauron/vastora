@@ -216,9 +216,17 @@ type bootNetworkDocker struct {
 	*fakePackageDocker
 	network  client.NetworkInspectResult
 	connects int
+	networks map[string]client.NetworkInspectResult
 }
 
-func (d *bootNetworkDocker) NetworkInspect(context.Context, string, client.NetworkInspectOptions) (client.NetworkInspectResult, error) {
+func (d *bootNetworkDocker) NetworkInspect(_ context.Context, id string, _ client.NetworkInspectOptions) (client.NetworkInspectResult, error) {
+	if d.networks != nil {
+		n, ok := d.networks[id]
+		if !ok {
+			return n, errors.New("network not found")
+		}
+		return n, nil
+	}
 	return d.network, nil
 }
 func (d *bootNetworkDocker) NetworkCreate(context.Context, string, client.NetworkCreateOptions) (client.NetworkCreateResult, error) {
@@ -227,13 +235,21 @@ func (d *bootNetworkDocker) NetworkCreate(context.Context, string, client.Networ
 func (d *bootNetworkDocker) NetworkDisconnect(context.Context, string, client.NetworkDisconnectOptions) (client.NetworkDisconnectResult, error) {
 	panic("bootstrap must not detach applications")
 }
-func (d *bootNetworkDocker) NetworkConnect(ctx context.Context, _ string, options client.NetworkConnectOptions) (client.NetworkConnectResult, error) {
+func (d *bootNetworkDocker) NetworkConnect(ctx context.Context, networkID string, options client.NetworkConnectOptions) (client.NetworkConnectResult, error) {
 	d.connects++
 	v, err := d.ContainerInspect(ctx, options.Container, client.ContainerInspectOptions{})
 	if err != nil {
 		return client.NetworkConnectResult{}, err
 	}
-	v.Container.NetworkSettings.Networks["private-test"] = &network.EndpointSettings{NetworkID: "network-id", EndpointID: "restored-endpoint", Aliases: options.EndpointConfig.Aliases, IPAMConfig: options.EndpointConfig.IPAMConfig}
+	name, id := "private-test", "network-id"
+	if d.networks != nil {
+		n, err := d.NetworkInspect(ctx, networkID, client.NetworkInspectOptions{})
+		if err != nil {
+			return client.NetworkConnectResult{}, err
+		}
+		name, id = n.Network.Name, n.Network.ID
+	}
+	v.Container.NetworkSettings.Networks[name] = &network.EndpointSettings{NetworkID: id, EndpointID: "restored-endpoint", Aliases: options.EndpointConfig.Aliases, IPAMConfig: options.EndpointConfig.IPAMConfig}
 	v.Container.NetworkSettings.Ports = v.Container.HostConfig.PortBindings
 	d.containers[v.Container.Name] = v
 	return client.NetworkConnectResult{}, errors.New("response was lost")
@@ -320,5 +336,36 @@ func TestPackageBootNetworkRecoveryPreservesAuthorizedReceipt(t *testing.T) {
 	}
 	if !reflect.DeepEqual(docker.calls, []string{"start"}) || docker.connects != 1 || len(docker.created) != 0 {
 		t.Fatal("same-container recovery did not run exactly once")
+	}
+}
+
+func TestRetainedDefaultBridgeUsesDockerIdentityAcrossBoot(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		d := &bootNetworkDocker{fakePackageDocker: newPackageDocker(), networks: map[string]client.NetworkInspectResult{}}
+		bridge := client.NetworkInspectResult{Network: network.Inspect{Network: network.Network{ID: "new-built-in-id", Name: "bridge", Driver: "bridge", Scope: "local", Options: map[string]string{"com.docker.network.bridge.default_bridge": "true"}}}}
+		custom := client.NetworkInspectResult{Network: network.Inspect{Network: network.Network{ID: "shared-id", Name: "original-shared", Driver: "bridge", Scope: "local"}}}
+		d.networks["bridge"], d.networks["new-built-in-id"] = bridge, bridge
+		d.networks["shared-id"] = custom
+		current := failedBootContainer(128)
+		current.Container.HostConfig.NetworkMode = "bridge"
+		current.Container.HostConfig.PortBindings = nil
+		current.Container.State.Running = true
+		d.containers[current.Container.Name] = current
+		expected := []RuntimeNetworkAttachment{{Name: "bridge", ID: "old-built-in-id"}}
+		if shared {
+			expected = []RuntimeNetworkAttachment{{Name: "original-shared", ID: "shared-id", Aliases: []string{"service"}}}
+		}
+		if err := recoverRetainedContainerNetworks(context.Background(), d, current, expected); err != nil {
+			t.Fatal(err)
+		}
+		if len(d.created) != 0 || len(d.calls) != 0 || d.connects != map[bool]int{false: 1, true: 2}[shared] {
+			t.Fatal("recovery replaced or restarted the working original container")
+		}
+		bridge.Network.Options = nil
+		d.networks["bridge"] = bridge
+		before := d.connects
+		if err := recoverRetainedContainerNetworks(context.Background(), d, current, expected); err == nil || d.connects != before {
+			t.Fatal("a non-default bridge was accepted or mutated")
+		}
 	}
 }
