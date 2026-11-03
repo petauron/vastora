@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.408](https://github.com/petauron/vastora/compare/v0.1.0-alpha.407...v0.1.0-alpha.408) (2026-11-03)
+
+
+### Bug Fixes
+
+* **agent:** wait for Caddy Admin listener during boot recovery ([625b773](https://github.com/petauron/vastora/commit/625b77354939031c37bfec19d8fd828c5b1988f8))
+
 ## [0.1.0-alpha.407](https://github.com/petauron/vastora/compare/v0.1.0-alpha.406...v0.1.0-alpha.407) (2026-11-03)
 
 
