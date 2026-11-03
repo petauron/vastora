@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.409](https://github.com/petauron/vastora/compare/v0.1.0-alpha.408...v0.1.0-alpha.409) (2026-11-03)
+
+
+### Features
+
+* **nodes:** authorize identity-preserving gateway promotion ([#1184](https://github.com/petauron/vastora/issues/1184)) ([0d964e7](https://github.com/petauron/vastora/commit/0d964e7b5b30be97c42f20a09c6fce87cb2bbf89))
+
 ## [0.1.0-alpha.408](https://github.com/petauron/vastora/compare/v0.1.0-alpha.407...v0.1.0-alpha.408) (2026-11-03)
 
 
