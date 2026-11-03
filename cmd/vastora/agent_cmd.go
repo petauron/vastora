@@ -175,6 +175,7 @@ func runAgent(arguments []string) error {
 		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
 		rolesValue := flags.String("roles", "", "comma-separated node roles: worker,gateway")
 		capabilitiesValue := flags.String("capabilities", "", "comma-separated implemented capabilities: docker,gateway,tunnel")
+		promotionID := flags.String("promotion-id", "", "Center-issued gateway promotion ID; requires a stopped Agent and existing recovery point")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -196,6 +197,27 @@ func runAgent(arguments []string) error {
 		if _, err := store.Connection(context.Background()); err != nil {
 			return errors.New("agent must be enrolled before its purpose can be changed")
 		}
+		if *promotionID != "" {
+			if strings.Join(roles, ",") != "worker,gateway" || capabilities.LandingOnly || !capabilities.Docker || !capabilities.Gateway || capabilities.Tunnel {
+				return errors.New("gateway promotion permits only worker,gateway with docker,gateway capabilities")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			state, err := exec.CommandContext(ctx, "systemctl", "show", "--property=ActiveState", "--value", "vastora-agent.service").Output()
+			if err != nil || strings.TrimSpace(string(state)) != "inactive" {
+				return errors.New("stop the existing Agent before applying its gateway promotion")
+			}
+			if err := exec.CommandContext(ctx, "/usr/bin/docker", "info", "--format", "{{.ServerVersion}}").Run(); err != nil {
+				return errors.New("install and verify the existing managed Docker prerequisite before promotion")
+			}
+			grant, err := (agent.Client{}).PrepareGatewayPromotion(ctx, store, *promotionID)
+			if err != nil {
+				return err
+			}
+			if err := store.CommitGatewayPromotion(ctx, grant); err != nil {
+				return err
+			}
+		}
 		if err := store.ValidateNodePurpose(context.Background(), capabilities); err != nil {
 			return err
 		}
@@ -206,8 +228,10 @@ func runAgent(arguments []string) error {
 		if err := installSystemdAgent(executable, *dataDir, strings.Join(roles, ","), nodeCapabilitiesString(capabilities)); err != nil {
 			return err
 		}
-		if output, err := exec.Command("systemctl", "restart", "vastora-agent.service").CombinedOutput(); err != nil {
-			return fmt.Errorf("restart Agent service: %s: %w", strings.TrimSpace(string(output)), err)
+		if *promotionID == "" {
+			if output, err := exec.Command("systemctl", "restart", "vastora-agent.service").CombinedOutput(); err != nil {
+				return fmt.Errorf("restart Agent service: %s: %w", strings.TrimSpace(string(output)), err)
+			}
 		}
 		fmt.Println("Agent purpose updated; Center will refresh it after the next heartbeat")
 		return nil

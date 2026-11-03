@@ -11,6 +11,7 @@ service AgentControl {
   rpc Enroll(EnrollRequest) returns (EnrollResponse);
   rpc Connect(stream AgentFrame) returns (stream CenterFrame);
   rpc Heartbeat(AgentDocument) returns (Document);
+  rpc PrepareGatewayPromotion(AgentDocument) returns (Document);
   rpc ReportLandingLatency(AgentDocument) returns (Document);
   rpc ImportLegacyReceipts(AgentDocument) returns (Document);
   rpc RegisterExecutionSession(AgentDocument) returns (Document);

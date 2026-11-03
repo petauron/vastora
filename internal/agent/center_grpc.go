@@ -338,6 +338,7 @@ type agentRPCOperation uint8
 
 const (
 	rpcHeartbeat agentRPCOperation = iota + 1
+	rpcGatewayPromotion
 	rpcLandingLatency
 	rpcLegacyReceipts
 	rpcExecutionSession
@@ -376,6 +377,8 @@ func (c Client) callAgentRPC(ctx context.Context, connection Connection, operati
 	switch operation {
 	case rpcHeartbeat:
 		result, err = client.Heartbeat(ctx, &agentpb.AgentDocument{AgentId: connection.AgentID, Json: body})
+	case rpcGatewayPromotion:
+		result, err = client.PrepareGatewayPromotion(ctx, &agentpb.AgentDocument{AgentId: connection.AgentID, Json: body})
 	case rpcLandingLatency:
 		result, err = client.ReportLandingLatency(ctx, &agentpb.AgentDocument{AgentId: connection.AgentID, Json: body})
 	case rpcLegacyReceipts:

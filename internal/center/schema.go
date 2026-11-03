@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 128
+const centerSchemaVersion = 129
 
 //go:embed schema_retirement.sql
 var currentRetirementSchema string
@@ -36,6 +36,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	defer tx.Rollback()
 	statements := []string{
 		currentReinstallSchema,
+		agentGatewayPromotionSchema,
 		glivelaPilotCheckpointSchema,
 		`CREATE TABLE official_catalog_trust (
 			channel TEXT PRIMARY KEY,

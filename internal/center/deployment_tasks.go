@@ -115,6 +115,9 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return nil, err
 	}
+	if blocked, err := gatewayPromotionPrepared(ctx, s.db, agentID); err != nil || blocked {
+		return nil, err
+	}
 	var tailscaleWaiting bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tailscale_update_tasks WHERE agent_id=? AND state='awaiting_decision')`, agentID).Scan(&tailscaleWaiting); err != nil {
 		return nil, err
@@ -169,6 +172,9 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, fmt.Errorf("center: begin task claim: %w", err)
 	}
 	defer tx.Rollback()
+	if blocked, err := gatewayPromotionPrepared(ctx, tx, agentID); err != nil || blocked {
+		return nil, err
+	}
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return nil, err
 	} else if blocked {

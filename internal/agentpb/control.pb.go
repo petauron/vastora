@@ -1483,12 +1483,13 @@ const file_vastora_agent_v1_control_proto_rawDesc = "" +
 	"\x04body\"U\n" +
 	"\x15BackupDownloadRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12!\n" +
-	"\fmigration_id\x18\x02 \x01(\tR\vmigrationId2\x99\v\n" +
+	"\fmigration_id\x18\x02 \x01(\tR\vmigrationId2\xf1\v\n" +
 	"\fAgentControl\x12H\n" +
 	"\x05Probe\x12\x1e.vastora.agent.v1.ProbeRequest\x1a\x1f.vastora.agent.v1.ProbeResponse\x12K\n" +
 	"\x06Enroll\x12\x1f.vastora.agent.v1.EnrollRequest\x1a .vastora.agent.v1.EnrollResponse\x12J\n" +
 	"\aConnect\x12\x1c.vastora.agent.v1.AgentFrame\x1a\x1d.vastora.agent.v1.CenterFrame(\x010\x01\x12H\n" +
-	"\tHeartbeat\x12\x1f.vastora.agent.v1.AgentDocument\x1a\x1a.vastora.agent.v1.Document\x12S\n" +
+	"\tHeartbeat\x12\x1f.vastora.agent.v1.AgentDocument\x1a\x1a.vastora.agent.v1.Document\x12V\n" +
+	"\x17PrepareGatewayPromotion\x12\x1f.vastora.agent.v1.AgentDocument\x1a\x1a.vastora.agent.v1.Document\x12S\n" +
 	"\x14ReportLandingLatency\x12\x1f.vastora.agent.v1.AgentDocument\x1a\x1a.vastora.agent.v1.Document\x12S\n" +
 	"\x14ImportLegacyReceipts\x12\x1f.vastora.agent.v1.AgentDocument\x1a\x1a.vastora.agent.v1.Document\x12W\n" +
 	"\x18RegisterExecutionSession\x12\x1f.vastora.agent.v1.AgentDocument\x1a\x1a.vastora.agent.v1.Document\x12V\n" +
@@ -1553,38 +1554,40 @@ var file_vastora_agent_v1_control_proto_depIdxs = []int32{
 	2,  // 9: vastora.agent.v1.AgentControl.Enroll:input_type -> vastora.agent.v1.EnrollRequest
 	4,  // 10: vastora.agent.v1.AgentControl.Connect:input_type -> vastora.agent.v1.AgentFrame
 	10, // 11: vastora.agent.v1.AgentControl.Heartbeat:input_type -> vastora.agent.v1.AgentDocument
-	10, // 12: vastora.agent.v1.AgentControl.ReportLandingLatency:input_type -> vastora.agent.v1.AgentDocument
-	10, // 13: vastora.agent.v1.AgentControl.ImportLegacyReceipts:input_type -> vastora.agent.v1.AgentDocument
-	10, // 14: vastora.agent.v1.AgentControl.RegisterExecutionSession:input_type -> vastora.agent.v1.AgentDocument
-	11, // 15: vastora.agent.v1.AgentControl.TransitionExecution:input_type -> vastora.agent.v1.ExecutionDocument
-	12, // 16: vastora.agent.v1.AgentControl.RenewTaskLease:input_type -> vastora.agent.v1.TaskDocument
-	12, // 17: vastora.agent.v1.AgentControl.CompleteTask:input_type -> vastora.agent.v1.TaskDocument
-	12, // 18: vastora.agent.v1.AgentControl.BeginAgentUpdate:input_type -> vastora.agent.v1.TaskDocument
-	12, // 19: vastora.agent.v1.AgentControl.BeginTailscaleUpdate:input_type -> vastora.agent.v1.TaskDocument
-	10, // 20: vastora.agent.v1.AgentControl.BeginDecommission:input_type -> vastora.agent.v1.AgentDocument
-	14, // 21: vastora.agent.v1.AgentControl.DecommissionCallback:input_type -> vastora.agent.v1.DecommissionRequest
-	15, // 22: vastora.agent.v1.AgentControl.DownloadAgentBinary:input_type -> vastora.agent.v1.BinaryRequest
-	20, // 23: vastora.agent.v1.AgentControl.UploadMigrationBackup:input_type -> vastora.agent.v1.BackupUploadFrame
-	21, // 24: vastora.agent.v1.AgentControl.DownloadMigrationBackup:input_type -> vastora.agent.v1.BackupDownloadRequest
-	1,  // 25: vastora.agent.v1.AgentControl.Probe:output_type -> vastora.agent.v1.ProbeResponse
-	3,  // 26: vastora.agent.v1.AgentControl.Enroll:output_type -> vastora.agent.v1.EnrollResponse
-	7,  // 27: vastora.agent.v1.AgentControl.Connect:output_type -> vastora.agent.v1.CenterFrame
-	13, // 28: vastora.agent.v1.AgentControl.Heartbeat:output_type -> vastora.agent.v1.Document
-	13, // 29: vastora.agent.v1.AgentControl.ReportLandingLatency:output_type -> vastora.agent.v1.Document
-	13, // 30: vastora.agent.v1.AgentControl.ImportLegacyReceipts:output_type -> vastora.agent.v1.Document
-	13, // 31: vastora.agent.v1.AgentControl.RegisterExecutionSession:output_type -> vastora.agent.v1.Document
-	13, // 32: vastora.agent.v1.AgentControl.TransitionExecution:output_type -> vastora.agent.v1.Document
-	13, // 33: vastora.agent.v1.AgentControl.RenewTaskLease:output_type -> vastora.agent.v1.Document
-	13, // 34: vastora.agent.v1.AgentControl.CompleteTask:output_type -> vastora.agent.v1.Document
-	13, // 35: vastora.agent.v1.AgentControl.BeginAgentUpdate:output_type -> vastora.agent.v1.Document
-	13, // 36: vastora.agent.v1.AgentControl.BeginTailscaleUpdate:output_type -> vastora.agent.v1.Document
-	13, // 37: vastora.agent.v1.AgentControl.BeginDecommission:output_type -> vastora.agent.v1.Document
-	13, // 38: vastora.agent.v1.AgentControl.DecommissionCallback:output_type -> vastora.agent.v1.Document
-	18, // 39: vastora.agent.v1.AgentControl.DownloadAgentBinary:output_type -> vastora.agent.v1.BinaryFrame
-	13, // 40: vastora.agent.v1.AgentControl.UploadMigrationBackup:output_type -> vastora.agent.v1.Document
-	17, // 41: vastora.agent.v1.AgentControl.DownloadMigrationBackup:output_type -> vastora.agent.v1.DataChunk
-	25, // [25:42] is the sub-list for method output_type
-	8,  // [8:25] is the sub-list for method input_type
+	10, // 12: vastora.agent.v1.AgentControl.PrepareGatewayPromotion:input_type -> vastora.agent.v1.AgentDocument
+	10, // 13: vastora.agent.v1.AgentControl.ReportLandingLatency:input_type -> vastora.agent.v1.AgentDocument
+	10, // 14: vastora.agent.v1.AgentControl.ImportLegacyReceipts:input_type -> vastora.agent.v1.AgentDocument
+	10, // 15: vastora.agent.v1.AgentControl.RegisterExecutionSession:input_type -> vastora.agent.v1.AgentDocument
+	11, // 16: vastora.agent.v1.AgentControl.TransitionExecution:input_type -> vastora.agent.v1.ExecutionDocument
+	12, // 17: vastora.agent.v1.AgentControl.RenewTaskLease:input_type -> vastora.agent.v1.TaskDocument
+	12, // 18: vastora.agent.v1.AgentControl.CompleteTask:input_type -> vastora.agent.v1.TaskDocument
+	12, // 19: vastora.agent.v1.AgentControl.BeginAgentUpdate:input_type -> vastora.agent.v1.TaskDocument
+	12, // 20: vastora.agent.v1.AgentControl.BeginTailscaleUpdate:input_type -> vastora.agent.v1.TaskDocument
+	10, // 21: vastora.agent.v1.AgentControl.BeginDecommission:input_type -> vastora.agent.v1.AgentDocument
+	14, // 22: vastora.agent.v1.AgentControl.DecommissionCallback:input_type -> vastora.agent.v1.DecommissionRequest
+	15, // 23: vastora.agent.v1.AgentControl.DownloadAgentBinary:input_type -> vastora.agent.v1.BinaryRequest
+	20, // 24: vastora.agent.v1.AgentControl.UploadMigrationBackup:input_type -> vastora.agent.v1.BackupUploadFrame
+	21, // 25: vastora.agent.v1.AgentControl.DownloadMigrationBackup:input_type -> vastora.agent.v1.BackupDownloadRequest
+	1,  // 26: vastora.agent.v1.AgentControl.Probe:output_type -> vastora.agent.v1.ProbeResponse
+	3,  // 27: vastora.agent.v1.AgentControl.Enroll:output_type -> vastora.agent.v1.EnrollResponse
+	7,  // 28: vastora.agent.v1.AgentControl.Connect:output_type -> vastora.agent.v1.CenterFrame
+	13, // 29: vastora.agent.v1.AgentControl.Heartbeat:output_type -> vastora.agent.v1.Document
+	13, // 30: vastora.agent.v1.AgentControl.PrepareGatewayPromotion:output_type -> vastora.agent.v1.Document
+	13, // 31: vastora.agent.v1.AgentControl.ReportLandingLatency:output_type -> vastora.agent.v1.Document
+	13, // 32: vastora.agent.v1.AgentControl.ImportLegacyReceipts:output_type -> vastora.agent.v1.Document
+	13, // 33: vastora.agent.v1.AgentControl.RegisterExecutionSession:output_type -> vastora.agent.v1.Document
+	13, // 34: vastora.agent.v1.AgentControl.TransitionExecution:output_type -> vastora.agent.v1.Document
+	13, // 35: vastora.agent.v1.AgentControl.RenewTaskLease:output_type -> vastora.agent.v1.Document
+	13, // 36: vastora.agent.v1.AgentControl.CompleteTask:output_type -> vastora.agent.v1.Document
+	13, // 37: vastora.agent.v1.AgentControl.BeginAgentUpdate:output_type -> vastora.agent.v1.Document
+	13, // 38: vastora.agent.v1.AgentControl.BeginTailscaleUpdate:output_type -> vastora.agent.v1.Document
+	13, // 39: vastora.agent.v1.AgentControl.BeginDecommission:output_type -> vastora.agent.v1.Document
+	13, // 40: vastora.agent.v1.AgentControl.DecommissionCallback:output_type -> vastora.agent.v1.Document
+	18, // 41: vastora.agent.v1.AgentControl.DownloadAgentBinary:output_type -> vastora.agent.v1.BinaryFrame
+	13, // 42: vastora.agent.v1.AgentControl.UploadMigrationBackup:output_type -> vastora.agent.v1.Document
+	17, // 43: vastora.agent.v1.AgentControl.DownloadMigrationBackup:output_type -> vastora.agent.v1.DataChunk
+	26, // [26:44] is the sub-list for method output_type
+	8,  // [8:26] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
