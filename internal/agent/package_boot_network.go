@@ -306,7 +306,7 @@ func recoverRetainedContainerNetworks(ctx context.Context, docker gatewayAttachm
 func builtinBridgeAttachment(ctx context.Context, docker gatewayAttachmentEngine) (RuntimeNetworkAttachment, error) {
 	n, err := docker.NetworkInspect(ctx, "bridge", client.NetworkInspectOptions{})
 	if err != nil || n.Network.ID == "" || n.Network.Name != "bridge" || n.Network.Driver != "bridge" || n.Network.Scope != "local" || n.Network.Options["com.docker.network.bridge.default_bridge"] != "true" {
-		return RuntimeNetworkAttachment{}, errors.New("Docker built-in default bridge identity changed")
+		return RuntimeNetworkAttachment{}, errors.New("docker built-in default bridge identity changed")
 	}
 	return RuntimeNetworkAttachment{Name: "bridge", ID: n.Network.ID}, nil
 }
