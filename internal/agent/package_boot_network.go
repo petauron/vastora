@@ -254,6 +254,27 @@ func recoverRetainedContainerNetworks(ctx context.Context, docker gatewayAttachm
 			}
 		}
 	}
+	if v.State.Running && v.NetworkSettings != nil && v.NetworkSettings.SandboxID == "" {
+		for _, endpoint := range v.NetworkSettings.Networks {
+			if endpoint != nil && endpoint.EndpointID != "" {
+				return errors.New("retained application has an inconsistent active sandbox")
+			}
+		}
+		// Docker may report Running after a failed boot bind while retaining
+		// no sandbox at all. Connecting a network cannot repair that state.
+		// Restart only this proven orphan, using its unchanged configuration.
+		if err := waitForPublishedAddresses(ctx, v.HostConfig.PortBindings); err != nil {
+			return err
+		}
+		timeout := 10
+		_, restartErr := docker.ContainerRestart(ctx, v.ID, client.ContainerRestartOptions{Timeout: &timeout})
+		recovered, err := docker.ContainerInspect(ctx, v.ID, client.ContainerInspectOptions{})
+		if err != nil || recovered.Container.State == nil || !recovered.Container.State.Running || recovered.Container.NetworkSettings == nil || recovered.Container.NetworkSettings.SandboxID == "" {
+			return errors.Join(errors.New("retained application sandbox did not recover"), restartErr, err)
+		}
+		current = recovered
+		v = current.Container
+	}
 	if !v.State.Running {
 		if !gatewayBindStartFailed(current) {
 			return nil

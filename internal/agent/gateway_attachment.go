@@ -16,6 +16,7 @@ import (
 type gatewayAttachmentEngine interface {
 	dockerruntime.AttachmentEngine
 	ContainerStart(context.Context, string, client.ContainerStartOptions) (client.ContainerStartResult, error)
+	ContainerRestart(context.Context, string, client.ContainerRestartOptions) (client.ContainerRestartResult, error)
 }
 
 // RecoverStartupRuntime restores committed local runtime resources once,
