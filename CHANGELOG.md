@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.403](https://github.com/petauron/vastora/compare/v0.1.0-alpha.402...v0.1.0-alpha.403) (2026-11-03)
+
+
+### Bug Fixes
+
+* **agent:** recover gateway network attachments before startup ([#1170](https://github.com/petauron/vastora/issues/1170)) ([dbee639](https://github.com/petauron/vastora/commit/dbee639556e4fa6ceb0590752ad3031780b1e50a))
+
 ## [0.1.0-alpha.402](https://github.com/petauron/vastora/compare/v0.1.0-alpha.401...v0.1.0-alpha.402) (2026-11-02)
 
 
