@@ -67,7 +67,7 @@ func (s *Store) AuthorizeGatewayPromotion(ctx context.Context, agentID string) (
 	if err != nil {
 		return result, err
 	}
-	if err := s.recordTaskEvent(ctx, tx, id, agentID, "node.gateway-promotion", 1, "authorized", `{"source":"local-center-operator","purpose":"worker,gateway"}`); err != nil {
+	if err := s.recordTaskEvent(ctx, tx, id, agentID, "node.gateway-promotion", 1, "queued", `{"source":"local-center-operator","purpose":"worker,gateway","phase":"authorized"}`); err != nil {
 		return result, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -118,7 +118,7 @@ func (s *Store) PrepareGatewayPromotion(ctx context.Context, agentID, credential
 			return result, err
 		}
 		result.State = "prepared"
-		if err := s.recordTaskEvent(ctx, tx, id, agentID, "node.gateway-promotion", 1, "prepared", "authenticated machine accepted operator authorization"); err != nil {
+		if err := s.recordTaskEvent(ctx, tx, id, agentID, "node.gateway-promotion", 1, "claimed", "authenticated machine accepted operator authorization; phase=prepared"); err != nil {
 			return result, err
 		}
 	}
