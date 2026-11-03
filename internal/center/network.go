@@ -282,8 +282,19 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	if err := s.reconcileBuiltinHeadscaleDNSIfConfigured(ctx); err != nil {
 		return nil, err
 	}
-	if err := s.queueAllGatewayStates(ctx); err != nil {
+	var gatewayAffected bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM gateway_components WHERE gateway_node_id = ? AND desired_status = 'running'
+	) OR EXISTS (
+		SELECT 1 FROM routes r JOIN services s ON s.id = r.service_id
+		JOIN applications a ON a.id = s.application_id WHERE a.node_id = ?
+	)`, agentID, agentID).Scan(&gatewayAffected); err != nil {
 		return nil, err
+	}
+	if gatewayAffected {
+		if err := s.queueAllGatewayStates(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return networkProfile(ctx, s.db, agentID)
 }
