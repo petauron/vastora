@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.410](https://github.com/petauron/vastora/compare/v0.1.0-alpha.409...v0.1.0-alpha.410) (2026-11-03)
+
+
+### Bug Fixes
+
+* **nodes:** use supported audit events for gateway promotion ([#1186](https://github.com/petauron/vastora/issues/1186)) ([0ef2e0b](https://github.com/petauron/vastora/commit/0ef2e0b61055e1cbe9eb6e87b9dba97e31b35cfc))
+
 ## [0.1.0-alpha.409](https://github.com/petauron/vastora/compare/v0.1.0-alpha.408...v0.1.0-alpha.409) (2026-11-03)
 
 
