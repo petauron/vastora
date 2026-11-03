@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.404](https://github.com/petauron/vastora/compare/v0.1.0-alpha.403...v0.1.0-alpha.404) (2026-11-03)
+
+
+### Bug Fixes
+
+* **agent:** resume gateways after boot bind failures ([#1172](https://github.com/petauron/vastora/issues/1172)) ([9a05edd](https://github.com/petauron/vastora/commit/9a05edd3b77d361216226abb813b8844b352fe4c))
+
 ## [0.1.0-alpha.403](https://github.com/petauron/vastora/compare/v0.1.0-alpha.402...v0.1.0-alpha.403) (2026-11-03)
 
 
