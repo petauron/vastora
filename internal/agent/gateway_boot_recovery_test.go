@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -20,6 +22,49 @@ import (
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/gateway"
 )
+
+type startupAdminTransport struct {
+	calls int
+	err   error
+	body  string
+}
+
+func (transport *startupAdminTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	transport.calls++
+	if transport.calls == 1 && transport.err != nil {
+		return nil, transport.err
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(transport.body)), Header: make(http.Header)}, nil
+}
+
+func TestGatewayStartupWaitsForAdminListenerOnly(t *testing.T) {
+	for _, startupErr := range []error{syscall.ENOENT, syscall.ECONNREFUSED} {
+		transport := &startupAdminTransport{err: startupErr, body: `{"admin":{}}`}
+		driver := &CaddyGatewayDriver{AdminURL: "http://localhost", HTTPClient: &http.Client{Transport: transport}}
+		if _, err := driver.startupRuntimeConfiguration(context.Background()); err != nil || transport.calls != 2 {
+			t.Fatal("startup did not wait for the Admin listener", err, transport.calls)
+		}
+	}
+	for _, body := range []string{`invalid`, `null`} {
+		transport := &startupAdminTransport{body: body}
+		driver := &CaddyGatewayDriver{AdminURL: "http://localhost", HTTPClient: &http.Client{Transport: transport}}
+		if _, err := driver.startupRuntimeConfiguration(context.Background()); err == nil || transport.calls != 1 {
+			t.Fatal("invalid configuration was retried", transport.calls)
+		}
+	}
+	transport := &startupAdminTransport{err: syscall.EACCES}
+	driver := &CaddyGatewayDriver{AdminURL: "http://localhost", HTTPClient: &http.Client{Transport: transport}}
+	if _, err := driver.startupRuntimeConfiguration(context.Background()); !errors.Is(err, syscall.EACCES) || transport.calls != 1 {
+		t.Fatal("Admin permission failure was retried", err, transport.calls)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	transport = &startupAdminTransport{err: syscall.ENOENT}
+	driver.HTTPClient.Transport = transport
+	if _, err := driver.startupRuntimeConfiguration(ctx); !errors.Is(err, context.Canceled) || transport.calls != 1 {
+		t.Fatal("startup wait ignored cancellation", err, transport.calls)
+	}
+}
 
 func failedBootContainer(code int) client.ContainerInspectResult {
 	return client.ContainerInspectResult{Container: container.InspectResponse{

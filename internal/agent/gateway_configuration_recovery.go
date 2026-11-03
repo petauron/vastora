@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"syscall"
+	"time"
 
 	"github.com/petauron/vastora/internal/gateway"
 )
@@ -46,7 +48,7 @@ func (s *Store) restoreGatewayConfiguration(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	actual, err := driver.runtimeConfiguration(ctx)
+	actual, err := driver.startupRuntimeConfiguration(ctx)
 	if err != nil {
 		return err
 	}
@@ -65,6 +67,26 @@ func (s *Store) restoreGatewayConfiguration(ctx context.Context) error {
 	driver.certificates = append([]gateway.Certificate(nil), state.Certificates...)
 	driver.mu.Unlock()
 	return nil
+}
+
+// Docker's running state precedes Caddy's Admin listener. Only a listener
+// that has not bound yet is retryable; invalid responses fail immediately.
+func (driver *CaddyGatewayDriver) startupRuntimeConfiguration(ctx context.Context) (map[string]any, error) {
+	ready, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	for {
+		config, err := driver.runtimeConfiguration(ready)
+		if err == nil || (!errors.Is(err, syscall.ENOENT) && !errors.Is(err, syscall.ECONNREFUSED)) {
+			return config, err
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ready.Done():
+			timer.Stop()
+			return nil, fmt.Errorf("agent: gateway Admin listener did not become ready: %w", errors.Join(err, ready.Err()))
+		case <-timer.C:
+		}
+	}
 }
 
 func (driver *CaddyGatewayDriver) runtimeConfigurationLoaded(ctx context.Context) (bool, error) {
