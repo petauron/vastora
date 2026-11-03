@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.411](https://github.com/petauron/vastora/compare/v0.1.0-alpha.410...v0.1.0-alpha.411) (2026-11-03)
+
+
+### Bug Fixes
+
+* **network:** avoid gateway requeue for unpublished nodes ([#1188](https://github.com/petauron/vastora/issues/1188)) ([08f2a27](https://github.com/petauron/vastora/commit/08f2a278b09058723105f18e7f38108cf04fe754))
+
 ## [0.1.0-alpha.410](https://github.com/petauron/vastora/compare/v0.1.0-alpha.409...v0.1.0-alpha.410) (2026-11-03)
 
 
