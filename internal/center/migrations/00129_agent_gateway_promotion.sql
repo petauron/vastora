@@ -8,3 +8,4 @@ CREATE TABLE agent_gateway_promotions (
  expires_at TEXT NOT NULL,
  confirmed_at TEXT NOT NULL DEFAULT ''
 );
+PRAGMA user_version=129;
