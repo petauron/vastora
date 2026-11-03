@@ -84,6 +84,32 @@ func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
 	return provisioner.reconcile(ctx, nil)
 }
 
+// Health includes Docker's live attachment: a reachable Unix Admin socket
+// alone does not prove that the website origin or published ports are usable.
+func (provisioner DockerGatewayProvisioner) Health(ctx context.Context) error {
+	settings, err := provisioner.settings()
+	if err != nil {
+		return err
+	}
+	docker, err := provisioner.client()
+	if err != nil {
+		return err
+	}
+	defer docker.Close()
+	existing, err := inspectManagedCaddy(ctx, docker, settings.Container)
+	if err != nil {
+		return err
+	}
+	if existing == nil || existing.Container.State == nil || !existing.Container.State.Running {
+		return errors.New("agent: Caddy gateway is not running")
+	}
+	if existing.Container.HostConfig == nil || string(existing.Container.HostConfig.NetworkMode) != dockerruntime.NetworkName ||
+		!dockerruntime.AttachmentHealthy(*existing, dockerruntime.NetworkName, dockerruntime.CaddyAlias) {
+		return errors.New("agent: Caddy network attachment is incomplete")
+	}
+	return nil
+}
+
 // Reconcile publishes exactly the sockets declared by the current desired
 // state. Docker port bindings are immutable, so a changed listener set causes
 // the managed Caddy container to be replaced before its configuration is

@@ -252,6 +252,11 @@ func (driver *CaddyGatewayDriver) GetRouteStatus(ctx context.Context, routeID st
 }
 
 func (driver *CaddyGatewayDriver) Health(ctx context.Context) error {
+	if runtime, ok := driver.SystemGateway.(interface{ Health(context.Context) error }); ok {
+		if err := runtime.Health(ctx); err != nil {
+			return err
+		}
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, driver.AdminURL+"/config/", nil)
 	if err != nil {
 		return err
