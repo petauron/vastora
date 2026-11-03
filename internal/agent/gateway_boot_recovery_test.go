@@ -27,7 +27,7 @@ func failedBootContainer(code int) client.ContainerInspectResult {
 			Error: "failed to set up container networking: failed to bind host port 100.64.0.2:443/tcp: cannot assign requested address"},
 		HostConfig: &container.HostConfig{NetworkMode: "private-test", RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 			PortBindings: network.PortMap{network.MustParsePort("443/tcp"): {{HostIP: netip.MustParseAddr("100.64.0.2"), HostPort: "443"}}}},
-		NetworkSettings: &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{}},
+		NetworkSettings: &container.NetworkSettings{SandboxID: "working-sandbox", Networks: map[string]*network.EndpointSettings{}},
 	}}
 }
 
@@ -216,9 +216,28 @@ type bootNetworkDocker struct {
 	*fakePackageDocker
 	network  client.NetworkInspectResult
 	connects int
+	networks map[string]client.NetworkInspectResult
 }
 
-func (d *bootNetworkDocker) NetworkInspect(context.Context, string, client.NetworkInspectOptions) (client.NetworkInspectResult, error) {
+func (d *bootNetworkDocker) ContainerRestart(ctx context.Context, id string, _ client.ContainerRestartOptions) (client.ContainerRestartResult, error) {
+	v, err := d.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil {
+		return client.ContainerRestartResult{}, err
+	}
+	d.calls = append(d.calls, "restart")
+	v.Container.NetworkSettings.SandboxID = "restored-sandbox"
+	d.containers[v.Container.Name] = v
+	return client.ContainerRestartResult{}, errors.New("restart response was lost")
+}
+
+func (d *bootNetworkDocker) NetworkInspect(_ context.Context, id string, _ client.NetworkInspectOptions) (client.NetworkInspectResult, error) {
+	if d.networks != nil {
+		n, ok := d.networks[id]
+		if !ok {
+			return n, errors.New("network not found")
+		}
+		return n, nil
+	}
 	return d.network, nil
 }
 func (d *bootNetworkDocker) NetworkCreate(context.Context, string, client.NetworkCreateOptions) (client.NetworkCreateResult, error) {
@@ -227,13 +246,21 @@ func (d *bootNetworkDocker) NetworkCreate(context.Context, string, client.Networ
 func (d *bootNetworkDocker) NetworkDisconnect(context.Context, string, client.NetworkDisconnectOptions) (client.NetworkDisconnectResult, error) {
 	panic("bootstrap must not detach applications")
 }
-func (d *bootNetworkDocker) NetworkConnect(ctx context.Context, _ string, options client.NetworkConnectOptions) (client.NetworkConnectResult, error) {
+func (d *bootNetworkDocker) NetworkConnect(ctx context.Context, networkID string, options client.NetworkConnectOptions) (client.NetworkConnectResult, error) {
 	d.connects++
 	v, err := d.ContainerInspect(ctx, options.Container, client.ContainerInspectOptions{})
 	if err != nil {
 		return client.NetworkConnectResult{}, err
 	}
-	v.Container.NetworkSettings.Networks["private-test"] = &network.EndpointSettings{NetworkID: "network-id", EndpointID: "restored-endpoint", Aliases: options.EndpointConfig.Aliases, IPAMConfig: options.EndpointConfig.IPAMConfig}
+	name, id := "private-test", "network-id"
+	if d.networks != nil {
+		n, err := d.NetworkInspect(ctx, networkID, client.NetworkInspectOptions{})
+		if err != nil {
+			return client.NetworkConnectResult{}, err
+		}
+		name, id = n.Network.Name, n.Network.ID
+	}
+	v.Container.NetworkSettings.Networks[name] = &network.EndpointSettings{NetworkID: id, EndpointID: "restored-endpoint", Aliases: options.EndpointConfig.Aliases, IPAMConfig: options.EndpointConfig.IPAMConfig}
 	v.Container.NetworkSettings.Ports = v.Container.HostConfig.PortBindings
 	d.containers[v.Container.Name] = v
 	return client.NetworkConnectResult{}, errors.New("response was lost")
@@ -320,5 +347,64 @@ func TestPackageBootNetworkRecoveryPreservesAuthorizedReceipt(t *testing.T) {
 	}
 	if !reflect.DeepEqual(docker.calls, []string{"start"}) || docker.connects != 1 || len(docker.created) != 0 {
 		t.Fatal("same-container recovery did not run exactly once")
+	}
+}
+
+func TestRetainedDefaultBridgeUsesDockerIdentityAcrossBoot(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		d := &bootNetworkDocker{fakePackageDocker: newPackageDocker(), networks: map[string]client.NetworkInspectResult{}}
+		bridge := client.NetworkInspectResult{Network: network.Inspect{Network: network.Network{ID: "new-built-in-id", Name: "bridge", Driver: "bridge", Scope: "local", Options: map[string]string{"com.docker.network.bridge.default_bridge": "true"}}}}
+		custom := client.NetworkInspectResult{Network: network.Inspect{Network: network.Network{ID: "shared-id", Name: "original-shared", Driver: "bridge", Scope: "local"}}}
+		d.networks["bridge"], d.networks["new-built-in-id"] = bridge, bridge
+		d.networks["shared-id"] = custom
+		current := failedBootContainer(128)
+		current.Container.HostConfig.NetworkMode = "bridge"
+		current.Container.HostConfig.PortBindings = nil
+		current.Container.State.Running = true
+		d.containers[current.Container.Name] = current
+		expected := []RuntimeNetworkAttachment{{Name: "bridge", ID: "old-built-in-id"}}
+		if shared {
+			expected = []RuntimeNetworkAttachment{{Name: "original-shared", ID: "shared-id", Aliases: []string{"service"}}}
+		}
+		if err := recoverRetainedContainerNetworks(context.Background(), d, current, expected); err != nil {
+			t.Fatal(err)
+		}
+		if len(d.created) != 0 || len(d.calls) != 0 || d.connects != map[bool]int{false: 1, true: 2}[shared] {
+			t.Fatal("recovery replaced or restarted the working original container")
+		}
+		bridge.Network.Options = nil
+		d.networks["bridge"] = bridge
+		before := d.connects
+		if err := recoverRetainedContainerNetworks(context.Background(), d, current, expected); err == nil || d.connects != before {
+			t.Fatal("a non-default bridge was accepted or mutated")
+		}
+	}
+}
+
+func TestRetainedOrphanSandboxRestartsOnlyTheOriginalContainer(t *testing.T) {
+	d := &bootNetworkDocker{fakePackageDocker: newPackageDocker(), network: client.NetworkInspectResult{Network: network.Inspect{Network: network.Network{ID: "network-id", Name: "private-test", Driver: "bridge"}}}}
+	current := failedBootContainer(128)
+	current.Container.State.Running = true
+	current.Container.HostConfig.PortBindings = nil
+	current.Container.NetworkSettings.SandboxID = ""
+	current.Container.NetworkSettings.Networks["private-test"] = &network.EndpointSettings{NetworkID: "network-id"}
+	d.containers[current.Container.Name] = current
+	expected := []RuntimeNetworkAttachment{{Name: "private-test", ID: "network-id"}}
+	// This stub is absent from Docker's live network; the original sandbox must
+	// be recreated before the existing network can be connected.
+	if err := recoverRetainedContainerNetworks(context.Background(), d, current, expected); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(d.calls, []string{"restart"}) || d.connects != 1 || len(d.created) != 0 {
+		t.Fatal("orphan recovery replaced or repeatedly restarted the application")
+	}
+	current.Container.NetworkSettings.SandboxID = "healthy-sandbox"
+	d.containers[current.Container.Name] = current
+	d.calls = nil
+	if err := recoverRetainedContainerNetworks(context.Background(), d, current, expected); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.calls) != 0 {
+		t.Fatal("healthy sandbox was restarted")
 	}
 }

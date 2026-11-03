@@ -197,26 +197,83 @@ func recoverRetainedContainerNetworks(ctx context.Context, docker gatewayAttachm
 	if v.State == nil || v.HostConfig == nil || v.ID == "" {
 		return errors.New("retained container identity is incomplete")
 	}
+
+	// Docker owns and recreates the built-in bridge on daemon boot. Its name,
+	// driver, scope and reserved default-bridge flag are the stable identity;
+	// custom networks must still match the recorded immutable ID.
+	expected = slices.Clone(expected)
 	allowed := make(map[string]RuntimeNetworkAttachment, len(expected))
-	for _, saved := range expected {
+	for i, saved := range expected {
 		if saved.ID == "" || saved.Name == "" {
 			return errors.New("retained network identity is incomplete")
 		}
-		n, err := docker.NetworkInspect(ctx, saved.ID, client.NetworkInspectOptions{})
-		if err != nil || n.Network.ID != saved.ID || n.Network.Name != saved.Name || n.Network.Driver != "bridge" {
-			return errors.New("retained network was replaced")
+		if saved.Name == "bridge" {
+			currentBridge, err := builtinBridgeAttachment(ctx, docker)
+			if err != nil {
+				return err
+			}
+			saved.ID = currentBridge.ID
+			expected[i] = saved
+		} else {
+			n, err := docker.NetworkInspect(ctx, saved.ID, client.NetworkInspectOptions{})
+			if err != nil || n.Network.ID != saved.ID || n.Network.Name != saved.Name || n.Network.Driver != "bridge" {
+				return errors.New("retained network was replaced")
+			}
 		}
 		allowed[saved.Name] = saved
 	}
-	if _, ok := allowed[string(v.HostConfig.NetworkMode)]; !ok {
-		return errors.New("retained primary network differs from the installed runtime")
+	primary := string(v.HostConfig.NetworkMode)
+	if primary == "bridge" || primary == "default" {
+		// Historical apps can join an additional shared network while preserving
+		// Docker's declared default primary mode. Starting the original container
+		// restores that implicit bridge; it is not an unexpected custom attachment.
+		if _, ok := allowed["bridge"]; !ok {
+			bridge, err := builtinBridgeAttachment(ctx, docker)
+			if err != nil {
+				return err
+			}
+			expected = append(expected, bridge)
+			allowed["bridge"] = bridge
+		}
+	} else {
+		found := false
+		for _, saved := range expected {
+			if primary == saved.Name || primary == saved.ID {
+				found = true
+			}
+		}
+		if !found {
+			return errors.New("retained primary network differs from the installed runtime")
+		}
 	}
+
 	if v.NetworkSettings != nil {
 		for name := range v.NetworkSettings.Networks {
 			if _, ok := allowed[name]; !ok {
 				return errors.New("unexpected application network attachment")
 			}
 		}
+	}
+	if v.State.Running && v.NetworkSettings != nil && v.NetworkSettings.SandboxID == "" {
+		for _, endpoint := range v.NetworkSettings.Networks {
+			if endpoint != nil && endpoint.EndpointID != "" {
+				return errors.New("retained application has an inconsistent active sandbox")
+			}
+		}
+		// Docker may report Running after a failed boot bind while retaining
+		// no sandbox at all. Connecting a network cannot repair that state.
+		// Restart only this proven orphan, using its unchanged configuration.
+		if err := waitForPublishedAddresses(ctx, v.HostConfig.PortBindings); err != nil {
+			return err
+		}
+		timeout := 10
+		_, restartErr := docker.ContainerRestart(ctx, v.ID, client.ContainerRestartOptions{Timeout: &timeout})
+		recovered, err := docker.ContainerInspect(ctx, v.ID, client.ContainerInspectOptions{})
+		if err != nil || recovered.Container.State == nil || !recovered.Container.State.Running || recovered.Container.NetworkSettings == nil || recovered.Container.NetworkSettings.SandboxID == "" {
+			return errors.Join(errors.New("retained application sandbox did not recover"), restartErr, err)
+		}
+		current = recovered
+		v = current.Container
 	}
 	if !v.State.Running {
 		if !gatewayBindStartFailed(current) {
@@ -244,6 +301,14 @@ func recoverRetainedContainerNetworks(ctx context.Context, docker gatewayAttachm
 		current = readback
 	}
 	return nil
+}
+
+func builtinBridgeAttachment(ctx context.Context, docker gatewayAttachmentEngine) (RuntimeNetworkAttachment, error) {
+	n, err := docker.NetworkInspect(ctx, "bridge", client.NetworkInspectOptions{})
+	if err != nil || n.Network.ID == "" || n.Network.Name != "bridge" || n.Network.Driver != "bridge" || n.Network.Scope != "local" || n.Network.Options["com.docker.network.bridge.default_bridge"] != "true" {
+		return RuntimeNetworkAttachment{}, errors.New("docker built-in default bridge identity changed")
+	}
+	return RuntimeNetworkAttachment{Name: "bridge", ID: n.Network.ID}, nil
 }
 
 func retainedEndpointPresent(current client.ContainerInspectResult, expected RuntimeNetworkAttachment) bool {
