@@ -96,7 +96,6 @@ func historicalDockerResources(ctx context.Context, task DeploymentTask, history
 	}
 	receipt := historicalReceipt(task, "docker")
 	resource := RuntimeResource{Kind: "container", LogicalName: binding.logical, Name: binding.name, ID: current.Container.ID, Component: binding.component}
-	resource.Networks = retainedContainerNetworks(current)
 	if _, digest, ok := strings.Cut(current.Container.Config.Image, "@sha256:"); ok {
 		resource.SHA256 = digest
 	}
@@ -148,6 +147,9 @@ func historicalDockerResources(ctx context.Context, task DeploymentTask, history
 		} else {
 			return nil, errors.New("agent: historical mount type requires manual ownership review")
 		}
+	}
+	if err := (PackageExecutor{StateDirectory: stateDirectory}).captureBootNetworks(receipt, current); err != nil {
+		return nil, err
 	}
 	return receipt, nil
 }

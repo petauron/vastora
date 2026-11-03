@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moby/moby/api/types/network"
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
@@ -55,17 +54,7 @@ type RuntimeResource struct {
 	InvocationID string `json:"invocationId,omitempty"`
 	Component    string `json:"component,omitempty"`
 	// Historical anonymous volumes are retained by immutable creation identity.
-	VolumeCreatedAt string                     `json:"volumeCreatedAt,omitempty"`
-	Networks        []RuntimeNetworkAttachment `json:"networks,omitempty"`
-}
-
-// Retain only the last working attachment identity. Docker can lose this map
-// after a failed host-port bind; it is not an application deployment recipe.
-type RuntimeNetworkAttachment struct {
-	Name    string                      `json:"name"`
-	ID      string                      `json:"id"`
-	Aliases []string                    `json:"aliases,omitempty"`
-	IPAM    *network.EndpointIPAMConfig `json:"ipam,omitempty"`
+	VolumeCreatedAt string `json:"volumeCreatedAt,omitempty"`
 }
 
 type RuntimeBackup struct {

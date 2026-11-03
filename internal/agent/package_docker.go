@@ -767,8 +767,10 @@ func (b *DockerPackageBackend) checkPlan(ctx context.Context, task DeploymentTas
 			return fmt.Errorf("agent: package service %s health check failed: %w", service.Name, err)
 		}
 	}
-	if observed := retainedContainerNetworks(current); len(observed) != 0 {
-		resource.Networks = observed
+	if b.StateDirectory != "" {
+		if err := (PackageExecutor{StateDirectory: b.StateDirectory}).captureBootNetworks(receipt, current); err != nil {
+			return err
+		}
 	}
 	return nil
 }
