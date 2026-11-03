@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -260,5 +261,64 @@ func TestRetainedNetworkRecoversLostResponseWithoutReplacingContainer(t *testing
 	d.connects = 0
 	if err := recoverRetainedContainerNetworks(context.Background(), d, current, expected); err == nil || len(d.calls) != 0 || d.connects != 0 {
 		t.Fatal("replaced network was accepted or mutated")
+	}
+}
+
+func TestPackageBootNetworkRecoveryPreservesAuthorizedReceipt(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	const appID = "retained-app"
+	const key = "source/retained"
+	if _, err := store.RecordApplied(ctx, AppliedInstallation{ApplicationID: appID, InstanceID: "original-task", AppKey: key, Version: "1.0.0", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	executor := PackageExecutor{StateDirectory: store.dataDir}
+	receipt := &InstanceResources{Version: 1, ApplicationID: appID, AppKey: key, Runtime: "docker", State: "ready", TaskID: "original-task", Resources: []RuntimeResource{{Kind: "container", Name: "retained", ID: "retained-id", Component: "web"}}}
+	if err := executor.save(receipt); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(executor.receiptPath(appID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := failedBootContainer(137)
+	current.Container.Config = &container.Config{Labels: map[string]string{"io.vastora.managed": "true", applicationIdentityLabel: key, applicationInstallationLabel: appID, "io.vastora.component": "web"}}
+	current.Container.State.Running = true
+	current.Container.State.Error = ""
+	current.Container.HostConfig.PortBindings = nil
+	current.Container.NetworkSettings.Networks["private-test"] = &network.EndpointSettings{NetworkID: "network-id", EndpointID: "working-endpoint", Aliases: []string{"web"}}
+	docker := &bootNetworkDocker{fakePackageDocker: newPackageDocker(), network: client.NetworkInspectResult{Network: network.Inspect{Network: network.Network{ID: "network-id", Name: "private-test", Driver: "bridge"}}}}
+	docker.containers[current.Container.Name] = current
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := store.recoverPackageNetworks(ctx, docker); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved, err := executor.readBootNetworks(receipt)
+	if err != nil || len(saved.Containers["retained-id"]) != 1 {
+		t.Fatal("working attachment was not retained", err)
+	}
+	info, err := os.Stat(executor.bootNetworkPath(appID))
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal("runtime observations are not private", err)
+	}
+	current.Container.State.Running = false
+	current.Container.State.Error = "failed to bind host port 127.0.0.1:443/tcp: cannot assign requested address"
+	current.Container.HostConfig.PortBindings = network.PortMap{network.MustParsePort("443/tcp"): {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: "443"}}}
+	current.Container.NetworkSettings.Networks = map[string]*network.EndpointSettings{}
+	docker.containers[current.Container.Name] = current
+	if err := store.recoverPackageNetworks(ctx, docker); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(executor.receiptPath(appID))
+	if err != nil || !bytes.Equal(original, after) {
+		t.Fatal("startup changed the receipt used by Center handover authorization", err)
+	}
+	if !reflect.DeepEqual(docker.calls, []string{"start"}) || docker.connects != 1 || len(docker.created) != 0 {
+		t.Fatal("same-container recovery did not run exactly once")
 	}
 }

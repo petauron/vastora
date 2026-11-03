@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
@@ -12,6 +14,92 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 )
+
+// Runtime network observations are local recovery evidence. Keep them outside
+// resources.json: Center authorizes handovers using that receipt's exact digest.
+type RuntimeNetworkAttachment struct {
+	Name    string                      `json:"name"`
+	ID      string                      `json:"id"`
+	Aliases []string                    `json:"aliases,omitempty"`
+	IPAM    *network.EndpointIPAMConfig `json:"ipam,omitempty"`
+}
+
+type packageBootNetworks struct {
+	ApplicationID string                                `json:"applicationId"`
+	AppKey        string                                `json:"appKey"`
+	Containers    map[string][]RuntimeNetworkAttachment `json:"containers"`
+}
+
+func (e PackageExecutor) bootNetworkPath(id string) string {
+	return filepath.Join(filepath.Dir(e.receiptPath(id)), "boot-networks.json")
+}
+
+func (e PackageExecutor) readBootNetworks(receipt *InstanceResources) (packageBootNetworks, error) {
+	empty := packageBootNetworks{ApplicationID: receipt.ApplicationID, AppKey: receipt.AppKey, Containers: map[string][]RuntimeNetworkAttachment{}}
+	path := e.bootNetworkPath(receipt.ApplicationID)
+	if err := checkPackageParents(path); err != nil {
+		return empty, err
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return empty, nil
+	}
+	if err != nil {
+		return empty, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 1<<20 {
+		return empty, errors.New("agent: unsafe package boot network evidence")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return empty, err
+	}
+	var saved packageBootNetworks
+	if json.Unmarshal(raw, &saved) != nil || saved.ApplicationID != receipt.ApplicationID || saved.Containers == nil {
+		return empty, errors.New("agent: invalid package boot network evidence")
+	}
+	// An authorized package identity replacement retires the previous observations.
+	if saved.AppKey != receipt.AppKey {
+		return empty, nil
+	}
+	return saved, nil
+}
+
+func (e PackageExecutor) captureBootNetworks(receipt *InstanceResources, current client.ContainerInspectResult) error {
+	observed := retainedContainerNetworks(current)
+	if len(observed) == 0 {
+		return nil
+	}
+	found := false
+	for _, resource := range receipt.Resources {
+		if resource.Kind == "container" && resource.ID == current.Container.ID {
+			found = true
+		}
+	}
+	if !found {
+		return errors.New("agent: boot network container is outside the package receipt")
+	}
+	saved, err := e.readBootNetworks(receipt)
+	if err != nil {
+		return err
+	}
+	if reflect.DeepEqual(saved.Containers[current.Container.ID], observed) {
+		return nil
+	}
+	retained := map[string][]RuntimeNetworkAttachment{}
+	for _, resource := range receipt.Resources {
+		if resource.Kind == "container" && len(saved.Containers[resource.ID]) != 0 {
+			retained[resource.ID] = saved.Containers[resource.ID]
+		}
+	}
+	retained[current.Container.ID] = observed
+	saved.Containers = retained
+	raw, err := json.Marshal(saved)
+	if err != nil {
+		return err
+	}
+	return writeHostFileAtomic(e.bootNetworkPath(receipt.ApplicationID), raw, 0600)
+}
 
 func retainedContainerNetworks(current client.ContainerInspectResult) []RuntimeNetworkAttachment {
 	if current.Container.State == nil || !current.Container.State.Running || current.Container.NetworkSettings == nil {
@@ -55,9 +143,12 @@ func (s *Store) recoverPackageNetworks(ctx context.Context, docker gatewayAttach
 		if receipt.Runtime != "docker" || receipt.State != "ready" || receipt.AppKey != app.AppKey {
 			continue
 		}
-		changed := false
-		for i := range receipt.Resources {
-			resource := &receipt.Resources[i]
+		saved, err := executor.readBootNetworks(receipt)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		for _, resource := range receipt.Resources {
 			if resource.Kind != "container" || resource.ID == "" {
 				continue
 			}
@@ -81,8 +172,9 @@ func (s *Store) recoverPackageNetworks(ctx context.Context, docker gatewayAttach
 			if v.State.Paused || v.State.Restarting || v.State.Dead {
 				continue
 			}
-			if len(resource.Networks) != 0 && (v.State.Running || gatewayBindStartFailed(current)) {
-				if err := recoverRetainedContainerNetworks(ctx, docker, current, resource.Networks); err != nil {
+			expected := saved.Containers[resource.ID]
+			if len(expected) != 0 && (v.State.Running || gatewayBindStartFailed(current)) {
+				if err := recoverRetainedContainerNetworks(ctx, docker, current, expected); err != nil {
 					failures = append(failures, fmt.Errorf("agent: restore retained application network: %w", err))
 					continue
 				}
@@ -92,17 +184,7 @@ func (s *Store) recoverPackageNetworks(ctx context.Context, docker gatewayAttach
 					continue
 				}
 			}
-			observed := retainedContainerNetworks(current)
-			if len(observed) != 0 && !reflect.DeepEqual(resource.Networks, observed) {
-				if len(resource.Networks) != 0 {
-					failures = append(failures, errors.New("agent: retained application network identity changed"))
-					continue
-				}
-				resource.Networks, changed = observed, true
-			}
-		}
-		if changed {
-			if err := executor.save(receipt); err != nil {
+			if err := executor.captureBootNetworks(receipt, current); err != nil {
 				failures = append(failures, err)
 			}
 		}
