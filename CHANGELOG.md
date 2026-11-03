@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.406](https://github.com/petauron/vastora/compare/v0.1.0-alpha.405...v0.1.0-alpha.406) (2026-11-03)
+
+
+### Bug Fixes
+
+* **agent:** preserve ownership receipts during boot recovery ([#1176](https://github.com/petauron/vastora/issues/1176)) ([6f3bc96](https://github.com/petauron/vastora/commit/6f3bc96633d04c756bec2cf42f584fcbc8a4496e)), closes [#356](https://github.com/petauron/vastora/issues/356)
+
 ## [0.1.0-alpha.405](https://github.com/petauron/vastora/compare/v0.1.0-alpha.404...v0.1.0-alpha.405) (2026-11-03)
 
 
