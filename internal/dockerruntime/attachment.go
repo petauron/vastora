@@ -25,11 +25,7 @@ func RecoverAttachment(ctx context.Context, docker AttachmentEngine, containerID
 	// Attachment recovery must not create a replacement bridge. Provisioning
 	// owns network creation; a missing or unowned bridge requires that explicit
 	// operation rather than silently adopting a new network during boot.
-	inspected, err := docker.NetworkInspect(ctx, networkName, client.NetworkInspectOptions{})
-	if err != nil {
-		return fmt.Errorf("docker runtime: inspect existing attachment network: %w", err)
-	}
-	if err := validateNetwork(ctx, docker, inspected, networkName, networkComponent); err != nil {
+	if err := ValidateExistingBridgeNetwork(ctx, docker, networkName, networkComponent); err != nil {
 		return err
 	}
 	current, err := docker.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
