@@ -15,7 +15,7 @@ import (
 const agentGatewayPromotionSchema = `CREATE TABLE agent_gateway_promotions (
  agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE RESTRICT,
  id TEXT NOT NULL UNIQUE,
- credential_hash TEXT NOT NULL,
+ credential_hash BLOB NOT NULL,
  state TEXT NOT NULL CHECK(state IN ('authorized','prepared','confirmed')),
  authorized_at TEXT NOT NULL,
  expires_at TEXT NOT NULL,
@@ -36,7 +36,7 @@ func (s *Store) AuthorizeGatewayPromotion(ctx context.Context, agentID string) (
 	}
 	defer tx.Rollback()
 	var raw []byte
-	var binding string
+	var binding []byte
 	if err := tx.QueryRowContext(ctx, `SELECT capabilities_json,credential_hash FROM agents WHERE id=? AND status='active' AND credential_revoked_at=''`, agentID).Scan(&raw, &binding); err != nil {
 		return result, errors.New("center: active enrolled Agent required")
 	}
@@ -102,8 +102,8 @@ func (s *Store) PrepareGatewayPromotion(ctx context.Context, agentID, credential
 		return result, err
 	}
 	defer tx.Rollback()
-	var expires, binding string
-	if err := tx.QueryRowContext(ctx, `SELECT p.id,p.state,p.expires_at,p.credential_hash FROM agent_gateway_promotions p JOIN agents a ON a.id=p.agent_id AND a.credential_hash=p.credential_hash WHERE p.agent_id=? AND p.id=?`, agentID, id).Scan(&result.ID, &result.State, &expires, &binding); err != nil || binding != tokenHash(credential) {
+	var expires string
+	if err := tx.QueryRowContext(ctx, `SELECT p.id,p.state,p.expires_at FROM agent_gateway_promotions p JOIN agents a ON a.id=p.agent_id AND a.credential_hash=p.credential_hash WHERE p.agent_id=? AND p.id=? AND p.credential_hash=? AND a.status='active' AND a.credential_revoked_at=''`, agentID, id, tokenHash(credential)).Scan(&result.ID, &result.State, &expires); err != nil {
 		return result, errors.New("center: operator-authorized promotion for this machine required")
 	}
 	if result.State == "authorized" {
