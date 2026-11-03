@@ -22,7 +22,14 @@ type AttachmentEngine interface {
 // can retain HostConfig after boot while its live endpoint/port map is empty.
 // Preserve the container and volumes; never turn a private bind into a wildcard.
 func RecoverAttachment(ctx context.Context, docker AttachmentEngine, containerID, networkName, networkComponent, alias string) error {
-	if err := EnsureBridgeNetwork(ctx, docker, networkName, networkComponent); err != nil {
+	// Attachment recovery must not create a replacement bridge. Provisioning
+	// owns network creation; a missing or unowned bridge requires that explicit
+	// operation rather than silently adopting a new network during boot.
+	inspected, err := docker.NetworkInspect(ctx, networkName, client.NetworkInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("docker runtime: inspect existing attachment network: %w", err)
+	}
+	if err := validateNetwork(ctx, docker, inspected, networkName, networkComponent); err != nil {
 		return err
 	}
 	current, err := docker.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})

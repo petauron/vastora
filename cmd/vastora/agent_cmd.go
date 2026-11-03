@@ -674,6 +674,17 @@ func runAgent(arguments []string) error {
 		// Reconnection is observation only. A failed heartbeat must not trigger
 		// offline application restoration or replay a management operation.
 		go func() {
+			// Repair only an existing running gateway's Docker attachment, once
+			// before any Center contact or task claim. Never replay saved routes
+			// or restart an application as part of heartbeat/reconnect handling.
+			if capabilities.Docker {
+				startup, cancel := context.WithTimeout(context.Background(), time.Minute)
+				err := store.RecoverGatewayAttachments(startup)
+				cancel()
+				if err != nil {
+					controlLogger.Error("Gateway startup network recovery failed", "event", "gateway.startup_network", "error", controlplane.SafeError(err.Error()))
+				}
+			}
 			// Glivela resumes its own proxy processes. Agent reconnection must
 			// not restart retained Dante/Xray installations after handover.
 			for {
