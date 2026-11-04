@@ -341,7 +341,13 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 		comparison := semver.Compare(canonicalAppVersion(manifest.Version), canonicalAppVersion(active.Version))
 		if comparison == 0 && manifest.PackageRevision == active.PackageRevision {
-			return DeploymentView{}, fmt.Errorf("center: app is already at version %s", active.Version)
+			reapply, err := s.failedDaylightReapplyAllowed(ctx, request, manifest, active)
+			if err != nil {
+				return DeploymentView{}, err
+			}
+			if !reapply {
+				return DeploymentView{}, fmt.Errorf("center: app is already at version %s", active.Version)
+			}
 		}
 		if comparison < 0 || comparison == 0 && manifest.PackageRevision < active.PackageRevision {
 			return DeploymentView{}, fmt.Errorf("center: catalog version %s is older than installed version %s; downgrade is not allowed", manifest.Version, active.Version)
