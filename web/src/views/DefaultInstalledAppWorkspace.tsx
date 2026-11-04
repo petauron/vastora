@@ -16,6 +16,7 @@ import { localized } from "./appAccess";
 import { copy } from "./shared";
 import { AppIdentityBadge } from "./AppIdentity";
 import { AppIcon } from "@/components/desktop/AppIcon";
+import { daylightModes, isDaylightAppKey } from "./daylight";
 import { RegionFlag } from "./RegionFlag";
 import { IPQualityButton } from "./IPQuality";
 import { canCreateRealityNode, publicationNeedsAttention, showInstalledNode, threeXUIAppKey, type InstalledAppGroup, type InstalledAppInstance } from "./installed-apps-model";
@@ -30,7 +31,7 @@ export function DefaultInstalledAppWorkspace({ group, language, mutate, onManage
   const nodeCount = group.instances.filter(showInstalledNode).length;
   const attentionCount = group.instances.reduce((count, instance) => count + instance.publications.filter(publicationNeedsAttention).length, 0);
   const attentionInstance = group.instances.find((instance) => instance.publications.some(publicationNeedsAttention));
-  const name = group.app ? localized(group.app, language, "name") : group.instances[0].application.name;
+  const name = isDaylightAppKey(group.appKey) ? "Daylight" : group.app ? localized(group.app, language, "name") : group.instances[0].application.name;
   const search = query.trim().toLocaleLowerCase();
   const instances = group.instances.filter(showInstalledNode).filter((instance) => !search || [instance.agent?.name, instance.application.nodeId, instance.siteName, ...instance.realityServices.map((service) => service.displayName)].some((value) => value?.toLocaleLowerCase().includes(search)));
   const showSearch = threeXUI || nodeCount > 1 || Boolean(query);
@@ -138,6 +139,7 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
   const pendingPublication = publications.find((publication) => publication.status !== "ready" && publication.status !== "stopped");
   const name = agent?.name ?? application.nodeId;
   const displayName = instance.realityServices[0]?.displayName;
+  const daylightMode = daylightModes.find((mode) => mode.key === application.appKey);
   const needsVLESS = threeXUI && instance.realityServices.length === 0;
   const check = async () => {
     if (!pendingPublication || locked || checking) return;
@@ -156,6 +158,7 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
         {threeXUI ? <RegionFlag code={instance.realityServices[0]?.regionCode} language={language} /> : null}
         <p className="min-w-0 break-words font-medium">{name}</p>
       </div>
+      {daylightMode ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, daylightMode.zh, daylightMode.en)}</p> : null}
       {threeXUI && application.role === "master" && application.id !== instance.controller?.id ? <Badge className="mt-1" variant="outline">{copy(language, "待转为节点", "Converting to node")}</Badge> : null}
       {showSite || displayName || threeXUI ? <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
         {showSite || displayName ? <p className="min-w-0 truncate text-xs text-muted-foreground" title={displayName ?? instance.siteName}>{showSite ? instance.siteName : displayName}</p> : null}

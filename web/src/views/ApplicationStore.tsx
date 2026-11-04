@@ -15,6 +15,9 @@ import type { InstalledAppGroup } from "./installed-apps-model";
 import { applicationLaunchURL, isBackgroundApplication } from "./applicationLaunch";
 import { GlivelaStoreCard, glivelaAppKeys, glivelaMatches, isGlivelaCatalogApp } from "./GlivelaStoreCard";
 
+import { DaylightStoreCard, daylightMatches } from "./DaylightStoreCard";
+import { isDaylightAppKey, isDaylightCatalogApp } from "./daylight";
+
 type Section = "installed" | "all" | "updates";
 export function ApplicationStore({ data, groups, language, onInstall, onOpen, onManage, onUpgrade, onSettings }: {
   data: AppData;
@@ -30,26 +33,31 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
   const [query, setQuery] = useState("");
   const [managedGroupKey, setManagedGroupKey] = useState<string | null>(null);
   const glivelaGroups = groups.filter((group) => glivelaAppKeys.has(group.appKey));
-  const otherGroups = groups.filter((group) => !glivelaAppKeys.has(group.appKey));
+  const daylightGroups = groups.filter((group) => isDaylightAppKey(group.appKey));
+  const otherGroups = groups.filter((group) => !glivelaAppKeys.has(group.appKey) && !isDaylightAppKey(group.appKey));
   const glivelaCatalog = data.apps.filter(isGlivelaCatalogApp);
-  const otherCatalog = data.apps.filter((app) => !isGlivelaCatalogApp(app));
+  const daylightCatalog = data.apps.filter(isDaylightCatalogApp);
+  const otherCatalog = data.apps.filter((app) => !isGlivelaCatalogApp(app) && !isDaylightCatalogApp(app));
   const updates = otherGroups.filter((group) => group.instances.some((instance) => instance.application.updateAvailable));
   const glivelaHasUpdates = glivelaGroups.some((group) => group.instances.some((instance) => instance.application.updateAvailable));
+  const daylightHasUpdates = daylightGroups.some((group) => group.instances.some((instance) => instance.application.updateAvailable));
   const search = query.trim().toLocaleLowerCase();
   const name = (group: InstalledAppGroup) => group.app ? localized(group.app, language, "name") : group.instances[0].application.name;
   const shown = (section === "updates" ? updates : otherGroups).filter((group) => !search || [name(group), group.appKey, group.app ? localized(group.app, language, "description") : ""].some((value) => value.toLocaleLowerCase().includes(search)));
   const matchingCatalog = otherCatalog.filter((app) => !search || [localized(app, language, "name"), localized(app, language, "description"), app.sourceId, app.key].some((value) => value.toLocaleLowerCase().includes(search)));
   const showGlivela = glivelaMatches(search, data, glivelaGroups, language) && (section === "all" ? glivelaCatalog.length > 0 : section === "updates" ? glivelaHasUpdates : glivelaGroups.length > 0);
-  const shownCount = (section === "all" ? matchingCatalog.length : shown.length) + Number(showGlivela);
+  const showDaylight = daylightMatches(search, data, daylightGroups, language) && (section === "all" ? daylightCatalog.length > 0 : section === "updates" ? daylightHasUpdates : daylightGroups.length > 0);
+  const shownCount = (section === "all" ? matchingCatalog.length : shown.length) + Number(showGlivela) + Number(showDaylight);
   const managedGroup = groups.find((group) => group.id === managedGroupKey);
   const managedApp = managedGroup?.app;
   const canInstallMore = managedApp && !catalogInstallBlocked(managedApp) && eligibleAppNodes(data, managedApp.key).length > 0;
   const sections = [
-    { id: "installed" as const, icon: DownloadIcon, label: copy(language, "已安装", "Installed"), count: otherGroups.length + Number(glivelaGroups.length > 0) },
-    { id: "all" as const, icon: Grid2X2Icon, label: copy(language, "所有应用", "All apps"), count: otherCatalog.length + Number(glivelaCatalog.length > 0) },
-    { id: "updates" as const, icon: ArrowUpCircleIcon, label: copy(language, "可更新", "Updates"), count: updates.length + Number(glivelaHasUpdates) },
+    { id: "installed" as const, icon: DownloadIcon, label: copy(language, "已安装", "Installed"), count: otherGroups.length + Number(glivelaGroups.length > 0) + Number(daylightGroups.length > 0) },
+    { id: "all" as const, icon: Grid2X2Icon, label: copy(language, "所有应用", "All apps"), count: otherCatalog.length + Number(glivelaCatalog.length > 0) + Number(daylightCatalog.length > 0) },
+    { id: "updates" as const, icon: ArrowUpCircleIcon, label: copy(language, "可更新", "Updates"), count: updates.length + Number(glivelaHasUpdates) + Number(daylightHasUpdates) },
   ];
   const glivelaCard = showGlivela ? <GlivelaStoreCard data={data} groups={glivelaGroups} language={language} onInstall={onInstall} onOpen={onOpen} onManage={onManage} onUpgrade={onUpgrade} /> : null;
+  const daylightCard = showDaylight ? <DaylightStoreCard data={data} groups={daylightGroups} language={language} onInstall={onInstall} onOpen={onOpen} onManage={onManage} onUpgrade={onUpgrade} /> : null;
   const actions = (group: InstalledAppGroup, compact = false) => {
     const url = applicationLaunchURL(data, group.appKey);
     const background = isBackgroundApplication(group.app);
@@ -71,7 +79,7 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
         <div><h1 className="text-xl font-semibold tracking-tight">{sections.find((item) => item.id === section)!.label}</h1><p className="mt-1 text-xs text-muted-foreground" role="status">{copy(language, `${shownCount} 个应用`, `${shownCount} applications`)}</p></div>
         <InputGroup className="h-10 w-full sm:w-64"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={copy(language, "搜索应用商店", "Search App Store")} placeholder={copy(language, "搜索应用…", "Search apps…")} type="search" value={query} onChange={(event) => setQuery(event.target.value)} /></InputGroup>
       </header>
-      {section === "all" ? <AppStore data={data} language={language} onInstall={onInstall} query={search} hideApp={isGlivelaCatalogApp} extraCard={glivelaCard} renderInstalledStatus={(key) => { const group = groups.find((value) => value.appKey === key); return group ? <AppInstallationSummary group={group} language={language} compact /> : null; }} renderInstalledDetailActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group) : null; }} renderInstalledSummary={(key) => { const group = groups.find((value) => value.appKey === key); return group ? <AppInstallationSummary group={group} language={language} /> : null; }} renderInstalledActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group, true) : null; }} /> : <div className="store-app-grid">{glivelaCard}{shown.map((group) => group.app
+      {section === "all" ? <AppStore data={data} language={language} onInstall={onInstall} query={search} hideApp={(app) => isGlivelaCatalogApp(app) || isDaylightCatalogApp(app)} extraCard={<>{glivelaCard}{daylightCard}</>} renderInstalledStatus={(key) => { const group = groups.find((value) => value.appKey === key); return group ? <AppInstallationSummary group={group} language={language} compact /> : null; }} renderInstalledDetailActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group) : null; }} renderInstalledSummary={(key) => { const group = groups.find((value) => value.appKey === key); return group ? <AppInstallationSummary group={group} language={language} /> : null; }} renderInstalledActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group, true) : null; }} /> : <div className="store-app-grid">{glivelaCard}{daylightCard}{shown.map((group) => group.app
         ? <AppStoreCard key={group.id} app={group.app} language={language} installedCount={group.instances.length} status={<AppInstallationSummary group={group} language={language} compact />} detailActions={actions(group)} summary={<AppInstallationSummary group={group} language={language} />} canInstall={false} blocker="" onInstall={onInstall} actions={actions(group, true)} />
         : <AppStoreTile key={group.id} appKey={group.appKey} name={name(group)} language={language} meta={copy(language, "已安装 · 已从目录移除", "Installed · unavailable in catalog")} onDetails={() => setManagedGroupKey(group.id)} action={actions(group, true)} />)}</div>}
       {(section === "all" ? !shownCount && Boolean(search) : !shownCount) ? <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-5 py-14 text-center"><AppIcon appKey="apps" className="size-12" /><p className="text-sm text-muted-foreground">{search ? copy(language, "没有匹配的应用", "No matching apps") : section === "updates" ? copy(language, "当前没有可用的应用更新", "No app updates available") : copy(language, "还没有安装应用", "No apps installed")}</p><Button onClick={() => { if (search) setQuery(""); else setSection("all"); }} variant="outline">{search ? copy(language, "清除搜索", "Clear search") : copy(language, "浏览所有应用", "Browse all apps")}</Button></div> : null}
