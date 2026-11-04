@@ -46,9 +46,15 @@ export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, on
 }) {
   const [open, setOpen] = useState(false);
   const officialApp = data.apps.find(isGlivelaCatalogApp);
-  const controller = groups.find((group) => group.appKey === roles[0].key);
+  const legacy = groups.find((group) => group.appKey === roles[0].key)?.instances.filter((instance) => instance.application.legacyGlivela) ?? [];
+  const roleGroups = groups.flatMap((group) => {
+    if (group.appKey !== roles[0].key) return [group];
+    const instances = group.instances.filter((instance) => !instance.application.legacyGlivela);
+    return instances.length ? [{ ...group, instances }] : [];
+  });
+  const controller = roleGroups.find((group) => group.appKey === roles[0].key);
   const installedRoles = roles.flatMap((role) => {
-    const group = groups.find((value) => value.appKey === role.key);
+    const group = roleGroups.find((value) => value.appKey === role.key);
     return group ? [{ role, group }] : [];
   });
   const openController = () => { setOpen(false); onOpen(roles[0].key); };
@@ -70,7 +76,7 @@ export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, on
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4">
         {roles.map((role) => {
           const label = copy(language, role.zh, role.en);
-          const group = groups.find((value) => value.appKey === role.key);
+          const group = roleGroups.find((value) => value.appKey === role.key);
           const app = data.apps.find((value) => value.key === role.key && isGlivelaCatalogApp(value));
           const canInstall = Boolean(app && !catalogInstallBlocked(app) && eligibleAppNodes(data, app.key).length);
           const blocker = app && !canInstall
@@ -99,6 +105,14 @@ export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, on
             </div> : null}
           </section>;
         })}
+        {legacy.length ? <section aria-labelledby="glivela-legacy-installations" className="flex flex-col gap-3">
+          <h3 className="font-medium" id="glivela-legacy-installations">{copy(language, "旧线路安装 · 待核对", "Legacy entry installations · review required")}</h3>
+          <p className="text-xs text-muted-foreground">{copy(language, "这些是旧代理执行记录，不是控制端。核对原生接管和停止状态后再归档，不能直接升级为控制端。", "These records belong to legacy proxy executors, not controllers. Verify native handover and stopped execution before archiving them.")}</p>
+          <div className="divide-y rounded-xl border">{legacy.map((instance) => <div className="flex flex-wrap items-center gap-3 p-4" key={instance.application.id}>
+            <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{instance.agent?.name ?? instance.application.nodeId}</p><p className="mt-1 text-xs text-muted-foreground">v{instance.application.installedVersion}</p></div>
+            <span className="text-xs text-muted-foreground">{copy(language, "待核对接管", "Handover review required")}</span>
+          </div>)}</div>
+        </section> : null}
       </div>
     </SheetContent></Sheet>
   </>;

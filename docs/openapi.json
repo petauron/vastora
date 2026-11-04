@@ -1930,6 +1930,15 @@
                           "role": {
                             "type": "string"
                           },
+                          "legacyGlivela": {
+                            "type": "boolean"
+                          },
+                          "executionRetired": {
+                            "type": "boolean"
+                          },
+                          "replacementApplicationId": {
+                            "type": "string"
+                          },
                           "controllerApplicationId": {
                             "type": "string"
                           },
