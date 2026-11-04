@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.412](https://github.com/petauron/vastora/compare/v0.1.0-alpha.411...v0.1.0-alpha.412) (2026-11-04)
+
+
+### Bug Fixes
+
+* **apps:** archive superseded Glivela execution records ([#1191](https://github.com/petauron/vastora/issues/1191)) ([b3c876e](https://github.com/petauron/vastora/commit/b3c876e46c4c84e070b632b4177c9c018f34bece))
+
 ## [0.1.0-alpha.411](https://github.com/petauron/vastora/compare/v0.1.0-alpha.410...v0.1.0-alpha.411) (2026-11-03)
 
 
