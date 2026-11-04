@@ -25,6 +25,7 @@ import { ApplicationCredentialsSheet, InstalledAppDetails } from "./apps/Applica
 import { DeploymentSheet, PublicationSheet, type DeploymentEditor } from "./apps/DeploymentSheets";
 import { RealityRenameSheet, SubscriptionSheet, UninstallSheet } from "./apps/SubscriptionSheets";
 import { OfficialAppManagerHost } from "@/app-workspaces/OfficialAppWorkspaceHost";
+import { daylightInstalledGroup, isDaylightAppKey } from "./daylight";
 import { TaskRecoverySheet } from "./TaskRecoverySheet";
 
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
@@ -53,7 +54,7 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
     services: data.services, publications: data.publications, deployments: data.deployments,
     threeXUIControllerMigrations: data.threeXUIControllerMigrations,
   }), [data.applications, data.apps, data.agents, data.sites, data.services, data.publications, data.deployments, data.threeXUIControllerMigrations]);
-  const selectedGroup = installedGroups.find((group) => group.appKey === workspaceKey);
+  const selectedGroup = workspaceKey && isDaylightAppKey(workspaceKey) ? daylightInstalledGroup(installedGroups) : installedGroups.find((group) => group.appKey === workspaceKey);
   const managedInstance = installedGroups.flatMap((group) => group.instances).find((instance) => instance.application.id === managedApplicationID);
   const recentOperations = latestOperations(data.deployments).filter((deployment) => deployment.state === "pending" || deployment.state === "running" || deployment.reconciliationRequired);
   const trafficApplication = trafficService ? data.applications.find((application) => application.id === trafficService.applicationId) : undefined;

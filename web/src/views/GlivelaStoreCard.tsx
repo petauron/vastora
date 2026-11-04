@@ -16,6 +16,7 @@ const roles = [
   { key: "vastora-official/meridian", id: "controller", zh: "控制端", en: "Controller" },
   { key: "vastora-official/glivela-entry", id: "entry", zh: "线路端", en: "Entry" },
   { key: "vastora-official/glivela-node", id: "landing", zh: "落地端", en: "Landing" },
+  { key: "vastora-official/glivela-dual", id: "dual", zh: "线路与落地", en: "Entry + landing" },
 ] as const;
 
 export const glivelaAppKeys: ReadonlySet<string> = new Set(roles.map((role) => role.key));
@@ -63,7 +64,7 @@ export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, on
     <AppStoreTile appKey={roles[0].key} name="Glivela" language={language} onDetails={() => setOpen(true)}
       meta={installedRoles.length ? <>{installedRoles.map(({ role, group }) => <span className="block" key={role.key}>
         {copy(language, role.zh, role.en)} · <AppInstallationSummary group={group} language={language} compact />
-      </span>)}</> : copy(language, "选择控制端、线路端或落地端", "Choose a controller, entry, or landing")}
+      </span>)}</> : copy(language, "选择控制端、线路端、落地端或双角色", "Choose a controller, entry, landing, or dual role")}
       action={<div className="flex flex-wrap gap-2">
         <Button aria-label={copy(language, "管理 Glivela", "Manage Glivela")} onClick={() => setOpen(true)} size="sm" variant={controller ? "outline" : "default"}>{copy(language, "管理", "Manage")}</Button>
         {controller ? <Button aria-label={copy(language, "打开 Glivela", "Open Glivela")} onClick={openController} size="sm">{copy(language, "打开", "Open")}</Button> : null}
@@ -71,7 +72,7 @@ export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, on
     <Sheet open={open} onOpenChange={setOpen}><SheetContent className="sm:max-w-xl">
       <SheetHeader>
         <SheetTitle className="flex items-center gap-3"><AppIcon appKey={roles[0].key} className="size-11" />Glivela{officialApp ? <AppIdentityBadge app={officialApp} language={language} /> : null}</SheetTitle>
-        <SheetDescription>{copy(language, "分别查看和管理控制端、线路端与落地端。", "View and manage controller, entry, and landing installations separately.")}</SheetDescription>
+        <SheetDescription>{copy(language, "分别管理控制端、线路端、落地端和双角色安装。", "Manage controller, entry, landing, and dual-role installations separately.")}</SheetDescription>
       </SheetHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4">
         {roles.map((role) => {
