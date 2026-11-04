@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.414](https://github.com/petauron/vastora/compare/v0.1.0-alpha.413...v0.1.0-alpha.414) (2026-11-04)
+
+
+### Bug Fixes
+
+* **apps:** allow managed reapply for failed Daylight installations ([#1199](https://github.com/petauron/vastora/issues/1199)) ([2326ee5](https://github.com/petauron/vastora/commit/2326ee53aceee0f24a755e571a2a9b10ae825857))
+* **apps:** group Daylight modes and all Glivela roles ([#1197](https://github.com/petauron/vastora/issues/1197)) ([5405f93](https://github.com/petauron/vastora/commit/5405f93c7ed36a6ad759c3cf26214c2d58c2aceb))
+
 ## [0.1.0-alpha.413](https://github.com/petauron/vastora/compare/v0.1.0-alpha.412...v0.1.0-alpha.413) (2026-11-04)
 
 
