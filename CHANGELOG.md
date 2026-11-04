@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.413](https://github.com/petauron/vastora/compare/v0.1.0-alpha.412...v0.1.0-alpha.413) (2026-11-04)
+
+
+### Bug Fixes
+
+* **glivela:** reconcile native entry health after package recovery ([#1194](https://github.com/petauron/vastora/issues/1194)) ([ab8f116](https://github.com/petauron/vastora/commit/ab8f1161d8bf3e3d8bfaf1d7ab99066cfc6f637a))
+
 ## [0.1.0-alpha.412](https://github.com/petauron/vastora/compare/v0.1.0-alpha.411...v0.1.0-alpha.412) (2026-11-04)
 
 
