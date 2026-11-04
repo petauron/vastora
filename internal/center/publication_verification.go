@@ -62,6 +62,9 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 			return publication, nil
 		}
 	}
+	if err := s.reconcileNativeEntryServiceHealth(ctx, id, publication.DesiredRevision); err != nil {
+		return s.recordPublicationVerification(ctx, id, expectedRevision, err.Error())
+	}
 	if err := s.ensureServicePublicationVerificationAllowed(ctx, s.db, publication.ServiceID); err != nil {
 		return s.recordPublicationVerification(ctx, id, expectedRevision, err.Error())
 	}
