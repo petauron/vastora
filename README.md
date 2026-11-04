@@ -158,6 +158,8 @@ Read [the architecture](docs/architecture.md), [catalog format](docs/catalog.md)
 and [threat model](docs/threat-model.md) before contributing.
 For backup-bound native replacements and retained public service identity, see
 [installation handover](docs/native-lifecycle-handover.md).
+For verified retirement of old Glivela proxy execution records while retaining
+their services and history, see [execution retirement](docs/glivela-execution-retirement.md).
 For controller-plus-pilot upgrades, configure the persistent
 [Agent update scope](docs/agent-update-scope.md) before upgrading Center.
 

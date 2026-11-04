@@ -284,6 +284,23 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
+	var executionRetired bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_execution_retirements r JOIN applications a ON a.id=r.application_id WHERE a.node_id=? AND a.app_key=?)`, request.AgentID, request.AppKey).Scan(&executionRetired); err != nil {
+		return DeploymentView{}, err
+	}
+	if executionRetired {
+		return DeploymentView{}, errors.New("center: superseded execution is archived; manage its current replacement instead")
+	}
+	if request.AppKey == meridianAppKey && request.Operation != "uninstall" {
+		var receiptRaw []byte
+		err := s.db.QueryRowContext(ctx, `SELECT r.resources_json FROM application_resources r JOIN applications a ON a.id=r.application_id WHERE a.node_id=? AND a.app_key=?`, request.AgentID, request.AppKey).Scan(&receiptRaw)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return DeploymentView{}, err
+		}
+		if legacyGlivelaReceipt(receiptRaw) {
+			return DeploymentView{}, errors.New("center: legacy Glivela proxy execution is not a controller; verify its native handover instead of upgrading it")
+		}
+	}
 	var manifest catalog.AppManifest
 	if request.Operation == "install" || request.Operation == "upgrade" {
 		apps, err := s.ListApps(ctx)

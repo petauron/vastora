@@ -140,7 +140,7 @@ export function isActiveApplication(status: string) {
 }
 
 export function isInstalledApplication(application: AppData["applications"][number]) {
-  return Boolean(application.installedVersion);
+	return Boolean(application.installedVersion) && !application.executionRetired;
 }
 
 export function latestOperations(deployments: Deployment[]) {

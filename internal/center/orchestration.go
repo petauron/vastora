@@ -610,9 +610,10 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		CASE WHEN a.app_key = 'vastora-official/3x-ui' AND a.role = 'worker' AND COALESCE(n.master_application_id, '') <> COALESCE(control.controller_application_id, '') THEN 'VLESS node is linked to a legacy controller; finish global convergence first' ELSE COALESCE(n.last_error, '') END,
 		COALESCE(b.state, ''), COALESCE(b.updated_at, ''),
 		COALESCE(CASE WHEN latest.operation IN ('install', 'upgrade', 'configure') THEN latest.app_version ELSE '' END, ''),
-		a.created_at, a.updated_at, COALESCE(latest.package_revision,0), COALESCE(resources.adoption_state,''), COALESCE(resources.last_error,'')
+		a.created_at, a.updated_at, COALESCE(latest.package_revision,0), COALESCE(resources.adoption_state,''), COALESCE(resources.last_error,''), COALESCE(resources.resources_json,'{}'), COALESCE(retirement.replacement_application_id,'')
 		FROM applications a
 		LEFT JOIN application_resources resources ON resources.application_id=a.id
+		LEFT JOIN application_execution_retirements retirement ON retirement.application_id=a.id
 		LEFT JOIN three_x_ui_nodes n ON n.worker_application_id = a.id
 		LEFT JOIN three_x_ui_control_plane control ON control.id = 1
 		LEFT JOIN three_x_ui_backups b ON b.application_id = a.id
@@ -632,8 +633,14 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		var value ApplicationView
 		var created, updated string
 		var restorePointAt string
-		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated, &value.InstalledPackageRevision, &value.AdoptionState, &value.AdoptionError); err != nil {
+		var resourcesRaw []byte
+		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated, &value.InstalledPackageRevision, &value.AdoptionState, &value.AdoptionError, &resourcesRaw, &value.ReplacementApplicationID); err != nil {
 			return nil, err
+		}
+		value.LegacyGlivela = value.AppKey == meridianAppKey && legacyGlivelaReceipt(resourcesRaw)
+		value.ExecutionRetired = value.ReplacementApplicationID != ""
+		if value.ExecutionRetired {
+			value.Status = "stopped"
 		}
 		if restorePointAt != "" {
 			parsed, parseErr := time.Parse(time.RFC3339Nano, restorePointAt)
@@ -645,7 +652,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		value.AvailableVersion = availableVersions[value.AppKey]
 		value.AvailablePackageRevision = availableRevisions[value.AppKey]
 		comparison := semver.Compare(canonicalAppVersion(value.AvailableVersion), canonicalAppVersion(value.InstalledVersion))
-		value.UpdateAvailable = value.InstalledVersion != "" && (comparison > 0 || comparison == 0 && value.AvailablePackageRevision > value.InstalledPackageRevision)
+		value.UpdateAvailable = !value.LegacyGlivela && !value.ExecutionRetired && value.InstalledVersion != "" && (comparison > 0 || comparison == 0 && value.AvailablePackageRevision > value.InstalledPackageRevision)
 		value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 		result = append(result, value)

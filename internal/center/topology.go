@@ -142,6 +142,9 @@ type ApplicationView struct {
 	Status                   string     `json:"status"`
 	Runtime                  string     `json:"runtime"`
 	Role                     string     `json:"role,omitempty"`
+	LegacyGlivela            bool       `json:"legacyGlivela,omitempty"`
+	ExecutionRetired         bool       `json:"executionRetired,omitempty"`
+	ReplacementApplicationID string     `json:"replacementApplicationId,omitempty"`
 	ControllerID             string     `json:"controllerApplicationId,omitempty"`
 	NodeSyncStatus           string     `json:"nodeSyncStatus,omitempty"`
 	NodeSyncError            string     `json:"nodeSyncError,omitempty"`
