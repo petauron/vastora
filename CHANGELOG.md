@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.415](https://github.com/petauron/vastora/compare/v0.1.0-alpha.414...v0.1.0-alpha.415) (2026-11-04)
+
+
+### Bug Fixes
+
+* **apps:** permit verified failed Daylight reapply ([#1200](https://github.com/petauron/vastora/issues/1200)) ([6b04601](https://github.com/petauron/vastora/commit/6b046013d4115251184c8cae1f68298a7028575c))
+
 ## [0.1.0-alpha.414](https://github.com/petauron/vastora/compare/v0.1.0-alpha.413...v0.1.0-alpha.414) (2026-11-04)
 
 
