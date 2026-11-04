@@ -206,7 +206,7 @@ func TestNodeSiteCenterMigration127PreservesSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.db.Exec(`INSERT INTO settings(key,value) VALUES('node-site-preserved','original'); DROP TABLE node_site_certmagic_storage; DROP TABLE node_site_tasks; DROP TABLE node_sites; DROP TABLE os_reinstall_tasks; DROP TABLE agent_gateway_promotions; DELETE FROM goose_db_version WHERE version_id>=127; PRAGMA user_version=126;`)
+	_, err = s.db.Exec(`INSERT INTO settings(key,value) VALUES('node-site-preserved','original'); DROP TABLE application_execution_retirements; DROP TABLE node_site_certmagic_storage; DROP TABLE node_site_tasks; DROP TABLE node_sites; DROP TABLE os_reinstall_tasks; DROP TABLE agent_gateway_promotions; DELETE FROM goose_db_version WHERE version_id>=127; PRAGMA user_version=126;`)
 	if err != nil {
 		t.Fatal(err)
 	}
