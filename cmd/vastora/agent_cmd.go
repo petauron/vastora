@@ -21,6 +21,7 @@ import (
 
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/hostservice"
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/tailscalehost"
@@ -34,6 +35,23 @@ func runAgent(arguments []string) error {
 	switch arguments[0] {
 	case "prepare-runtime-directories", "install-runtime-directories", "uninstall-runtime-directories":
 		return runRuntimeDirectories(arguments)
+	case "prepare-native", "run-native", "check-native":
+		flags := flag.NewFlagSet(arguments[0], flag.ContinueOnError)
+		path := flags.String("spec", "", "executor-owned native process specification")
+		digest := flags.String("sha256", "", "installed specification digest")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 || *path == "" || *digest == "" {
+			return errors.New("native service specification and digest required")
+		}
+		if arguments[0] == "prepare-native" {
+			return agent.PrepareOpenRCProcess(*path, *digest)
+		}
+		if arguments[0] == "check-native" {
+			return agent.WaitOpenRCProcess(context.Background(), *path, *digest)
+		}
+		return agent.RunOpenRCProcess(*path, *digest)
 	case "execute-os-reinstall":
 		return executeOSReinstall(arguments[1:])
 	case "prepare-center-upgrade-recovery":
@@ -72,10 +90,13 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		if runtime.GOOS != "linux" {
-			return errors.New("agent install currently supports Linux systemd hosts")
+			return errors.New("agent install supports Linux systemd and OpenRC hosts")
 		}
 		if os.Geteuid() != 0 {
 			return errors.New("agent install must run as root")
+		}
+		if _, err := hostservice.Detect(); err != nil {
+			return err
 		}
 		if *centerURL == "" || *tokenFile == "" {
 			return errors.New("--center-url and --token-file are required")
@@ -128,7 +149,7 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return fmt.Errorf("locate vastora executable: %w", err)
 		}
-		if err := resumeSystemdAgentInstall(context.Background(), store, executable, *dataDir, strings.Join(roles, ","), nodeCapabilitiesString(capabilities), *replaceExisting, defaultAgentSystemdInstallEnvironment()); err != nil {
+		if err := resumeAgentServiceInstall(context.Background(), store, executable, *dataDir, strings.Join(roles, ","), nodeCapabilitiesString(capabilities), *replaceExisting, defaultAgentServiceInstallEnvironment()); err != nil {
 			return err
 		}
 		if *replaceExisting {
@@ -225,12 +246,12 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return fmt.Errorf("locate vastora executable: %w", err)
 		}
-		if err := installSystemdAgent(executable, *dataDir, strings.Join(roles, ","), nodeCapabilitiesString(capabilities)); err != nil {
+		if err := installAgentService(executable, *dataDir, strings.Join(roles, ","), nodeCapabilitiesString(capabilities)); err != nil {
 			return err
 		}
 		if *promotionID == "" {
-			if output, err := exec.Command("systemctl", "restart", "vastora-agent.service").CombinedOutput(); err != nil {
-				return fmt.Errorf("restart Agent service: %s: %w", strings.TrimSpace(string(output)), err)
+			if err := agentServiceAction(context.Background(), "restart"); err != nil {
+				return err
 			}
 		}
 		fmt.Println("Agent purpose updated; Center will refresh it after the next heartbeat")
@@ -306,11 +327,7 @@ func runAgent(arguments []string) error {
 			return fmt.Errorf("locate vastora executable: %w", err)
 		}
 		version, err := updateAgentExecutable(context.Background(), connection, executable, func() error {
-			output, restartErr := exec.Command("systemctl", "restart", "vastora-agent.service").CombinedOutput()
-			if restartErr != nil {
-				return fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), restartErr)
-			}
-			return nil
+			return agentServiceAction(context.Background(), "restart")
 		})
 		if err != nil {
 			return err
@@ -366,7 +383,13 @@ func runAgent(arguments []string) error {
 		if err := requireLinuxRoot("agent finish-update"); err != nil {
 			return err
 		}
-		return runPersistentHostUpdate(context.Background(), *operationFile)
+		if err := runPersistentHostUpdate(context.Background(), *operationFile); err != nil {
+			return err
+		}
+		if isOpenRCHost() {
+			return cleanPersistentHostUpdate(*operationFile)
+		}
+		return nil
 	case "cleanup-update":
 		flags := flag.NewFlagSet("agent cleanup-update", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -937,23 +960,30 @@ func downloadAgentUpdateAttempt(ctx context.Context, connection agent.Connection
 
 const vastoraAgentUnitPath = "/etc/systemd/system/vastora-agent.service"
 
-type agentSystemdInstallEnvironment struct {
-	unitPath     string
-	readFile     func(string) ([]byte, error)
-	writeFile    func(string, []byte, os.FileMode) error
-	rename       func(string, string) error
-	runSystemctl func(...string) ([]byte, error)
-	verify       func(context.Context, *agent.Store, string, string) error
+type agentServiceInstallEnvironment struct {
+	kind       hostservice.Kind
+	unitPath   string
+	readFile   func(string) ([]byte, error)
+	writeFile  func(string, []byte, os.FileMode) error
+	rename     func(string, string) error
+	runService func(...string) ([]byte, error)
+	verify     func(context.Context, *agent.Store, string, string) error
 }
 
-func defaultAgentSystemdInstallEnvironment() agentSystemdInstallEnvironment {
-	return agentSystemdInstallEnvironment{
-		unitPath:  vastoraAgentUnitPath,
-		readFile:  os.ReadFile,
-		writeFile: os.WriteFile,
-		rename:    os.Rename,
-		runSystemctl: func(arguments ...string) ([]byte, error) {
-			return exec.Command("systemctl", arguments...).CombinedOutput()
+func defaultAgentServiceInstallEnvironment() agentServiceInstallEnvironment {
+	kind, detectErr := hostservice.Detect()
+	path, _ := hostservice.Path(kind, "vastora-agent.service")
+	return agentServiceInstallEnvironment{
+		kind: kind, unitPath: path, readFile: os.ReadFile, writeFile: os.WriteFile, rename: os.Rename,
+		runService: func(arguments ...string) ([]byte, error) {
+			if detectErr != nil {
+				return nil, detectErr
+			}
+			unit := ""
+			if len(arguments) > 1 {
+				unit = arguments[1]
+			}
+			return nil, hostservice.Action(context.Background(), kind, nil, arguments[0], unit)
 		},
 		verify: func(ctx context.Context, store *agent.Store, rolesValue, capabilitiesValue string) error {
 			roles, capabilities, err := validatedNodeRuntime(rolesValue, capabilitiesValue)
@@ -967,7 +997,7 @@ func defaultAgentSystemdInstallEnvironment() agentSystemdInstallEnvironment {
 	}
 }
 
-func resumeSystemdAgentInstall(ctx context.Context, store *agent.Store, executable, dataDir, roles, capabilities string, replace bool, environment agentSystemdInstallEnvironment) error {
+func resumeAgentServiceInstall(ctx context.Context, store *agent.Store, executable, dataDir, roles, capabilities string, replace bool, environment agentServiceInstallEnvironment) error {
 	executable, err := filepath.Abs(executable)
 	if err != nil {
 		return fmt.Errorf("resolve executable path: %w", err)
@@ -991,13 +1021,20 @@ func resumeSystemdAgentInstall(ctx context.Context, store *agent.Store, executab
 		switch operation.Phase {
 		case "enrolled":
 			unit := systemdAgentUnit(executable, dataDir, roles, capabilities)
-			if existing, readErr := environment.readFile(environment.unitPath); readErr == nil && !strings.Contains(string(existing), "Description=Vastora Agent") {
+			mode := os.FileMode(0644)
+			marker := "Description=Vastora Agent"
+			if environment.kind == hostservice.OpenRC {
+				unit = openRCAgentService(executable, dataDir, roles, capabilities)
+				mode = 0755
+				marker = "# Managed by Vastora Agent\n"
+			}
+			if existing, readErr := environment.readFile(environment.unitPath); readErr == nil && !strings.Contains(string(existing), marker) {
 				return fail(errors.New("refusing to replace an unrelated vastora-agent.service"))
 			} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 				return fail(fmt.Errorf("inspect systemd service: %w", readErr))
 			}
 			temporary := environment.unitPath + ".tmp"
-			if err := environment.writeFile(temporary, []byte(unit), 0o644); err != nil {
+			if err := environment.writeFile(temporary, []byte(unit), mode); err != nil {
 				return fail(fmt.Errorf("write systemd service: %w", err))
 			}
 			if err := environment.rename(temporary, environment.unitPath); err != nil {
@@ -1007,14 +1044,14 @@ func resumeSystemdAgentInstall(ctx context.Context, store *agent.Store, executab
 				return fail(err)
 			}
 		case "unit_written":
-			if output, err := environment.runSystemctl("daemon-reload"); err != nil {
+			if output, err := environment.runService("reload"); err != nil {
 				return fail(fmt.Errorf("reload systemd: %s: %w", strings.TrimSpace(string(output)), err))
 			}
 			if err := store.AdvanceInstallOperation(ctx, "unit_written", "reloaded"); err != nil {
 				return fail(err)
 			}
 		case "reloaded":
-			if output, err := environment.runSystemctl("enable", "vastora-agent.service"); err != nil {
+			if output, err := environment.runService("enable", "vastora-agent.service"); err != nil {
 				return fail(fmt.Errorf("enable Agent service: %s: %w", strings.TrimSpace(string(output)), err))
 			}
 			if err := store.AdvanceInstallOperation(ctx, "reloaded", "enabled"); err != nil {
@@ -1025,7 +1062,7 @@ func resumeSystemdAgentInstall(ctx context.Context, store *agent.Store, executab
 			if replace {
 				action = "restart"
 			}
-			if output, err := environment.runSystemctl(action, "vastora-agent.service"); err != nil {
+			if output, err := environment.runService(action, "vastora-agent.service"); err != nil {
 				return fail(fmt.Errorf("%s Agent service: %s: %w", action, strings.TrimSpace(string(output)), err))
 			}
 			if err := store.AdvanceInstallOperation(ctx, "enabled", "started"); err != nil {
@@ -1047,42 +1084,59 @@ func resumeSystemdAgentInstall(ctx context.Context, store *agent.Store, executab
 			}
 			return store.CompleteInstallOperation(ctx)
 		case "enrollment_pending":
-			return fail(errors.New("agent: enrollment must complete before systemd installation"))
+			return fail(errors.New("agent: enrollment must complete before service installation"))
 		default:
 			return fail(errors.New("agent: stored installation phase is invalid"))
 		}
 	}
 }
 
-func installSystemdAgent(executable, dataDir, roles, capabilities string) error {
+func installAgentService(executable, dataDir, roles, capabilities string) error {
+	env := defaultAgentServiceInstallEnvironment()
+	if env.kind == "" {
+		return errors.New("agent: supported init system required")
+	}
 	executable, err := filepath.Abs(executable)
 	if err != nil {
-		return fmt.Errorf("resolve executable path: %w", err)
+		return err
 	}
 	dataDir, err = filepath.Abs(dataDir)
 	if err != nil {
-		return fmt.Errorf("resolve Agent data path: %w", err)
+		return err
 	}
-	unit := systemdAgentUnit(executable, dataDir, roles, capabilities)
-	if existing, readErr := os.ReadFile(vastoraAgentUnitPath); readErr == nil && !strings.Contains(string(existing), "Description=Vastora Agent") {
-		return errors.New("refusing to replace an unrelated vastora-agent.service")
-	} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-		return fmt.Errorf("inspect systemd service: %w", readErr)
+	unit, marker, mode := systemdAgentUnit(executable, dataDir, roles, capabilities), "Description=Vastora Agent", os.FileMode(0644)
+	if env.kind == hostservice.OpenRC {
+		unit = openRCAgentService(executable, dataDir, roles, capabilities)
+		marker = "# Managed by Vastora Agent\n"
+		mode = 0755
 	}
-	temporary := vastoraAgentUnitPath + ".tmp"
-	if err := os.WriteFile(temporary, []byte(unit), 0o644); err != nil {
-		return fmt.Errorf("write systemd service: %w", err)
+	if existing, e := os.ReadFile(env.unitPath); e == nil && !strings.Contains(string(existing), marker) {
+		return errors.New("refusing to replace an unrelated Agent service")
+	} else if e != nil && !errors.Is(e, os.ErrNotExist) {
+		return e
 	}
-	if err := os.Rename(temporary, vastoraAgentUnitPath); err != nil {
-		return fmt.Errorf("install systemd service: %w", err)
+	if err := writeRootFileAtomic(env.unitPath, []byte(unit), mode); err != nil {
+		return err
 	}
-	if output, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
-		return fmt.Errorf("reload systemd: %s: %w", strings.TrimSpace(string(output)), err)
-	}
-	if output, err := exec.Command("systemctl", "enable", "--now", "vastora-agent.service").CombinedOutput(); err != nil {
-		return fmt.Errorf("start Agent service: %s: %w", strings.TrimSpace(string(output)), err)
+	for _, action := range []string{"reload", "enable", "start"} {
+		if _, err := env.runService(action, "vastora-agent.service"); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func openRCAgentService(executable, dataDir, roles, capabilities string) string {
+	args := []string{"agent", "serve", "--data-dir", dataDir, "--roles", roles, "--capabilities", capabilities}
+	for i := range args {
+		args[i] = hostservice.Quote(args[i])
+	}
+	return "#!/sbin/openrc-run\n# Managed by Vastora Agent\n" +
+		"description='Vastora Agent'\nsupervisor=supervise-daemon\ncommand=" + hostservice.Quote(executable) + "\ncommand_args=" + hostservice.Quote(strings.Join(args, " ")) + "\n" +
+		"respawn_delay=5\nrespawn_max=0\nretry='TERM/30/KILL/5'\numask=0077\n" +
+		"output_logger='/usr/bin/logger -t vastora-agent'\nerror_logger='/usr/bin/logger -t vastora-agent'\n" +
+		"depend() { need net; use tailscale docker; }\n" +
+		"start_pre() { " + hostservice.Quote(executable) + " agent prepare-runtime-directories; }\n"
 }
 
 func systemdAgentUnit(executable, dataDir, roles, capabilities string) string {

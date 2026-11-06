@@ -46,7 +46,7 @@ func (b *NativeServicesPackageBackend) Prepare(ctx context.Context, task Deploym
 }
 
 func (b *NativeServicesPackageBackend) Inspect(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
-	plan, err := planNativePackage(task.ApplicationID, task.Manifest)
+	plan, err := b.Manager.planNativePackage(task.ApplicationID, task.Manifest)
 	if err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func (b *NativeServicesPackageBackend) Healthy(ctx context.Context, task Deploym
 	if err := b.Inspect(ctx, task, receipt); err != nil {
 		return err
 	}
-	plan, err := planNativePackage(task.ApplicationID, task.Manifest)
+	plan, err := b.Manager.planNativePackage(task.ApplicationID, task.Manifest)
 	if err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func (b *NativeServicesPackageBackend) Healthy(ctx context.Context, task Deploym
 			return err
 		}
 		if unit.Automatic {
-			if err := b.Manager.run(ctx, "systemctl", "is-active", "--quiet", unit.Name); err != nil {
+			if err := b.Manager.service(ctx, "status", unit.Name); err != nil {
 				return errors.New("agent: native service is not active")
 			}
 			if observed.MainPID <= 0 || observed.InvocationID == "" {
@@ -138,7 +138,7 @@ func (b *NativeServicesPackageBackend) Resume(ctx context.Context, task Deployme
 	if err := b.Inspect(ctx, task, receipt); err != nil {
 		return err
 	}
-	plan, err := planNativePackage(task.ApplicationID, task.Manifest)
+	plan, err := b.Manager.planNativePackage(task.ApplicationID, task.Manifest)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func (b *NativeServicesPackageBackend) Resume(ctx context.Context, task Deployme
 			if unit.Automatic != automatic || !b.resumeUnits[unit.Name] {
 				continue
 			}
-			if err := b.Manager.run(ctx, "systemctl", "start", unit.Name); err != nil {
+			if err := b.Manager.service(ctx, "start", unit.Name); err != nil {
 				return errors.New("agent: native service could not resume after backup")
 			}
 		}

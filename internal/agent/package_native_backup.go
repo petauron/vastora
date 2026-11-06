@@ -14,7 +14,7 @@ func (b *NativeServicesPackageBackend) Backup(ctx context.Context, task Deployme
 	if err := b.Inspect(ctx, task, receipt); err != nil {
 		return err
 	}
-	plan, err := planNativePackage(task.ApplicationID, task.Manifest)
+	plan, err := b.Manager.planNativePackage(task.ApplicationID, task.Manifest)
 	if err != nil {
 		return err
 	}
@@ -46,7 +46,7 @@ func (b *NativeServicesPackageBackend) Backup(ctx context.Context, task Deployme
 			if unit.Automatic != automatic {
 				continue
 			}
-			if err := b.Manager.run(ctx, "systemctl", "stop", unit.Name); err != nil {
+			if err := b.Manager.service(ctx, "stop", unit.Name); err != nil {
 				return errors.New("agent: native writer could not stop for backup")
 			}
 		}

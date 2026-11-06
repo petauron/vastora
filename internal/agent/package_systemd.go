@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/petauron/vastora/internal/hostservice"
 	"io"
 	"io/fs"
 	"net/http"
@@ -732,6 +733,11 @@ func (b *SystemdPackageBackend) Remove(ctx context.Context, task DeploymentTask,
 var _ PackageBackend = (*SystemdPackageBackend)(nil)
 
 func (manager SystemdHostApplicationManager) readPackageUnit(ctx context.Context, name string) (RuntimeResource, error) {
+	if manager.InitSystem == hostservice.OpenRC {
+		invocation, err := hostservice.OpenRCInvocation(ctx, manager.ReadCommand, name)
+		return RuntimeResource{MainPID: invocation.PID, InvocationID: invocation.ID, StartedAt: invocation.Started}, err
+	}
+
 	args := []string{"show", name, "--property=MainPID", "--property=InvocationID", "--property=ActiveEnterTimestampMonotonic"}
 	var output []byte
 	var err error

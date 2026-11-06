@@ -52,3 +52,12 @@ describe("declarative runtime eligibility", () => {
     expect(canInstall({ ...agent, connected: false }, native)).toBe(false);
   });
 });
+
+it("admits portable native apps only with their explicit executor and reviewed landing capabilities", () => {
+ const portable = app("senlun-agent", "native");
+ portable.app.runtime = { kind: "native", version: 2, requiredCapabilities: ["native-services"] };
+ const alpine = { ...agent, capabilities: { ...agent.capabilities, landingOnly: true, executorVersions: { native: 2 }, runtimeCapabilities: ["native-services"] } };
+ expect(packageNodeBlocker(alpine, portable, "en")).toBe("");
+ const systemdOnly = { ...alpine, capabilities: { ...alpine.capabilities, executorVersions: { systemd: 2 } } };
+ expect(packageNodeBlocker(systemdOnly, portable, "en")).toContain("does not support executor");
+});

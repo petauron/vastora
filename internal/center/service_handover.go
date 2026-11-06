@@ -66,7 +66,7 @@ func readServiceHandover(ctx context.Context, tx *sql.Tx, id string) (serviceHan
 		return value, errServiceHandover
 	}
 	var receipt maintenanceReceipt
-	if json.Unmarshal(raw, &receipt) != nil || receipt.Version != 1 || receipt.ApplicationID != value.ApplicationID || receipt.AppKey != value.AppKey || receipt.ManifestSHA256 != value.ManifestSHA256 || receipt.State != "ready" || receipt.Runtime != "docker" && receipt.Runtime != "systemd" {
+	if json.Unmarshal(raw, &receipt) != nil || receipt.Version != 1 || receipt.ApplicationID != value.ApplicationID || receipt.AppKey != value.AppKey || receipt.ManifestSHA256 != value.ManifestSHA256 || receipt.State != "ready" || receipt.Runtime != "docker" && receipt.Runtime != "systemd" && receipt.Runtime != "native" {
 		return value, errServiceHandover
 	}
 	value.ResourceCount = len(receipt.Resources)

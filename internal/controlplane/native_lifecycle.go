@@ -5,7 +5,7 @@ package controlplane
 // sealed execution authorization remain mandatory at their existing boundaries.
 // This does not grant a node-wide Docker, gateway, tunnel or host-path ability.
 func NativeLifecycleAllowed(runtimeKind string, version int, operation string, grants []string) bool {
-	if runtimeKind != "systemd" || version != 2 {
+	if (runtimeKind != "systemd" && runtimeKind != "native") || version != 2 {
 		return false
 	}
 	switch operation {

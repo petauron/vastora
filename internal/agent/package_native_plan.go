@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/petauron/vastora/internal/hostservice"
 	"path/filepath"
 	"sort"
 
@@ -14,10 +15,12 @@ import (
 // names from a signed manifest never select existing host accounts or units.
 // Planning is side-effect free; ownership inspection precedes any host write.
 type nativePackagePlan struct {
-	Users     map[string]string
-	Units     []nativeUnitPlan
-	Artifacts map[string][]catalog.ArtifactFile
-	State     map[string]nativeStatePlan
+	Runtime    string
+	InitSystem hostservice.Kind
+	Users      map[string]string
+	Units      []nativeUnitPlan
+	Artifacts  map[string][]catalog.ArtifactFile
+	State      map[string]nativeStatePlan
 }
 
 type nativeUnitPlan struct {
@@ -46,6 +49,24 @@ func nativeAccountName(applicationID, logicalName string) string {
 }
 
 func planNativePackage(applicationID string, app catalog.AppManifest) (nativePackagePlan, error) {
+	init := hostservice.Systemd
+	if app.Runtime != nil && app.Runtime.Kind == "native" {
+		var err error
+		init, err = hostservice.Detect()
+		if err != nil {
+			return nativePackagePlan{}, err
+		}
+	}
+	return planNativePackageWithInit(applicationID, app, init)
+}
+func (manager SystemdHostApplicationManager) planNativePackage(applicationID string, app catalog.AppManifest) (nativePackagePlan, error) {
+	init := manager.InitSystem
+	if init == "" {
+		init = hostservice.Systemd
+	}
+	return planNativePackageWithInit(applicationID, app, init)
+}
+func planNativePackageWithInit(applicationID string, app catalog.AppManifest, init hostservice.Kind) (nativePackagePlan, error) {
 	var p nativePackagePlan
 	if applicationID == "" {
 		return p, errors.New("agent: native package identity is required")
@@ -53,8 +74,13 @@ func planNativePackage(applicationID string, app catalog.AppManifest) (nativePac
 	if err := catalog.ValidateRuntime(app); err != nil {
 		return p, err
 	}
-	if app.Runtime.Kind != "systemd" || app.Runtime.Version != 2 || app.Runtime.NativeServices == nil {
-		return p, errors.New("agent: native bundle requires systemd version 2")
+	if (app.Runtime.Kind != "systemd" && app.Runtime.Kind != "native") || app.Runtime.Version != 2 || app.Runtime.NativeServices == nil {
+		return p, errors.New("agent: native bundle requires systemd/OpenRC version 2")
+	}
+	p.Runtime = app.Runtime.Kind
+	p.InitSystem = init
+	if (init != hostservice.Systemd && init != hostservice.OpenRC) || (app.Runtime.Kind == "systemd" && init != hostservice.Systemd) {
+		return p, errors.New("agent: native declaration does not support host init system")
 	}
 	p.Users = map[string]string{}
 	p.Artifacts = map[string][]catalog.ArtifactFile{}
@@ -76,9 +102,13 @@ func planNativePackage(applicationID string, app catalog.AppManifest) (nativePac
 		if namespace := app.Runtime.NativeServices.Namespace; namespace != "" {
 			name = "vastora-pkg-" + namespace + "-" + service.Name
 		}
+		servicePath, err := hostservice.Path(init, name+".service")
+		if err != nil {
+			return p, err
+		}
 		p.Units = append(p.Units, nativeUnitPlan{
 			LogicalName: service.Name, Name: name + ".service",
-			Path:             filepath.Join("/etc/systemd/system", name+".service"),
+			Path:             servicePath,
 			RuntimeDirectory: name,
 			ConfigDirectory:  filepath.Join("/etc/vastora/packages", base, service.Name),
 			Automatic:        service.Start == "automatic", Process: process, WritableState: append([]string(nil), service.WritableState...),

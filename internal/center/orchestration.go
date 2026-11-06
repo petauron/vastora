@@ -746,7 +746,7 @@ func requireApplicationDeploymentOwner(ctx context.Context, tx *sql.Tx, applicat
 	if err == nil || !errors.Is(err, errGlivelaPilotOwnsRuntime) {
 		return err
 	}
-	if operation != "upgrade" || manifest.Runtime == nil || manifest.Runtime.Kind != "systemd" || manifest.Runtime.Version != 2 {
+	if operation != "upgrade" || manifest.Runtime == nil || (manifest.Runtime.Kind != "systemd" && manifest.Runtime.Kind != "native") || manifest.Runtime.Version != 2 {
 		return err
 	}
 	var key, runtime string

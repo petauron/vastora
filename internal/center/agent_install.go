@@ -21,6 +21,9 @@ import (
 //go:embed install-docker.sh
 var dockerInstallScript string
 
+//go:embed install-tailscale-openrc.sh
+var alpineTailscaleInstallScript string
+
 const agentInstallLoaderScript = `#!/bin/sh
 set -eu
 
@@ -91,17 +94,18 @@ if [ ! -r /etc/os-release ]; then
 fi
 . /etc/os-release
 case "${ID:-}:${VERSION_ID:-}" in
+  alpine:3.24|alpine:3.24.*) distro=alpine; codename=alpine ;;
   debian:12) distro=debian; codename=bookworm ;;
   debian:13) distro=debian; codename=trixie ;;
   ubuntu:22.04) distro=ubuntu; codename=jammy ;;
   ubuntu:24.04) distro=ubuntu; codename=noble ;;
   ubuntu:26.04) distro=ubuntu; codename=resolute ;;
   *)
-    echo "Unsupported system: ${PRETTY_NAME:-unknown}. Use Debian 12/13 or Ubuntu 22.04/24.04/26.04." >&2
+    echo "Unsupported system: ${PRETTY_NAME:-unknown}. Use Alpine 3.24, Debian 12/13 or Ubuntu 22.04/24.04/26.04." >&2
     exit 1 ;;
 esac
 
-for required in curl systemctl sha256sum awk dpkg ip; do
+for required in curl sha256sum awk ip install; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     if [ "$required" = ip ]; then echo "Install iproute2 before continuing." >&2; fi
@@ -109,7 +113,16 @@ for required in curl systemctl sha256sum awk dpkg ip; do
   fi
 done
 
-arch="$(dpkg --print-architecture)"
+if [ "$distro" = alpine ]; then
+  for required in rc-service rc-update supervise-daemon; do
+    command -v "$required" >/dev/null 2>&1 || { echo "Required OpenRC command is missing: $required" >&2; exit 1; }
+  done
+  test -d /run/openrc || { echo "OpenRC must be running." >&2; exit 1; }
+  case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; *) arch=unsupported ;; esac
+else
+  command -v systemctl >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1 || { echo "systemd and dpkg are required." >&2; exit 1; }
+  arch="$(dpkg --print-architecture)"
+fi
 case "$arch" in
   amd64|arm64) ;;
   *) echo "Unsupported architecture: $arch. Vastora Agent requires amd64 or arm64." >&2; exit 1 ;;
@@ -190,7 +203,12 @@ if [ -s /var/lib/vastora/agent/agent.db ]; then
     *) echo "The stored Vastora Agent installation state is invalid." >&2; exit 1 ;;
   esac
 fi
-if [ "$resume_install" -eq 0 ] && { [ -s /var/lib/vastora/agent/agent.db ] || systemctl is-enabled --quiet vastora-agent.service 2>/dev/null || systemctl is-active --quiet vastora-agent.service 2>/dev/null; }; then
+agent_service_exists() {
+ if [ "$distro" = alpine ]; then test -e /etc/init.d/vastora-agent
+ else systemctl is-enabled --quiet vastora-agent.service 2>/dev/null || systemctl is-active --quiet vastora-agent.service 2>/dev/null
+ fi
+}
+if [ "$resume_install" -eq 0 ] && { [ -s /var/lib/vastora/agent/agent.db ] || agent_service_exists; }; then
   if ! existing_status="$("$temporary" agent status --data-dir /var/lib/vastora/agent 2>&1)"; then
     echo "An existing Vastora Agent was found, but its Center registration could not be inspected." >&2
     echo "$existing_status" >&2
@@ -289,9 +307,15 @@ fi`
 		for _, address := range profile.HeadscaleAddresses {
 			prepareArguments += " --control-address " + shellQuote(address)
 		}
-		headscaleBootstrap = `tailscale_version=@@TAILSCALE_VERSION@@
+		headscaleBootstrap = alpineTailscaleInstallScript + `
+tailscale_version=@@TAILSCALE_VERSION@@
 tailscale_ownership=external
 if ! command -v tailscale >/dev/null 2>&1; then
+  if [ "$distro" = alpine ]; then
+    tailscale_ownership=managed
+    "$temporary" agent prepare-tailscale @@TAILSCALE_PREPARE_ARGUMENTS@@ --configure-only
+    install_alpine_tailscale
+  else
   if ! command -v apt-get >/dev/null 2>&1; then
     echo "apt-get is required to install Tailscale on this server." >&2
     exit 1
@@ -309,6 +333,11 @@ if ! command -v tailscale >/dev/null 2>&1; then
   chmod 0644 /usr/share/keyrings/tailscale-archive-keyring.gpg /etc/apt/sources.list.d/tailscale.list
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y "tailscale=$tailscale_version" tailscale-archive-keyring
+  fi
+fi
+if [ "$distro" = alpine ] && [ -f /var/lib/vastora/agent/tailscale-static.sha256 ] && [ ! -L /var/lib/vastora/agent/tailscale-static.sha256 ]; then
+  sha256sum -c /var/lib/vastora/agent/tailscale-static.sha256 >/dev/null
+  tailscale_ownership=managed
 fi
 "$temporary" agent check-tailscale
 "$temporary" agent prepare-tailscale @@TAILSCALE_PREPARE_ARGUMENTS@@

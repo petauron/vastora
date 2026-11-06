@@ -207,7 +207,7 @@ func validatePackageTask(task DeploymentTask) error {
 		return errors.New("agent: package manifest digest mismatch")
 	}
 	runtime := task.Manifest.Runtime
-	if runtime == nil || !((runtime.Kind == "docker" && runtime.Version == 1) || (runtime.Kind == "systemd" && (runtime.Version == 1 || runtime.Version == 2))) {
+	if runtime == nil || !((runtime.Kind == "docker" && runtime.Version == 1) || (runtime.Kind == "systemd" && (runtime.Version == 1 || runtime.Version == 2)) || (runtime.Kind == "native" && runtime.Version == 2)) {
 		return errors.New("agent: unsupported package executor protocol")
 	}
 	for _, capability := range runtime.RequiredCapabilities {
@@ -345,7 +345,7 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if err := e.Backend.Prepare(ctx, task, receipt); err != nil {
 		return result, err
 	}
-	if task.Operation == "configure" && task.Manifest.Runtime.Kind == "systemd" && task.Manifest.Runtime.Version == 2 {
+	if task.Operation == "configure" && (task.Manifest.Runtime.Kind == "systemd" || task.Manifest.Runtime.Kind == "native") && task.Manifest.Runtime.Version == 2 {
 		backend, ok := e.Backend.(*NativeServicesPackageBackend)
 		if !ok || receipt.State != "ready" {
 			return result, errors.New("agent: native service port update requires a ready owned bundle")

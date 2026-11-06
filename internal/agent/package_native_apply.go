@@ -50,7 +50,7 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 			if unit.Automatic != automatic || resourceNamed(receipt, "unit", unit.LogicalName) == nil {
 				continue
 			}
-			if err := manager.run(ctx, "systemctl", "stop", unit.Name); err != nil {
+			if err := manager.service(ctx, "stop", unit.Name); err != nil {
 				return errors.New("agent: native service could not stop before update")
 			}
 		}
@@ -90,8 +90,8 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		if err == nil || !errors.As(err, &status) || status.ExitCode() != 2 || len(raw) != 0 {
 			return errors.New("agent: native group is not safely available")
 		}
-		if err := manager.run(ctx, "useradd", "--system", "--user-group", "--no-create-home", "--home-dir", "/nonexistent", "--shell", "/usr/sbin/nologin", "--comment", "Vastora "+task.ApplicationID, name); err != nil {
-			return errors.New("agent: native account creation failed")
+		if err := manager.createNativeAccount(ctx, name, task.ApplicationID); err != nil {
+			return err
 		}
 		account, exists, err := readNativeAccount(ctx, manager, name, task.ApplicationID)
 		if err != nil || !exists {
@@ -163,7 +163,7 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 	if err := inspectNativeOwnership(ctx, manager, task.ApplicationID, prepared.Plan, receipt); err != nil {
 		return err
 	}
-	if err := manager.run(ctx, "systemctl", "daemon-reload"); err != nil {
+	if err := manager.service(ctx, "reload", ""); err != nil {
 		return errors.New("agent: native unit reload failed")
 	}
 	for _, unit := range prepared.Plan.Units {
@@ -171,13 +171,13 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		if activate && unit.Automatic {
 			action = "enable"
 		}
-		if err := manager.run(ctx, "systemctl", action, unit.Name); err != nil {
+		if err := manager.service(ctx, action, unit.Name); err != nil {
 			return errors.New("agent: native startup policy could not be applied")
 		}
 	}
 	for _, unit := range prepared.Plan.Units {
 		if activate && unit.Automatic {
-			if err := manager.run(ctx, "systemctl", "start", unit.Name); err != nil {
+			if err := manager.service(ctx, "start", unit.Name); err != nil {
 				return errors.New("agent: native service start failed")
 			}
 		}
