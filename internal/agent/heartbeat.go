@@ -17,6 +17,7 @@ import (
 
 	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/hostservice"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
@@ -139,7 +140,13 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	} else if c.Capabilities.LandingOnly && runtime.GOOS == "linux" && os.Geteuid() == 0 {
 		// Availability is observation, not a host-wide executor grant. The task
 		// runner constructs an executor only for a reviewed native lifecycle.
-		c.Capabilities.ExecutorVersions = map[string]int{"systemd": 2}
+		c.Capabilities.ExecutorVersions = map[string]int{}
+		if kind, err := hostservice.Detect(); err == nil {
+			c.Capabilities.ExecutorVersions["native"] = 2
+			if kind == hostservice.Systemd {
+				c.Capabilities.ExecutorVersions["systemd"] = 2
+			}
+		}
 		c.Capabilities.RuntimeCapabilities = []string{"native-services", "root"}
 		if store.sharedCaddy != nil {
 			c.Capabilities.RuntimeCapabilities = append(c.Capabilities.RuntimeCapabilities, "shared-caddy")

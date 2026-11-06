@@ -22,7 +22,7 @@ func requireCatalogRuntime(manifest catalog.AppManifest) error {
 		return err
 	}
 	result := catalog.CheckRuntimeSupport(manifest, catalog.ExecutorSupport{
-		Versions:     map[string]int{"docker": 1, "systemd": 2},
+		Versions:     map[string]int{"docker": 1, "systemd": 2, "native": 2},
 		Capabilities: []string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy"},
 	})
 	if !result.Supported {
@@ -119,7 +119,7 @@ func legacyRemovalAuthorization(ctx context.Context, db registryCredentialQuerie
 }
 
 func packageRuntimeName(manifest catalog.AppManifest) string {
-	if manifest.Runtime != nil && manifest.Runtime.Kind == "systemd" {
+	if manifest.Runtime != nil && (manifest.Runtime.Kind == "systemd" || manifest.Runtime.Kind == "native") {
 		return "host"
 	}
 	return "docker"
@@ -219,7 +219,7 @@ func storePackageReceipt(ctx context.Context, tx *sql.Tx, taskID, applicationID,
 	if json.Unmarshal(raw, &receipt) != nil || receipt.Version != 1 || receipt.ApplicationID != applicationID || receipt.AppKey != appKey || receipt.TaskID != taskID {
 		return errors.New("center: package resource receipt identity mismatch")
 	}
-	if receipt.Runtime != "docker" && receipt.Runtime != "systemd" || receipt.State == "ready" && len(receipt.Resources) == 0 {
+	if receipt.Runtime != "docker" && receipt.Runtime != "systemd" && receipt.Runtime != "native" || receipt.State == "ready" && len(receipt.Resources) == 0 {
 		return errors.New("center: package resource receipt lacks runtime ownership evidence")
 	}
 	if operation == "uninstall" {

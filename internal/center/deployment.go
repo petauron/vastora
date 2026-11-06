@@ -353,7 +353,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, fmt.Errorf("center: catalog version %s is older than installed version %s; downgrade is not allowed", manifest.Version, active.Version)
 		}
 	}
-	if request.Operation == "configure" && manifest.Runtime != nil && manifest.Runtime.Kind == "systemd" && manifest.Runtime.Version == 2 {
+	if request.Operation == "configure" && manifest.Runtime != nil && (manifest.Runtime.Kind == "systemd" || manifest.Runtime.Kind == "native") && manifest.Runtime.Version == 2 {
 		if err := validateNativeServicePortConfigure(manifest, request.Config); err != nil {
 			return DeploymentView{}, err
 		}
@@ -377,7 +377,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, err
 	}
 	if landingOnly && (manifest.Runtime == nil || !controlplane.NativeLifecycleAllowed(manifest.Runtime.Kind, manifest.Runtime.Version, request.Operation, grants)) {
-		return DeploymentView{}, errors.New("center: landing-only host permits only reviewed native systemd installation, upgrade and uninstall")
+		return DeploymentView{}, errors.New("center: landing-only host permits only reviewed native installation, upgrade and uninstall")
 	}
 	grantsJSON, err := json.Marshal(grants)
 	if err != nil {

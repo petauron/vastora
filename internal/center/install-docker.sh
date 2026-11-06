@@ -1,6 +1,25 @@
 #!/bin/sh
 set -eu
 
+# Alpine uses its maintained distribution packages and native OpenRC service.
+if [ -r /etc/os-release ]; then
+ . /etc/os-release
+ if [ "${ID:-}" = alpine ]; then
+  case "${VERSION_ID:-}" in 3.24|3.24.*) ;; *) echo 'Supported Alpine version: 3.24' >&2; exit 1 ;; esac
+  [ "$(id -u)" -eq 0 ] || { echo 'Run the Alpine installer as root.' >&2; exit 1; }
+  command -v rc-service >/dev/null 2>&1 && command -v apk >/dev/null 2>&1 || exit 1
+  if command -v docker >/dev/null 2>&1; then
+   docker info >/dev/null 2>&1 || { echo 'Existing Docker daemon is not running; no changes made.' >&2; exit 1; }
+   exit 0
+  fi
+  apk add --no-cache docker docker-openrc docker-cli-compose
+  rc-update add docker default
+  rc-service docker start
+  docker info >/dev/null
+  exit 0
+ fi
+fi
+
 if ! command -v apt-get >/dev/null 2>&1 ||
   ! command -v dpkg >/dev/null 2>&1 ||
   ! command -v dpkg-query >/dev/null 2>&1 ||

@@ -7,7 +7,7 @@ import { daylightAppKey, isDaylightAppKey } from "./daylight";
 export type DesktopApplication = { key: string; name: string; count: number; url?: string };
 
 export function isBackgroundApplication(app: AppView | undefined) {
-  return app?.app.runtime?.kind === "systemd" && !app.app.homepage
+  return (app?.app.runtime?.kind === "systemd" || app?.app.runtime?.kind === "native") && !app.app.homepage
     && !app.app.services?.some((service) => service.management && ["http", "https"].includes(service.protocol));
 }
 

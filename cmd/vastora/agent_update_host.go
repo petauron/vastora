@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/hostservice"
 )
 
 const (
@@ -59,6 +60,7 @@ var errHostUpdateCandidatePending = errors.New("agent: update requires explicit 
 var errHostUpdateExecutableInstalled = errors.New("agent: update executable was installed but its directory sync failed")
 
 type hostUpdateActivationEnvironment struct {
+	initSystem        hostservice.Kind
 	authorize         func(context.Context, string) error
 	candidatePath     string
 	recoveryDirectory string
@@ -70,6 +72,9 @@ type hostUpdateActivationEnvironment struct {
 }
 
 func (u systemHostUpdater) ScheduleUpdate(ctx context.Context, request agent.HostUpdateRequest) error {
+	if _, err := hostservice.Detect(); err != nil {
+		return err
+	}
 	if cancelled, err := hostUpdateCancelled(hostUpdateOperationPath); err != nil {
 		return err
 	} else if cancelled {
@@ -156,10 +161,19 @@ func persistHostUpdate(candidate string, operation hostUpdateOperation) error {
 
 func persistHostUpdateUnit(operation hostUpdateOperation) error {
 	unit := hostUpdateServiceUnit()
+	path, mode := hostUpdateUnit, os.FileMode(0644)
+	if isOpenRCHost() {
+		unit = openRCHostUpdateService()
+		path = openRCUpdateUnit
+		if err := verifyOpenRCUpdateService(path); err != nil {
+			return err
+		}
+		mode = 0755
+	}
 	if strings.Contains(unit, operation.Credential) {
 		return errors.New("agent: refusing to expose update credentials in systemd")
 	}
-	if err := writeRootFileAtomic(hostUpdateUnit, []byte(unit), 0o644); err != nil {
+	if err := writeRootFileAtomic(path, []byte(unit), mode); err != nil {
 		return fmt.Errorf("agent: persist update service: %w", err)
 	}
 	return nil
@@ -286,7 +300,9 @@ func hostUpdateActivationResult(updateErr error) (hostUpdateResult, bool) {
 }
 
 func defaultHostUpdateActivationEnvironment(directory string, operation hostUpdateOperation) hostUpdateActivationEnvironment {
+	kind, _ := hostservice.Detect()
 	return hostUpdateActivationEnvironment{
+		initSystem:        kind,
 		candidatePath:     filepath.Join(directory, filepath.Base(hostUpdateBinary)),
 		recoveryDirectory: hostUpdateRecoveryDirectory(directory, operation),
 		run:               runHostCommand,
@@ -337,8 +353,8 @@ func activateHostUpdate(ctx context.Context, operation hostUpdateOperation, envi
 	if err := check("stop"); err != nil {
 		return err
 	}
-	if output, err := environment.run(ctx, "systemctl", "stop", "vastora-agent.service"); err != nil {
-		return fmt.Errorf("agent: stop Agent for update: %s: %w", strings.TrimSpace(string(output)), err)
+	if err := hostUpdateServiceAction(ctx, environment, "stop"); err != nil {
+		return fmt.Errorf("agent: stop Agent for update: %w", err)
 	}
 	if err := check("backup"); err != nil {
 		return err
@@ -375,8 +391,8 @@ func activateHostUpdate(ctx context.Context, operation hostUpdateOperation, envi
 }
 
 func ensureAgentServiceActive(ctx context.Context, environment hostUpdateActivationEnvironment) error {
-	if output, err := environment.run(ctx, "systemctl", "start", "vastora-agent.service"); err != nil {
-		return fmt.Errorf("agent: start updated Agent: %s: %w", strings.TrimSpace(string(output)), err)
+	if err := hostUpdateServiceAction(ctx, environment, "start"); err != nil {
+		return fmt.Errorf("agent: start updated Agent: %w", err)
 	}
 	stable := 0
 	for range 10 {
@@ -396,7 +412,7 @@ func ensureAgentServiceActive(ctx context.Context, environment hostUpdateActivat
 }
 
 func agentServiceActive(ctx context.Context) bool {
-	return exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", "vastora-agent.service").Run() == nil
+	return agentServiceAction(ctx, "status") == nil
 }
 
 func executableVersion(ctx context.Context, path string) (string, error) {
@@ -565,15 +581,33 @@ func cleanPersistentHostUpdate(operationPath string) error {
 			return err
 		}
 	}
-	if output, err := exec.Command("systemctl", "disable", hostUpdateUnitName).CombinedOutput(); err != nil {
-		return fmt.Errorf("disable persistent Agent update: %s: %w", strings.TrimSpace(string(output)), err)
+	if isOpenRCHost() {
+		if err := cleanOpenRCUpdateService(); err != nil {
+			return err
+		}
+		if err := hostservice.Action(context.Background(), hostservice.OpenRC, nil, "disable", hostUpdateUnitName); err != nil {
+			return err
+		}
+		// The acknowledged oneshot is finished. Clear only its OpenRC state;
+		// PID/executable ownership is still checked before future staging.
+		if _, err := runHostCommand(context.Background(), "rc-service", "vastora-agent-update", "zap"); err != nil {
+			return err
+		}
+		if err := os.Remove(openRCUpdateUnit); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	} else {
+		if output, err := exec.Command("systemctl", "disable", hostUpdateUnitName).CombinedOutput(); err != nil {
+			return fmt.Errorf("disable persistent Agent update: %s: %w", strings.TrimSpace(string(output)), err)
+		}
+		if err := os.Remove(hostUpdateUnit); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
+			return err
+		}
 	}
-	if err := os.Remove(hostUpdateUnit); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if output, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
-		return fmt.Errorf("reload systemd after Agent update: %s: %w", strings.TrimSpace(string(output)), err)
-	}
+
 	var result error
 	for _, path := range []string{operationPath, hostUpdateResultPath, completionPath, hostUpdateBinary, operation.Executable + ".previous"} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/petauron/vastora/internal/hostservice"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -79,11 +80,20 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 		}
 		kind = receipt.Runtime
 	}
-	if kind == "systemd" {
+	if kind == "systemd" || kind == "native" {
 		manager, ok := e.Host.(SystemdHostApplicationManager)
 		if !ok {
 			return ApplicationTaskResult{}, errors.New("agent: generic systemd executor is unavailable")
 		}
+		detected := manager.InitSystem
+		var detectErr error
+		if detected == "" {
+			detected, detectErr = hostservice.DetectAt(manager.RootDir)
+		}
+		if detectErr != nil || kind == "systemd" && detected != hostservice.Systemd {
+			return ApplicationTaskResult{}, errors.New("agent: package init system does not match host")
+		}
+		manager.InitSystem = detected
 		if task.AppKey == senulun.AgentKey && task.Operation != "uninstall" && task.Manifest.Runtime != nil && task.Manifest.Runtime.Version == 2 {
 			backend, err := e.senlunNativeBackend(ctx, task, manager)
 			if err != nil {
@@ -150,10 +160,16 @@ func (e ApplicationExecutor) PackageCapabilities(dockerAvailable bool) (map[stri
 		versions["docker"] = 1
 	}
 	if _, ok := e.Host.(SystemdHostApplicationManager); ok && runtime.GOOS == "linux" {
-		versions["systemd"] = 2
+		manager := e.Host.(SystemdHostApplicationManager)
+		if kind, err := hostservice.DetectAt(manager.RootDir); err == nil {
+			versions["native"] = 2
+			if kind == hostservice.Systemd {
+				versions["systemd"] = 2
+			}
+		}
 	}
 	capabilities := []string{"root", "host-network", "host-path", "devices"}
-	if versions["systemd"] == 2 {
+	if versions["systemd"] == 2 || versions["native"] == 2 {
 		capabilities = append(capabilities, "native-services")
 		if e.Store != nil && e.Store.sharedCaddy != nil {
 			capabilities = append(capabilities, "shared-caddy")

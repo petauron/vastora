@@ -98,6 +98,9 @@ func clearStoppedHostUpdateStaging(directory string) error {
 // Querying an inactive/not-loaded unit is valid; resetting a not-loaded unit
 // is not. MainPID and ControlPID also cover ExecStopPost cleanup ownership.
 func stoppedHostUpdateHelper(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error)) (bool, error) {
+	if isOpenRCHost() {
+		return false, stoppedOpenRCUpdateHelper()
+	}
 	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	output, err := run(checkCtx, "systemctl", "show", hostUpdateUnitName, "--property=LoadState,ActiveState,MainPID,ControlPID")
@@ -124,6 +127,9 @@ func stoppedHostUpdateHelper(ctx context.Context, run func(context.Context, stri
 }
 
 func startHostUpdateHelper(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error)) error {
+	if isOpenRCHost() {
+		return startOpenRCUpdateHelper(ctx, run)
+	}
 	command := func(arguments ...string) error {
 		commandCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()

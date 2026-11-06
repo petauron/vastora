@@ -218,7 +218,7 @@ func TestOfficialCatalogIndependentUpdateThroughInstallWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	var commands []string
-	executor := agent.ApplicationExecutor{PackageStateDirectory: filepath.Join(hostRoot, "agent-state"), DockerSocket: "unix://" + filepath.Join(hostRoot, "absent-docker.sock"), Host: agent.SystemdHostApplicationManager{RootDir: hostRoot, HTTPClient: distribution.Client(), HostTarget: platform.Target{OS: "linux", Architecture: "amd64"}, RunCommand: func(_ context.Context, name string, args ...string) error {
+	executor := agent.ApplicationExecutor{PackageStateDirectory: filepath.Join(hostRoot, "agent-state"), DockerSocket: "unix://" + filepath.Join(hostRoot, "absent-docker.sock"), Host: agent.SystemdHostApplicationManager{InitSystem: "systemd", RootDir: hostRoot, HTTPClient: distribution.Client(), HostTarget: platform.Target{OS: "linux", Architecture: "amd64"}, RunCommand: func(_ context.Context, name string, args ...string) error {
 		commands = append(commands, name+" "+strings.Join(args, " "))
 		return nil
 	}, ReadCommand: func(context.Context, string, ...string) ([]byte, error) {

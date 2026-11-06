@@ -61,7 +61,7 @@ func (b *NativeServicesPackageBackend) Restore(ctx context.Context, task Deploym
 	if err := b.Inspect(ctx, task, receipt); err != nil {
 		return err
 	}
-	plan, err := planNativePackage(task.ApplicationID, task.Manifest)
+	plan, err := b.Manager.planNativePackage(task.ApplicationID, task.Manifest)
 	if err != nil {
 		return err
 	}
