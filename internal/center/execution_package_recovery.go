@@ -16,11 +16,17 @@ import (
 func (s *Store) attachPackageRecovery(ctx context.Context, tx *sql.Tx, agentID string, task *AgentTask) error {
 	task.PackageRecovery = nil
 	nativeHandover := task.Operation == "install" && task.SourceReceiptSHA256 != ""
-	if task.Kind != "application.apply" || (task.Operation != "upgrade" && task.Operation != "configure" && !nativeHandover) {
+	nativeInstall := task.Operation == "install" && task.SourceReceiptSHA256 == "" && task.Manifest.Runtime != nil && (task.Manifest.Runtime.Kind == "systemd" || task.Manifest.Runtime.Kind == "native") && task.Manifest.Runtime.Version == 2
+	if task.Kind != "application.apply" || (task.Operation != "upgrade" && task.Operation != "configure" && !nativeHandover && !nativeInstall) {
 		return nil
 	}
-	if task.Attempt == 1 && task.Operation == "upgrade" {
+	if task.Attempt == 1 && (task.Operation == "upgrade" || nativeInstall) {
 		return s.attachPackageSuccessorRecovery(ctx, tx, agentID, task)
+	}
+	// Corrected first installs use a new task and the exact abandoned receipt,
+	// never the unchanged same-task retry path.
+	if nativeInstall {
+		return nil
 	}
 	if task.Attempt < 2 {
 		return nil
@@ -50,9 +56,9 @@ func (s *Store) attachPackageRecovery(ctx context.Context, tx *sql.Tx, agentID s
 	return nil
 }
 
-// A fresh upgrade can follow an abandoned failed task only when its authenticated
-// result identifies the exact locked receipt. Both the latest attempt and the
-// mutating predecessor must have been stopped and explicitly reviewed.
+// A fresh upgrade or corrected first native install can follow an abandoned
+// failed task only when its authenticated result identifies the exact locked
+// receipt. Both the latest attempt and the mutating predecessor are reviewed.
 func (s *Store) attachPackageSuccessorRecovery(ctx context.Context, tx *sql.Tx, agentID string, task *AgentTask) error {
 	var latestID string
 	err := tx.QueryRowContext(ctx, `SELECT e.id FROM task_executions e
@@ -96,10 +102,28 @@ func (s *Store) attachPackageSuccessorRecovery(ctx context.Context, tx *sql.Tx, 
 	}
 	if previous.ID == task.ID || receipt.TaskID != previous.ID || previous.Kind != task.Kind ||
 		previous.ApplicationID != task.ApplicationID || previous.AppKey != task.AppKey ||
-		previous.Operation != "upgrade" || previous.Manifest.Runtime == nil || task.Manifest.Runtime == nil ||
+		previous.Operation != task.Operation || previous.Manifest.Runtime == nil || task.Manifest.Runtime == nil ||
 		previous.Manifest.Runtime.Kind != task.Manifest.Runtime.Kind || receipt.Runtime != task.Manifest.Runtime.Kind ||
-		receipt.ApplicationID != task.ApplicationID || receipt.AppKey != task.AppKey ||
-		!semver.IsValid(canonicalAppVersion(previous.Manifest.Version)) || !semver.IsValid(canonicalAppVersion(task.Manifest.Version)) ||
+		receipt.ApplicationID != task.ApplicationID || receipt.AppKey != task.AppKey {
+		return nil
+	}
+	if task.Operation == "install" {
+		// Keep the reviewed package and instance namespace unchanged; only its
+		// declared inputs may be corrected. An earlier healthy install is not a
+		// first-install recovery, even if a later attempt failed.
+		if (task.Manifest.Runtime.Kind != "systemd" && task.Manifest.Runtime.Kind != "native") || task.Manifest.Runtime.Version != 2 || previous.Manifest.Runtime.Version != 2 ||
+			task.SourceReceiptSHA256 != "" || previous.SourceReceiptSHA256 != "" ||
+			task.ManifestSHA256 != previous.ManifestSHA256 || task.PackageRevision != previous.PackageRevision || task.Manifest.Version != previous.Manifest.Version {
+			return nil
+		}
+		var installed bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM deployments WHERE agent_id=? AND application_id=? AND state='succeeded')`, agentID, task.ApplicationID).Scan(&installed); err != nil {
+			return err
+		}
+		if installed {
+			return nil
+		}
+	} else if task.Operation != "upgrade" || !semver.IsValid(canonicalAppVersion(previous.Manifest.Version)) || !semver.IsValid(canonicalAppVersion(task.Manifest.Version)) ||
 		semver.Compare(canonicalAppVersion(task.Manifest.Version), canonicalAppVersion(previous.Manifest.Version)) <= 0 {
 		return nil
 	}
@@ -145,6 +169,16 @@ func (s *Store) reviewedAbandonedPackage(ctx context.Context, tx *sql.Tx, agentI
 		return nil, receipt, nil, errors.New("center: package recovery result evidence does not match")
 	}
 	receipt, err = decodeMaintenanceReceipt(result.Resources)
+	if err != nil && previous.Operation == "install" && previous.SourceReceiptSHA256 == "" && previous.Manifest.Runtime != nil &&
+		(previous.Manifest.Runtime.Kind == "systemd" || previous.Manifest.Runtime.Kind == "native") && previous.Manifest.Runtime.Version == 2 {
+		// First-install completion metadata is written only after health passes.
+		// Decode only that exact incomplete shape here; maintenance still requires
+		// a complete healthy package receipt. The sealed source task binds its recipe.
+		if len(result.Resources) <= 1<<20 && json.Unmarshal(result.Resources, &receipt) == nil && receipt.Version == 1 && len(receipt.Resources) > 0 &&
+			receipt.Runtime == previous.Manifest.Runtime.Kind && receipt.PackageVersion == "" && receipt.PackageRevision == 0 && receipt.ManifestSHA256 == "" {
+			err = nil
+		}
+	}
 	if err != nil || receipt.State != "review-required" || receipt.TaskID == "" ||
 		receipt.ApplicationID != previous.ApplicationID || receipt.AppKey != previous.AppKey {
 		return nil, receipt, nil, nil

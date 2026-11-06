@@ -265,11 +265,13 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if receipt != nil && receipt.IntegrationState == "execution-retired" {
 		return result, errors.New("agent: legacy execution registration is retired; retained data is not an executable installation")
 	}
+	recoveringInstall := false
 	if receipt != nil && receipt.State != "ready" && receipt.State != "retained" {
 		result.Resources = receipt
 		if !reviewedPackageRecovery(task, receipt) {
 			return result, uncertainTaskOutcome(errors.New("agent: unfinished package execution requires an operator-reviewed retry"))
 		}
+		recoveringInstall = task.Operation == "install"
 		// Preserve the receipt if inspection or preparation rejects the retry.
 		// Do not clear the lock before all existing resources are verified.
 		defer func() {
@@ -314,7 +316,7 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if dormant && (task.AppKey != meridianKey || task.Operation != "upgrade" || receipt.State != "ready" || receipt.Runtime != "docker" || task.Manifest.Runtime.Kind != "docker" || len(receipt.Resources) != 0) {
 		return result, errors.New("agent: dormant Glivela permits only a verified package upgrade without runtime activation")
 	}
-	if task.Operation == "install" && receipt != nil && receipt.State != "retained" {
+	if task.Operation == "install" && receipt != nil && receipt.State != "retained" && !recoveringInstall {
 		return result, errors.New("agent: application is already installed")
 	}
 	if receipt == nil {
@@ -449,18 +451,22 @@ func validateHistoricalPackageTask(task DeploymentTask) error {
 func reviewedPackageRecovery(task DeploymentTask, receipt *InstanceResources) bool {
 	recovery := task.PackageRecovery
 	if receipt.State != "review-required" || len(receipt.Resources) == 0 ||
-		task.Kind != "application.apply" || (task.Operation != "upgrade" && task.Operation != "configure") ||
+		task.Kind != "application.apply" || (task.Operation != "upgrade" && task.Operation != "configure" && task.Operation != "install") ||
 		task.Authorization.ID == "" || task.Authorization.Protocol != controlplane.ExecutionProtocol || len(task.Authorization.Digest) != 64 ||
 		recovery == nil || recovery.ExecutionID == "" || recovery.ExecutionID == task.Authorization.ID || recovery.Attempt <= 0 {
 		return false
 	}
 	if recovery.ReceiptSHA256 == "" {
-		return recovery.TaskID == task.ID && receipt.TaskID == task.ID && recovery.Attempt == task.Attempt-1
+		return task.Operation != "install" && recovery.TaskID == task.ID && receipt.TaskID == task.ID && recovery.Attempt == task.Attempt-1
 	}
 	// A new task is not a replay of the abandoned task. Its authority binds the
 	// complete old receipt; normal ownership, manifest and health checks follow.
-	if task.Operation != "upgrade" || task.Attempt != 1 || recovery.TaskID == task.ID ||
+	if task.Operation != "upgrade" && task.Operation != "install" || task.Attempt != 1 || recovery.TaskID == task.ID ||
 		receipt.TaskID != recovery.TaskID || receipt.ApplicationID != task.ApplicationID || receipt.AppKey != task.AppKey {
+		return false
+	}
+	if task.Operation == "install" && (task.SourceReceiptSHA256 != "" || task.Manifest.Runtime == nil || (task.Manifest.Runtime.Kind != "systemd" && task.Manifest.Runtime.Kind != "native") || task.Manifest.Runtime.Version != 2 ||
+		receipt.Runtime != task.Manifest.Runtime.Kind || receipt.RuntimeVersion != 2 || receipt.PackageVersion != "" || receipt.PackageRevision != 0 || receipt.ManifestSHA256 != "") {
 		return false
 	}
 	raw, err := json.Marshal(receipt)

@@ -27,6 +27,11 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 	if err := inspectNativeCollisions(ctx, manager, task.ApplicationID, prepared, receipt); err != nil {
 		return err
 	}
+	if prepared.RecoverInstallation {
+		if err := verifyNativeInstallRecovery(ctx, manager, prepared, receipt); err != nil {
+			return err
+		}
+	}
 	// Check all configuration paths before stopping anything. An upgrade must
 	// not initialize missing configuration or overwrite application edits.
 	if task.Operation == "upgrade" {
@@ -145,12 +150,23 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		if err := checkPackageParents(actual); err != nil {
 			return err
 		}
-		if file.ApplicationOwned && resourceNamed(receipt, "file", file.LogicalName) != nil {
+		owned := resourceNamed(receipt, "file", file.LogicalName)
+		if file.ApplicationOwned && owned != nil {
 			snapshot, err := captureApplicationConfiguration(actual)
 			if err != nil || !snapshot.Exists {
 				return errors.New("agent: native configuration changed during update")
 			}
-			file.Data, file.Mode = snapshot.Data, snapshot.Mode
+			if prepared.RecoverInstallation {
+				digest := sha256.Sum256(snapshot.Data)
+				if owned.SHA256 != hex.EncodeToString(digest[:]) {
+					return errors.New("agent: failed installation configuration changed after review")
+				}
+				if err := writeHostFileAtomic(actual, file.Data, file.Mode); err != nil {
+					return err
+				}
+			} else {
+				file.Data, file.Mode = snapshot.Data, snapshot.Mode
+			}
 		} else if err := writeHostFileAtomic(actual, file.Data, file.Mode); err != nil {
 			return err
 		}
