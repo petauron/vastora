@@ -188,7 +188,7 @@ func (b *senlunNativePackageBackend) retainSource(ctx context.Context, task Depl
 	if unit == nil {
 		return errors.New("agent: original Senlun service receipt is missing")
 	}
-	if err := b.Manager.service(ctx,"stop",unit.Name); err != nil {
+	if err := b.Manager.service(ctx, "stop", unit.Name); err != nil {
 		return err
 	}
 	observed, err := b.Manager.readPackageUnit(ctx, unit.Name)
@@ -299,10 +299,10 @@ func (b *senlunNativePackageBackend) Apply(ctx context.Context, task DeploymentT
 		if !unit.Automatic {
 			return errors.New("agent: Senlun collector must start automatically")
 		}
-		if err := b.Manager.service(ctx,"enable",unit.Name); err != nil {
+		if err := b.Manager.service(ctx, "enable", unit.Name); err != nil {
 			return err
 		}
-		if err := b.Manager.service(ctx,"start",unit.Name); err != nil {
+		if err := b.Manager.service(ctx, "start", unit.Name); err != nil {
 			return err
 		}
 	}
