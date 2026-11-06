@@ -99,8 +99,6 @@ github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJwooC2xJA040=
 github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
-github.com/petauron/catalog v0.4.1-0.20261019081100-736a82671387 h1:RZiDJejp6OL7GvSNr42c6EqFFzPMe0kMRraRmfqXX5o=
-github.com/petauron/catalog v0.4.1-0.20261019081100-736a82671387/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
 github.com/petauron/catalog v0.4.1-0.20261106034937-53f84d1b4969 h1:zb37CgaFP7FKAVJYtKwJeLaxXsstN5WusoLP1wJp9WM=
 github.com/petauron/catalog v0.4.1-0.20261106034937-53f84d1b4969/go.mod h1:B9Rqy4lQ+lMqOKtU7z+dxUcbMebeBD9boGJHX473DCU=
 github.com/petauron/glivela v0.1.0-alpha.24.0.20261018115648-011a0efc9777 h1:FkOv3jO5qDoJbyBLiKOVea+d71OTfcJKoYVAIIs585A=
@@ -185,8 +183,8 @@ golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa h1:QSyA8ishJCyT21kER9KwNt0b7
 golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa/go.mod h1:zeBbvyFKDaLwa7CH/zI8KXt7gTl14SF7sO08Pl5jBCM=
 golang.org/x/mod v0.42.0 h1:ICeL3t2L30ljSPHHxDnR4fqVcBt/zR2zJAb9juavmQg=
 golang.org/x/mod v0.42.0/go.mod h1:u5fzIrRInkL8MaO1cbRkUHT64v303YIT5KEqpNr7jRs=
-golang.org/x/net v0.61.0 h1:RR+6j/BTBCrggOLugxa+66R8FvoN6MHlzDlZIbN9YFw=
-golang.org/x/net v0.61.0/go.mod h1:WgDCOTH8iwtB66T4/GfI94AHo/hhdb7Hah9NDseQfiI=
+golang.org/x/net v0.62.0 h1:18ELalfM5+XNRwzM2nYqXsZQ9ByS1uhj2O/U7+5jqRY=
+golang.org/x/net v0.62.0/go.mod h1:WgDCOTH8iwtB66T4/GfI94AHo/hhdb7Hah9NDseQfiI=
 golang.org/x/sync v0.24.0 h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
 golang.org/x/sync v0.24.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
 golang.org/x/sys v0.49.0 h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=
