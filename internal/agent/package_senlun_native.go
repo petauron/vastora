@@ -162,10 +162,13 @@ func (b *senlunNativePackageBackend) Prepare(ctx context.Context, task Deploymen
 		if b.source != nil && state.Path == b.sourceState {
 			return errors.New("agent: Senlun migration must retain its original state separately")
 		}
-		if task.Operation != "install" && b.source == nil {
+		if (task.Operation != "install" || b.prepared.RecoverInstallation) && b.source == nil {
 			raw, err := readSenulunPackageCredentials(b.Manager.path(filepath.Join(state.Path, "agent-credentials.json")), b.serviceURL)
-			if err != nil || len(raw) == 0 {
+			if err != nil || len(raw) == 0 && !b.prepared.RecoverInstallation {
 				return errors.New("agent: retained Senlun identity is unavailable")
+			}
+			if len(raw) == 0 {
+				continue
 			}
 			var parseErr error
 			b.nodeID, parseErr = parseSenlunNativeIdentity(raw, b.serviceURL)
@@ -174,7 +177,7 @@ func (b *senlunNativePackageBackend) Prepare(ctx context.Context, task Deploymen
 			}
 		}
 	}
-	if task.Operation == "install" && len(b.identity) == 0 && (len(secrets["enrollment_token"]) < 16 || len(secrets["enrollment_token"]) > 512 || strings.ContainsAny(secrets["enrollment_token"], " \t\r\n")) {
+	if task.Operation == "install" && len(b.identity) == 0 && b.nodeID == "" && (len(secrets["enrollment_token"]) < 16 || len(secrets["enrollment_token"]) > 512 || strings.ContainsAny(secrets["enrollment_token"], " \t\r\n")) {
 		return errors.New("agent: supply a Senlun enrollment token or an explicitly imported existing identity")
 	}
 	return nil
