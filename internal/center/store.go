@@ -28,7 +28,7 @@ type Store struct {
 	businessRetired                bool
 	glivelaPilotStatePath          string
 	agentUpdateScope               map[string]bool
-	headscaleControlIPv6           string
+	headscaleControlIPv6            string
 	db                             *sql.DB
 	dataDir                        string
 	key                            []byte
@@ -220,7 +220,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		backgroundCtx:               backgroundCtx,
 		backgroundCancel:            backgroundCancel,
 		headscaleAllowedEndpoints:   headscaleAllowedEndpoints,
-		headscaleControlIPv6:         controlIPv6,
+		headscaleControlIPv6:        controlIPv6,
 		headscaleHTTPClient:         &http.Client{Timeout: 20 * time.Second},
 		builtinHeadscaleDialAddress: net.JoinHostPort(dockerruntime.CaddyAlias, "443"),
 		cloudflareOAuth: cloudflareOAuthConfig{
