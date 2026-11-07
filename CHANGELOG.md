@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.417](https://github.com/petauron/vastora/compare/v0.1.0-alpha.416...v0.1.0-alpha.417) (2026-11-07)
+
+
+### Bug Fixes
+
+* support IPv6-only Agent control connectivity ([#1207](https://github.com/petauron/vastora/issues/1207)) ([b8ad864](https://github.com/petauron/vastora/commit/b8ad86470454ca281aa323e5fec00071e5cf2f75))
+
 ## [0.1.0-alpha.416](https://github.com/petauron/vastora/compare/v0.1.0-alpha.415...v0.1.0-alpha.416) (2026-11-06)
 
 
