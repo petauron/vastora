@@ -28,6 +28,7 @@ type Store struct {
 	businessRetired                bool
 	glivelaPilotStatePath          string
 	agentUpdateScope               map[string]bool
+	headscaleControlIPv6           string
 	db                             *sql.DB
 	dataDir                        string
 	key                            []byte
@@ -130,6 +131,10 @@ func (s *Store) UseHostNetworkAddresses(encoded string) error {
 }
 
 func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
+	controlIPv6, err := readHeadscaleControlIPv6(dataDir)
+	if err != nil {
+		return nil, err
+	}
 	updateScope, scopeErr := readAgentUpdateScope(dataDir)
 	if scopeErr != nil {
 		return nil, scopeErr
@@ -169,7 +174,6 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		return nil, errors.New("center: root key exists without its database")
 	}
 	var key []byte
-	var err error
 	if existingDatabase {
 		key, err = secret.LoadKey(keyPath)
 	} else {
@@ -216,6 +220,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		backgroundCtx:               backgroundCtx,
 		backgroundCancel:            backgroundCancel,
 		headscaleAllowedEndpoints:   headscaleAllowedEndpoints,
+		headscaleControlIPv6:         controlIPv6,
 		headscaleHTTPClient:         &http.Client{Timeout: 20 * time.Second},
 		builtinHeadscaleDialAddress: net.JoinHostPort(dockerruntime.CaddyAlias, "443"),
 		cloudflareOAuth: cloudflareOAuthConfig{

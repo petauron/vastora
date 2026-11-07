@@ -118,3 +118,32 @@ Upstream references:
 - [Stable and unstable client version tracks](https://tailscale.com/docs/reference/tailscale-client-versions).
 - [Structured version metadata](https://github.com/tailscale/tailscale/blob/v1.102.3/version/prop.go).
 - [Daemon version output](https://github.com/tailscale/tailscale/blob/v1.102.3/version/print.go).
+
+## IPv6-only control connectivity (#1206)
+
+An IPv6-only host requires a working IPv6 path to the same authenticated
+Headscale/bootstrap HTTPS endpoint. The host administrator may provision
+`headscale-control-addresses.json` in the persistent Center data directory:
+
+```json
+{"ipv6Address":"2001:db8::10"}
+```
+
+Replace the documentation address with the actual public unicast IPv6, protect
+the file as host configuration, and restart only Center after a scoped upgrade.
+A missing file preserves existing behavior; malformed, unknown or non-public
+address configuration stops startup. No database migration is introduced.
+
+Before enabling it, independently verify the same hostname/certificate over
+this IPv6 from the target host (for example with curl `--resolve`, without `-k`).
+Provision the listener, cloud and host firewall, TLS and bootstrap DNS/hosts
+mapping separately. This setting does not open ports, change DNS, replace the
+IPv4 gateway binding, or claim that an IPv6 listener is externally reachable.
+
+The authenticated installer receives both explicit control addresses and keeps
+its existing TLS/reachability checks. After enrollment, heartbeat configuration
+uses the IPv6 control address only when the Agent reports public IPv6 and no
+ordinary LAN/public IPv4; overlay IPv4 is excluded. Existing IPv4/NAT and
+dual-stack nodes retain their original control address. The same IPv6 setting
+is used by installation and ongoing reconciliation; a downloaded script edit
+is not a persistent fix. Private Center access still uses the managed network.
