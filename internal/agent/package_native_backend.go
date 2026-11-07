@@ -29,6 +29,12 @@ func (b *NativeServicesPackageBackend) Prepare(ctx context.Context, task Deploym
 	if err := inspectNativeCollisions(ctx, b.Manager, task.ApplicationID, prepared, receipt); err != nil {
 		return err
 	}
+	prepared.RecoverInstallation = task.Operation == "install" && receipt != nil && reviewedPackageRecovery(task, receipt)
+	if prepared.RecoverInstallation {
+		if err := verifyNativeInstallRecovery(ctx, b.Manager, prepared, receipt); err != nil {
+			return err
+		}
+	}
 	if task.Operation == "configure" {
 		if err := b.verifyServicePortConfiguration(ctx, task, prepared, receipt); err != nil {
 			return err

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.0-alpha.417](https://github.com/petauron/vastora/compare/v0.1.0-alpha.416...v0.1.0-alpha.417) (2026-11-07)
+
+
+### Bug Fixes
+
+* support IPv6-only Agent control connectivity ([#1207](https://github.com/petauron/vastora/issues/1207)) ([b8ad864](https://github.com/petauron/vastora/commit/b8ad86470454ca281aa323e5fec00071e5cf2f75))
+
+## [0.1.0-alpha.416](https://github.com/petauron/vastora/compare/v0.1.0-alpha.415...v0.1.0-alpha.416) (2026-11-06)
+
+
+### Features
+
+* **agent:** support Alpine OpenRC native lifecycles ([#1202](https://github.com/petauron/vastora/issues/1202)) ([2a6f896](https://github.com/petauron/vastora/commit/2a6f896d5599308a68fc5dd67a405a1c79e6dd86))
+
+
+### Bug Fixes
+
+* **apps:** recover reviewed failed first native installs ([#1205](https://github.com/petauron/vastora/issues/1205)) ([470f9b2](https://github.com/petauron/vastora/commit/470f9b256aca7f87196c5869bff9aec8a02602c5))
+
 ## [0.1.0-alpha.415](https://github.com/petauron/vastora/compare/v0.1.0-alpha.414...v0.1.0-alpha.415) (2026-11-04)
 
 

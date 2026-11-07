@@ -343,6 +343,21 @@ func (s *Store) tailscaleIsolationDesiredState(ctx context.Context, agentID stri
 		}
 	}
 	state.ControlAddresses = []string{controlAddress}
+	if s.headscaleControlIPv6 != "" {
+		if strings.TrimSpace(agentID) == "" {
+			// Bootstrap runs before host discovery. The existing Agent verifies
+			// HTTPS reachability before pinning these explicit control addresses.
+			state.ControlAddresses = append(state.ControlAddresses, s.headscaleControlIPv6)
+		} else {
+			ipv6Only, err := s.agentHasOnlyIPv6Underlay(ctx, agentID)
+			if err != nil {
+				return nil, err
+			}
+			if ipv6Only {
+				state.ControlAddresses = []string{s.headscaleControlIPv6}
+			}
+		}
+	}
 	fixedEndpoint, err := s.readTailscaleFixedEndpoint(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("center: read Tailscale fixed endpoint: %w", err)
