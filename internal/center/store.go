@@ -28,7 +28,7 @@ type Store struct {
 	businessRetired                bool
 	glivelaPilotStatePath          string
 	agentUpdateScope               map[string]bool
-	headscaleControlIPv6          string
+	headscaleControlIPv6           string
 	db                             *sql.DB
 	dataDir                        string
 	key                            []byte
