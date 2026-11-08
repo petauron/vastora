@@ -32,10 +32,11 @@ var (
 )
 
 type tailscaleIsolationEnvironment struct {
-	overridePath string
-	hostsPath    string
-	derpCache    string
-	run          func(context.Context, string, ...string) ([]byte, error)
+	controlIPv6Path string
+	overridePath    string
+	hostsPath       string
+	derpCache       string
+	run             func(context.Context, string, ...string) ([]byte, error)
 }
 
 func defaultTailscaleIsolationEnvironment() tailscaleIsolationEnvironment {
@@ -44,10 +45,11 @@ func defaultTailscaleIsolationEnvironment() tailscaleIsolationEnvironment {
 		path = "/etc/conf.d/tailscale"
 	}
 	return tailscaleIsolationEnvironment{
-		overridePath: path,
-		hostsPath:    "/etc/hosts",
-		derpCache:    "/var/lib/tailscale/derpmap.cached.json",
-		run:          runHostCommand,
+		controlIPv6Path: "/etc/vastora/agent-headscale-control.json",
+		overridePath:    path,
+		hostsPath:       "/etc/hosts",
+		derpCache:       "/var/lib/tailscale/derpmap.cached.json",
+		run:             runHostCommand,
 	}
 }
 
@@ -62,6 +64,15 @@ func reconcileTailscaleIsolation(ctx context.Context, desired agent.TailscaleIso
 	desired, err := validateTailscaleIsolationDesiredState(desired)
 	if err != nil {
 		return err
+	}
+	address, err := readAgentHeadscaleControlIPv6(environment.controlIPv6Path)
+	if err != nil {
+		return err
+	}
+	if address != "" {
+		// Explicit host routing policy, not a fallback or a new control origin.
+		// The existing HTTPS preflight and runtime isolation checks still run.
+		desired.ControlAddresses = []string{address}
 	}
 	if environment.run == nil {
 		return errors.New("configure Tailscale isolation: host command runner is required")

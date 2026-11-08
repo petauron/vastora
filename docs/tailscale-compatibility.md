@@ -147,3 +147,9 @@ ordinary LAN/public IPv4; overlay IPv4 is excluded. Existing IPv4/NAT and
 dual-stack nodes retain their original control address. The same IPv6 setting
 is used by installation and ongoing reconciliation; a downloaded script edit
 is not a persistent fix. Private Center access still uses the managed network.
+
+## Explicit Agent control IPv6
+
+For a host that still has an IPv4 address but cannot reach the existing Headscale origin over IPv4, its operator may set `/etc/vastora/agent-headscale-control.json` to `{"ipv6Address":"2001:db8::20"}` (replace the documentation address with the independently verified control server IPv6). The file must be a regular file owned by the Agent execution identity, root on managed hosts, and not writable by group or others; use mode 0600. Restart only that Agent after provisioning it.
+
+This is an explicit address pin for the existing HTTPS hostname and its aliases, not an alternate origin or automatic fallback. The existing TLS endpoint preflight, DERP/privacy checks and persistent private-network identity remain required. Invalid files or failed verification stop reconciliation before host changes. Absence of the file retains the Center-supplied policy. To restore automatic selection, remove this local setting and restart the Agent only after verifying the Center-supplied path is reachable. Interface addresses, public service bindings and other Agents are not changed. This setting does not request a Tailscale software update.
