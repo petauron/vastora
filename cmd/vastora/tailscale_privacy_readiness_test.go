@@ -18,11 +18,24 @@ func TestTailscaleIsolationWaitsForMapWithoutRestartingAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	desired := agent.TailscaleIsolationDesiredState{ControlURL: "https://headscale.example.com", ControlAddresses: []string{"203.0.113.10"}, RelayRegionID: 999}
+	controlPath := filepath.Join(root, "agent-control.json")
+	if err := os.WriteFile(controlPath, []byte(`{"ipv6Address":"2001:db8::20"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	mapPayload := "null"
 	restarts := 0
+	probes := 0
 	environment := tailscaleIsolationEnvironment{
-		overridePath: filepath.Join(root, "privacy.conf"), hostsPath: hostsPath, derpCache: filepath.Join(root, "cache.json"),
+		controlIPv6Path: controlPath,
+		overridePath:    filepath.Join(root, "privacy.conf"), hostsPath: hostsPath, derpCache: filepath.Join(root, "cache.json"),
 		run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+			if name == "curl" {
+				request := strings.Join(arguments, " ")
+				if !strings.Contains(request, "--resolve headscale.example.com:443:[2001:db8::20]") || strings.Contains(request, "203.0.113.10") || strings.Contains(request, "--insecure") || arguments[len(arguments)-1] != desired.ControlURL+"/" {
+					t.Fatal("IPv6 selection changed origin or TLS verification", request)
+				}
+				probes++
+			}
 			switch name + " " + strings.Join(arguments, " ") {
 			case "systemctl restart tailscaled.service":
 				restarts++
@@ -43,6 +56,13 @@ func TestTailscaleIsolationWaitsForMapWithoutRestartingAgain(t *testing.T) {
 			t.Fatalf("readiness retry restarted daemon: marker=%q restarts=%d err=%v", marker, restarts, err)
 		}
 	}
+	if probes != 1 {
+		t.Fatal("IPv6 control preflight missing or repeated", probes)
+	}
+	hosts, err := os.ReadFile(hostsPath)
+	if err != nil || !strings.Contains(string(hosts), "2001:db8::20 headscale.example.com") || strings.Contains(string(hosts), "203.0.113.10") {
+		t.Fatal("selected IPv6 not retained for reconnect", err)
+	}
 	mapPayload = `{"Regions":{"999":{"RegionID":999,"RegionCode":"vastora","Nodes":[{"HostName":"headscale.example.com","DERPPort":443}]}}}`
 	if err := reconcileTailscaleIsolation(context.Background(), desired, false, environment); err != nil {
 		t.Fatal(err)
@@ -58,5 +78,34 @@ func TestTailscaleIsolationWaitsForMapWithoutRestartingAgain(t *testing.T) {
 	mapPayload = `{"Regions":{"1":{"RegionID":1,"Nodes":[{"HostName":"derp.example.net"}]}}}`
 	if err := reconcileTailscaleIsolation(context.Background(), desired, false, environment); err == nil || errors.Is(err, errTailscaleDERPMapNotReady) {
 		t.Fatalf("unexpected relay was treated as harmless startup: %v", err)
+	}
+}
+
+func TestTailscaleControlIPv6PreflightFailurePreservesHostState(t *testing.T) {
+	root := t.TempDir()
+	hosts := filepath.Join(root, "hosts")
+	original := "127.0.0.1 localhost\n"
+	if err := os.WriteFile(hosts, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	control := filepath.Join(root, "control.json")
+	if err := os.WriteFile(control, []byte(`{"ipv6Address":"2001:db8::20"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	environment := tailscaleIsolationEnvironment{controlIPv6Path: control, overridePath: filepath.Join(root, "privacy.conf"), hostsPath: hosts, derpCache: filepath.Join(root, "cache.json"), run: func(_ context.Context, name string, _ ...string) ([]byte, error) {
+		if name != "curl" {
+			t.Fatal("failed endpoint verification reached a host mutation", name)
+		}
+		return []byte("synthetic TLS verification failure"), errors.New("verification failed")
+	}}
+	desired := agent.TailscaleIsolationDesiredState{ControlURL: "https://headscale.example.com", ControlAddresses: []string{"203.0.113.10"}, RelayRegionID: 999}
+	if err := reconcileTailscaleIsolation(context.Background(), desired, false, environment); err == nil {
+		t.Fatal("failed preflight accepted")
+	}
+	if got, err := os.ReadFile(hosts); err != nil || string(got) != original {
+		t.Fatal("failed verification changed hosts", err)
+	}
+	if _, err := os.Stat(tailscalePrivacyAppliedPath(environment.overridePath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("failed verification wrote an applied marker", err)
 	}
 }
