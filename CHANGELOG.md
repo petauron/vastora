@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.418](https://github.com/petauron/vastora/compare/v0.1.0-alpha.417...v0.1.0-alpha.418) (2026-11-08)
+
+
+### Bug Fixes
+
+* allow explicit Agent IPv6 Headscale control pin ([bf20b03](https://github.com/petauron/vastora/commit/bf20b037eb256b044211a8c922b28beddbeba267))
+
 ## [0.1.0-alpha.417](https://github.com/petauron/vastora/compare/v0.1.0-alpha.416...v0.1.0-alpha.417) (2026-11-07)
 
 
