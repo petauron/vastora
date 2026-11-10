@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/hostservice"
 )
 
 const nativeCaddySocket = "/run/vastora-caddy/admin.sock"
@@ -75,6 +76,14 @@ type NativeCaddySiteRuntime struct {
 func sha256String(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
 
 func (runtime NativeCaddySiteRuntime) Idle(ctx context.Context) error {
+	var err error
+	runtime, err = runtime.withInitSystem()
+	if err != nil {
+		return err
+	}
+	if runtime.Manager.InitSystem == hostservice.OpenRC {
+		return runtime.idleOpenRC(ctx)
+	}
 	path := filepath.Join(runtime.StateDirectory, "shared-caddy", "runtime.json")
 	if err := checkPackageParents(path); err != nil {
 		return err
@@ -104,6 +113,14 @@ func (runtime NativeCaddySiteRuntime) ReconcileWebsites(ctx context.Context, des
 	}
 	if runtime.StateDirectory == "" {
 		return errors.New("agent: shared Caddy state directory is unavailable")
+	}
+	var initErr error
+	runtime, initErr = runtime.withInitSystem()
+	if initErr != nil {
+		return initErr
+	}
+	if runtime.Manager.InitSystem == hostservice.OpenRC {
+		return runtime.reconcileOpenRC(ctx, sites)
 	}
 	receiptPath := filepath.Join(runtime.StateDirectory, "shared-caddy", "runtime.json")
 	if err := checkPackageParents(receiptPath); err != nil {

@@ -261,7 +261,7 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 			if err != nil {
 				return nativePreparedPackage{}, err
 			}
-			if err := add(nativePreparedFile{Path: filepath.Join(unit.ConfigDirectory, "process.json"), Data: process, Mode: 0644, Kind: "file", LogicalName: unit.LogicalName + ":process", Component: unit.LogicalName}); err != nil {
+			if err := add(nativePreparedFile{Path: filepath.Join(unit.ConfigDirectory, "process.json"), Data: process, Mode: 0600, Kind: "file", LogicalName: unit.LogicalName + ":process", Component: unit.LogicalName}); err != nil {
 				return nativePreparedPackage{}, err
 			}
 			mode = 0755

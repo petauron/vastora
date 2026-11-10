@@ -52,6 +52,51 @@ this work does not claim an Alpine Service distribution or UI acceptance.
 
 ## Verification boundary
 
+### No-TUN private management (follow-up #1214)
+
+A running userspace Tailscale daemon can carry the Agent's TLS gRPC management
+connection. Explicitly configure the host, rather than exporting proxy variables:
+
+```json
+{"socks5":"socks5://127.0.0.1:1055"}
+```
+
+Save this as `/etc/petauron/private-network.json`, owned by root, mode 0600,
+in a root-owned directory that is not writable by other users. Start tailscaled
+with `--tun=userspace-networking --socks5-server=127.0.0.1:1055`; retain its own
+state and OpenRC service. Configure a literal tailnet IP in the HTTPS Center URL
+and supply its normally verified CA/name. Only literal Tailscale destinations
+use this policy; public endpoints, application proxy egress and ambient proxy
+environment variables do not. Invalid policy fails closed. Glivela's paired
+controller/node build supports the same policy while retaining mTLS validation.
+
+Userspace networking does not assign these addresses to a kernel interface.
+Do not advertise them as interface addresses or claim support for kernel-bound
+landing listeners, subnet routing or UDP merely because management is online.
+The no-TUN lab confirms an actually observed, firewalled LAN service address;
+its application management connection still crosses the authenticated overlay.
+
+Fresh OpenRC installs keep dedicated workers non-root. Protected parent
+directories permit search, not listing; each root-owned process specification
+is readable only by its own service group (0640). Durable environment and
+credential files remain 0600. No compatibility shim or Docker is required.
+
+Native shared-Caddy websites also use OpenRC supervision and the same protected
+launcher. Their dedicated non-root account has only the bind-service capability;
+bootstrap credentials are reconstructed under its private runtime directory,
+and the Agent verifies its receipt, executable, specification, unit and state
+owner before reusing it. The admin API remains a private Unix socket. Caddy uses
+the existing 96 MiB Go memory target; this does not claim systemd's hard resource
+limits on an OpenRC host. Existing systemd shared-Caddy resources are unchanged.
+
+The isolated follow-up uses real Headscale enrollment, a separately signed lab
+catalog, real Center task authorization/receipts and static release probes.
+Its GNU Senlun backend uses a private loader directory, not an Alpine Service
+package or a system musl replacement. Fixture HTTPS responses and same-guest
+peers are synthetic; they do not establish commercial VPS or WAN acceptance.
+
+### Previous #1182 acceptance
+
 The dedicated Alpine LXC uses synthetic enrollment, independent synthetic
 Glivela/Senlun identities and a pinned Caddy HTTPS target. No production account,
 subscription, token or proxy route is imported. Fixture tooling is opt-in under
