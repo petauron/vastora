@@ -64,11 +64,16 @@ connection. Explicitly configure the host, rather than exporting proxy variables
 Save this as `/etc/petauron/private-network.json`, owned by root, mode 0600,
 in a root-owned directory that is not writable by other users. Start tailscaled
 with `--tun=userspace-networking --socks5-server=127.0.0.1:1055`; retain its own
-state and OpenRC service. Configure a literal tailnet IP in the HTTPS Center URL
-and supply its normally verified CA/name. Only literal Tailscale destinations
-use this policy; public endpoints, application proxy egress and ambient proxy
-environment variables do not. Invalid policy fails closed. Glivela's paired
-controller/node build supports the same policy while retaining mTLS validation.
+state and OpenRC service. Keep the certificate hostname in the HTTPS Center
+URL. When private DNS is
+not installed by userspace networking, pin that exact hostname to its verified
+tailnet address in the host resolver configuration. The Agent accepts named
+management destinations only when every resolved address belongs to the tailnet,
+then pins the transport address while retaining normal TLS hostname/CA checks.
+Literal Tailscale destinations also use this policy; public endpoints, application
+proxy egress and ambient proxy environment variables do not. Invalid policy
+fails closed. Glivela's paired controller/node build uses the same explicit
+policy for literal tailnet endpoints while retaining mTLS validation.
 
 Userspace networking does not assign these addresses to a kernel interface.
 Do not advertise them as interface addresses or claim support for kernel-bound
