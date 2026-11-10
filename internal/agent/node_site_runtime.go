@@ -74,7 +74,7 @@ func (s *Store) nodeSiteInstallationHost(ctx context.Context, installed AppliedI
 	if err != nil {
 		return host, err
 	}
-	if err := inspectNativeOwnership(ctx, SystemdHostApplicationManager{}, installed.ApplicationID, plan, receipt); err != nil {
+	if err := inspectNativeOwnership(ctx, SystemdHostApplicationManager{InitSystem: plan.InitSystem}, installed.ApplicationID, plan, receipt); err != nil {
 		return host, err
 	}
 	if len(plan.Units) != 1 || plan.Units[0].LogicalName != "web" || plan.Units[0].Process.Executable != "daylight" || plan.Units[0].Automatic || !slices.Contains(installed.Manifest.Runtime.RequiredCapabilities, "shared-caddy") || !slices.Contains(receipt.AuthorizedCapabilities, "shared-caddy") {
