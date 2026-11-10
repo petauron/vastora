@@ -158,7 +158,7 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 			}
 			var address string
 			var owned int
-			if err := tx.QueryRowContext(ctx, `SELECT p.service_address,EXISTS(SELECT 1 FROM application_resources r WHERE r.application_id=? AND r.adoption_state='ready' AND json_extract(r.resources_json,'$.applicationId')=? AND json_extract(r.resources_json,'$.appKey')=? AND json_extract(r.resources_json,'$.runtime')='systemd' AND json_extract(r.resources_json,'$.state')='ready' AND json_extract(r.resources_json,'$.manifestSha256')=r.manifest_sha256) FROM agent_network_profiles p WHERE p.agent_id=?`, applicationID, applicationID, appKey, nodeID).Scan(&address, &owned); err != nil || owned != 1 || address != host {
+			if err := tx.QueryRowContext(ctx, `SELECT p.service_address,EXISTS(SELECT 1 FROM application_resources r WHERE r.application_id=? AND r.adoption_state='ready' AND json_extract(r.resources_json,'$.applicationId')=? AND json_extract(r.resources_json,'$.appKey')=? AND json_extract(r.resources_json,'$.runtime') IN ('systemd','native') AND json_extract(r.resources_json,'$.state')='ready' AND json_extract(r.resources_json,'$.manifestSha256')=r.manifest_sha256) FROM agent_network_profiles p WHERE p.agent_id=?`, applicationID, applicationID, appKey, nodeID).Scan(&address, &owned); err != nil || owned != 1 || address != host {
 				return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("native shared backend must match its ready installation and confirmed node service address")}
 			}
 			route.ManagedReality = false
