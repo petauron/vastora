@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.421](https://github.com/petauron/vastora/compare/v0.1.0-alpha.420...v0.1.0-alpha.421) (2026-11-10)
+
+
+### Bug Fixes
+
+* **agent:** retain init system during site ownership checks ([#1219](https://github.com/petauron/vastora/issues/1219)) ([4b3ad72](https://github.com/petauron/vastora/commit/4b3ad7297c978c6b4adf662579677ceb82dd6874))
+
 ## [0.1.0-alpha.420](https://github.com/petauron/vastora/compare/v0.1.0-alpha.419...v0.1.0-alpha.420) (2026-11-10)
 
 
