@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.420](https://github.com/petauron/vastora/compare/v0.1.0-alpha.419...v0.1.0-alpha.420) (2026-11-10)
+
+
+### Bug Fixes
+
+* **agent:** preserve named Center TLS over userspace private transport ([#1217](https://github.com/petauron/vastora/issues/1217)) ([1c15e0d](https://github.com/petauron/vastora/commit/1c15e0dc41e5612dec78117e82ad94ff95e37a72))
+
 ## [0.1.0-alpha.419](https://github.com/petauron/vastora/compare/v0.1.0-alpha.418...v0.1.0-alpha.419) (2026-11-10)
 
 
