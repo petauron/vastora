@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.422](https://github.com/petauron/vastora/compare/v0.1.0-alpha.421...v0.1.0-alpha.422) (2026-11-10)
+
+
+### Bug Fixes
+
+* **center:** accept owned native receipts for shared listeners ([690c929](https://github.com/petauron/vastora/commit/690c92978cd1a494b25b775f4778398d35e99277))
+
 ## [0.1.0-alpha.421](https://github.com/petauron/vastora/compare/v0.1.0-alpha.420...v0.1.0-alpha.421) (2026-11-10)
 
 
