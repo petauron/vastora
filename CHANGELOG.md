@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.419](https://github.com/petauron/vastora/compare/v0.1.0-alpha.418...v0.1.0-alpha.419) (2026-11-10)
+
+
+### Bug Fixes
+
+* **agent:** complete Alpine userspace onboarding and shared sites ([#1215](https://github.com/petauron/vastora/issues/1215)) ([5ae5357](https://github.com/petauron/vastora/commit/5ae5357d6d34e2cd5d44184f0c4da5cf257ddff1))
+
 ## [0.1.0-alpha.418](https://github.com/petauron/vastora/compare/v0.1.0-alpha.417...v0.1.0-alpha.418) (2026-11-08)
 
 
