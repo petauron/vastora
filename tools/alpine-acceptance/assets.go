@@ -77,6 +77,11 @@ func senlunProxy() *http.Server {
 	return &http.Server{Addr: "127.0.0.1:18091", Handler: httputil.NewSingleHostReverseProxy(target), ReadHeaderTimeout: 5 * time.Second}
 }
 
+func headscaleProxy() *http.Server {
+	target, _ := url.Parse("http://127.0.0.1:18080")
+	return &http.Server{Addr: "127.0.0.1:18443", Handler: httputil.NewSingleHostReverseProxy(target), ReadHeaderTimeout: 5 * time.Second}
+}
+
 func assetLeaf() error {
 	if _, err := os.Stat(filepath.Join(root, "asset-leaf.pem")); err == nil {
 		return nil
@@ -112,7 +117,7 @@ func assetLeaf() error {
 	if err != nil {
 		return err
 	}
-	leaf := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "isolated-https"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(48 * time.Hour), BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
+	leaf := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "isolated-https"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(48 * time.Hour), BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("100.126.0.2")}}
 	der, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, signer)
 	if err != nil {
 		return err

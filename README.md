@@ -193,7 +193,7 @@ Existing Glivela business installations require the [final data handover](docs/G
 安全基线仍单独管理。读取失败或缺少节点映射时显示未知，可手动刷新。
 
 Node-local Daylight certificates and shared Caddy ownership: [configuration, handover and recovery](docs/node-site-certificates.md) (#1128).
-Alpine/OpenRC 的源码适配、原生套件契约和隔离验收边界见 [Alpine/OpenRC MVP](docs/alpine-openrc.md)（#1182；尚未发布到生产）。
+Alpine/OpenRC 的原生套件契约和隔离验收边界见 [Alpine/OpenRC MVP](docs/alpine-openrc.md)（#1182；无 TUN 用户态管理接续 #1214，源码验收不代表生产发布）。
 
 Vastora 自动管理的运行目录、开机准备和共享资源卸载边界见 [运行目录生命周期](docs/runtime-directories.md)（#356）。
 Linux Agent 和共址 Center 的开机引导依赖系统 iproute2（`ip`）；安装器会检查，不自动下载或更改已有网络身份。

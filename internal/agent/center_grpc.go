@@ -16,6 +16,7 @@ import (
 
 	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/tailscalehost"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
@@ -138,7 +139,15 @@ func newAgentGRPCConn(ctx context.Context, centerURL, fingerprint, certificate s
 		return nil, errors.New("agent: Center gRPC requires validated TLS or loopback")
 	}
 	options := []grpc.DialOption{
+		grpc.WithNoProxy(),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(controlplane.MaxEnvelopeWire), grpc.MaxCallSendMsgSize(controlplane.MaxEnvelopeWire)),
+	}
+	privateDialer, err := tailscalehost.PrivateNetworkDialer(parsed.Hostname())
+	if err != nil {
+		return nil, err
+	}
+	if privateDialer != nil && parsed.Scheme != "https" {
+		return nil, errors.New("agent: userspace private control requires TLS")
 	}
 	prefix := strings.TrimRight(parsed.EscapedPath(), "/")
 	if prefix != "" {
@@ -151,21 +160,29 @@ func newAgentGRPCConn(ctx context.Context, centerURL, fingerprint, certificate s
 			}),
 		)
 	}
-	if peer != nil {
-		options = append(options, grpc.WithNoProxy())
-		if parsed.Scheme == "https" {
+	if peer != nil || privateDialer != nil {
+		if peer != nil && parsed.Scheme == "https" {
 			transport = grpcPinCredentials{TransportCredentials: transport, peer: peer}
 		}
 		dialer := &net.Dialer{}
 		options = append(options, grpc.WithContextDialer(func(ctx context.Context, address string) (net.Conn, error) {
-			peer.mu.Lock()
-			pinned := peer.address
-			peer.mu.Unlock()
+			pinned := ""
+			if peer != nil {
+				peer.mu.Lock()
+				pinned = peer.address
+				peer.mu.Unlock()
+			}
+			if privateDialer != nil {
+				// A SOCKS connection's TCP peer is the local daemon. Keep the
+				// immutable, literal tail address as the logical destination;
+				// the helper still pins the daemon peer and verifies Center TLS.
+				return privateDialer.DialContext(ctx, "tcp", address)
+			}
 			if pinned != "" {
 				address = pinned
 			}
 			conn, err := dialer.DialContext(ctx, "tcp", address)
-			if err == nil && parsed.Scheme == "http" {
+			if err == nil && peer != nil && parsed.Scheme == "http" {
 				peer.mu.Lock()
 				if peer.address == "" {
 					peer.address = conn.RemoteAddr().String()
@@ -188,7 +205,7 @@ func newAgentGRPCConn(ctx context.Context, centerURL, fingerprint, certificate s
 	// resolver ensures later reconnects reach the dialer even if DNS goes away;
 	// the dialer then uses that peer instead of consulting DNS again.
 	target := "dns:///" + net.JoinHostPort(parsed.Hostname(), port)
-	if peer != nil {
+	if peer != nil || privateDialer != nil {
 		target = "passthrough:///" + net.JoinHostPort(parsed.Hostname(), port)
 	}
 	conn, err := grpc.NewClient(target, options...)

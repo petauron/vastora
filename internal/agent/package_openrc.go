@@ -176,6 +176,26 @@ func PrepareOpenRCProcess(path, digest string) error {
 	if e1 != nil || e2 != nil || uid < 0 || gid < 0 {
 		return errors.New("agent: invalid native account IDs")
 	}
+	if spec.User != "root" {
+		// Arguments may contain secrets: only this dedicated service group may
+		// read the root-owned spec. Apply that restriction before opening parent
+		// search permissions; environment and durable credentials remain 0600.
+		if err := os.Chown(path, 0, gid); err != nil {
+			return err
+		}
+		if err := os.Chmod(path, 0640); err != nil {
+			return err
+		}
+		for _, file := range []string{path, spec.Executable} {
+			base := "/etc/vastora"
+			if file == spec.Executable {
+				base = "/opt/vastora"
+			}
+			if err := prepareOpenRCSearchPath(file, base); err != nil {
+				return err
+			}
+		}
+	}
 	if err := checkPackageParents(filepath.Join(spec.RuntimeDirectory, "placeholder")); err != nil {
 		return err
 	}
@@ -215,6 +235,28 @@ func PrepareOpenRCProcess(path, digest string) error {
 		target := filepath.Join(spec.RuntimeDirectory, name)
 		if err := writeOpenRCRuntimeFile(target, content, uid, gid); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func prepareOpenRCSearchPath(file, base string) error {
+	if !strings.HasPrefix(file, base+"/") || filepath.Clean(file) != file {
+		return errors.New("agent: native search path outside managed installation")
+	}
+	for directory := filepath.Dir(file); strings.HasPrefix(directory, base); directory = filepath.Dir(directory) {
+		info, err := os.Lstat(directory)
+		if err != nil {
+			return err
+		}
+		owner, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || owner.Uid != 0 || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0022 != 0 {
+			return errors.New("agent: protected root-owned native search directory required")
+		}
+		if info.Mode().Perm()&0011 != 0011 {
+			if err := os.Chmod(directory, info.Mode().Perm()|0011); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

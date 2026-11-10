@@ -682,7 +682,11 @@ func runAgent(arguments []string) error {
 		if !capabilities.Gateway && runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			admin := *caddyAdmin
 			if !capabilities.Docker {
-				admin = "unix:///run/vastora-caddy/admin.sock"
+				var err error
+				admin, err = agent.NativeCaddyAdminURL()
+				if err != nil {
+					return err
+				}
 			}
 			driver, err := agent.NewCaddyGatewayDriver(admin)
 			if err != nil {
