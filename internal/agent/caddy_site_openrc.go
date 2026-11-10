@@ -196,6 +196,11 @@ func (runtime NativeCaddySiteRuntime) reconcileOpenRC(ctx context.Context, sites
 		if err != nil || !exists {
 			return errors.New("agent: shared Caddy account unavailable after creation")
 		}
+		// os.Chown accepts int on every supported architecture. Reject IDs
+		// outside signed 32-bit range rather than wrapping on a 32-bit host.
+		if account.UID > 1<<31-1 || account.GID > 1<<31-1 {
+			return errors.New("agent: shared Caddy account IDs exceed supported range")
+		}
 		receipt = openRCCaddyReceipt{nativeCaddyReceipt: nativeCaddyReceipt{Version: 2, SHA256: source.CaddySHA256, UnitSHA256: sha256String(unit), BootstrapSHA256: sha256String(openRCCaddyBootstrap())}, ProcessSHA256: sha256String(spec), AccountID: account.identity()}
 		raw, _ := json.Marshal(receipt)
 		if err := writeHostFileAtomic(filepath.Join(runtime.StateDirectory, "shared-caddy", "runtime.json"), raw, 0600); err != nil {
