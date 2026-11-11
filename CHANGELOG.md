@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.425](https://github.com/petauron/vastora/compare/v0.1.0-alpha.424...v0.1.0-alpha.425) (2026-11-11)
+
+
+### Bug Fixes
+
+* **center:** unblock reviewed website certificate recovery ([9cb1309](https://github.com/petauron/vastora/commit/9cb13099717ae9c0f4fc72d4f28313c960333dc0))
+
 ## [0.1.0-alpha.424](https://github.com/petauron/vastora/compare/v0.1.0-alpha.423...v0.1.0-alpha.424) (2026-11-11)
 
 
