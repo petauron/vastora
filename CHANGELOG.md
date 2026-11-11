@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.423](https://github.com/petauron/vastora/compare/v0.1.0-alpha.422...v0.1.0-alpha.423) (2026-11-11)
+
+
+### Bug Fixes
+
+* **agent:** migrate owned systemd v2 receipts on native upgrade ([3fd9118](https://github.com/petauron/vastora/commit/3fd91183a6870c259ea3ab20025591bd8e4f1774))
+* **build:** use Go 1.26.11 security patch ([063f38a](https://github.com/petauron/vastora/commit/063f38ad76abf0aca4f6c3810bb387c5a01cd6ae))
+
 ## [0.1.0-alpha.422](https://github.com/petauron/vastora/compare/v0.1.0-alpha.421...v0.1.0-alpha.422) (2026-11-10)
 
 
