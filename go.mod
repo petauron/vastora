@@ -2,7 +2,7 @@ module github.com/petauron/vastora
 
 go 1.26.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/caddyserver/certmagic v0.25.6
