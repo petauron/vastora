@@ -733,6 +733,7 @@ func runAgent(arguments []string) error {
 				cancel()
 				if err != nil {
 					controlLogger.Error("Gateway startup network recovery failed", "event", "gateway.startup_network", "error", controlplane.SafeError(err.Error()))
+					go retryStartupRuntimeRecovery(context.Background(), store, controlLogger)
 				}
 			}
 			// Glivela resumes its own proxy processes. Agent reconnection must
