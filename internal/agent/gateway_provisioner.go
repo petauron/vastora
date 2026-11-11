@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -188,7 +189,8 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	matchesRuntime := existing != nil && existing.Container.HostConfig != nil && existing.Container.HostConfig.NetworkMode == container.NetworkMode(dockerruntime.NetworkName)
 	matchesPorts := desired == nil || existing != nil && caddyPortsMatch(existing.Container.Config, existing.Container.HostConfig, exposedPorts, portBindings)
 	matchesProtection := desired == nil || existingSystemServices == desiredSystemServices
-	if existing != nil && matchesTCP && matchesRuntime && matchesPorts && matchesProtection && caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) && (protectedSystemGateway || existing.Container.Config.Image == settings.Image) {
+	matchesDefinition := existing != nil && matchesRuntime && matchesPorts && matchesProtection && caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) && (protectedSystemGateway || existing.Container.Config.Image == settings.Image)
+	if matchesTCP && matchesDefinition {
 		if err := waitForPublishedAddresses(ctx, existing.Container.HostConfig.PortBindings); err != nil {
 			return err
 		}
@@ -209,18 +211,27 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 		// The Deployer owns the protected gateway's runtime image.
 		settings.Image = existing.Container.Config.Image
 	}
-	pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
-	if err != nil {
-		return fmt.Errorf("agent: pull Caddy image: %w", err)
-	}
-	_, _ = io.Copy(io.Discard, pull)
-	_ = pull.Close()
-	for _, name := range []string{settings.DataVolume, settings.ConfigVolume} {
-		if _, err := docker.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name, Labels: map[string]string{
-			gatewayruntime.ManagedLabel:   "true",
-			gatewayruntime.ComponentLabel: "gateway-storage",
-		}}); err != nil {
-			return fmt.Errorf("agent: create Caddy volume %s: %w", name, err)
+	profileOnly := matchesDefinition
+	var bootstrap []byte
+	if profileOnly {
+		bootstrap, err = retainedCaddyBootstrap(ctx, docker, *existing)
+		if err != nil {
+			return err
+		}
+	} else {
+		pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
+		if err != nil {
+			return fmt.Errorf("agent: pull Caddy image: %w", err)
+		}
+		_, _ = io.Copy(io.Discard, pull)
+		_ = pull.Close()
+		for _, name := range []string{settings.DataVolume, settings.ConfigVolume} {
+			if _, err := docker.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name, Labels: map[string]string{
+				gatewayruntime.ManagedLabel:   "true",
+				gatewayruntime.ComponentLabel: "gateway-storage",
+			}}); err != nil {
+				return fmt.Errorf("agent: create Caddy volume %s: %w", name, err)
+			}
 		}
 	}
 	if existing != nil {
@@ -247,7 +258,7 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	if err := waitForPublishedAddresses(ctx, portBindings); err != nil {
 		return err
 	}
-	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
+	options := client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:        settings.Image,
 			Cmd:          []string{"caddy", "run", "--resume", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"},
@@ -263,11 +274,26 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 		},
 		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.CaddyAlias),
 		Name:             settings.Container,
-	})
+	}
+	if profileOnly {
+		// A TCP policy change does not authorize changing command, environment,
+		// storage references, security settings or resource limits.
+		config, host := *existing.Container.Config, *existing.Container.HostConfig
+		host.Sysctls = tcpProfile
+		options.Config, options.HostConfig = &config, &host
+	}
+	created, err := docker.ContainerCreate(ctx, options)
 	if err != nil {
 		return fmt.Errorf("agent: create Caddy container: %w", err)
 	}
-	if err := copyCaddyfile(ctx, docker, created.ID, settings.AdminListen); err != nil {
+	if profileOnly {
+		if len(bootstrap) != 0 {
+			_, err = docker.CopyToContainer(ctx, created.ID, client.CopyToContainerOptions{DestinationPath: "/etc", Content: bytes.NewReader(bootstrap), CopyUIDGID: true})
+		}
+	} else {
+		err = copyCaddyfile(ctx, docker, created.ID, settings.AdminListen)
+	}
+	if err != nil {
 		_, _ = docker.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})
 		return err
 	}
@@ -478,4 +504,68 @@ func copyCaddyfile(ctx context.Context, docker *client.Client, containerID, admi
 		return fmt.Errorf("agent: install Caddy bootstrap configuration: %w", err)
 	}
 	return nil
+}
+
+// Preserve existing bootstrap files before a TCP-only replacement. Live
+// configuration may have been loaded through the Admin API, but the original
+// Caddyfile/certificates are still needed on the next Docker/host startup.
+// Mounted files remain at their existing sources and must not be overwritten.
+func retainedCaddyBootstrap(ctx context.Context, docker *client.Client, current client.ContainerInspectResult) ([]byte, error) {
+	if current.Container.HostConfig.ReadonlyRootfs {
+		// A read-only root has no writable-layer bootstrap changes; its image
+		// and every existing mount are retained by the replacement options.
+		return nil, nil
+	}
+	copied, err := docker.CopyFromContainer(ctx, current.Container.ID, client.CopyFromContainerOptions{SourcePath: "/etc/caddy"})
+	if err != nil {
+		return nil, fmt.Errorf("agent: retain Caddy bootstrap: %w", err)
+	}
+	defer copied.Content.Close()
+	const limit = 8 << 20
+	raw, err := io.ReadAll(io.LimitReader(copied.Content, limit+1))
+	if err != nil || len(raw) > limit {
+		return nil, errors.New("agent: Caddy bootstrap archive could not be retained within its size limit")
+	}
+	reader := tar.NewReader(bytes.NewReader(raw))
+	var output bytes.Buffer
+	writer := tar.NewWriter(&output)
+	written := false
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, errors.New("agent: invalid retained Caddy bootstrap archive")
+		}
+		filename := path.Clean("/etc/" + header.Name)
+		if filename != "/etc/caddy" && !strings.HasPrefix(filename, "/etc/caddy/") {
+			return nil, errors.New("agent: retained Caddy bootstrap escaped its directory")
+		}
+		mounted := false
+		for _, volume := range current.Container.Mounts {
+			destination := path.Clean(volume.Destination)
+			if filename == destination || strings.HasPrefix(filename, destination+"/") {
+				mounted = true
+				break
+			}
+		}
+		if mounted {
+			continue
+		}
+		if err := writer.WriteHeader(header); err != nil {
+			return nil, err
+		}
+		if _, err := io.Copy(writer, reader); err != nil {
+			return nil, err
+		}
+		written = true
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	if !written {
+		return nil, nil
+	}
+	return output.Bytes(), nil
 }

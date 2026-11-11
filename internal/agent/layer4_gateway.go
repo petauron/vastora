@@ -375,7 +375,14 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 		return err
 	}
 	expected.HostConfig.Sysctls = tcpProfile
+	profileOnly := false
 	if inspectErr == nil {
+		// Compare the remaining definition independently of the TCP options.
+		if current.Container.HostConfig != nil {
+			expected.HostConfig.Sysctls = current.Container.HostConfig.Sysctls
+			profileOnly = haproxyRuntimeMatches(current, expected)
+			expected.HostConfig.Sysctls = tcpProfile
+		}
 		if liveTCPMatches && haproxyRuntimeMatches(current, expected) {
 			if err := waitForPublishedAddresses(ctx, expected.HostConfig.PortBindings); err != nil {
 				return err
@@ -401,15 +408,22 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 			return gatewayruntime.VerifyContainerTCPProfile(ctx, docker, current.Container.ID, tcpProfile)
 		}
 	}
+	if profileOnly {
+		config, host := *current.Container.Config, *current.Container.HostConfig
+		host.Sysctls = tcpProfile
+		expected.Config, expected.HostConfig = &config, &host
+	}
 	if err := waitForPublishedAddresses(ctx, expected.HostConfig.PortBindings); err != nil {
 		return err
 	}
-	pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
-	if err != nil {
-		return fmt.Errorf("agent: pull HAProxy image: %w", err)
+	if !profileOnly {
+		pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
+		if err != nil {
+			return fmt.Errorf("agent: pull HAProxy image: %w", err)
+		}
+		_, _ = io.Copy(io.Discard, pull)
+		_ = pull.Close()
 	}
-	_, _ = io.Copy(io.Discard, pull)
-	_ = pull.Close()
 	if inspectErr == nil {
 		if _, err := docker.ContainerRemove(ctx, current.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 			return fmt.Errorf("agent: replace HAProxy container: %w", err)
