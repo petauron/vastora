@@ -107,7 +107,7 @@ func (provisioner DockerGatewayProvisioner) Health(ctx context.Context) error {
 		!dockerruntime.AttachmentHealthy(*existing, dockerruntime.NetworkName, dockerruntime.CaddyAlias) {
 		return errors.New("agent: Caddy network attachment is incomplete")
 	}
-	return nil
+	return gatewayruntime.CheckContainerTCPProfile(ctx, docker, *existing)
 }
 
 // Reconcile publishes exactly the sockets declared by the current desired
@@ -135,6 +135,14 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 		return err
 	}
 	existing, err := inspectManagedCaddy(ctx, docker, settings.Container)
+	if err != nil {
+		return err
+	}
+	hostTCP, err := gatewayruntime.HostTCPProfile()
+	if err != nil {
+		return err
+	}
+	tcpProfile, liveTCPMatches, err := gatewayruntime.ContainerTCPProfile(ctx, docker, hostTCP, existing)
 	if err != nil {
 		return err
 	}
@@ -170,10 +178,17 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 			return err
 		}
 	}
+	// Ensure has no new listener state. A TCP-profile-only replacement must
+	// retain the current ports, especially the protected Center endpoints.
+	if desired == nil && existing != nil && existing.Container.HostConfig != nil {
+		exposedPorts = existing.Container.Config.ExposedPorts
+		portBindings = existing.Container.HostConfig.PortBindings
+	}
+	matchesTCP := liveTCPMatches && existing != nil && existing.Container.HostConfig != nil && gatewayruntime.TCPProfileMatches(existing.Container.HostConfig.Sysctls, tcpProfile)
 	matchesRuntime := existing != nil && existing.Container.HostConfig != nil && existing.Container.HostConfig.NetworkMode == container.NetworkMode(dockerruntime.NetworkName)
 	matchesPorts := desired == nil || existing != nil && caddyPortsMatch(existing.Container.Config, existing.Container.HostConfig, exposedPorts, portBindings)
 	matchesProtection := desired == nil || existingSystemServices == desiredSystemServices
-	if existing != nil && matchesRuntime && matchesPorts && matchesProtection && caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) && (protectedSystemGateway || existing.Container.Config.Image == settings.Image) {
+	if existing != nil && matchesTCP && matchesRuntime && matchesPorts && matchesProtection && caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) && (protectedSystemGateway || existing.Container.Config.Image == settings.Image) {
 		if err := waitForPublishedAddresses(ctx, existing.Container.HostConfig.PortBindings); err != nil {
 			return err
 		}
@@ -185,7 +200,14 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 		if err := dockerruntime.RecoverAttachment(ctx, docker, existing.Container.ID, dockerruntime.NetworkName, "runtime-network", dockerruntime.CaddyAlias); err != nil {
 			return err
 		}
-		return waitForCaddyAdminSocket(ctx, settings.AdminSocketPath)
+		if err := waitForCaddyAdminSocket(ctx, settings.AdminSocketPath); err != nil {
+			return err
+		}
+		return gatewayruntime.VerifyContainerTCPProfile(ctx, docker, existing.Container.ID, tcpProfile)
+	}
+	if existing != nil && protectedSystemGateway {
+		// The Deployer owns the protected gateway's runtime image.
+		settings.Image = existing.Container.Config.Image
 	}
 	pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
 	if err != nil {
@@ -236,6 +258,7 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
 			NetworkMode:   container.NetworkMode(dockerruntime.NetworkName),
 			PortBindings:  portBindings,
+			Sysctls:       tcpProfile,
 			Mounts:        mounts,
 		},
 		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.CaddyAlias),
@@ -251,7 +274,10 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	if _, err := docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("agent: start Caddy container: %w", err)
 	}
-	return waitForCaddyAdminSocket(ctx, settings.AdminSocketPath)
+	if err := waitForCaddyAdminSocket(ctx, settings.AdminSocketPath); err != nil {
+		return err
+	}
+	return gatewayruntime.VerifyContainerTCPProfile(ctx, docker, created.ID, tcpProfile)
 }
 
 func systemServicesForGatewayTransition(existingLabel string, desired *gateway.DesiredState) (string, error) {
