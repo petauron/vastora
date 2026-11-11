@@ -216,7 +216,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 	}
 	store := &Store{
 		agentUpdatePauses: updatePauses,
-		db:               db, dataDir: dataDir, key: key,
+		db:                db, dataDir: dataDir, key: key,
 		backgroundCtx:               backgroundCtx,
 		backgroundCancel:            backgroundCancel,
 		headscaleAllowedEndpoints:   headscaleAllowedEndpoints,
