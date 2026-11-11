@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.424](https://github.com/petauron/vastora/compare/v0.1.0-alpha.423...v0.1.0-alpha.424) (2026-11-11)
+
+
+### Bug Fixes
+
+* **gateway:** synchronize managed TCP profiles with the host ([#1228](https://github.com/petauron/vastora/issues/1228)) ([e94534f](https://github.com/petauron/vastora/commit/e94534fcca37a4750d04a6c439582d47f1113779))
+
 ## [0.1.0-alpha.423](https://github.com/petauron/vastora/compare/v0.1.0-alpha.422...v0.1.0-alpha.423) (2026-11-11)
 
 
