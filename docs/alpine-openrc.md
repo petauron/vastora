@@ -121,3 +121,14 @@ LXC shares the PVE host kernel. Guest reboot proves OpenRC and runtime-directory
 recovery, not a separate Alpine kernel, host swap behavior or a VPS reinstall.
 Other host administration operations that require systemd/apt remain outside this
 MVP. BreadCloud and other production hosts are unchanged.
+
+## Existing systemd v2 installations
+
+An explicitly authorized application upgrade can migrate an owned systemd v2
+receipt to the portable native v2 contract on the same systemd host. The Agent
+requires unchanged capabilities and verifies the existing files, users, units
+and state against the target plan before preparing the upgrade. The ordinary
+apply and health lifecycle persists the new receipt; failed preflight leaves
+the installed receipt untouched. No service is re-enrolled, no data directory
+is recreated, and no OpenRC adapter is substituted. Reverse migration, v1
+conversion, unreviewed partial execution and other executor changes fail closed.

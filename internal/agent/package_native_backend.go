@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/hostservice"
 )
 
 type NativeServicesPackageBackend struct {
@@ -16,6 +18,28 @@ type NativeServicesPackageBackend struct {
 	CheckHealth    func(context.Context, string, int, catalog.Service) error
 	prepared       *nativePreparedPackage
 	resumeUnits    map[string]bool
+}
+
+// migrateSystemdReceipt is a forward-only v2 contract migration during an
+// explicitly authorized upgrade. Both declarations use the same systemd
+// adapter. Verify every owned resource against the target plan before allowing
+// preparation; never rewrite the on-disk receipt merely to bypass ownership.
+func (b *NativeServicesPackageBackend) migrateSystemdReceipt(ctx context.Context, task DeploymentTask, receipt *InstanceResources) (*InstanceResources, error) {
+	if task.Operation != "upgrade" || b.Manager.InitSystem != hostservice.Systemd ||
+		receipt.Runtime != "systemd" || receipt.RuntimeVersion != 2 || len(receipt.Resources) == 0 ||
+		task.Manifest.Runtime == nil || task.Manifest.Runtime.Kind != "native" || task.Manifest.Runtime.Version != 2 ||
+		(receipt.State != "ready" && !reviewedPackageRecovery(task, receipt)) ||
+		!slices.Equal(slices.Sorted(slices.Values(receipt.AuthorizedCapabilities)), slices.Sorted(slices.Values(task.AuthorizedCapabilities))) {
+		return nil, errors.New("agent: changing executor requires explicit instance migration")
+	}
+	candidate := *receipt
+	candidate.Runtime = "native"
+	// Only the successful normal preparation/apply/health lifecycle may persist
+	// this candidate. Inspection failure leaves the original receipt untouched.
+	if err := b.Inspect(ctx, task, &candidate); err != nil {
+		return nil, err
+	}
+	return &candidate, nil
 }
 
 func (b *NativeServicesPackageBackend) Prepare(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
