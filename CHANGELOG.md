@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.426](https://github.com/petauron/vastora/compare/v0.1.0-alpha.425...v0.1.0-alpha.426) (2026-11-11)
+
+
+### Bug Fixes
+
+* **gateway:** preserve container bootstrap during TCP profile convergence ([#1232](https://github.com/petauron/vastora/issues/1232)) ([c9fddad](https://github.com/petauron/vastora/commit/c9fddad8e25e60a640c512d3a1ee67c0cc77f22d))
+
 ## [0.1.0-alpha.425](https://github.com/petauron/vastora/compare/v0.1.0-alpha.424...v0.1.0-alpha.425) (2026-11-11)
 
 
