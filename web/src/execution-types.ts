@@ -28,6 +28,9 @@ export function executionActions(value: ExecutionView): ExecutionAction[] {
   // Firewall operations require host-checkpoint review, never generic replay
   // or a manual success assertion. Reuse the existing audited abandonment.
   if (value.kind === "node.security" || value.kind === "tailscale.update") return ["abandon"];
+  // Certificate delivery needs fresh inspection after the old attempt is abandoned.
+  // Never replay a cached certificate task or confirm its success manually.
+  if (value.kind === "node.site.certificate") return ["abandon"];
   if (!taskKinds.has(value.kind)) return [];
   return isHelperExecution(value.kind) || value.canConfirm ? ["confirm-completed", "abandon", "reexecute"] : ["abandon", "reexecute"];
 }
