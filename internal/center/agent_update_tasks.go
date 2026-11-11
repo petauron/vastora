@@ -20,7 +20,7 @@ type AgentUpdateView struct {
 }
 
 type AgentUpdateRolloutStatus struct {
-	Scoped        bool   `json:"scoped"`
+	Paused        bool   `json:"paused"`
 	Excluded      int    `json:"excluded"`
 	TargetVersion string `json:"targetVersion"`
 	Total         int    `json:"total"`
@@ -165,7 +165,7 @@ type AgentUpdateRecoveryInput struct {
 func (s *Store) queueAgentUpdate(ctx context.Context, agentID, targetVersion string, recovery *AgentUpdateRecoveryInput) (AgentUpdateView, error) {
 	agentID = strings.TrimSpace(agentID)
 	if !s.agentUpdateAllowed(agentID) {
-		return AgentUpdateView{}, errors.New("center: Agent is outside the configured update scope")
+		return AgentUpdateView{}, errors.New("center: Agent updates are explicitly paused for this node")
 	}
 	targetVersion = strings.TrimPrefix(strings.TrimSpace(targetVersion), "v")
 	if agentID == "" || targetVersion == "" || !semver.IsValid("v"+targetVersion) {
@@ -396,7 +396,7 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 
 func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion string) (AgentUpdateRolloutStatus, error) {
 	targetVersion = strings.TrimPrefix(strings.TrimSpace(targetVersion), "v")
-	status := AgentUpdateRolloutStatus{TargetVersion: targetVersion, Scoped: s.agentUpdateScope != nil}
+	status := AgentUpdateRolloutStatus{TargetVersion: targetVersion, Paused: len(s.agentUpdatePauses) > 0}
 	if targetVersion == "" || !semver.IsValid("v"+targetVersion) {
 		return status, errors.New("center: Agent rollout target version is invalid")
 	}

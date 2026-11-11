@@ -9,41 +9,41 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-func TestAgentUpdateScopeConfiguration(t *testing.T) {
+func TestAgentUpdatePausesConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		name, data string
 		valid      bool
 	}{
-		{"selected", `{"agentIds":["pilot"]}`, true},
-		{"none", `{"agentIds":[]}`, true},
-		{"null", `{"agentIds":null}`, false},
+		{"selected", `{"pausedAgentIds":["pilot"]}`, true},
+		{"none", `{"pausedAgentIds":[]}`, true},
+		{"null", `{"pausedAgentIds":null}`, false},
 		{"missing", `{}`, false},
-		{"unknown", `{"agentIds":[],"all":true}`, false},
-		{"duplicate", `{"agentIds":["pilot","pilot"]}`, false},
-		{"empty", `{"agentIds":[""]}`, false},
-		{"trailing", `{"agentIds":[]} {}`, false},
+		{"unknown", `{"pausedAgentIds":[],"all":true}`, false},
+		{"duplicate", `{"pausedAgentIds":["pilot","pilot"]}`, false},
+		{"empty", `{"pausedAgentIds":[""]}`, false},
+		{"trailing", `{"pausedAgentIds":[]} {}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "agent-update-scope.json"), []byte(tc.data), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "agent-update-pauses.json"), []byte(tc.data), 0600); err != nil {
 				t.Fatal(err)
 			}
-			scope, err := readAgentUpdateScope(dir)
+			pauses, err := readAgentUpdatePauses(dir)
 			if (err == nil) != tc.valid {
-				t.Fatalf("scope=%v error=%v", scope, err)
+				t.Fatalf("pauses=%v error=%v", pauses, err)
 			}
-			if tc.valid && scope == nil {
-				t.Fatal("explicit scope must not enable all nodes")
+			if tc.valid && pauses == nil {
+				t.Fatal("explicit pause list must be loaded")
 			}
 		})
 	}
-	scope, err := readAgentUpdateScope(t.TempDir())
-	if err != nil || scope != nil {
-		t.Fatalf("missing file changed existing policy: %v %v", scope, err)
+	pauses, err := readAgentUpdatePauses(t.TempDir())
+	if err != nil || pauses != nil {
+		t.Fatalf("missing file changed existing policy: %v %v", pauses, err)
 	}
 }
 
-func TestAgentUpdateScopeFencesQueueAndExistingPendingTask(t *testing.T) {
+func TestAgentUpdatePausesFencesQueueAndExistingPendingTask(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -55,9 +55,9 @@ func TestAgentUpdateScopeFencesQueueAndExistingPendingTask(t *testing.T) {
 	if _, err := store.QueueAgentUpdate(ctx, other.ID, "0.1.0-alpha.89"); err != nil {
 		t.Fatal(err)
 	}
-	store.agentUpdateScope = map[string]bool{pilot.ID: true}
+	store.agentUpdatePauses = map[string]bool{other.ID: true}
 	if _, err := store.QueueAgentUpdate(ctx, other.ID, "0.1.0-alpha.89"); err == nil {
-		t.Fatal("manual upgrade escaped scope")
+		t.Fatal("manual upgrade escaped pause")
 	}
 	ids, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89")
 	if err != nil || len(ids) != 1 || ids[0] != pilot.ID {
@@ -73,7 +73,7 @@ func TestAgentUpdateScopeFencesQueueAndExistingPendingTask(t *testing.T) {
 		t.Fatalf("existing excluded task claimed: %v %v", task, err)
 	}
 	status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
-	if err != nil || !status.Scoped || status.Total != 1 || status.Excluded != 1 {
+	if err != nil || !status.Paused || status.Total != 1 || status.Excluded != 1 {
 		t.Fatalf("status: %+v %v", status, err)
 	}
 }

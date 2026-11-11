@@ -27,7 +27,7 @@ import (
 type Store struct {
 	businessRetired                bool
 	glivelaPilotStatePath          string
-	agentUpdateScope               map[string]bool
+	agentUpdatePauses              map[string]bool
 	headscaleControlIPv6           string
 	db                             *sql.DB
 	dataDir                        string
@@ -135,9 +135,9 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	updateScope, scopeErr := readAgentUpdateScope(dataDir)
-	if scopeErr != nil {
-		return nil, scopeErr
+	updatePauses, pausesErr := readAgentUpdatePauses(dataDir)
+	if pausesErr != nil {
+		return nil, pausesErr
 	}
 	headscaleAllowedEndpoints := make([]string, 0, len(headscaleAllowedURLs))
 	seenHeadscaleEndpoints := make(map[string]struct{}, len(headscaleAllowedURLs))
@@ -215,7 +215,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		return nil, err
 	}
 	store := &Store{
-		agentUpdateScope: updateScope,
+		agentUpdatePauses: updatePauses,
 		db:               db, dataDir: dataDir, key: key,
 		backgroundCtx:               backgroundCtx,
 		backgroundCancel:            backgroundCancel,
