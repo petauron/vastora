@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.427](https://github.com/petauron/vastora/compare/v0.1.0-alpha.426...v0.1.0-alpha.427) (2026-11-11)
+
+
+### Bug Fixes
+
+* **agent:** retry startup recovery after delayed private networking ([#1234](https://github.com/petauron/vastora/issues/1234)) ([aca1405](https://github.com/petauron/vastora/commit/aca14053e947ea579a23ed1c0b751de578b984d8))
+* **center:** synchronize all eligible Agents except explicit pauses ([#1236](https://github.com/petauron/vastora/issues/1236)) ([c96955e](https://github.com/petauron/vastora/commit/c96955e599432220ff75e4a0819b0495dfb9a925))
+
 ## [0.1.0-alpha.426](https://github.com/petauron/vastora/compare/v0.1.0-alpha.425...v0.1.0-alpha.426) (2026-11-11)
 
 
