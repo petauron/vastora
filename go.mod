@@ -42,7 +42,7 @@ require (
 )
 
 require (
-	github.com/Microsoft/go-winio v0.6.3 // indirect
+	github.com/Microsoft/go-winio v0.6.4 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
