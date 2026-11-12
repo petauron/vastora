@@ -305,9 +305,12 @@ func (s *Store) queueAgentUpdate(ctx context.Context, agentID, targetVersion str
 	return update, nil
 }
 
-// QueueAgentUpdates starts every eligible online Agent independently so one
-// unhealthy node cannot prevent the rest of the fleet from moving forward.
-func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]string, error) {
+type agentUpdateCandidate struct {
+	id, currentVersion string
+}
+
+// Discover eligible nodes without creating any update tasks.
+func (s *Store) agentUpdateCandidates(ctx context.Context, targetVersion string) ([]agentUpdateCandidate, error) {
 	targetVersion = strings.TrimPrefix(strings.TrimSpace(targetVersion), "v")
 	if targetVersion == "" || !semver.IsValid("v"+targetVersion) {
 		return nil, errors.New("center: Agent rollout target version is invalid")
@@ -315,7 +318,7 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	if paused, err := agentUpdateRolloutPaused(ctx, s.db); err != nil {
 		return nil, err
 	} else if paused {
-		return []string{}, nil
+		return []agentUpdateCandidate{}, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT agent.id, agent.version, COALESCE(previous.state,''), COALESCE(previous.target_version,''),
 		EXISTS(SELECT 1 FROM task_executions execution WHERE execution.task_id=previous.id AND execution.attempt=previous.attempt AND execution.disposition='abandon')
@@ -341,10 +344,7 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("center: select Agent rollout targets: %w", err)
 	}
-	type rolloutCandidate struct {
-		id, currentVersion string
-	}
-	candidates := []rolloutCandidate{}
+	candidates := []agentUpdateCandidate{}
 	for rows.Next() {
 		var agentID, currentVersion, previousState, previousTarget string
 		var previousAbandoned bool
@@ -365,7 +365,7 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 		if semver.IsValid(currentSemver) && semver.Compare("v"+targetVersion, currentSemver) <= 0 {
 			continue
 		}
-		candidates = append(candidates, rolloutCandidate{id: agentID, currentVersion: currentVersion})
+		candidates = append(candidates, agentUpdateCandidate{id: agentID, currentVersion: currentVersion})
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -374,19 +374,45 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	queuedIDs := make([]string, 0, len(candidates))
-	queueErrors := make([]error, 0)
+	eligible := make([]agentUpdateCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		blocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, s.db, candidate.id, candidate.currentVersion)
 		if err != nil {
-			queueErrors = append(queueErrors, fmt.Errorf("center: inspect Agent %s before independent update: %w", candidate.id, err))
-			continue
+			return nil, err
 		}
-		if blocked {
+		if !blocked {
+			eligible = append(eligible, candidate)
+		}
+	}
+	return eligible, nil
+}
+
+// QueueAgentUpdates is called only by an explicit administrator push. A nil
+// selection means all currently eligible online nodes; an empty selection is
+// invalid and must never expand to all nodes. No selection is kept as policy.
+func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string, agentIDs []string) ([]string, error) {
+	selected := make(map[string]bool, len(agentIDs))
+	if agentIDs != nil && len(agentIDs) == 0 {
+		return nil, errors.New("center: select at least one Agent")
+	}
+	for _, id := range agentIDs {
+		if id == "" || strings.TrimSpace(id) != id || selected[id] {
+			return nil, errors.New("center: invalid or duplicate selected Agent")
+		}
+		selected[id] = true
+	}
+	candidates, err := s.agentUpdateCandidates(ctx, targetVersion)
+	if err != nil {
+		return nil, err
+	}
+	queuedIDs := make([]string, 0, len(candidates))
+	queueErrors := make([]error, 0)
+	for _, candidate := range candidates {
+		if agentIDs != nil && !selected[candidate.id] {
 			continue
 		}
 		if _, err := s.QueueAgentUpdate(ctx, candidate.id, targetVersion); err != nil {
-			queueErrors = append(queueErrors, fmt.Errorf("center: queue Agent %s independently: %w", candidate.id, err))
+			queueErrors = append(queueErrors, fmt.Errorf("center: queue Agent %s: %w", candidate.id, err))
 			continue
 		}
 		queuedIDs = append(queuedIDs, candidate.id)

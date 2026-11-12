@@ -160,7 +160,7 @@ For backup-bound native replacements and retained public service identity, see
 [installation handover](docs/native-lifecycle-handover.md).
 For verified retirement of old Glivela proxy execution records while retaining
 their services and history, see [execution retirement](docs/glivela-execution-retirement.md).
-Center upgrades automatically synchronize all eligible online Agents. Preserve
+Center upgrades and all-or-selected Agent update pushes are separate actions. Preserve
 [explicit Agent update pauses](docs/agent-update-pauses.md) for maintenance holds.
 For IPv6-only Agent onboarding, see the explicitly configured
 [Headscale control IPv6 address](docs/tailscale-compatibility.md#ipv6-only-control-connectivity-1206).

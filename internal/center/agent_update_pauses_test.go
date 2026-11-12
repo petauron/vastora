@@ -59,7 +59,7 @@ func TestAgentUpdatePausesFencesQueueAndExistingPendingTask(t *testing.T) {
 	if _, err := store.QueueAgentUpdate(ctx, other.ID, "0.1.0-alpha.89"); err == nil {
 		t.Fatal("manual upgrade escaped pause")
 	}
-	ids, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89")
+	ids, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89", nil)
 	if err != nil || len(ids) != 1 || ids[0] != pilot.ID {
 		t.Fatalf("rollout: %v %v", ids, err)
 	}

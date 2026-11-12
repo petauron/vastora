@@ -10,9 +10,16 @@ import { SettingsView } from "./SettingsView";
 import { SetupWizard } from "./SetupWizard";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { CenterUpdateCard } from "./CenterUpdateCard";
+import { AgentUpdateCard } from "./AgentUpdateCard";
+import type { AgentUpdatesStatus, AgentUpdateRollout, AgentUpdateTarget } from "../types";
 import { userError } from "./shared";
 
 import { dashboard, rerender, resetRender, render } from "./views.test-support";
+
+function updateStatus(rollout: Partial<AgentUpdateRollout> = {}, targets: AgentUpdateTarget[] = []): AgentUpdatesStatus {
+  return { targetVersion: "0.1.0-alpha.99", available: true, pushPaused: rollout.claimsPaused ?? false,
+    rollout: { targetVersion: "0.1.0-alpha.99", total: 3, updated: 1, updating: 0, pending: 2, failed: 0, offline: 0, manual: 0, blocked: 0, claimsPaused: false, paused: false, excluded: 0, ...rollout }, targets };
+}
 
 describe("network and app views", () => {
   beforeEach(() => window.history.replaceState({}, "", "/"));
@@ -830,7 +837,6 @@ describe("network and app views", () => {
       currentVersion: "0.1.0-alpha.51",
       updateAvailable: false,
       state: "succeeded" as const,
-      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 1, updating: 1, pending: 1, failed: 0, offline: 0, manual: 0, blocked: 0, claimsPaused: false },
     };
     vi.spyOn(api, "centerUpdate").mockResolvedValue(completed);
     render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onReload={onReload} onStatusChange={onStatusChange} status={status} />);
@@ -840,72 +846,46 @@ describe("network and app views", () => {
     expect(onStatusChange).toHaveBeenCalledWith(completed);
   });
 
-  it("keeps polling pending Agents after the updated Center page loads", async () => {
-    const status = {
-      ...dashboard().centerUpdate,
-      currentVersion: "0.1.0-alpha.51",
-      latestVersion: "0.1.0-alpha.51",
-      updateAvailable: false,
-      state: "succeeded" as const,
-      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 1, updating: 0, pending: 2, failed: 0, offline: 0, manual: 0, blocked: 0, claimsPaused: false },
-    };
-    const onRefresh = vi.fn().mockResolvedValue(undefined);
-    const onReload = vi.fn();
-    const onStatusChange = vi.fn();
-    const pending = {
-      ...status,
-      currentVersion: "0.1.0-alpha.51",
-      updateAvailable: false,
-      state: "succeeded" as const,
-      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 1, updating: 0, pending: 2, failed: 0, offline: 0, manual: 0, blocked: 0, claimsPaused: false },
-    };
-    vi.spyOn(api, "centerUpdate").mockResolvedValue(pending);
-    render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onReload={onReload} onStatusChange={onStatusChange} status={status} />);
+  it("pushes only the selected Agent without expanding the selection", async () => {
+    const targets: AgentUpdateTarget[] = [
+      { id: "node-a", name: "Node A", version: "0.1.0-alpha.98", state: "available", eligible: true },
+      { id: "node-b", name: "Node B", version: "0.1.0-alpha.98", state: "available", eligible: true },
+    ];
+    const status = updateStatus({}, targets);
+    vi.spyOn(api, "agentUpdates").mockResolvedValue(status);
+    const push = vi.spyOn(api, "pushAgentUpdates").mockResolvedValue({ queuedAgentIds: ["node-a"], skippedAgentIds: [], status });
+    const container = render(<AgentUpdateCard language="zh-CN" />);
     await act(async () => { await Promise.resolve(); });
-    expect(onStatusChange).toHaveBeenCalledWith(pending);
-    expect(onRefresh).not.toHaveBeenCalled();
-    expect(onReload).not.toHaveBeenCalled();
+    act(() => container.querySelector<HTMLElement>('[role="checkbox"][aria-label="选择 Node A"]')?.click());
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("更新所选 (1)"))?.click());
+    expect(push).not.toHaveBeenCalled();
+    await act(async () => { [...document.body.querySelectorAll("button")].find((button) => button.textContent === "确认推送")?.click(); await Promise.resolve(); });
+    expect(push).toHaveBeenCalledWith({ mode: "selected", targetVersion: status.targetVersion, agentIds: ["node-a"] });
   });
 
-  it("does not keep the update busy when an Agent requires follow-up", async () => {
-    const status = {
-      ...dashboard().centerUpdate,
-      currentVersion: "0.1.0-alpha.51",
-      latestVersion: "0.1.0-alpha.51",
-      updateAvailable: false,
-      state: "succeeded" as const,
-      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 2, updating: 0, pending: 0, failed: 1, offline: 0, manual: 0, blocked: 0, claimsPaused: false },
-    };
-    const onRefresh = vi.fn().mockResolvedValue(undefined);
-    const onReload = vi.fn();
-    const onStatusChange = vi.fn();
-    const failed = {
-      ...status,
-      currentVersion: "0.1.0-alpha.51",
-      updateAvailable: false,
-      state: "succeeded" as const,
-      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 2, updating: 0, pending: 0, failed: 1, offline: 0, manual: 0, blocked: 0, claimsPaused: false },
-    };
-    const check = vi.spyOn(api, "centerUpdate").mockResolvedValue(failed);
-    render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onReload={onReload} onStatusChange={onStatusChange} status={status} />);
+  it("pushes all eligible nodes only after confirmation while retaining pauses", async () => {
+    const status = updateStatus({ failed: 1, excluded: 1 }, [
+      { id: "node-a", name: "Node A", version: "0.1.0-alpha.98", state: "available", eligible: true },
+      { id: "node-b", name: "Node B", version: "0.1.0-alpha.98", state: "paused", eligible: false },
+      { id: "node-c", name: "Node C", version: "0.1.0-alpha.98", state: "failed", eligible: false },
+    ]);
+    vi.spyOn(api, "agentUpdates").mockResolvedValue(status);
+    const push = vi.spyOn(api, "pushAgentUpdates").mockResolvedValue({ queuedAgentIds: ["node-a"], skippedAgentIds: [], status });
+    const container = render(<AgentUpdateCard language="zh-CN" />);
     await act(async () => { await Promise.resolve(); });
-    expect(check).not.toHaveBeenCalled();
-    expect(onStatusChange).not.toHaveBeenCalled();
-    expect(onRefresh).not.toHaveBeenCalled();
-    expect(onReload).not.toHaveBeenCalled();
+    const pausedCheckbox = container.querySelector('[role="checkbox"][aria-label="选择 Node B"]');
+    expect(pausedCheckbox?.hasAttribute("disabled") || pausedCheckbox?.getAttribute("aria-disabled") === "true").toBe(true);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("全部更新"))?.click());
+    expect(push).not.toHaveBeenCalled();
+    await act(async () => { [...document.body.querySelectorAll("button")].find((button) => button.textContent === "确认推送")?.click(); await Promise.resolve(); });
+    expect(push).toHaveBeenCalledWith({ mode: "all", targetVersion: status.targetVersion });
   });
 
-  it("distinguishes unresolved task blockers from legacy Agents", () => {
-    const status = {
-      ...dashboard().centerUpdate,
-      currentVersion: "0.1.0-alpha.159",
-      latestVersion: "0.1.0-alpha.159",
-      updateAvailable: false,
-      state: "succeeded" as const,
-      agentRollout: { targetVersion: "0.1.0-alpha.159", total: 17, updated: 6, updating: 0, pending: 0, failed: 0, offline: 0, manual: 0, blocked: 11, claimsPaused: false },
-    };
+  it("distinguishes unresolved task blockers from legacy Agents", async () => {
+    vi.spyOn(api, "agentUpdates").mockResolvedValue(updateStatus({ total: 17, updated: 6, pending: 0, blocked: 11 }));
     const onViewActivity = vi.fn();
-    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} onViewActivity={onViewActivity} status={status} />);
+    const container = render(<AgentUpdateCard language="zh-CN" onViewActivity={onViewActivity} />);
+    await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain("11 个存在待处理任务，已暂停更新");
     expect(container.textContent).not.toContain("旧版本需要手动更新");
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("查看活动"))?.click());
@@ -924,78 +904,53 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("50%");
   });
 
-  it("shows remote Agent rollout as independent background work", () => {
-    const status = {
-      ...dashboard().centerUpdate,
-      currentVersion: "0.1.0-alpha.99",
-      latestVersion: "0.1.0-alpha.99",
-      updateAvailable: false,
-      state: "succeeded" as const,
-      targetVersion: "0.1.0-alpha.99",
-      agentRollout: { targetVersion: "0.1.0-alpha.99", total: 4, updated: 2, updating: 1, pending: 1, failed: 0, offline: 0, manual: 0, blocked: 0, claimsPaused: false },
-    };
-    vi.spyOn(api, "centerUpdate").mockImplementation(() => new Promise(() => undefined));
-    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
-    expect(container.textContent).toContain("Agent 同步进度");
-    expect(container.textContent).not.toContain("并发");
-    expect(container.textContent).not.toContain("远端");
+  it("shows explicitly pushed Agent tasks independently of Center updates", async () => {
+    vi.spyOn(api, "agentUpdates").mockResolvedValue(updateStatus({ total: 4, updated: 2, updating: 1, pending: 1 }, [
+      { id: "node-a", name: "Node A", version: "0.1.0-alpha.98", state: "updating", eligible: false },
+      { id: "node-b", name: "Node B", version: "0.1.0-alpha.98", state: "pending", eligible: false },
+    ]));
+    const center = vi.spyOn(api, "centerUpdate");
+    const container = render(<AgentUpdateCard language="zh-CN" />);
+    await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain("2/4 个 Agent 已是当前版本");
-    expect(container.textContent).toContain("Agent 后台升级");
-    expect(container.textContent).toContain("1 个正在更新；1 个等待领取更新任务");
-    expect(container.textContent).not.toContain("Center 会短暂重启");
+    expect(container.textContent).toContain("更新中");
+    expect(container.textContent).toContain("等待领取");
+    expect(center).not.toHaveBeenCalled();
     expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("50");
   });
 
-  it("reports Center completion while Agents wait for independent tasks", () => {
-    const status = {
-      ...dashboard().centerUpdate,
-      currentVersion: "0.1.0-alpha.99",
-      latestVersion: "0.1.0-alpha.99",
-      updateAvailable: false,
-      state: "succeeded" as const,
-      targetVersion: "0.1.0-alpha.99",
-      agentRollout: { targetVersion: "0.1.0-alpha.99", total: 16, updated: 1, updating: 0, pending: 15, failed: 0, offline: 0, manual: 0, blocked: 0, claimsPaused: false },
-    };
+  it("reports Center completion without starting or polling Agent updates", async () => {
+    const status = { ...dashboard().centerUpdate, currentVersion: "0.1.0-alpha.99", latestVersion: "0.1.0-alpha.99", updateAvailable: false, state: "succeeded" as const };
+    const agents = vi.spyOn(api, "agentUpdates");
+    const push = vi.spyOn(api, "pushAgentUpdates");
     const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
+    await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain("Center 更新完成");
-    expect(container.textContent).toContain("15 个等待领取更新任务");
-    expect(container.textContent).not.toContain("等待发布条件");
-    expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("6");
+    expect(container.textContent).toContain("单独推送");
+    expect(container.querySelector('[role="progressbar"]')).toBeNull();
+    expect(agents).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
   });
 
-  it("explains when an emergency pause blocks Agent updates", () => {
-    const status = {
-      ...dashboard().centerUpdate,
-      currentVersion: "0.1.0-alpha.99",
-      latestVersion: "0.1.0-alpha.99",
-      updateAvailable: false,
-      state: "succeeded" as const,
-      targetVersion: "0.1.0-alpha.99",
-      agentRollout: { targetVersion: "0.1.0-alpha.99", total: 16, updated: 1, updating: 0, pending: 15, failed: 0, offline: 0, manual: 0, blocked: 0, claimsPaused: true },
-    };
+  it("explains when an emergency pause blocks Agent updates", async () => {
+    vi.spyOn(api, "agentUpdates").mockResolvedValue(updateStatus({ claimsPaused: true }));
     const onViewActivity = vi.fn();
-    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} onViewActivity={onViewActivity} status={status} />);
+    const container = render(<AgentUpdateCard language="zh-CN" onViewActivity={onViewActivity} />);
+    await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain("紧急维护已暂停 Agent 更新");
-    expect(container.textContent).toContain("15 个 Agent 更新任务已保留");
-    expect(container.textContent).not.toContain("15 个等待领取更新任务");
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("查看并恢复领取"))?.click());
+    expect([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("全部更新"))?.disabled).toBe(true);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("查看活动"))?.click());
     expect(onViewActivity).toHaveBeenCalledOnce();
   });
 
-  it("shows a complete Agent rollout progress bar after the update", () => {
-    const status = {
-      ...dashboard().centerUpdate,
-      currentVersion: "0.1.0-alpha.151",
-      latestVersion: "0.1.0-alpha.151",
-      updateAvailable: false,
-      state: "succeeded" as const,
-      agentRollout: { targetVersion: "0.1.0-alpha.151", total: 17, updated: 17, updating: 0, pending: 0, failed: 0, offline: 0, manual: 0, blocked: 0, claimsPaused: false },
-    };
-    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
+  it("shows complete Agent version status in its independent update area", async () => {
+    vi.spyOn(api, "agentUpdates").mockResolvedValue(updateStatus({ total: 17, updated: 17, pending: 0 }));
+    const container = render(<AgentUpdateCard language="zh-CN" />);
+    await act(async () => { await Promise.resolve(); });
     const progress = container.querySelector('[role="progressbar"]');
     expect(progress?.getAttribute("aria-valuenow")).toBe("100");
     expect(progress?.getAttribute("aria-valuetext")).toBe("17/17 个 Agent 已是当前版本");
-    expect(container.textContent).toContain("Agent 同步进度");
+    expect(container.textContent).toContain("Agent 版本状态");
   });
 
   it("bypasses the official release cache when update checking is requested", async () => {

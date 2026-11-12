@@ -23,23 +23,22 @@ type CenterRelease struct {
 }
 
 type CenterUpdateStatus struct {
-	CurrentVersion        string                    `json:"currentVersion"`
-	CurrentImageDigest    string                    `json:"currentImageDigest,omitempty"`
-	LatestVersion         string                    `json:"latestVersion,omitempty"`
-	LatestImageDigest     string                    `json:"latestImageDigest,omitempty"`
-	ImageMismatch         bool                      `json:"imageMismatch"`
-	UpdateAvailable       bool                      `json:"updateAvailable"`
-	ReleaseCheckAvailable bool                      `json:"releaseCheckAvailable"`
-	Automatic             bool                      `json:"automatic"`
-	State                 string                    `json:"state"`
-	TargetVersion         string                    `json:"targetVersion,omitempty"`
-	Phase                 string                    `json:"phase,omitempty"`
-	Progress              int                       `json:"progress,omitempty"`
-	Message               string                    `json:"message,omitempty"`
-	CheckedAt             string                    `json:"checkedAt,omitempty"`
-	UpdatedAt             string                    `json:"updatedAt,omitempty"`
-	Error                 string                    `json:"error,omitempty"`
-	AgentRollout          *AgentUpdateRolloutStatus `json:"agentRollout,omitempty"`
+	CurrentVersion        string `json:"currentVersion"`
+	CurrentImageDigest    string `json:"currentImageDigest,omitempty"`
+	LatestVersion         string `json:"latestVersion,omitempty"`
+	LatestImageDigest     string `json:"latestImageDigest,omitempty"`
+	ImageMismatch         bool   `json:"imageMismatch"`
+	UpdateAvailable       bool   `json:"updateAvailable"`
+	ReleaseCheckAvailable bool   `json:"releaseCheckAvailable"`
+	Automatic             bool   `json:"automatic"`
+	State                 string `json:"state"`
+	TargetVersion         string `json:"targetVersion,omitempty"`
+	Phase                 string `json:"phase,omitempty"`
+	Progress              int    `json:"progress,omitempty"`
+	Message               string `json:"message,omitempty"`
+	CheckedAt             string `json:"checkedAt,omitempty"`
+	UpdatedAt             string `json:"updatedAt,omitempty"`
+	Error                 string `json:"error,omitempty"`
 }
 
 type ReleaseChecker struct {
@@ -214,44 +213,8 @@ func (s *Server) centerUpdateStatus(ctx context.Context, refreshOfficial bool) C
 		result.Message = execution.Message
 		result.UpdatedAt = execution.UpdatedAt
 	}
-	if execution.State == "succeeded" && execution.TargetVersion == strings.TrimPrefix(Version, "v") {
-		rollout, rolloutErr := s.store.AgentUpdateRolloutStatus(ctx, Version)
-		if rolloutErr != nil {
-			result.Error = rolloutErr.Error()
-			return result
-		}
-		result.AgentRollout = &rollout
-	}
-	return result
-}
 
-func (s *Server) RunAgentUpdateRollout(ctx context.Context, interval time.Duration, report func(error)) {
-	if interval <= 0 {
-		interval = 5 * time.Second
-	}
-	reconcile := func() {
-		if !s.agentUpdateRolloutAvailable() {
-			return
-		}
-		_, err := s.store.QueueAgentUpdates(ctx, Version)
-		if err == nil {
-			err = s.store.releaseMigrationExecutionPause(ctx)
-		}
-		if err != nil && ctx.Err() == nil && report != nil {
-			report(err)
-		}
-	}
-	reconcile()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			reconcile()
-		}
-	}
+	return result
 }
 
 func centerUpdateProgress(execution deployapi.CenterUpdateExecution) (string, int) {
@@ -285,7 +248,7 @@ func centerUpdateProgress(execution deployapi.CenterUpdateExecution) (string, in
 		return "reconciling", 94
 	case "Verifying the co-located Agent.":
 		return "finalizing", 97
-	case "Verifying the running Center and co-located Agent.":
+	case "Verifying the running Center.":
 		return "finalizing", 97
 	default:
 		return "installing", 30

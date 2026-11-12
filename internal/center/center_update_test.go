@@ -158,14 +158,22 @@ func TestAgentUpdateRolloutDoesNotBlockCenterWhenUnqueuedOrOffline(t *testing.T)
 	}}
 	server := &Server{store: store, updates: updater, releaseChecker: fixedReleaseChecker{version: "0.1.0-alpha.100"}}
 	status := server.centerUpdateStatus(context.Background(), false)
-	if status.State != "succeeded" || !status.UpdateAvailable || status.AgentRollout == nil || status.AgentRollout.Pending != 1 {
+	rollout, err := store.AgentUpdateRolloutStatus(context.Background(), Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "succeeded" || !status.UpdateAvailable || rollout.Pending != 1 {
 		t.Fatalf("unqueued Agents blocked the completed Center update: %#v", status)
 	}
-	if _, err := store.QueueAgentUpdates(context.Background(), Version); err != nil {
+	if _, err := store.QueueAgentUpdates(context.Background(), Version, nil); err != nil {
 		t.Fatal(err)
 	}
 	status = server.centerUpdateStatus(context.Background(), false)
-	if status.State != "succeeded" || status.Phase != "completed" || status.Progress != 100 || status.AgentRollout == nil || status.AgentRollout.Updating != 1 {
+	rollout, err = store.AgentUpdateRolloutStatus(context.Background(), Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "succeeded" || status.Phase != "completed" || status.Progress != 100 || rollout.Updating != 1 {
 		t.Fatalf("unexpected remote Agent rollout status: %#v", status)
 	}
 	task, err := store.ClaimNextTask(context.Background(), node.ID, node.Credential)
@@ -174,7 +182,11 @@ func TestAgentUpdateRolloutDoesNotBlockCenterWhenUnqueuedOrOffline(t *testing.T)
 	}
 	clock = clock.Add(agentConnectedMaxAge)
 	status = server.centerUpdateStatus(context.Background(), false)
-	if status.State != "succeeded" || status.Phase != "completed" || status.Progress != 100 || !status.UpdateAvailable || !status.Automatic || status.AgentRollout == nil || status.AgentRollout.Updating != 0 || status.AgentRollout.Offline != 1 {
+	rollout, err = store.AgentUpdateRolloutStatus(context.Background(), Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "succeeded" || status.Phase != "completed" || status.Progress != 100 || !status.UpdateAvailable || !status.Automatic || rollout.Updating != 0 || rollout.Offline != 1 {
 		t.Fatalf("offline Agent blocked the completed Center update: %#v", status)
 	}
 }
