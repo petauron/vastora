@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.428](https://github.com/petauron/vastora/compare/v0.1.0-alpha.427...v0.1.0-alpha.428) (2026-11-12)
+
+
+### Features
+
+* **updates:** separate Center upgrades from explicit Agent pushes ([#1239](https://github.com/petauron/vastora/issues/1239)) ([29e9dfb](https://github.com/petauron/vastora/commit/29e9dfba756e491a96118f9eb0ad73795f5d62e2))
+
 ## [0.1.0-alpha.427](https://github.com/petauron/vastora/compare/v0.1.0-alpha.426...v0.1.0-alpha.427) (2026-11-11)
 
 
