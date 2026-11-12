@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.436](https://github.com/petauron/vastora/compare/v0.1.0-alpha.435...v0.1.0-alpha.436) (2026-11-12)
+
+
+### Bug Fixes
+
+* **center:** purge explicitly retired landing history ([#1259](https://github.com/petauron/vastora/issues/1259)) ([5f4417b](https://github.com/petauron/vastora/commit/5f4417b6181e05e58710a8014ba5f6d9ebdeae43))
+
 ## [0.1.0-alpha.435](https://github.com/petauron/vastora/compare/v0.1.0-alpha.434...v0.1.0-alpha.435) (2026-11-12)
 
 
