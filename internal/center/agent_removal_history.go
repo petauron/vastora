@@ -49,6 +49,23 @@ func (s *Store) PurgeRemovedLandingHistory(ctx context.Context, id, confirmation
 	if err != nil {
 		return err
 	}
+	// Frozen grants may still say enabled/ready. Their old secrets are cleanup
+	// candidates after independent retirement, never live authorization.
+	for _, query := range []string{
+		`SELECT protocol_secret_id FROM meridian_credentials WHERE egress_node_id=?`,
+		`SELECT credential_secret_id FROM landing_client_grants WHERE landing_node_id=?`,
+		`SELECT material_secret_id FROM landing_client_grants WHERE landing_node_id=? AND material_secret_id IS NOT NULL`,
+	} {
+		rows, err := tx.QueryContext(ctx, query, id)
+		if err != nil {
+			return err
+		}
+		values, err := scanRemovalStrings(rows)
+		if err != nil {
+			return err
+		}
+		secretIDs = append(secretIDs, values...)
+	}
 	// Snapshot exact primary keys before deleting parents. Exceptions never allow
 	// updates/inserts or deletion of another row, and cannot escape this SQLite
 	// transaction. All original guards are restored before it becomes visible.
