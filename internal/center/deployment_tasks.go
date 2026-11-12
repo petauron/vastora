@@ -669,6 +669,8 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	}
 	if currentRestore != nil {
 		task.SenulunRestore = currentRestore.SenulunRestore
+		task.NodeSite = currentRestore.NodeSite
+		task.NodeListenerState = currentRestore.NodeListenerState
 	}
 	if restoredMonitor != nil {
 		task.SenulunRestore = restoredMonitor.SenulunRestore

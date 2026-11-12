@@ -526,7 +526,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				result, err = manager.Adopt(ctx, task)
 			}
 		case "application.apply":
-			if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
+			if (task.NodeSite != nil || task.NodeListenerState != nil) && (task.Operation != "install" || !strings.HasPrefix(task.ID, "reinstall-current-") || task.NodeSite != nil && (task.AppKey != "vastora-official/daylight" || task.NodeSite.AppKey != task.AppKey || task.NodeSite.ApplicationID != task.ApplicationID || task.NodeSite.Action != "apply" || task.NodeSite.Validate() != nil) || task.NodeListenerState != nil && (task.AppKey != "vastora-official/glivela-entry" || !c.Capabilities.Docker)) {
+				err = errors.New("agent: invalid current recovery access")
+			} else if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
 				err = fmt.Errorf("agent: application task requires runtime generation %d, executor is generation %d", task.RequiredRuntimeGeneration, platform.ApplicationRuntimeGeneration)
 			} else if c.Executor == nil {
 				err = errors.New("agent: application capability is not configured")
@@ -897,6 +899,22 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 						err = uncertainTaskOutcome(err)
 					}
 				}
+			}
+		}
+		if err == nil && task.NodeSite != nil {
+			var siteResult nodesite.Result
+			siteResult, err = store.executeNodeSite(ctx, *task.NodeSite)
+			if err == nil {
+				result.NodeSite = &siteResult
+			} else {
+				err = uncertainTaskOutcome(err)
+			}
+		}
+		if err == nil && task.NodeListenerState != nil {
+			coordinator, _ := c.GatewayDriver.(NodeListenerCoordinator)
+			err = applyNodeListenerState(ctx, store, c.NodeListener, coordinator, *task.NodeListenerState)
+			if err != nil {
+				err = uncertainTaskOutcome(err)
 			}
 		}
 		if err != nil && task.SourceReceiptSHA256 != "" {

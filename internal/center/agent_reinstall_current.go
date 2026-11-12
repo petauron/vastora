@@ -16,11 +16,21 @@ import (
 	"github.com/petauron/vastora/internal/senulun"
 )
 
-// These collectors own their business state on another service. Recovery may
-// install their original package with newly issued credentials, but installation
-// does not prove that the original business identity is reporting or usable.
+// Collectors keep business state on their original service; supported Daylight
+// contains signed static content, with certificates owned by Center. Restore only
+// the original reviewed package. Installation never proves business usability.
 func currentReinstallApp(key string) bool {
-	return key == "vastora-official/glivela-entry" || key == komariAppKey || key == senulunAgentAppKey
+	return key == "vastora-official/glivela-entry" || key == komariAppKey || key == senulunAgentAppKey || key == "vastora-official/daylight"
+}
+
+// Daylight v0.2.0 r2 serves only the signed page through shared Caddy. Its
+// former Caddy state is a cache, not site content or application credentials.
+// Other website packages/versions must retain their explicit data recovery gate.
+func reinstallCurrentPackage(key string, manifest catalog.AppManifest) bool {
+	if key != "vastora-official/daylight" {
+		return true
+	}
+	return manifest.Version == "0.2.0" && manifest.PackageRevision == 2 && manifest.Runtime != nil && manifest.Runtime.Kind == "native" && manifest.Runtime.Version == 2 && slices.Contains(manifest.Runtime.RequiredCapabilities, "shared-caddy")
 }
 
 const currentReinstallSchema = `CREATE TABLE agent_reinstall_current_applications (
@@ -93,7 +103,7 @@ func (s *Store) QueueAgentReinstallCurrent(ctx context.Context, agentID, adminID
 	if err != nil {
 		return result, err
 	}
-	if registry.Valid || json.Unmarshal(manifest, &task.Manifest) != nil || catalog.ValidateApp(task.Manifest) != nil || task.Manifest.Version != app.Version {
+	if registry.Valid || json.Unmarshal(manifest, &task.Manifest) != nil || catalog.ValidateApp(task.Manifest) != nil || task.Manifest.Version != app.Version || !reinstallCurrentPackage(app.AppKey, task.Manifest) {
 		return result, errors.New("center: original package requires review")
 	}
 	if err = readReinstallPackageAuthorization(ctx, tx, app.DeploymentID, &task); err != nil {
@@ -123,7 +133,7 @@ func (s *Store) QueueAgentReinstallCurrent(ctx context.Context, agentID, adminID
 	if string(oldJSON) != string(newJSON) {
 		return result, errors.New("center: recovery must retain the original service and non-secret settings")
 	}
-	if app.AppKey != senulunAgentAppKey {
+	if app.AppKey != senulunAgentAppKey && app.AppKey != "vastora-official/daylight" {
 		var fresh, previous map[string]string
 		if json.Unmarshal(credentials, &fresh) != nil {
 			return result, errExecutionAuthorization
@@ -168,6 +178,9 @@ func (s *Store) QueueAgentReinstallCurrent(ctx context.Context, agentID, adminID
 	if app.AppKey == senulunAgentAppKey {
 		task.Secrets = json.RawMessage(`{}`)
 		task.ServiceAddress = ""
+	}
+	if err = s.attachReinstallCurrentAccess(ctx, tx, agentID, app.ApplicationID, app.AppKey, plan.NetworkReview.Approval, &task); err != nil {
+		return result, err
 	}
 	var secretID any
 	if string(task.Secrets) != "{}" {
@@ -234,13 +247,13 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 		return nil, nil
 	}
 	var sealed, approval, manifest, config []byte
-	var source, app, key, version, operation, address string
+	var source, app, key, version, operation, address, state string
 	var generation, attempt int
 	var invalid bool
-	err := tx.QueryRowContext(ctx, `SELECT r.sealed_task,r.approval_json,r.source_revision,d.application_id,d.app_key,d.app_version,d.manifest_json,d.config_json,d.operation,d.service_address,d.runtime_generation,d.attempt,d.delete_data OR d.reconciliation_required OR d.reconciliation_requested OR d.registry_credential_id IS NOT NULL
+	err := tx.QueryRowContext(ctx, `SELECT r.sealed_task,r.approval_json,r.source_revision,d.application_id,d.app_key,d.app_version,d.manifest_json,d.config_json,d.operation,d.service_address,d.runtime_generation,d.attempt,d.state,d.delete_data OR d.reconciliation_required OR d.reconciliation_requested OR d.registry_credential_id IS NOT NULL
  FROM agent_reinstall_current_applications r JOIN deployments d ON d.id=r.deployment_id JOIN agent_reinstall_operations op ON op.id=r.operation_id JOIN agents a ON a.id=op.agent_id
- WHERE d.id=? AND d.agent_id=? AND op.agent_id=d.agent_id AND r.application_id=d.application_id AND op.state='review_required' AND op.private_isolation IN ('withdrawn','not_required') AND a.x25519_public_key=r.replacement_key AND a.status='active' AND a.credential_revoked_at='' AND EXISTS(SELECT 1 FROM admins WHERE id=op.authorized_by)`, id, agentID).Scan(&sealed, &approval, &source, &app, &key, &version, &manifest, &config, &operation, &address, &generation, &attempt, &invalid)
-	if err != nil || invalid || attempt > 1 || operation != "install" || !currentReinstallApp(key) {
+ WHERE d.id=? AND d.agent_id=? AND op.agent_id=d.agent_id AND r.application_id=d.application_id AND op.state='review_required' AND op.private_isolation IN ('withdrawn','not_required') AND a.x25519_public_key=r.replacement_key AND a.status='active' AND a.credential_revoked_at='' AND EXISTS(SELECT 1 FROM admins WHERE id=op.authorized_by)`, id, agentID).Scan(&sealed, &approval, &source, &app, &key, &version, &manifest, &config, &operation, &address, &generation, &attempt, &state, &invalid)
+	if err != nil || invalid || attempt < 0 || operation != "install" || !currentReinstallApp(key) {
 		return nil, errExecutionAuthorization
 	}
 	raw, err := secret.Open(s.key, sealed, []byte("reinstall-current:"+id))
@@ -248,9 +261,25 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 		return nil, errExecutionAuthorization
 	}
 	var task AgentTask
-	if json.Unmarshal(raw, &task) != nil || task.ID != id || task.ApplicationID != app || task.AppKey != key || task.Manifest.Version != version || task.Operation != operation || task.ServiceAddress != address || task.RequiredRuntimeGeneration != generation || string(task.Config) != string(config) {
+	if json.Unmarshal(raw, &task) != nil || task.ID != id || task.ApplicationID != app || task.AppKey != key || task.Manifest.Version != version || !reinstallCurrentPackage(key, task.Manifest) || task.Operation != operation || task.ServiceAddress != address || task.RequiredRuntimeGeneration != generation || string(task.Config) != string(config) {
 		return nil, errExecutionAuthorization
 	}
+	// Reuse only the immutable task after an explicit operator decision and an
+	// authenticated failure with no owned resource receipt. The outer execution
+	// phase is already "apply" while package preparation still runs.
+	requestedAttempt := attempt
+	if state == "pending" {
+		requestedAttempt++
+	}
+	if requestedAttempt < 1 {
+		return nil, errExecutionAuthorization
+	}
+	if requestedAttempt > 1 {
+		if err = s.reviewReinstallCurrentRetries(ctx, tx, agentID, task, requestedAttempt); err != nil {
+			return nil, err
+		}
+	}
+	task.Attempt = int64(requestedAttempt)
 	actualManifest, _ := json.Marshal(task.Manifest)
 	var savedManifest catalog.AppManifest
 	if json.Unmarshal(manifest, &savedManifest) != nil {
@@ -286,9 +315,67 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 	if string(current) != string(approval) {
 		return nil, errExecutionAuthorization
 	}
+	checked := task
+	if err = s.attachReinstallCurrentAccess(ctx, tx, agentID, app, key, review.Approval, &checked); err != nil {
+		return nil, err
+	}
+	approvedAccess, _ := json.Marshal([]any{task.NodeSite, task.NodeListenerState})
+	currentAccess, _ := json.Marshal([]any{checked.NodeSite, checked.NodeListenerState})
+	if string(approvedAccess) != string(currentAccess) {
+		return nil, errExecutionAuthorization
+	}
 	// Decryption proves the immutable approved task; execution authorization also
 	// compares the actual issued task including fresh secrets to this exact value.
 	return &task, nil
+}
+
+// PackageExecutor attaches a receipt before its first owned-resource mutation.
+// Unknown outcomes, partial installs, changed tasks and unreviewed failures must
+// keep their lock; a reported preparation failure can use the existing decision.
+func (s *Store) reviewReinstallCurrentRetries(ctx context.Context, tx *sql.Tx, agentID string, task AgentTask, attempt int) error {
+	if task.Manifest.Runtime == nil || task.Manifest.Runtime.Version != 2 || (task.Manifest.Runtime.Kind != "native" && task.Manifest.Runtime.Kind != "systemd") {
+		return errExecutionAuthorization
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT e.id,e.attempt,e.sealed_task,e.sealed_result FROM task_executions e WHERE e.task_id=? AND e.agent_id=? AND e.attempt<? AND e.state='failed' AND e.phase='reported' AND e.disposition='reexecute' AND e.identity_retired_at='' ORDER BY e.attempt`, task.ID, agentID, attempt)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var id string
+		var previous int64
+		var sealedTask, sealedResult []byte
+		if err = rows.Scan(&id, &previous, &sealedTask, &sealedResult); err != nil {
+			return err
+		}
+		count++
+		if previous != int64(count) {
+			return errExecutionAuthorization
+		}
+		rawTask, openErr := secret.Open(s.key, sealedTask, []byte("execution-task:"+id))
+		rawResult, resultErr := secret.Open(s.key, sealedResult, []byte("execution-result:"+id))
+		var original AgentTask
+		var proof executionResultEvidence
+		var result ApplicationTaskResult
+		if openErr != nil || resultErr != nil || json.Unmarshal(rawTask, &original) != nil || json.Unmarshal(rawResult, &proof) != nil || proof.Succeeded || proof.Unknown || len(proof.Result) == 0 || string(proof.Result) == "null" || json.Unmarshal(proof.Result, &result) != nil || result.Resources != nil || len(result.Services) != 0 {
+			return errExecutionAuthorization
+		}
+		expected := task
+		expected.Attempt = previous
+		actualJSON, _ := json.Marshal(original)
+		expectedJSON, _ := json.Marshal(expected)
+		if string(actualJSON) != string(expectedJSON) {
+			return errExecutionAuthorization
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	if count != attempt-1 {
+		return errExecutionAuthorization
+	}
+	return nil
 }
 
 func (s *Server) handleAgentReinstallCurrent(w http.ResponseWriter, r *http.Request) {

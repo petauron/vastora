@@ -147,7 +147,7 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 			return gateway.NodeListenerState{}, errors.New("center: node-direct listener upstream belongs to another Agent")
 		}
 		route.ApplicationNodeID = applicationNodeID
-		if runtime == "host" && restore == nil {
+		if runtime == "host" {
 			// Native packages report their own private service endpoint and the
 			// signed recipe declares forwarding metadata. Do not infer a proxy
 			// component, fixed port or Docker alias from the application's key.
@@ -160,6 +160,12 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 			var owned int
 			if err := tx.QueryRowContext(ctx, `SELECT p.service_address,EXISTS(SELECT 1 FROM application_resources r WHERE r.application_id=? AND r.adoption_state='ready' AND json_extract(r.resources_json,'$.applicationId')=? AND json_extract(r.resources_json,'$.appKey')=? AND json_extract(r.resources_json,'$.runtime') IN ('systemd','native') AND json_extract(r.resources_json,'$.state')='ready' AND json_extract(r.resources_json,'$.manifestSha256')=r.manifest_sha256) FROM agent_network_profiles p WHERE p.agent_id=?`, applicationID, applicationID, appKey, nodeID).Scan(&address, &owned); err != nil || owned != 1 || address != host {
 				return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("native shared backend must match its ready installation and confirmed node service address")}
+			}
+			if restore != nil {
+				if applicationID != restore.ApplicationID || appKey != "vastora-official/glivela-entry" || actionRequired != 0 {
+					return gateway.NodeListenerState{}, errors.New("center: native recovery must retain its original publication")
+				}
+				host = restore.BackendAddress
 			}
 			route.ManagedReality = false
 			route.ProxyProtocol = serviceForwarding
