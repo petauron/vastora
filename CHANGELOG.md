@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.433](https://github.com/petauron/vastora/compare/v0.1.0-alpha.432...v0.1.0-alpha.433) (2026-11-12)
+
+
+### Bug Fixes
+
+* **recovery:** bind native listener to approved retained address ([#1250](https://github.com/petauron/vastora/issues/1250)) ([2857160](https://github.com/petauron/vastora/commit/2857160871bf9e51fbcbfb9ef7aa7485c51304ed))
+
 ## [0.1.0-alpha.432](https://github.com/petauron/vastora/compare/v0.1.0-alpha.431...v0.1.0-alpha.432) (2026-11-12)
 
 
