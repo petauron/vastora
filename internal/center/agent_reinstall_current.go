@@ -179,6 +179,9 @@ func (s *Store) QueueAgentReinstallCurrent(ctx context.Context, agentID, adminID
 		task.Secrets = json.RawMessage(`{}`)
 		task.ServiceAddress = ""
 	}
+	if err = s.attachReinstallCurrentAccess(ctx, tx, agentID, app.ApplicationID, app.AppKey, plan.NetworkReview.Approval, &task); err != nil {
+		return result, err
+	}
 	var secretID any
 	if string(task.Secrets) != "{}" {
 		secretID, err = s.putSecret(ctx, tx, task.Secrets, "deployment:"+id)
@@ -310,6 +313,15 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 	}
 	current, _ := json.Marshal(review.Approval)
 	if string(current) != string(approval) {
+		return nil, errExecutionAuthorization
+	}
+	checked := task
+	if err = s.attachReinstallCurrentAccess(ctx, tx, agentID, app, key, review.Approval, &checked); err != nil {
+		return nil, err
+	}
+	approvedAccess, _ := json.Marshal([]any{task.NodeSite, task.NodeListenerState})
+	currentAccess, _ := json.Marshal([]any{checked.NodeSite, checked.NodeListenerState})
+	if string(approvedAccess) != string(currentAccess) {
 		return nil, errExecutionAuthorization
 	}
 	// Decryption proves the immutable approved task; execution authorization also

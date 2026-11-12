@@ -52,6 +52,9 @@ func (s *Store) currentReinstallProof(ctx context.Context, tx *sql.Tx, target, i
 	if json.Unmarshal(raw, &proof) != nil || !proof.Succeeded || proof.Unknown || proof.ApplicationRuntimeGeneration == nil || *proof.ApplicationRuntimeGeneration < task.RequiredRuntimeGeneration || json.Unmarshal(proof.Result, &result) != nil {
 		return result, 0, errExecutionAuthorization
 	}
+	if task.NodeSite != nil && (result.NodeSite == nil || result.NodeSite.State != "applied" || result.NodeSite.Action != "apply" || result.NodeSite.Hostname != task.NodeSite.Hostname || result.NodeSite.Revision != task.NodeSite.Revision || result.NodeSite.Fingerprint == "") {
+		return result, 0, errors.New("center: authenticated original site restoration is required")
+	}
 	if task.SenulunRestore != nil && (result.SenulunRestored == nil || result.SenulunRestored.NodeID != task.SenulunRestore.NodeID) {
 		return result, 0, errExecutionAuthorization
 	}
