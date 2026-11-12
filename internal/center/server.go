@@ -124,6 +124,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/status", s.requireAuth(false, s.handleStatus))
 	mux.HandleFunc("GET /api/v1/diagnostics", s.requireAuth(false, s.handleDiagnostics))
 	mux.HandleFunc("GET /api/v1/system/update", s.requireAuth(false, s.handleCenterUpdateStatus))
+	mux.HandleFunc("GET /api/v1/system/agent-updates", s.requireAuth(false, s.handleAgentUpdateStatus))
+	mux.HandleFunc("POST /api/v1/system/agent-updates", s.requireAuth(true, s.handlePushAgentUpdates))
 	mux.HandleFunc("POST /api/v1/system/update", s.requireAuth(true, s.handleStartCenterUpdate))
 	mux.HandleFunc("GET /api/v1/system/domain", s.requireAuth(false, s.handleSystemDomain))
 	mux.HandleFunc("POST /api/v1/system/domain", s.requireAuth(true, s.handleSwitchSystemDomain))

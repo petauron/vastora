@@ -252,10 +252,14 @@ fi
 migrate_legacy_vastora_runtime_network "$install_dir"
 ensure_vastora_runtime_network_for_upgrade "$install_dir"
 
+cohost_agent_present=no
 agent_executable="${VASTORA_AGENT_EXECUTABLE:-/usr/local/bin/vastora}"
 agent_unit="${VASTORA_AGENT_UNIT:-/etc/systemd/system/vastora-agent.service}"
 agent_data_dir="${VASTORA_AGENT_DATA_DIR:-/var/lib/vastora/agent}"
 if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=Vastora Agent' "$agent_unit"; then
+  cohost_agent_present=yes
+fi
+if [ "$protocol_transition" = yes ] && [ "$cohost_agent_present" = yes ]; then
   if ! command -v systemctl >/dev/null 2>&1; then
     echo "systemctl is required to update the co-located Vastora Agent." >&2
     exit 1
@@ -382,9 +386,13 @@ if [ "$agent_changed" = yes ]; then
     done
   fi
 	echo "Co-located Agent is running; verify its Center heartbeat before proceeding."
-else
+elif [ "$cohost_agent_present" = no ]; then
   "$install_dir/install-host-cli.sh" \
     --image "$new_image" --version "$new_version" --install-dir "$install_dir"
+else
+  # The host command is also the Agent executable. Keep it unchanged, including
+  # on the next reboot; update this Agent only through an explicit Agent push.
+  echo "Co-located Agent and its host command were preserved; push its update separately."
 fi
 
 install -m 0644 /dev/null "$install_dir/.host-cli-installed"

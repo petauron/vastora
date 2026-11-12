@@ -100,24 +100,33 @@ export type CenterUpdateStatus = {
   automatic: boolean;
   state: "idle" | "queued" | "applying" | "succeeded" | "failed";
   targetVersion?: string;
-  phase?: "queued" | "downloading" | "verifying" | "installing" | "validating" | "pulling" | "agent" | "restarting" | "health" | "reconciling" | "finalizing" | "agents" | "completed";
+  phase?: "queued" | "downloading" | "verifying" | "installing" | "validating" | "pulling" | "agent" | "restarting" | "health" | "reconciling" | "finalizing" | "completed";
   progress?: number;
   message?: string;
   checkedAt?: string;
   updatedAt?: string;
   error?: string;
-  agentRollout?: {
-    targetVersion: string;
-    total: number;
-    updated: number;
-    updating: number;
-    pending: number;
-    failed: number;
-    offline: number;
-    manual: number;
-    blocked: number;
-    claimsPaused: boolean;
-  };
+
+};
+
+export type AgentUpdateRollout = {
+  targetVersion: string; total: number; updated: number; updating: number;
+  pending: number; failed: number; offline: number; manual: number;
+  blocked: number; claimsPaused: boolean; paused: boolean; excluded: number;
+};
+export type AgentUpdateTarget = {
+  id: string; name: string; version: string; eligible: boolean;
+  state: "available" | "current" | "newer" | "paused" | "disabled" | "offline" | "pending" | "updating" | "failed" | "manual" | "blocked";
+};
+export type AgentUpdatesStatus = {
+  targetVersion: string; available: boolean; pushPaused: boolean;
+  rollout: AgentUpdateRollout; targets: AgentUpdateTarget[];
+};
+export type AgentUpdatePushInput = { targetVersion: string } & (
+  { mode: "all"; agentIds?: never } | { mode: "selected"; agentIds: string[] }
+);
+export type AgentUpdatePushResult = {
+  queuedAgentIds: string[]; skippedAgentIds: string[]; error?: string; status: AgentUpdatesStatus;
 };
 
 export type AssistantProvider = {
