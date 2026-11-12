@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.434](https://github.com/petauron/vastora/compare/v0.1.0-alpha.433...v0.1.0-alpha.434) (2026-11-12)
+
+
+### Bug Fixes
+
+* **center:** accept heartbeat while network confirmation is pending ([d5e2262](https://github.com/petauron/vastora/commit/d5e226276c2156a0d07f61043b40115b45a06641))
+* **center:** confirm replacement public mapping after network invalidation ([593fd44](https://github.com/petauron/vastora/commit/593fd44aca2017cbc5dd6827718b8ad7b594bebc))
+
 ## [0.1.0-alpha.433](https://github.com/petauron/vastora/compare/v0.1.0-alpha.432...v0.1.0-alpha.433) (2026-11-12)
 
 
