@@ -110,7 +110,7 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 // A recovering host has no active profile or published service binding yet.
 // Only the reviewed, restored Meridian backend may enter its fresh listener.
 type nodeListenerRestoreTarget struct {
-	ApplicationID, BackendAddress, BindAddress string
+	ApplicationID, PreviousBackendAddress, BackendAddress, BindAddress string
 }
 
 func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID string, revision int64, restore *nodeListenerRestoreTarget) (gateway.NodeListenerState, error) {
@@ -156,16 +156,22 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 			if err != nil || portErr != nil || port < 1 || port > 65535 || serviceProtocol != "tcp" || !networking.IsPrivateServiceAddress(host) || net.ParseIP(host).IsLoopback() || (serviceForwarding != "" && serviceForwarding != gateway.ProxyProtocolV2) {
 				return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("native shared listener requires a declared private TCP service")}
 			}
-			var address string
 			var owned int
-			if err := tx.QueryRowContext(ctx, `SELECT p.service_address,EXISTS(SELECT 1 FROM application_resources r WHERE r.application_id=? AND r.adoption_state='ready' AND json_extract(r.resources_json,'$.applicationId')=? AND json_extract(r.resources_json,'$.appKey')=? AND json_extract(r.resources_json,'$.runtime') IN ('systemd','native') AND json_extract(r.resources_json,'$.state')='ready' AND json_extract(r.resources_json,'$.manifestSha256')=r.manifest_sha256) FROM agent_network_profiles p WHERE p.agent_id=?`, applicationID, applicationID, appKey, nodeID).Scan(&address, &owned); err != nil || owned != 1 || address != host {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_resources r WHERE r.application_id=? AND r.adoption_state='ready' AND json_extract(r.resources_json,'$.applicationId')=? AND json_extract(r.resources_json,'$.appKey')=? AND json_extract(r.resources_json,'$.runtime') IN ('systemd','native') AND json_extract(r.resources_json,'$.state')='ready' AND json_extract(r.resources_json,'$.manifestSha256')=r.manifest_sha256)`, applicationID, applicationID, appKey).Scan(&owned); err != nil || owned != 1 {
 				return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("native shared backend must match its ready installation and confirmed node service address")}
 			}
 			if restore != nil {
-				if applicationID != restore.ApplicationID || appKey != "vastora-official/glivela-entry" || actionRequired != 0 {
+				// Reinstall withdraws the active profile until business acceptance.
+				// Match its explicitly approved retained address before migration.
+				if applicationID != restore.ApplicationID || appKey != "vastora-official/glivela-entry" || actionRequired != 0 || restore.PreviousBackendAddress == "" || host != restore.PreviousBackendAddress {
 					return gateway.NodeListenerState{}, errors.New("center: native recovery must retain its original publication")
 				}
 				host = restore.BackendAddress
+			} else {
+				var address string
+				if err := tx.QueryRowContext(ctx, `SELECT service_address FROM agent_network_profiles WHERE agent_id=?`, nodeID).Scan(&address); err != nil || address != host {
+					return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("native shared backend must match its ready installation and confirmed node service address")}
+				}
 			}
 			route.ManagedReality = false
 			route.ProxyProtocol = serviceForwarding
