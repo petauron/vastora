@@ -470,7 +470,7 @@ for (const route of routes) {
   if (route.handler === "handleContinueAgentReinstallIsolation") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallContinueInput");
-    operation.description = "Explicit continuation by the authorizing administrator, bound to the inspected recovery attempt. Rechecks the exact saved private identity and controller; never rediscovers another owner by address. Stale or duplicate continuations cannot repeat an attempt. This action cannot repeat bootstrap preparation with an uncertain result.";
+    operation.description = "Explicit continuation by the authorizing administrator, bound to the inspected recovery attempt. Rechecks the exact saved private identity and controller; never rediscovers another owner by address. Stale or duplicate continuations cannot repeat an attempt. This action cannot repeat bootstrap preparation with an uncertain result. When authenticated previous evidence is missing, the authorizing administrator may explicitly review the exact old controller peer ID/public key and saved address. The controller tuple, ownership, operation attempt and concurrent state are rechecked and audited before the normal withdrawal; there is no automatic address/name matching.";
   }
   if (route.handler === "handleApproveAgentReinstallNetwork") {
     operation.responses[status].headers = noStoreHeaders;
