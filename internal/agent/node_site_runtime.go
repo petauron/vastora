@@ -200,6 +200,11 @@ func (s *Store) recoverNodeSiteJournals(ctx context.Context, resolve func(contex
 func (s *Store) executeNodeSite(ctx context.Context, task nodesite.Task) (nodesite.Result, error) {
 	s.landingMutationMu.Lock()
 	defer s.landingMutationMu.Unlock()
+	return s.executeNodeSiteLocked(ctx, task)
+}
+
+// The application lifecycle already owns landingMutationMu through persistence.
+func (s *Store) executeNodeSiteLocked(ctx context.Context, task nodesite.Task) (nodesite.Result, error) {
 	host, err := s.nodeSiteHost(ctx, task)
 	if err != nil {
 		return nodesite.Result{}, err

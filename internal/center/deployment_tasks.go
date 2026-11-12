@@ -32,6 +32,7 @@ import (
 )
 
 type AgentTask struct {
+	CurrentRecoveryResume     bool                                 `json:"currentRecoveryResume,omitempty"`
 	NodeSite                  *nodesite.Task                       `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
@@ -669,6 +670,7 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	}
 	if currentRestore != nil {
 		task.SenulunRestore = currentRestore.SenulunRestore
+		task.CurrentRecoveryResume = currentRestore.CurrentRecoveryResume
 		task.NodeSite = currentRestore.NodeSite
 		task.NodeListenerState = currentRestore.NodeListenerState
 	}
