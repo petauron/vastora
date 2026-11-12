@@ -149,13 +149,12 @@ grep -Fqx 'https://vastora.petauron.com/releases/v0.1.0-alpha.58/vastora-center-
 test ! -e "$install_dir/.update-request"
 
 # Files matching a target are not proof that the runtime is healthy.
-for failure in unhealthy not-ready wrong-version wrong-image stopped-agent stopped-gateway; do
+for failure in unhealthy not-ready wrong-version wrong-image stopped-gateway; do
   case "$failure" in
     unhealthy) export FAKE_UNHEALTHY=1 ;;
     not-ready) export FAKE_NOT_READY=1 ;;
     wrong-version) export FAKE_RUNNING_VERSION=0.1.0-alpha.57 ;;
     wrong-image) export FAKE_RUNNING_IMAGE="$image_57" ;;
-    stopped-agent) printf '%s\n' 'Description=Vastora Agent' > "$temporary_dir/agent.service" ;;
     stopped-gateway) export FAKE_GATEWAY_STOPPED=1 ;;
   esac
   if run_update 0.1.0-alpha.58 0.1.0-alpha.58 "$image_58" >/dev/null 2>&1; then
@@ -166,10 +165,13 @@ for failure in unhealthy not-ready wrong-version wrong-image stopped-agent stopp
   unset FAKE_UNHEALTHY FAKE_NOT_READY FAKE_RUNNING_VERSION FAKE_RUNNING_IMAGE FAKE_GATEWAY_STOPPED
   rm -f "$temporary_dir/agent.service"
 done
+# A stopped co-located Agent is independent of Center finalization.
+printf '%s\n' 'Description=Vastora Agent' > "$temporary_dir/agent.service"
 printf '%s\n' untouched > "$temporary_dir/installer.log"
 run_update 0.1.0-alpha.58 0.1.0-alpha.58 "$image_58"
 grep -Fq '"state":"succeeded"' "$install_dir/.update-status.json"
 grep -Fqx untouched "$temporary_dir/installer.log"
+rm -f "$temporary_dir/agent.service"
 
 if run_update 0.1.0-alpha.59 0.1.0-alpha.58 "$image_59" >/dev/null 2>&1; then
   echo "Center updater accepted an installer for the wrong version." >&2
