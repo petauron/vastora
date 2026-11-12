@@ -903,7 +903,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		}
 		if err == nil && task.NodeSite != nil {
 			var siteResult nodesite.Result
-			siteResult, err = store.executeNodeSite(ctx, *task.NodeSite)
+			siteResult, err = store.executeNodeSiteLocked(ctx, *task.NodeSite)
 			if err == nil {
 				result.NodeSite = &siteResult
 			} else {

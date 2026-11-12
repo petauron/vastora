@@ -275,7 +275,7 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 		return nil, errExecutionAuthorization
 	}
 	if requestedAttempt > 1 {
-		if err = s.reviewReinstallCurrentRetries(ctx, tx, agentID, task, requestedAttempt); err != nil {
+		if task.CurrentRecoveryResume, err = s.reviewReinstallCurrentRetries(ctx, tx, agentID, task, requestedAttempt); err != nil {
 			return nil, err
 		}
 	}
@@ -329,53 +329,61 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 	return &task, nil
 }
 
-// PackageExecutor attaches a receipt before its first owned-resource mutation.
-// Unknown outcomes, partial installs, changed tasks and unreviewed failures must
-// keep their lock; a reported preparation failure can use the existing decision.
-func (s *Store) reviewReinstallCurrentRetries(ctx context.Context, tx *sql.Tx, agentID string, task AgentTask, attempt int) error {
+// Preparation failures may retry unchanged. A single interrupted Daylight
+// persistence may only resume after an explicit operator decision; the Agent
+// must prove the exact original healthy installation and never reinstall it.
+func (s *Store) reviewReinstallCurrentRetries(ctx context.Context, tx *sql.Tx, agentID string, task AgentTask, attempt int) (bool, error) {
 	if task.Manifest.Runtime == nil || task.Manifest.Runtime.Version != 2 || (task.Manifest.Runtime.Kind != "native" && task.Manifest.Runtime.Kind != "systemd") {
-		return errExecutionAuthorization
+		return false, errExecutionAuthorization
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT e.id,e.attempt,e.sealed_task,e.sealed_result FROM task_executions e WHERE e.task_id=? AND e.agent_id=? AND e.attempt<? AND e.state='failed' AND e.phase='reported' AND e.disposition='reexecute' AND e.identity_retired_at='' ORDER BY e.attempt`, task.ID, agentID, attempt)
+	rows, err := tx.QueryContext(ctx, `SELECT e.id,e.attempt,e.state,e.phase,e.sealed_task,e.sealed_result FROM task_executions e WHERE e.task_id=? AND e.agent_id=? AND e.attempt<? AND e.state IN ('failed','unknown') AND e.disposition='reexecute' AND e.identity_retired_at='' ORDER BY e.attempt`, task.ID, agentID, attempt)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer rows.Close()
 	count := 0
+	resume := false
 	for rows.Next() {
-		var id string
+		var id, state, phase string
 		var previous int64
 		var sealedTask, sealedResult []byte
-		if err = rows.Scan(&id, &previous, &sealedTask, &sealedResult); err != nil {
-			return err
+		if err = rows.Scan(&id, &previous, &state, &phase, &sealedTask, &sealedResult); err != nil {
+			return false, err
 		}
 		count++
 		if previous != int64(count) {
-			return errExecutionAuthorization
+			return false, errExecutionAuthorization
 		}
 		rawTask, openErr := secret.Open(s.key, sealedTask, []byte("execution-task:"+id))
-		rawResult, resultErr := secret.Open(s.key, sealedResult, []byte("execution-result:"+id))
 		var original AgentTask
-		var proof executionResultEvidence
-		var result ApplicationTaskResult
-		if openErr != nil || resultErr != nil || json.Unmarshal(rawTask, &original) != nil || json.Unmarshal(rawResult, &proof) != nil || proof.Succeeded || proof.Unknown || len(proof.Result) == 0 || string(proof.Result) == "null" || json.Unmarshal(proof.Result, &result) != nil || result.Resources != nil || len(result.Services) != 0 {
-			return errExecutionAuthorization
+		if openErr != nil || json.Unmarshal(rawTask, &original) != nil {
+			return false, errExecutionAuthorization
 		}
 		expected := task
 		expected.Attempt = previous
 		actualJSON, _ := json.Marshal(original)
 		expectedJSON, _ := json.Marshal(expected)
 		if string(actualJSON) != string(expectedJSON) {
-			return errExecutionAuthorization
+			return false, errExecutionAuthorization
+		}
+		if state == "unknown" && phase == "persist" && attempt == 2 && count == 1 && task.AppKey == "vastora-official/daylight" && task.NodeSite != nil && len(sealedResult) == 0 {
+			resume = true
+			continue
+		}
+		rawResult, resultErr := secret.Open(s.key, sealedResult, []byte("execution-result:"+id))
+		var proof executionResultEvidence
+		var result ApplicationTaskResult
+		if state != "failed" || phase != "reported" || resultErr != nil || json.Unmarshal(rawResult, &proof) != nil || proof.Succeeded || proof.Unknown || len(proof.Result) == 0 || string(proof.Result) == "null" || json.Unmarshal(proof.Result, &result) != nil || result.Resources != nil || len(result.Services) != 0 {
+			return false, errExecutionAuthorization
 		}
 	}
 	if err = rows.Err(); err != nil {
-		return err
+		return false, err
 	}
 	if count != attempt-1 {
-		return errExecutionAuthorization
+		return false, errExecutionAuthorization
 	}
-	return nil
+	return resume, nil
 }
 
 func (s *Server) handleAgentReinstallCurrent(w http.ResponseWriter, r *http.Request) {
