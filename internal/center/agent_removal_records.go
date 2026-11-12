@@ -42,6 +42,13 @@ func (s *Store) finishAgentRemoval(ctx context.Context, id string) error {
 		}
 		return tx.Commit()
 	}
+	if err := deleteAgentRemovalRecords(ctx, tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func deleteAgentRemovalRecords(ctx context.Context, tx *sql.Tx, id string) error {
 	secretIDs, err := agentRemovalSecretIDs(ctx, tx, id)
 	if err != nil {
 		return err
@@ -97,7 +104,7 @@ func (s *Store) finishAgentRemoval(ctx context.Context, id string) error {
 	if err = deleteUnreferencedRemovalSecrets(ctx, tx, secretIDs); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func agentRemovalSecretIDs(ctx context.Context, tx *sql.Tx, id string) ([]string, error) {

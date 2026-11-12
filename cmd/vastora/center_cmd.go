@@ -22,6 +22,28 @@ func runCenter(arguments []string) error {
 		return errors.New("center command is required")
 	}
 	switch arguments[0] {
+	case "purge-removed-landing-history":
+		flags := flag.NewFlagSet("center purge-removed-landing-history", flag.ContinueOnError)
+		dataDir := flags.String("data-dir", "", "Center state directory")
+		nodeID := flags.String("node-id", "", "exact permanently removed landing identity")
+		confirmation := flags.String("confirm-name", "", "exact retained node name")
+		confirmed := flags.Bool("confirm-glivela-retired", false, "confirm independent Glivela identity and routes have already been permanently retired")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if *dataDir == "" || *nodeID == "" || *confirmation == "" || !*confirmed || flags.NArg() != 0 {
+			return errors.New("data directory, node ID, exact name and Glivela retirement confirmation are required")
+		}
+		store, err := center.Open(*dataDir)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		if err := store.PurgeRemovedLandingHistory(context.Background(), *nodeID, *confirmation, *confirmed); err != nil {
+			return err
+		}
+		fmt.Println("Removed landing history and unshared credentials purged; no remote host contacted")
+		return nil
 	case "retire-glivela-execution":
 		return runCenterExecutionRetirement(arguments[1:])
 	case "authorize-gateway-promotion":
