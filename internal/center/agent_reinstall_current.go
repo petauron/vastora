@@ -30,7 +30,7 @@ func reinstallCurrentPackage(key string, manifest catalog.AppManifest) bool {
 	if key != "vastora-official/daylight" {
 		return true
 	}
-	return manifest.Version == "0.2.0" && manifest.PackageRevision == 2 && manifest.Runtime.Kind == "native" && manifest.Runtime.Version == 2 && slices.Contains(manifest.Runtime.RequiredCapabilities, "shared-caddy")
+	return manifest.Version == "0.2.0" && manifest.PackageRevision == 2 && manifest.Runtime != nil && manifest.Runtime.Kind == "native" && manifest.Runtime.Version == 2 && slices.Contains(manifest.Runtime.RequiredCapabilities, "shared-caddy")
 }
 
 const currentReinstallSchema = `CREATE TABLE agent_reinstall_current_applications (
@@ -244,13 +244,13 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 		return nil, nil
 	}
 	var sealed, approval, manifest, config []byte
-	var source, app, key, version, operation, address string
+	var source, app, key, version, operation, address, state string
 	var generation, attempt int
 	var invalid bool
-	err := tx.QueryRowContext(ctx, `SELECT r.sealed_task,r.approval_json,r.source_revision,d.application_id,d.app_key,d.app_version,d.manifest_json,d.config_json,d.operation,d.service_address,d.runtime_generation,d.attempt,d.delete_data OR d.reconciliation_required OR d.reconciliation_requested OR d.registry_credential_id IS NOT NULL
+	err := tx.QueryRowContext(ctx, `SELECT r.sealed_task,r.approval_json,r.source_revision,d.application_id,d.app_key,d.app_version,d.manifest_json,d.config_json,d.operation,d.service_address,d.runtime_generation,d.attempt,d.state,d.delete_data OR d.reconciliation_required OR d.reconciliation_requested OR d.registry_credential_id IS NOT NULL
  FROM agent_reinstall_current_applications r JOIN deployments d ON d.id=r.deployment_id JOIN agent_reinstall_operations op ON op.id=r.operation_id JOIN agents a ON a.id=op.agent_id
- WHERE d.id=? AND d.agent_id=? AND op.agent_id=d.agent_id AND r.application_id=d.application_id AND op.state='review_required' AND op.private_isolation IN ('withdrawn','not_required') AND a.x25519_public_key=r.replacement_key AND a.status='active' AND a.credential_revoked_at='' AND EXISTS(SELECT 1 FROM admins WHERE id=op.authorized_by)`, id, agentID).Scan(&sealed, &approval, &source, &app, &key, &version, &manifest, &config, &operation, &address, &generation, &attempt, &invalid)
-	if err != nil || invalid || attempt > 1 || operation != "install" || !currentReinstallApp(key) {
+ WHERE d.id=? AND d.agent_id=? AND op.agent_id=d.agent_id AND r.application_id=d.application_id AND op.state='review_required' AND op.private_isolation IN ('withdrawn','not_required') AND a.x25519_public_key=r.replacement_key AND a.status='active' AND a.credential_revoked_at='' AND EXISTS(SELECT 1 FROM admins WHERE id=op.authorized_by)`, id, agentID).Scan(&sealed, &approval, &source, &app, &key, &version, &manifest, &config, &operation, &address, &generation, &attempt, &state, &invalid)
+	if err != nil || invalid || attempt < 0 || operation != "install" || !currentReinstallApp(key) {
 		return nil, errExecutionAuthorization
 	}
 	raw, err := secret.Open(s.key, sealed, []byte("reinstall-current:"+id))
@@ -261,6 +261,24 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 	if json.Unmarshal(raw, &task) != nil || task.ID != id || task.ApplicationID != app || task.AppKey != key || task.Manifest.Version != version || !reinstallCurrentPackage(key, task.Manifest) || task.Operation != operation || task.ServiceAddress != address || task.RequiredRuntimeGeneration != generation || string(task.Config) != string(config) {
 		return nil, errExecutionAuthorization
 	}
+	// Only a positively reported pre-apply failure may be retried through the
+	// existing explicit operator decision. Unknown or mutating attempts remain
+	// fenced. Retain the immutable task and every previous execution record.
+	requestedAttempt := attempt
+	if state == "pending" {
+		requestedAttempt++
+	}
+	if requestedAttempt < 1 {
+		return nil, errExecutionAuthorization
+	}
+	if requestedAttempt > 1 {
+		var reviewed int
+		err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_executions e WHERE e.task_id=? AND e.agent_id=? AND e.attempt<? AND e.state='failed' AND e.phase='reported' AND e.disposition='reexecute' AND e.identity_retired_at='' AND NOT EXISTS(SELECT 1 FROM execution_events ev WHERE ev.execution_id=e.id AND ev.phase IN ('apply','persist','handoff'))`, id, agentID, requestedAttempt).Scan(&reviewed)
+		if err != nil || reviewed != requestedAttempt-1 {
+			return nil, errExecutionAuthorization
+		}
+	}
+	task.Attempt = int64(requestedAttempt)
 	actualManifest, _ := json.Marshal(task.Manifest)
 	var savedManifest catalog.AppManifest
 	if json.Unmarshal(manifest, &savedManifest) != nil {

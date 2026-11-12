@@ -99,7 +99,11 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 			if err != nil {
 				return ApplicationTaskResult{}, err
 			}
-			return (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: backend}).Deploy(ctx, task)
+			result, err := (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: backend}).Deploy(ctx, task)
+			if err == nil && task.SenulunRestore != nil {
+				result.SenulunRestored = &senulun.RestoreResult{NodeID: task.SenulunRestore.NodeID}
+			}
+			return result, err
 		}
 		version := 1
 		if task.Manifest.Runtime != nil {

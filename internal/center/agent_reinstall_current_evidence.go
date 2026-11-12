@@ -40,7 +40,7 @@ func (s *Store) currentReinstallProof(ctx context.Context, tx *sql.Tx, target, i
 	}
 	var execution string
 	var sealed []byte
-	err = tx.QueryRowContext(ctx, `SELECT e.id,e.sealed_result FROM task_executions e JOIN deployments d ON d.id=e.task_id WHERE e.task_id=? AND e.agent_id=? AND e.kind='application.apply' AND e.attempt=1 AND e.state='succeeded' AND e.phase='reported' AND e.identity_retired_at='' AND d.state='succeeded' AND d.reconciliation_required=0`, id, target).Scan(&execution, &sealed)
+	err = tx.QueryRowContext(ctx, `SELECT e.id,e.sealed_result FROM task_executions e JOIN deployments d ON d.id=e.task_id WHERE e.task_id=? AND e.agent_id=? AND e.kind='application.apply' AND e.attempt=d.attempt AND e.state='succeeded' AND e.phase='reported' AND e.identity_retired_at='' AND d.state='succeeded' AND d.reconciliation_required=0`, id, target).Scan(&execution, &sealed)
 	if err != nil {
 		return result, 0, errors.New("center: authenticated replacement installation is required")
 	}
