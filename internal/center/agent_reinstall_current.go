@@ -261,9 +261,9 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 	if json.Unmarshal(raw, &task) != nil || task.ID != id || task.ApplicationID != app || task.AppKey != key || task.Manifest.Version != version || !reinstallCurrentPackage(key, task.Manifest) || task.Operation != operation || task.ServiceAddress != address || task.RequiredRuntimeGeneration != generation || string(task.Config) != string(config) {
 		return nil, errExecutionAuthorization
 	}
-	// Only a positively reported pre-apply failure may be retried through the
-	// existing explicit operator decision. Unknown or mutating attempts remain
-	// fenced. Retain the immutable task and every previous execution record.
+	// Reuse only the immutable task after an explicit operator decision and an
+	// authenticated failure with no owned resource receipt. The outer execution
+	// phase is already "apply" while package preparation still runs.
 	requestedAttempt := attempt
 	if state == "pending" {
 		requestedAttempt++
@@ -272,10 +272,8 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 		return nil, errExecutionAuthorization
 	}
 	if requestedAttempt > 1 {
-		var reviewed int
-		err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_executions e WHERE e.task_id=? AND e.agent_id=? AND e.attempt<? AND e.state='failed' AND e.phase='reported' AND e.disposition='reexecute' AND e.identity_retired_at='' AND NOT EXISTS(SELECT 1 FROM execution_events ev WHERE ev.execution_id=e.id AND ev.phase IN ('apply','persist','handoff'))`, id, agentID, requestedAttempt).Scan(&reviewed)
-		if err != nil || reviewed != requestedAttempt-1 {
-			return nil, errExecutionAuthorization
+		if err = s.reviewReinstallCurrentRetries(ctx, tx, agentID, task, requestedAttempt); err != nil {
+			return nil, err
 		}
 	}
 	task.Attempt = int64(requestedAttempt)
@@ -317,6 +315,55 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 	// Decryption proves the immutable approved task; execution authorization also
 	// compares the actual issued task including fresh secrets to this exact value.
 	return &task, nil
+}
+
+// PackageExecutor attaches a receipt before its first owned-resource mutation.
+// Unknown outcomes, partial installs, changed tasks and unreviewed failures must
+// keep their lock; a reported preparation failure can use the existing decision.
+func (s *Store) reviewReinstallCurrentRetries(ctx context.Context, tx *sql.Tx, agentID string, task AgentTask, attempt int) error {
+	if task.Manifest.Runtime == nil || task.Manifest.Runtime.Version != 2 || (task.Manifest.Runtime.Kind != "native" && task.Manifest.Runtime.Kind != "systemd") {
+		return errExecutionAuthorization
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT e.id,e.attempt,e.sealed_task,e.sealed_result FROM task_executions e WHERE e.task_id=? AND e.agent_id=? AND e.attempt<? AND e.state='failed' AND e.phase='reported' AND e.disposition='reexecute' AND e.identity_retired_at='' ORDER BY e.attempt`, task.ID, agentID, attempt)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var id string
+		var previous int64
+		var sealedTask, sealedResult []byte
+		if err = rows.Scan(&id, &previous, &sealedTask, &sealedResult); err != nil {
+			return err
+		}
+		count++
+		if previous != int64(count) {
+			return errExecutionAuthorization
+		}
+		rawTask, openErr := secret.Open(s.key, sealedTask, []byte("execution-task:"+id))
+		rawResult, resultErr := secret.Open(s.key, sealedResult, []byte("execution-result:"+id))
+		var original AgentTask
+		var proof executionResultEvidence
+		var result ApplicationTaskResult
+		if openErr != nil || resultErr != nil || json.Unmarshal(rawTask, &original) != nil || json.Unmarshal(rawResult, &proof) != nil || proof.Succeeded || proof.Unknown || len(proof.Result) == 0 || string(proof.Result) == "null" || json.Unmarshal(proof.Result, &result) != nil || result.Resources != nil || len(result.Services) != 0 {
+			return errExecutionAuthorization
+		}
+		expected := task
+		expected.Attempt = previous
+		actualJSON, _ := json.Marshal(original)
+		expectedJSON, _ := json.Marshal(expected)
+		if string(actualJSON) != string(expectedJSON) {
+			return errExecutionAuthorization
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	if count != attempt-1 {
+		return errExecutionAuthorization
+	}
+	return nil
 }
 
 func (s *Server) handleAgentReinstallCurrent(w http.ResponseWriter, r *http.Request) {
