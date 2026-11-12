@@ -473,7 +473,7 @@ describe("network and app views", () => {
     expect(revoke).toHaveBeenCalledOnce();
   });
 
-  it("blocks the stale confirmation if the offline node reconnects", () => {
+  it("blocks the stale confirmation if access is already revoked", () => {
     const data = dashboard();
     data.agents[0].connected = false;
     const mutate = async () => undefined;
@@ -485,7 +485,7 @@ describe("network and app views", () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, data.agents[0].name);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    const next = { ...data, agents: [{ ...data.agents[0], connected: true }] };
+    const next = { ...data, agents: [{ ...data.agents[0], credentialRevoked: true }] };
     rerender(<NodesView data={next} language="zh-CN" mutate={mutate} onNavigate={() => undefined} />);
     expect(document.body.textContent).toContain("节点状态已变化");
     expect([...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入" && button.type === "submit")?.disabled).toBe(true);
