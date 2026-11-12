@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.430](https://github.com/petauron/vastora/compare/v0.1.0-alpha.429...v0.1.0-alpha.430) (2026-11-12)
+
+
+### Bug Fixes
+
+* **recovery:** restore native services and original host access ([#1244](https://github.com/petauron/vastora/issues/1244)) ([c161c8f](https://github.com/petauron/vastora/commit/c161c8f94b31cecf89f5d826d3d37d26790b9973))
+
 ## [0.1.0-alpha.429](https://github.com/petauron/vastora/compare/v0.1.0-alpha.428...v0.1.0-alpha.429) (2026-11-12)
 
 
