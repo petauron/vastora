@@ -434,10 +434,10 @@ describe("network and app views", () => {
     expect(document.querySelector("#stop-node-access-name")).toBeNull();
   });
 
-  it("does not offer offline access stop for a connected node", () => {
+  it("offers explicit access revocation for a connected node", () => {
     const container = render(<NodesView data={dashboard()} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 home-server"]')?.click());
-    expect([...document.querySelectorAll("button")].some((button) => button.textContent === "停止接入")).toBe(false);
+    expect([...document.querySelectorAll("button")].some((button) => button.textContent === "停止接入")).toBe(true);
   });
 
   it("shows stopped access distinctly from offline and preserves reconnect", () => {

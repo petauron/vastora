@@ -379,7 +379,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
   const [danger, setDanger] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const deleting = agent?.status === "disabled";
-  const canStopAccess = agent?.status === "active" && !agent.connected;
+  const canStopAccess = agent?.status === "active" && !agent.credentialRevoked;
   const dependenciesUnavailable = Boolean(data.desktopDataUnavailable || data.nodeAuxiliaryDataUnavailable);
   useEffect(() => {
     if (!agent) return;
