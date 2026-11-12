@@ -581,13 +581,26 @@ func (s *Store) queueMismatchedNodeListenerReconcile(ctx context.Context, tx *sq
 	if healthy && liveRevision == appliedRevision && liveHash == expectedHash {
 		return nil
 	}
+	profile, err := networkProfile(ctx, tx, nodeID)
+	if err != nil {
+		return fmt.Errorf("center: inspect node-listener network profile: %w", err)
+	}
 	reason := "node-direct listener state differs from Center; queued for reconcile"
 	if !healthy {
 		reason = "node-direct listener health check failed; queued for reconcile"
 	}
+	if profile == nil {
+		reason = "Node network is recovering"
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'degraded', last_error = ?, updated_at = ?
 		WHERE ingress_owner = 'application_node' AND entry_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped'`, reason, now.Format(time.RFC3339Nano), nodeID); err != nil {
 		return fmt.Errorf("center: mark unhealthy node-direct publications: %w", err)
+	}
+	if profile == nil {
+		// Commit fresh heartbeat/address observations while the normal network
+		// confirmation flow restores the prerequisite. Do not queue an
+		// unverified listener or roll back the observations needed to repair it.
+		return nil
 	}
 	if err := s.queueNodeListenerState(ctx, tx, nodeID, now); err != nil {
 		return fmt.Errorf("center: queue mismatched live node-listener state: %w", err)
