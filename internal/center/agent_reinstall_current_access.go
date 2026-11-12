@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"math"
+
+	"github.com/petauron/vastora/internal/nodesite"
+	"github.com/petauron/vastora/internal/secret"
 )
 
 // Restore existing host access in the same immutable replacement-bound task.
@@ -17,7 +20,7 @@ func (s *Store) attachReinstallCurrentAccess(ctx context.Context, tx *sql.Tx, ag
 			return err
 		}
 		if exists {
-			site, owner, err := s.nodeSiteTask(ctx, tx, appID, "apply")
+			site, owner, err := s.reinstallCurrentSiteTask(ctx, tx, appID, agentID)
 			if err != nil {
 				return err
 			}
@@ -54,4 +57,24 @@ func (s *Store) attachReinstallCurrentAccess(ctx context.Context, tx *sql.Tx, ag
 	}
 	task.NodeListenerState = &state
 	return nil
+}
+
+// Normal site commands require a running application. An explicit reinstall
+// decision marks that original application pending, so recovery instead binds
+// the retained ready certificate to the same reviewed original node and app.
+// This does not relax the ordinary site-command gate or issue a new certificate.
+func (s *Store) reinstallCurrentSiteTask(ctx context.Context, tx *sql.Tx, appID, agentID string) (nodesite.Task, string, error) {
+	var task nodesite.Task
+	var sealed []byte
+	err := tx.QueryRowContext(ctx, `SELECT n.application_id,a.app_key,n.hostname,n.port,n.revision,n.certificate_pem,n.sealed_key FROM node_sites n JOIN applications a ON a.id=n.application_id WHERE n.application_id=? AND n.agent_id=? AND a.node_id=n.agent_id AND a.app_key='vastora-official/daylight' AND n.state='ready' AND n.applied_revision=n.revision`, appID, agentID).Scan(&task.ApplicationID, &task.AppKey, &task.Hostname, &task.Port, &task.Revision, &task.CertificatePEM, &sealed)
+	if err != nil {
+		return task, "", err
+	}
+	key, err := secret.Open(s.key, sealed, []byte("node-site-certificate:"+appID))
+	if err != nil {
+		return task, "", errors.New("center: retained original site key is unavailable")
+	}
+	task.Action = "apply"
+	task.PrivateKeyPEM = string(key)
+	return task, agentID, task.Validate()
 }
