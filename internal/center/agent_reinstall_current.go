@@ -16,11 +16,21 @@ import (
 	"github.com/petauron/vastora/internal/senulun"
 )
 
-// These collectors own their business state on another service. Recovery may
-// install their original package with newly issued credentials, but installation
-// does not prove that the original business identity is reporting or usable.
+// Collectors keep business state on their original service; supported Daylight
+// contains signed static content, with certificates owned by Center. Restore only
+// the original reviewed package. Installation never proves business usability.
 func currentReinstallApp(key string) bool {
-	return key == "vastora-official/glivela-entry" || key == komariAppKey || key == senulunAgentAppKey
+	return key == "vastora-official/glivela-entry" || key == komariAppKey || key == senulunAgentAppKey || key == "vastora-official/daylight"
+}
+
+// Daylight v0.2.0 r2 serves only the signed page through shared Caddy. Its
+// former Caddy state is a cache, not site content or application credentials.
+// Other website packages/versions must retain their explicit data recovery gate.
+func reinstallCurrentPackage(key string, manifest catalog.AppManifest) bool {
+	if key != "vastora-official/daylight" {
+		return true
+	}
+	return manifest.Version == "0.2.0" && manifest.PackageRevision == 2 && manifest.Runtime.Kind == "native" && manifest.Runtime.Version == 2 && slices.Contains(manifest.Runtime.RequiredCapabilities, "shared-caddy")
 }
 
 const currentReinstallSchema = `CREATE TABLE agent_reinstall_current_applications (
@@ -93,7 +103,7 @@ func (s *Store) QueueAgentReinstallCurrent(ctx context.Context, agentID, adminID
 	if err != nil {
 		return result, err
 	}
-	if registry.Valid || json.Unmarshal(manifest, &task.Manifest) != nil || catalog.ValidateApp(task.Manifest) != nil || task.Manifest.Version != app.Version {
+	if registry.Valid || json.Unmarshal(manifest, &task.Manifest) != nil || catalog.ValidateApp(task.Manifest) != nil || task.Manifest.Version != app.Version || !reinstallCurrentPackage(app.AppKey, task.Manifest) {
 		return result, errors.New("center: original package requires review")
 	}
 	if err = readReinstallPackageAuthorization(ctx, tx, app.DeploymentID, &task); err != nil {
@@ -123,7 +133,7 @@ func (s *Store) QueueAgentReinstallCurrent(ctx context.Context, agentID, adminID
 	if string(oldJSON) != string(newJSON) {
 		return result, errors.New("center: recovery must retain the original service and non-secret settings")
 	}
-	if app.AppKey != senulunAgentAppKey {
+	if app.AppKey != senulunAgentAppKey && app.AppKey != "vastora-official/daylight" {
 		var fresh, previous map[string]string
 		if json.Unmarshal(credentials, &fresh) != nil {
 			return result, errExecutionAuthorization
@@ -248,7 +258,7 @@ func (s *Store) reinstallCurrentTask(ctx context.Context, tx *sql.Tx, agentID, i
 		return nil, errExecutionAuthorization
 	}
 	var task AgentTask
-	if json.Unmarshal(raw, &task) != nil || task.ID != id || task.ApplicationID != app || task.AppKey != key || task.Manifest.Version != version || task.Operation != operation || task.ServiceAddress != address || task.RequiredRuntimeGeneration != generation || string(task.Config) != string(config) {
+	if json.Unmarshal(raw, &task) != nil || task.ID != id || task.ApplicationID != app || task.AppKey != key || task.Manifest.Version != version || !reinstallCurrentPackage(key, task.Manifest) || task.Operation != operation || task.ServiceAddress != address || task.RequiredRuntimeGeneration != generation || string(task.Config) != string(config) {
 		return nil, errExecutionAuthorization
 	}
 	actualManifest, _ := json.Marshal(task.Manifest)
