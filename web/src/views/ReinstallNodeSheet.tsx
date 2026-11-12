@@ -14,12 +14,18 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { ReinstallNetworkReview } from "./ReinstallNetworkReview";
 import { ReinstallApplicationReview } from "./ReinstallApplicationReview";
 import { ReinstallMonitorReview } from "./ReinstallMonitorReview";
+import { Field, FieldGroup, FieldLabel, FieldDescription } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Spinner } from "@/components/ui/spinner";
 import { ReinstallRemaining } from "./ReinstallRemaining";
 
 export function ReinstallNodeSheet({ agent, installerAvailable, language, onClose }: { agent: AgentView; installerAvailable: boolean; language: Language; onClose: () => void }) {
   const [plan, setPlan] = useState<AgentReinstallPlan | null>(null);
   const [enrollment, setEnrollment] = useState<AgentEnrollment | null>(null);
+  const [previousPeerId, setPreviousPeerId] = useState("");
+  const [previousPeerKey, setPreviousPeerKey] = useState("");
+  const [previousPeerConfirmed, setPreviousPeerConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [workingDNS, setWorkingDNS] = useState<string | null>(null);
   const [checkingEntry, setCheckingEntry] = useState<string | null>(null);
@@ -35,6 +41,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
     setCheckingEntry(null);
     setWorkingDNS(null);
     setReplacementReview(null);
+    setPreviousPeerId(""); setPreviousPeerKey(""); setPreviousPeerConfirmed(false);
     setBusy(true);
     api.agentReinstallPlan(agent.id).then((value) => {
       if (generation.current === current) { setPlan(value); setError(""); }
@@ -45,6 +52,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
   }, [agent.id, agent.reinstall?.updatedAt, language, revision]);
   const recovery = plan?.recovery;
   const joined = recovery?.state === "review_required";
+  const needsPreviousPeerReview = recovery?.privateIsolation === "pending" && recovery.lastError === "center: authenticated previous private identity evidence is missing";
   const localTasks = plan ? plan.executions.filter((execution) => execution.agentId === agent.id && execution.resolution === "local_after_isolation").length + plan.unclaimedLocalWork.length : 0;
   const settledTasks = plan?.localWorkDisposition ? plan.localWorkDisposition.executionIds.length + plan.localWorkDisposition.unclaimedWork.length : 0;
   const command = enrollment && !joined ? agentInstallCommand({ centerURL: enrollment.centerUrl ?? "", enrollment, installerAvailable }) : "";
@@ -87,7 +95,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
     setBusy(true); setError("");
     try {
       const result = mode === "continue_isolation" && recovery
-        ? await api.continueAgentReinstallIsolation(agent.id, { operationId: recovery.id, expectedAttempt: recovery.attempt, confirmIsolation: true })
+        ? await api.continueAgentReinstallIsolation(agent.id, { operationId: recovery.id, expectedAttempt: recovery.attempt, confirmIsolation: true, ...(needsPreviousPeerReview ? { previousPeerId: previousPeerId.trim(), previousPeerKey: previousPeerKey.trim(), confirmPreviousPeer: previousPeerConfirmed } : {}) })
         : await api.createAgentReconnectEnrollment(agent.id, request.current);
       if (generation.current !== current) return;
       setEnrollment(result);
@@ -326,6 +334,12 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
             {recovery.state === "failed" || recovery.state === "preparing" ? copy(language, "命令准备尚未完成。核对现场后再继续，系统不会自动重复操作。", "Command preparation is incomplete. Inspect the operation before continuing; it will not run again automatically.") : copy(language, "需要继续核对网络地址和应用恢复；节点在线不代表业务已恢复。", "Network addresses and application recovery still need verification. Being online does not mean business is restored.")}
           </AlertDescription></Alert> : <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "确认后替换管理身份", "Confirm management identity replacement")}</AlertTitle><AlertDescription>{copy(language, "旧 Agent 凭据、接入命令和受管私网身份将撤销，任务领取暂停。应用、订阅和历史执行记录保留。", "The previous Agent credential, enrollment command and managed private identity will be revoked, and task claims paused. Apps, subscriptions and execution history are retained.")}</AlertDescription></Alert>}
           {recovery?.lastError ? <Alert variant="destructive"><AlertTitle>{copy(language, "恢复已暂停", "Recovery paused")}</AlertTitle><AlertDescription>{userError(language, recovery.lastError)}</AlertDescription></Alert> : null}
+          {needsPreviousPeerReview ? <FieldGroup>
+            <FieldDescription>{copy(language, `从原私网控制面独立核对旧节点。必须确认节点 ID、公钥和原地址 ${plan.privateNetwork.privateAddress} 均属于这台旧机器；名称或同 IP 不代表身份。确认后会撤销旧私网身份。`, `Independently inspect the old peer on the original private controller. Confirm its ID, public key and saved address ${plan.privateNetwork.privateAddress} belong to this previous machine; a matching name or IP alone is insufficient. Confirmation revokes the old private identity.`)}</FieldDescription>
+            <Field><FieldLabel htmlFor="previous-peer-id">{copy(language, "旧私网节点 ID", "Previous private peer ID")}</FieldLabel><Input id="previous-peer-id" value={previousPeerId} disabled={busy} onChange={(event) => { setPreviousPeerId(event.target.value); setPreviousPeerConfirmed(false); }} /></Field>
+            <Field><FieldLabel htmlFor="previous-peer-key">{copy(language, "旧私网公钥", "Previous private public key")}</FieldLabel><Input id="previous-peer-key" value={previousPeerKey} disabled={busy} onChange={(event) => { setPreviousPeerKey(event.target.value); setPreviousPeerConfirmed(false); }} /></Field>
+            <Field orientation="horizontal"><Checkbox id="previous-peer-confirmed" checked={previousPeerConfirmed} disabled={busy} onCheckedChange={(checked) => setPreviousPeerConfirmed(checked === true)} /><FieldLabel htmlFor="previous-peer-confirmed">{copy(language, "已独立核对旧节点归属，确认撤销该身份", "I independently verified ownership and confirm revoking this previous identity")}</FieldLabel></Field>
+          </FieldGroup> : null}
           {replacementReview === plan.revision && recovery?.state === "awaiting_enrollment" ? <Alert variant="destructive"><AlertTitle>{copy(language, "重新审核后替换未使用命令", "Replace the unused command after a fresh review")}</AlertTitle><AlertDescription>{copy(language, "已重新读取下方恢复清单。请确认旧命令尚未执行，且不存在结果不明的安装操作。确认后旧授权将作废，再生成新命令；应用、订阅和历史记录保留。取消或刷新不会生成命令。", "The recovery checklist below was reloaded. Confirm the old command has not been run and no installation has an uncertain outcome. Confirmation invalidates the old authorization and generates a new command; apps, subscriptions and history remain. Cancelling or refreshing creates no command.")}</AlertDescription></Alert> : null}
           <section aria-label={copy(language, "恢复清单", "Recovery checklist")} className="flex flex-col gap-3 rounded-xl border p-4">
             <div className="flex items-start justify-between gap-3 text-sm"><span>{copy(language, "私网与入口", "Network and access")}</span><span className="text-right text-muted-foreground">{plan.privateNetwork.privateAddress || plan.privateNetwork.serviceAddress || copy(language, "待确认", "Needs review")}</span></div>
@@ -354,7 +368,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
         <Button onClick={onClose} variant="outline">{copy(language, "关闭", "Close")}</Button>
         {plan && !command && (!recovery || recovery.state === "awaiting_enrollment") ? <Button disabled={busy || (agent.connected && !recovery)} onClick={() => void confirm()}>{recovery ? copy(language, "取回接入命令", "Retrieve command") : copy(language, "确认接替并生成命令", "Confirm and create command")}</Button> : null}
         {recovery?.state === "awaiting_enrollment" ? replacementReview === plan?.revision ? <><Button disabled={busy} variant="outline" onClick={() => setReplacementReview(null)}>{copy(language, "取消替换", "Cancel replacement")}</Button><Button disabled={busy} variant="destructive" onClick={() => void confirm("replace_unused")}>{copy(language, "确认作废旧命令并生成新命令", "Invalidate old command and create a new one")}</Button></> : <Button disabled={busy} variant="outline" onClick={() => void reviewUnusedCommand()}>{copy(language, "重新审核并替换未使用命令", "Review and replace unused command")}</Button> : null}
-        {recovery?.privateIsolation === "pending" && (recovery.state === "failed" || recovery.state === "preparing") ? <Button disabled={busy} onClick={() => void confirm("continue_isolation")}>{copy(language, "核对并继续隔离", "Inspect and continue isolation")}</Button> : null}
+        {recovery?.privateIsolation === "pending" && (recovery.state === "failed" || recovery.state === "preparing") ? <Button disabled={busy || (needsPreviousPeerReview && (!previousPeerId.trim() || !previousPeerKey.trim() || !previousPeerConfirmed))} onClick={() => void confirm("continue_isolation")}>{copy(language, "核对并继续隔离", "Inspect and continue isolation")}</Button> : null}
       </SheetFooter>
     </SheetContent>
   </Sheet>;
