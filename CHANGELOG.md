@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.429](https://github.com/petauron/vastora/compare/v0.1.0-alpha.428...v0.1.0-alpha.429) (2026-11-12)
+
+
+### Bug Fixes
+
+* **recovery:** review missing previous private-peer evidence ([#1242](https://github.com/petauron/vastora/issues/1242)) ([074c9fe](https://github.com/petauron/vastora/commit/074c9fe02b89fa8ca893898f3977597b92c3b13a))
+
 ## [0.1.0-alpha.428](https://github.com/petauron/vastora/compare/v0.1.0-alpha.427...v0.1.0-alpha.428) (2026-11-12)
 
 
