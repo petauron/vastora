@@ -51,7 +51,10 @@ func (s *Store) attachReinstallCurrentAccess(ctx context.Context, tx *sql.Tx, ag
 	if revision < 1 || revision == math.MaxInt64 {
 		return errExecutionAuthorization
 	}
-	state, err := s.buildNodeListenerState(ctx, tx, agentID, revision+1, &nodeListenerRestoreTarget{ApplicationID: appID, BackendAddress: approval.Profile.ServiceAddress, BindAddress: approval.Profile.PublicBindAddress})
+	if approval.Previous == nil {
+		return errors.New("center: original private service address evidence is required")
+	}
+	state, err := s.buildNodeListenerState(ctx, tx, agentID, revision+1, &nodeListenerRestoreTarget{ApplicationID: appID, PreviousBackendAddress: approval.Previous.ServiceAddress, BackendAddress: approval.Profile.ServiceAddress, BindAddress: approval.Profile.PublicBindAddress})
 	if err != nil {
 		return err
 	}
