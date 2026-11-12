@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.432](https://github.com/petauron/vastora/compare/v0.1.0-alpha.431...v0.1.0-alpha.432) (2026-11-12)
+
+
+### Bug Fixes
+
+* **recovery:** retain original site authority during pending recovery ([#1248](https://github.com/petauron/vastora/issues/1248)) ([8fac223](https://github.com/petauron/vastora/commit/8fac22379e2822f9dac0bff3bf58be10c855908a))
+
 ## [0.1.0-alpha.431](https://github.com/petauron/vastora/compare/v0.1.0-alpha.430...v0.1.0-alpha.431) (2026-11-12)
 
 
