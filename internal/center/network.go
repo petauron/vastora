@@ -140,13 +140,20 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	if !lastSeenAt.After(s.now().UTC().Add(-agentConnectedMaxAge)) {
 		return nil, errors.New("center: reconnect the node before confirming its network")
 	}
+	profileWasInvalidated := previous == nil
 	if previous == nil {
 		previous, err = recoverableNetworkProfile(ctx, tx, agentID)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if previous != nil && (previous.PublicAddress != input.PublicAddress || previous.PublicBindAddress != input.PublicBindAddress || previous.PublicMode != input.PublicMode) {
+	// An invalidated profile has already withdrawn the old network mapping.
+	// Explicit confirmation may replace only its public side; the normal
+	// observation validation below still requires the Agent's current address.
+	recoveringPublicEntry := profileWasInvalidated && previous != nil && previous.DirectPublic && input.DirectPublic &&
+		previous.ServiceAddress == input.ServiceAddress && previous.LANAddress == input.LANAddress && previous.HeadscaleAddress == input.HeadscaleAddress &&
+		(previous.PublicAddress != input.PublicAddress || previous.PublicBindAddress != input.PublicBindAddress || previous.PublicMode != input.PublicMode)
+	if previous != nil && !recoveringPublicEntry && (previous.PublicAddress != input.PublicAddress || previous.PublicBindAddress != input.PublicBindAddress || previous.PublicMode != input.PublicMode) {
 		var publicationCount int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications
 			WHERE entry_node_id = ? AND kind IN ('public_direct', 'public_shared_443') AND status <> 'stopped'`, agentID).Scan(&publicationCount); err != nil {
@@ -276,6 +283,17 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	if err := s.autoAssignFirstSiteGateway(ctx, tx, agentID, s.now().UTC()); err != nil {
 		return nil, err
 	}
+	if recoveringPublicEntry {
+		var gatewayRunning bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM gateway_components WHERE gateway_node_id=? AND desired_status='running')`, agentID).Scan(&gatewayRunning); err != nil {
+			return nil, err
+		}
+		if gatewayRunning {
+			if err := s.queueGatewayState(ctx, tx, agentID, s.now().UTC()); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -291,7 +309,7 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	)`, agentID, agentID).Scan(&gatewayAffected); err != nil {
 		return nil, err
 	}
-	if gatewayAffected {
+	if gatewayAffected && !recoveringPublicEntry {
 		if err := s.queueAllGatewayStates(ctx); err != nil {
 			return nil, err
 		}
