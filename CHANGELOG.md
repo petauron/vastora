@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.435](https://github.com/petauron/vastora/compare/v0.1.0-alpha.434...v0.1.0-alpha.435) (2026-11-12)
+
+
+### Bug Fixes
+
+* **nodes:** allow explicit access revocation for connected nodes ([#1257](https://github.com/petauron/vastora/issues/1257)) ([418d28c](https://github.com/petauron/vastora/commit/418d28c0ca8271b8c317f05ee174ce72f7179e46))
+
 ## [0.1.0-alpha.434](https://github.com/petauron/vastora/compare/v0.1.0-alpha.433...v0.1.0-alpha.434) (2026-11-12)
 
 
