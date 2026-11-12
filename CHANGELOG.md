@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.431](https://github.com/petauron/vastora/compare/v0.1.0-alpha.430...v0.1.0-alpha.431) (2026-11-12)
+
+
+### Bug Fixes
+
+* **recovery:** finish retained site TLS without lock reentry ([#1246](https://github.com/petauron/vastora/issues/1246)) ([f84e41d](https://github.com/petauron/vastora/commit/f84e41d9a40c78083ab687c364bf2910f98aaf1c))
+
 ## [0.1.0-alpha.430](https://github.com/petauron/vastora/compare/v0.1.0-alpha.429...v0.1.0-alpha.430) (2026-11-12)
 
 
