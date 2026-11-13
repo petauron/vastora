@@ -240,11 +240,7 @@ func TestRetiredMeridianSourceRevocationCannotReplayArchivedRuntime(t *testing.T
 	if err := store.RevokeMeridianRouteGrant(context.Background(), grantID); err != nil {
 		t.Fatal(err)
 	}
-	var agentID string
-	if err := store.db.QueryRow(`SELECT agent_id FROM application_commands WHERE id=?`, commandID).Scan(&agentID); err != nil {
-		t.Fatal(err)
-	}
-	assertRetiredProxyCommandChannel(t, store, agentID)
+	assertRetiredProxyCommandChannel(t, store, projection.agentID)
 }
 
 func TestMeridianQuotaDoesNotRevokeSharedTransportAuthorization(t *testing.T) {
@@ -403,9 +399,5 @@ func TestRetiredMeridianReceiptCannotRewriteSnapshotDuringUnrelatedSourceFailure
 		t.Fatal(err)
 	}
 
-	var agentID string
-	if err := store.db.QueryRow(`SELECT agent_id FROM application_commands WHERE id=?`, commandID).Scan(&agentID); err != nil {
-		t.Fatal(err)
-	}
-	assertRetiredMeridianResultPreservesState(t, store, agentID, commandID, true, meridianHealthResult(projection, store.now(), true))
+	assertRetiredMeridianResultPreservesState(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
 }
