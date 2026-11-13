@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.441](https://github.com/petauron/vastora/compare/v0.1.0-alpha.440...v0.1.0-alpha.441) (2026-11-13)
+
+
+### Bug Fixes
+
+* **apps:** reconcile Glivela SNI and verify upgraded native entries ([#1271](https://github.com/petauron/vastora/issues/1271)) ([b4180de](https://github.com/petauron/vastora/commit/b4180de19fd062ffd921011cdd9356380c59f7ba))
+
 ## [0.1.0-alpha.440](https://github.com/petauron/vastora/compare/v0.1.0-alpha.439...v0.1.0-alpha.440) (2026-11-13)
 
 
