@@ -14,7 +14,7 @@ func TestExecutionRequeueStatementsMatchSchemaAndDoNotCreateTasks(t *testing.T) 
 	for _, kind := range []string{"node.ip-quality", "application.apply", "application.command", "agent.update", "agent.decommission", "landing.proxy.apply", "landing.server.apply", "gateway.routes.apply", "gateway.component.apply", "node.listener.apply", "tunnel.state.apply"} {
 		t.Run(kind, func(t *testing.T) {
 			query, args, err := executionRequeueStatement(AgentTask{ID: "nonexistent-task", Kind: kind, Attempt: 2, Revision: 7}, "nonexistent-agent", time.Now().UTC().Format(time.RFC3339Nano))
-			if kind == "landing.proxy.apply" || kind == "landing.server.apply" {
+			if kind == "landing.proxy.apply" || kind == "landing.server.apply" || kind == "application.command" {
 				if err == nil || query != "" {
 					t.Fatal("retired proxy task was offered for replay")
 				}

@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 )

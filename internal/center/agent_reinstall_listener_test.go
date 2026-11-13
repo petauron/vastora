@@ -299,3 +299,17 @@ func TestAgentReinstallListenerMissingPublicApprovalStopsBeforeQueue(t *testing.
 		t.Fatalf("missing ingress approval: %v", err)
 	}
 }
+
+func archivedListenerTask(t *testing.T, s *Store, node AgentCredential, taskID string) *AgentTask {
+	t.Helper()
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	task, err := s.reinstallListenerTask(context.Background(), tx, node.ID, taskID, false)
+	if err != nil || task == nil {
+		t.Fatalf("archived listener: %v", err)
+	}
+	return task
+}
