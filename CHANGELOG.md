@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.446](https://github.com/petauron/vastora/compare/v0.1.0-alpha.445...v0.1.0-alpha.446) (2026-11-13)
+
+
+### Bug Fixes
+
+* **websites:** resume explicitly reviewed hostname configuration ([#1282](https://github.com/petauron/vastora/issues/1282)) ([a247d98](https://github.com/petauron/vastora/commit/a247d98c76b55dea7646e594c40a41058feee7c7))
+
 ## [0.1.0-alpha.445](https://github.com/petauron/vastora/compare/v0.1.0-alpha.444...v0.1.0-alpha.445) (2026-11-13)
 
 
