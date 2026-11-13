@@ -76,6 +76,11 @@ func (b *NativeServicesPackageBackend) Prepare(ctx context.Context, task Deploym
 			return err
 		}
 		b.website = website
+		if sharedWebsiteConfigure(task) {
+			// This authorization never comes from a task payload. Bind it only
+			// after exact installed configuration and owned handover preparation.
+			b.prepared.WebsiteConfigureTaskID = task.ID
+		}
 	}
 	return nil
 }
