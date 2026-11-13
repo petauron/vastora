@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.444](https://github.com/petauron/vastora/compare/v0.1.0-alpha.443...v0.1.0-alpha.444) (2026-11-13)
+
+
+### Bug Fixes
+
+* **websites:** execute verified native hostname configuration ([#1279](https://github.com/petauron/vastora/issues/1279)) ([5d45f0f](https://github.com/petauron/vastora/commit/5d45f0f724b6b4f0ae04f5184d9ba0cfc7b6cf5b))
+
 ## [0.1.0-alpha.443](https://github.com/petauron/vastora/compare/v0.1.0-alpha.442...v0.1.0-alpha.443) (2026-11-13)
 
 
