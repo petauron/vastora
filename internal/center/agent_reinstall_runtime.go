@@ -213,8 +213,3 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 	s.taskChanges.notify("agent:" + agentID)
 	return AgentReinstallRuntime{CommandID: id, State: "pending"}, nil
 }
-
-func (s *Store) recordReinstallRuntimeProgress(ctx context.Context, tx *sql.Tx, id string) error {
-	_, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_operations SET updated_at=? WHERE id=(SELECT operation_id FROM agent_reinstall_app_preparations WHERE runtime_command_id=?)`, s.now().UTC().Format(time.RFC3339Nano), id)
-	return err
-}

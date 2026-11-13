@@ -83,26 +83,6 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...str
 	return s, node, input
 }
 
-func submitRestoredRuntime(t *testing.T, s *Store, node AgentCredential, task *AgentTask, valid, succeeded bool) error {
-	t.Helper()
-	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
-	// Fresh machines have no superseded 3x-ui installation to retire.
-	result.LegacyRetired = true
-	if !valid {
-		result.Receipt.ConfigSHA256 = strings.Repeat("f", 64)
-	}
-	return submitReinstallRuntimeResult(t, s, node, task, result, succeeded)
-}
-
-func submitReinstallRuntimeResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, result meridianruntime.Result, succeeded bool) error {
-	t.Helper()
-	if err := s.StartExecution(context.Background(), node.ID, "package-preparation-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
-		t.Fatal(err)
-	}
-	input, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": "package-preparation-session", "attempt": task.Attempt, "succeeded": succeeded, "result": ApplicationTaskResult{MeridianRuntime: &result}})
-	return completeAgentTaskGRPCTest(context.Background(), s, node, task.ID, input)
-}
-
 func TestArchivedReinstallRuntimeRetainsIdentityWithoutDispatchOrPublication(t *testing.T) {
 	s, node, input := reinstallRuntimeFixture(t)
 	ctx := context.Background()

@@ -2,7 +2,6 @@ package center
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -29,16 +28,6 @@ func reinstallListenerFixture(t *testing.T, publicExit ...string) (*Store, Agent
 	}
 	input.PlanRevision = plan.Revision
 	return s, node, input
-}
-
-func submitReinstallListener(t *testing.T, s *Store, node AgentCredential, task *AgentTask, succeeded bool) error {
-	t.Helper()
-	ctx := context.Background()
-	if err := s.StartExecution(ctx, node.ID, "package-preparation-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
-		t.Fatal(err)
-	}
-	payload, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": "package-preparation-session", "attempt": task.Attempt, "succeeded": succeeded, "result": json.RawMessage(`{}`)})
-	return completeAgentTaskGRPCTest(context.Background(), s, node, task.ID, payload)
 }
 
 func TestArchivedListenerIntentDoesNotRestoreRetiredEntry(t *testing.T) {

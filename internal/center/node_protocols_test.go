@@ -100,31 +100,13 @@ func TestProtocolCertificateOnlyHydratesControllerDelivery(t *testing.T) {
 	}
 }
 
-func TestProtocolVerificationRejectsWrongSibling(t *testing.T) {
+func TestRetiredProtocolVerificationNeverDispatchesOrAcceptsSiblingResult(t *testing.T) {
 	store, node := nodeProtocolFixture(t)
-	ctx := context.Background()
-	root, err := store.ConfigureNodeProtocols(ctx, "local", nodeprotocol.Selection{VLESS: true})
-	if err != nil {
-		t.Fatal(err)
+	root, err := store.ConfigureNodeProtocols(context.Background(), "local", nodeprotocol.Selection{VLESS: true})
+	if err != nil || root.ID == "" {
+		t.Fatal("missing retained protocol intent", err)
 	}
-	for _, phase := range []string{"prepare", "apply", "verify"} {
-		task := claimLocalRemoval(t, store, node.ID)
-		if task == nil {
-			t.Fatal("task missing")
-		}
-		result := nodeprotocol.Result{Phase: phase}
-		if phase == "verify" {
-			result.HY2InboundID = 999
-		}
-		raw, _ := json.Marshal(map[string]any{"protocolCommand": result})
-		if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
-			t.Fatal(err)
-		}
-	}
-	current, err := store.ApplicationCommand(ctx, root.ID)
-	if err != nil || current.State != "failed" {
-		t.Fatal("wrong final identity marked successful")
-	}
+	assertRetiredProxyCommandChannel(t, store, node.ID)
 }
 
 func TestProtocolPortPreparationRetainsObservedNodeAndDomain(t *testing.T) {

@@ -256,41 +256,10 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 	}
 	assertReserved("pending cross-Agent")
 
-	first := claimTask(t, store, previousController)
-	if first.ID != command.ID {
-		t.Fatalf("old Agent claimed command %q, want %q", first.ID, command.ID)
-	}
-	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, previousController.ID, previousController.Credential, first.ID, first.Attempt, false, "remote API state is uncertain", nil, true); err != nil {
-		t.Fatal(err)
-	}
-	assertReserved("reconciliation")
-
-	retry, err := store.RetryTaskReconciliation(ctx, command.ID)
-	if err != nil || !retry.Queued || retry.TaskID != command.ID {
-		t.Fatalf("reconciliation retry = %#v, err=%v", retry, err)
-	}
-	replayed := claimTask(t, store, previousController)
-	if replayed.ID != command.ID || replayed.Attempt != first.Attempt+1 || !replayed.Reconcile {
-		t.Fatalf("reconciliation changed task identity or attempt history: first=%#v replay=%#v", first, replayed)
-	}
-	if err := store.CompleteTask(ctx, previousController.ID, previousController.Credential, replayed.ID, replayed.Attempt, false, "remote mutation was compensated", nil, replayed.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-	var state string
-	var reconciliationRequired, reservations int
-	if err := store.db.QueryRowContext(ctx, `SELECT state, reconciliation_required FROM application_commands WHERE id = ?`, command.ID).Scan(&state, &reconciliationRequired); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands
-		WHERE site_id = ? AND display_name = ? COLLATE NOCASE
-		AND kind IN (?, ?) AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, testSiteID(t, store), "🇺🇸 美国｜edge", realityCommandKind, realityRenameCommandKind).Scan(&reservations); err != nil {
-		t.Fatal(err)
-	}
-	if state != "failed" || reconciliationRequired != 0 || reservations != 0 {
-		t.Fatalf("terminal compensation did not release reservation: state=%q reconciliation=%d reservations=%d", state, reconciliationRequired, reservations)
-	}
-	if released, err := create("edge"); err != nil || released.ID == "" || released.ID == command.ID {
-		t.Fatalf("released display name was not reusable by the current Agent: command=%#v err=%v", released, err)
+	assertRetiredProxyCommandChannel(t, store, previousController.ID)
+	assertReserved("retired command retains unresolved history")
+	if _, err := store.RetryTaskReconciliation(ctx, command.ID); err == nil {
+		t.Fatal("retired proxy intent replayed")
 	}
 }
 

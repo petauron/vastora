@@ -279,10 +279,18 @@ func assertRetiredProxyCommandChannel(t *testing.T, store *Store, agentID string
 		t.Fatal("missing retained proxy intent")
 	}
 	for _, id := range ids {
+		var state string
+		var attempt int
+		if err := store.db.QueryRowContext(ctx, `SELECT state,attempt FROM application_commands WHERE id=?`, id).Scan(&state, &attempt); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, id); err != nil {
 			t.Fatal(err)
 		}
 		assertRetiredApplicationResultPreservesState(t, store, agentID, id, true, json.RawMessage(`{}`))
 		assertRetiredApplicationResultPreservesState(t, store, agentID, id, false, json.RawMessage(`{}`))
+		if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state=?,attempt=? WHERE id=?`, state, attempt, id); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

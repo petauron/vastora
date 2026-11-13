@@ -61,81 +61,25 @@ func reinstallPreparationNetworkFixture(t *testing.T, public bool, publicExit ..
 	return s, node, AgentReinstallApplicationInput{OperationID: plan.Recovery.ID, PlanRevision: plan.Revision, ApplicationID: "retained-meridian"}
 }
 
-func preparationResult(t *testing.T, s *Store, node AgentCredential, task *AgentTask, succeeded bool) error {
-	t.Helper()
-	if err := s.StartExecution(context.Background(), node.ID, "package-preparation-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
-		t.Fatal(err)
-	}
-	input, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": "package-preparation-session", "attempt": task.Attempt, "succeeded": succeeded, "applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration, "result": json.RawMessage(`{"services":[]}`)})
-	return completeAgentTaskGRPCTest(context.Background(), s, node, task.ID, input)
-}
-
-func TestAgentReinstallPreparationRoundTripKeepsBusinessFenced(t *testing.T) {
+func TestArchivedProxyPreparationRemainsReadableButCannotRestoreBusiness(t *testing.T) {
 	s, node, input := reinstallPreparationFixture(t)
-	ctx := context.Background()
-	before, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replay, err := s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil || replay != receipt {
-		t.Fatalf("duplicate preparation: %+v %v", replay, err)
-	}
-	pendingPlan, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil || len(pendingPlan.UnclaimedLocalWork) != 0 {
-		t.Fatalf("new package treated as old work: %+v %v", pendingPlan.UnclaimedLocalWork, err)
-	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatalf("claim: %+v %v", task, err)
-	}
-	if task.ID != receipt.DeploymentID || task.ID == "retained-meridian-deployment" || task.ApplicationID != input.ApplicationID || task.ServiceAddress != "10.0.0.8" || task.Manifest.Version != "0.1.0-alpha.12" || task.Attempt != 1 {
-		t.Fatalf("wrong restore binding: %+v", task)
-	}
-	claimedPlan, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pendingPlan.Recovery.UpdatedAt == before.Recovery.UpdatedAt || claimedPlan.Recovery.UpdatedAt == pendingPlan.Recovery.UpdatedAt {
-		t.Fatal("queued/claimed progress did not refresh recovery")
-	}
-	response := preparationResult(t, s, node, task, true)
-	if response != nil {
-		t.Fatalf("result: %v", response)
-	}
-	plan, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(plan.Applications) != 1 || plan.Applications[0].DeploymentID != "retained-meridian-deployment" || plan.Applications[0].Preparation == nil || plan.Applications[0].Preparation.State != "succeeded" || plan.Recovery.State != "review_required" {
-		t.Fatalf("preparation became business restoration: %+v", plan)
-	}
-	if plan.Recovery.UpdatedAt == claimedPlan.Recovery.UpdatedAt {
-		t.Fatal("completion did not refresh recovery")
-	}
-	var activated int
-	if err = s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM agent_network_profiles WHERE agent_id=?)+(SELECT COUNT(*) FROM services WHERE application_id=?)`, node.ID, input.ApplicationID).Scan(&activated); err != nil || activated != 0 {
-		t.Fatalf("activated business: %d %v", activated, err)
-	}
-	if _, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
-		t.Fatalf("released fence: %v", err)
-	}
-	directory := s.dataDir
-	if err = s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err = Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer s.Close()
-	replay, err = s.QueueAgentReinstallPreparation(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil || replay.DeploymentID != receipt.DeploymentID || replay.State != "succeeded" {
-		t.Fatalf("restart lost receipt: %+v %v", replay, err)
+	seedArchivedReinstallPreparation(t, s, node, input, "succeeded")
+	if _, err := s.QueueAgentReinstallPreparation(context.Background(), node.ID, "reinstall-review-admin", input); err == nil {
+		t.Fatal("obsolete package preparation queued")
+	}
+	plan, err := s.AgentReinstallPlan(context.Background(), node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Applications) != 1 || plan.Applications[0].Preparation != nil || plan.Recovery.State != "review_required" {
+		t.Fatal("archived proxy exposed as current recovery")
+	}
+	if historical := readHistoricalReinstallPreparation(t, s, node, input); historical == nil || historical.State != "succeeded" {
+		t.Fatal("historical receipt lost")
+	}
+	if task, err := s.claimExecutionTask(context.Background(), node.ID, node.Credential, "package-preparation-session", 0); task != nil || !errors.Is(err, errExecutionBlocked) {
+		t.Fatal("obsolete package replayed", err)
 	}
 }
 

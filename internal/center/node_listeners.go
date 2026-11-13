@@ -495,7 +495,7 @@ func (s *Store) projectNodeListenerState(ctx context.Context, tx *sql.Tx, commit
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return err
 	} else if blocked || recoveryTask {
-		return s.completeReinstallListener(ctx, tx, commit, agentID, revision, expectedAttempt, succeeded, taskError)
+		return errExecutionBlocked
 	}
 	var err error
 	var desired, applied, attempt int64
