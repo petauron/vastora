@@ -885,8 +885,15 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 	if err != nil {
 		return err
 	}
+	verificationTargets, err := nativeEntryVerificationTargetsForDeployment(ctx, tx, taskID)
+	if err != nil {
+		return err
+	}
 	if err := commit(tx); err != nil {
 		return err
+	}
+	for _, target := range verificationTargets {
+		s.schedulePublicationVerification(target.id, target.revision)
 	}
 	s.resumeCredentialRotationForDeployment(ctx, taskID)
 	if succeeded && !reconciliationRequired && appKey == threeXUIAppKey {

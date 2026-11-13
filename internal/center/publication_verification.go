@@ -36,6 +36,9 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 	if expectedRevision > 0 && publication.DesiredRevision != expectedRevision {
 		return publication, nil
 	}
+	if publication.nativeMetadataError != nil {
+		return s.recordPublicationVerification(ctx, id, expectedRevision, publication.nativeMetadataError.Error())
+	}
 	var recovery bool
 	if err := s.db.QueryRowContext(ctx, `SELECT NOT (`+publicationReinstallAllowedSQL+`) FROM publications WHERE id=?`, id).Scan(&recovery); err != nil {
 		return PublicationView{}, err
