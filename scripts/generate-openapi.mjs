@@ -837,6 +837,14 @@ for (const route of routes) {
     schema.properties.note.minLength = 1;
     schema.properties.note.maxLength = 500;
   }
+  if (["handleManagedDomain", "handleEnsureManagedDomain"].includes(route.handler)) {
+    operation.responses["200"].content["application/json"].schema = schemaForGoType("ManagedDomainView");
+    operation.description = "Administrator-provisioned DNS-only resource. A ready resource confirms provider application, not public DNS propagation or application readiness. Stable names are reused per application/key; address changes require the current revision and retain the address family.";
+  }
+  if (route.handler === "handleListManagedDomains") {
+    operation.responses["200"].content["application/json"].schema = { type: "object", properties: { domains: { type: "array", items: schemaForGoType("ManagedDomainView") } }, required: ["domains"] };
+    operation.parameters = [...(operation.parameters ?? []).filter(p => !(p.name === "applicationId" && p.in === "query")), { name: "applicationId", in: "query", required: true, schema: { type: "string" } }];
+  }
   if (["handleNodeSite", "handleConfigureNodeSite", "handleNodeSiteAction"].includes(route.handler)) {
     const status = route.handler === "handleNodeSite" ? "200" : "202";
     operation.responses[status] = { description: "Managed node website certificate state", headers: noStoreHeaders, content: { "application/json": { schema: schemaForGoType("NodeSiteView") } } };

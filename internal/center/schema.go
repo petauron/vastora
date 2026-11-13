@@ -7,10 +7,13 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 130
+const centerSchemaVersion = 131
 
 //go:embed schema_retirement.sql
 var currentRetirementSchema string
+
+//go:embed schema_managed_domains.sql
+var currentManagedDomainSchema string
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -35,6 +38,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	statements := []string{
+		currentManagedDomainSchema,
 		currentReinstallSchema,
 		agentGatewayPromotionSchema,
 		glivelaPilotCheckpointSchema,
@@ -599,6 +603,7 @@ CREATE TABLE agent_reinstall_access_activations (
 			entry_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
 			hostname TEXT NOT NULL,
 			sni_hostname TEXT NOT NULL DEFAULT '',
+			managed_domain_id TEXT NOT NULL DEFAULT '',
 			dns_provider TEXT NOT NULL CHECK(dns_provider IN ('manual', 'cloudflare', 'headscale')),
 			dns_record_id TEXT NOT NULL DEFAULT '',
 			access_application_id TEXT NOT NULL DEFAULT '',

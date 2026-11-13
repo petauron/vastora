@@ -4823,6 +4823,385 @@
         "description": "Explicit same-node/site managed service ownership transfer. Preserves original service/publication/route IDs and public/access boundaries. Existing IDs only, no caller-selected endpoint. Requires current owned resources and no active/uncertain work. Binding changes remain pending real publication verification; no old task is acknowledged as successful."
       }
     },
+    "/api/v1/managed-domains": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List Managed Domains",
+        "operationId": "listManagedDomains_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "domains": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "applicationId": {
+                            "type": "string"
+                          },
+                          "agentId": {
+                            "type": "string"
+                          },
+                          "key": {
+                            "type": "string"
+                          },
+                          "prefix": {
+                            "type": "string"
+                          },
+                          "hostname": {
+                            "type": "string"
+                          },
+                          "address": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "zoneId": {
+                            "type": "string"
+                          },
+                          "recordId": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "integer"
+                          },
+                          "appliedRevision": {
+                            "type": "integer"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "lastError": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "domains"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "applicationId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Ensure Managed Domain",
+        "operationId": "ensureManagedDomain_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "applicationId": {
+                      "type": "string"
+                    },
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "prefix": {
+                      "type": "string"
+                    },
+                    "hostname": {
+                      "type": "string"
+                    },
+                    "address": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "zoneId": {
+                      "type": "string"
+                    },
+                    "recordId": {
+                      "type": "string"
+                    },
+                    "revision": {
+                      "type": "integer"
+                    },
+                    "appliedRevision": {
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "lastError": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "applicationId": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "prefix": {
+                    "type": "string"
+                  },
+                  "hostname": {
+                    "type": "string"
+                  },
+                  "address": {
+                    "type": "string"
+                  },
+                  "expectedRevision": {
+                    "type": "integer"
+                  },
+                  "expectedRecordAddress": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Administrator-provisioned DNS-only resource. A ready resource confirms provider application, not public DNS propagation or application readiness. Stable names are reused per application/key; address changes require the current revision and retain the address family."
+      }
+    },
+    "/api/v1/managed-domains/{id}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Managed Domain",
+        "operationId": "managedDomain_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "applicationId": {
+                      "type": "string"
+                    },
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "prefix": {
+                      "type": "string"
+                    },
+                    "hostname": {
+                      "type": "string"
+                    },
+                    "address": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "zoneId": {
+                      "type": "string"
+                    },
+                    "recordId": {
+                      "type": "string"
+                    },
+                    "revision": {
+                      "type": "integer"
+                    },
+                    "appliedRevision": {
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "lastError": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Administrator-provisioned DNS-only resource. A ready resource confirms provider application, not public DNS propagation or application readiness. Stable names are reused per application/key; address changes require the current revision and retain the address family."
+      },
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Retire Managed Domain",
+        "operationId": "retireManagedDomain_delete",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/publications": {
       "get": {
         "tags": [

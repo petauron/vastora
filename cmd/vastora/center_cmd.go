@@ -246,6 +246,9 @@ func runCenter(arguments []string) error {
 		if err := store.StartPublicationVerifications(maintenanceContext); err != nil {
 			return fmt.Errorf("resume public entry verification: %w", err)
 		}
+		go store.RunManagedDomains(maintenanceContext, func(err error) {
+			fmt.Fprintf(os.Stderr, "Center managed DNS: %v\n", err)
+		})
 		go store.RunAgentRemovals(maintenanceContext, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center node removal: %v\n", err)
 		})
