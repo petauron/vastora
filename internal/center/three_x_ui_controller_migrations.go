@@ -326,37 +326,6 @@ func (s *Store) CreateThreeXUIControllerMigration(ctx context.Context, sourceApp
 	return ThreeXUIControllerMigrationView{}, errors.New("center: legacy controller relocation is unavailable; use Meridian cutover")
 }
 
-func (s *Store) queueThreeXUIPromote(ctx context.Context, tx *sql.Tx, migrationID string, source, target struct {
-	applicationID, siteID, agentID, role, status, name, address, lastSeen string
-	panelPort, remoteNodeID                                               int
-}, revision int64, now time.Time) error {
-	command := ThreeXUIControllerCommandTask{Action: "promote", MigrationID: migrationID, ApplicationID: target.applicationID, SourceApplicationID: source.applicationID, SourceName: source.name, SourceAddress: source.address, SourcePanelPort: source.panelPort, SourceRemoteNodeID: target.remoteNodeID, BackupRevision: revision}
-	if err := s.queueThreeXUIControllerCommand(ctx, tx, target.applicationID, target.agentID, command, now, "3x-ui restore point queued on the new subscription host"); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET backup_revision = ?, state = 'restoring', step = 'restore', last_error = '', updated_at = ? WHERE id = ?`, revision, now.Format(time.RFC3339Nano), migrationID)
-	return err
-}
-
-func (s *Store) queueThreeXUIConsolidationDemote(ctx context.Context, tx *sql.Tx, migrationID string, source, target struct {
-	applicationID, siteID, agentID, role, status, name, address, lastSeen string
-	panelPort, remoteNodeID                                               int
-}, now time.Time) error {
-	if source.role != threeXUIRoleMaster || source.status != "running" || target.role != threeXUIRoleMaster || target.status != "running" {
-		return errors.New("center: legacy 3x-ui controller topology changed during convergence")
-	}
-	canonicalApplicationID, _, err := runningGlobalThreeXUIController(ctx, tx)
-	if err != nil || target.applicationID != canonicalApplicationID {
-		return errors.New("center: global 3x-ui subscription controller changed during convergence")
-	}
-	command := ThreeXUIControllerCommandTask{Action: "demote", MigrationID: migrationID, ApplicationID: source.applicationID}
-	if err := s.queueThreeXUIControllerCommand(ctx, tx, source.applicationID, source.agentID, command, now, "legacy 3x-ui controller backed up and queued for VLESS-only mode"); err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET state = 'switching', step = 'cleanup', last_error = '', updated_at = ? WHERE id = ? AND kind = 'consolidate'`, now.Format(time.RFC3339Nano), migrationID)
-	return err
-}
-
 func (s *Store) ListThreeXUIControllerMigrations(ctx context.Context) ([]ThreeXUIControllerMigrationView, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.kind, m.site_id, m.source_application_id, m.target_application_id, m.backup_revision, m.state, m.step, m.last_error, m.failed_worker_application_id, m.created_at, m.updated_at,
 		COALESCE(b.application_id, ''), COALESCE(b.revision, 0), COALESCE(b.state, ''), COALESCE(b.sha256, ''), COALESCE(b.size, 0), COALESCE(b.last_error, ''), COALESCE(b.updated_at, '')
@@ -556,25 +525,4 @@ func (s *Store) RetryThreeXUIControllerMigrationCleanup(ctx context.Context, mig
 		return ThreeXUIControllerMigrationView{}, err
 	}
 	return s.ThreeXUIControllerMigration(ctx, migrationID)
-}
-
-func (s *Store) loadThreeXUIMigrationEndpoints(ctx context.Context, tx *sql.Tx, migrationID string, source, target *struct {
-	applicationID, siteID, agentID, role, status, name, address, lastSeen string
-	panelPort, remoteNodeID                                               int
-}) error {
-	var sourceID, targetID string
-	if err := tx.QueryRowContext(ctx, `SELECT source_application_id, target_application_id FROM three_x_ui_migrations WHERE id = ?`, migrationID).Scan(&sourceID, &targetID); err != nil {
-		return err
-	}
-	query := `SELECT a.id, a.site_id, a.node_id, a.role, a.status, n.name, COALESCE(p.service_address, ''), n.last_seen_at, COALESCE(json_extract(d.config_json, '$.panel_port'), 2053), COALESCE(t.remote_node_id, 0)
-		FROM applications a JOIN agents n ON n.id = a.node_id LEFT JOIN agent_network_profiles p ON p.agent_id = n.id
-		JOIN deployments d ON d.rowid = (SELECT d2.rowid FROM deployments d2 WHERE d2.application_id = a.id AND d2.state = 'succeeded' AND d2.operation IN ('install','upgrade','configure') ORDER BY d2.updated_at DESC, d2.rowid DESC LIMIT 1)
-		LEFT JOIN three_x_ui_nodes t ON t.worker_application_id = a.id WHERE a.id = ?`
-	if err := tx.QueryRowContext(ctx, query, sourceID).Scan(&source.applicationID, &source.siteID, &source.agentID, &source.role, &source.status, &source.name, &source.address, &source.lastSeen, &source.panelPort, &source.remoteNodeID); err != nil {
-		return err
-	}
-	if err := tx.QueryRowContext(ctx, query, targetID).Scan(&target.applicationID, &target.siteID, &target.agentID, &target.role, &target.status, &target.name, &target.address, &target.lastSeen, &target.panelPort, &target.remoteNodeID); err != nil {
-		return err
-	}
-	return nil
 }

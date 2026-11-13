@@ -196,22 +196,6 @@ func (s *Store) agentReinstallPlan(ctx context.Context, tx *sql.Tx, agentID stri
 	digest := sha256.Sum256(encoded)
 	plan.Revision = hex.EncodeToString(digest[:])
 	for i := range plan.Applications {
-		plan.Applications[i].Preparation, err = s.readReinstallPreparation(ctx, tx, plan.AgentID, plan.Applications[i].ApplicationID)
-		if err != nil {
-			return plan, err
-		}
-		if preparation := plan.Applications[i].Preparation; preparation != nil {
-			preparation.DNS, err = s.readReinstallDNS(ctx, tx, agentID, preparation.DeploymentID)
-			if err != nil {
-				return plan, err
-			}
-			preparation.EntryCheck, err = s.readReinstallEntryCheck(ctx, tx, preparation.DeploymentID, plan.Revision)
-			if err != nil {
-				return plan, err
-			}
-		}
-	}
-	for i := range plan.Applications {
 		var status AgentReinstallCurrentStatus
 		err = tx.QueryRowContext(ctx, `SELECT r.deployment_id,d.state,CASE WHEN json_extract(r.operator_verification_json,'$.verifiedAt') IS NULL THEN 'required' ELSE 'operator_attested' END FROM agent_reinstall_current_applications r JOIN deployments d ON d.id=r.deployment_id JOIN agent_reinstall_operations op ON op.id=r.operation_id WHERE op.agent_id=? AND op.state='review_required' AND r.application_id=?`, plan.AgentID, plan.Applications[i].ApplicationID).Scan(&status.DeploymentID, &status.State, &status.Verification)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -294,9 +278,6 @@ func readReinstallApplications(ctx context.Context, tx *sql.Tx, plan *AgentReins
 				app.Requirements = append(app.Requirements, "verify_saved_artifact_and_credentials")
 				policy, reconstructible := recovery.OfficialRecoveryPolicy(app.AppKey, app.Version)
 				switch {
-				case app.AppKey == meridianAppKey:
-					app.Recovery = "rebuild_configuration"
-					app.Requirements = append(app.Requirements, "validate_saved_meridian_intent_and_credentials")
 				case app.AppKey == senulunAgentAppKey && managedMonitorEvidence:
 					app.Recovery = "reenroll_monitor"
 					app.Requirements = append(app.Requirements, "replace_managed_monitor_enrollment")

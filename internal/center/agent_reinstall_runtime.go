@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
-	"net/http"
 	"strings"
 	"time"
 
@@ -246,24 +245,4 @@ func (s *Store) claimReinstallRuntime(ctx context.Context, tx *sql.Tx, agentID, 
 func (s *Store) recordReinstallRuntimeProgress(ctx context.Context, tx *sql.Tx, id string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_operations SET updated_at=? WHERE id=(SELECT operation_id FROM agent_reinstall_app_preparations WHERE runtime_command_id=?)`, s.now().UTC().Format(time.RFC3339Nano), id)
 	return err
-}
-
-func (s *Server) handleAgentReinstallRuntime(writer http.ResponseWriter, request *http.Request) {
-	var input AgentReinstallApplicationInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	adminID, err := s.requestAdminID(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.QueueAgentReinstallRuntime(request.Context(), request.PathValue("id"), adminID, input)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, result)
 }

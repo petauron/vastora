@@ -103,71 +103,59 @@ func submitReinstallRuntimeResult(t *testing.T, s *Store, node AgentCredential, 
 	return completeAgentTaskGRPCTest(context.Background(), s, node, task.ID, input)
 }
 
-func TestAgentReinstallRuntimeRestoresNativeIdentityWithoutPublishing(t *testing.T) {
+func TestArchivedReinstallRuntimeRetainsIdentityWithoutDispatchOrPublication(t *testing.T) {
 	s, node, input := reinstallRuntimeFixture(t)
 	ctx := context.Background()
 	receipt, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil || replay != receipt {
-		t.Fatalf("repeat queue: %+v %v", replay, err)
-	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil || task.MeridianRuntime == nil {
-		t.Fatalf("claim: %+v %v", task, err)
-	}
-	config := string(task.MeridianRuntime.Desired.Config)
-	if task.ID != receipt.CommandID || task.Revision != 5 || !strings.Contains(config, "10.0.0.8") || strings.Contains(config, "10.0.0.7") || !strings.Contains(config, restoreNativeID) || strings.Contains(config, restoreRouteID) || !strings.Contains(config, "original-private-key") || task.MeridianRuntime.Source != nil || len(task.MeridianRuntime.Peers) != 0 || task.MeridianRuntime.ReplacePendingState || task.MeridianRuntime.RetireLegacy {
-		t.Fatal("restoration lost identity/address or enabled an unreviewed landing")
-	}
-	raw, _ := json.Marshal(task)
-	var metadata string
-	if err = s.db.QueryRow(`SELECT task_json FROM agent_reinstall_app_preparations`).Scan(&metadata); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(metadata, restoreNativeID) || strings.Contains(metadata, "original-private-key") || len(raw) == 0 {
-		t.Fatal("recovery metadata contains runtime secrets")
+	task, err := s.reinstallRuntimeTask(ctx, tx, node.ID, receipt.CommandID, false)
+	_ = tx.Rollback()
+	if err != nil || task == nil || task.MeridianRuntime == nil {
+		t.Fatalf("historical native configuration unavailable: %v", err)
 	}
-	response := submitRestoredRuntime(t, s, node, task, true, true)
-	if response != nil {
-		t.Fatalf("result: %v", response)
+	config := string(task.MeridianRuntime.Desired.Config)
+	if task.Revision != 5 || !strings.Contains(config, "10.0.0.8") || strings.Contains(config, "10.0.0.7") || !strings.Contains(config, restoreNativeID) || strings.Contains(config, restoreRouteID) || !strings.Contains(config, "original-private-key") || task.MeridianRuntime.Source != nil || len(task.MeridianRuntime.Peers) != 0 || task.MeridianRuntime.ReplacePendingState || task.MeridianRuntime.RetireLegacy {
+		t.Fatal("historical rendering lost identity or enabled unreviewed landing")
 	}
+	var metadata string
+	if err := s.db.QueryRow(`SELECT task_json FROM agent_reinstall_app_preparations`).Scan(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(metadata, restoreNativeID) || strings.Contains(metadata, "original-private-key") {
+		t.Fatal("recovery metadata contains private credentials")
+	}
+	if _, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
+		t.Fatalf("retired command dispatched: %v", err)
+	}
+	if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, receipt.CommandID); err != nil {
+		t.Fatal(err)
+	}
+	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+	result.LegacyRetired = true
+	assertRetiredMeridianResultPreservesState(t, s, meridianRuntimeProjection{agentID: node.ID}, receipt.CommandID, result)
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Applications[0].Preparation.Runtime.State != "succeeded" || plan.Recovery.State != "review_required" {
-		t.Fatalf("receipt/fence: %+v", plan)
-	}
-	public, _ := json.Marshal(plan)
-	if bytes.Contains(public, []byte(restoreNativeID)) || bytes.Contains(public, []byte("original-private-key")) {
-		t.Fatal("recovery UI contains credentials")
-	}
-	var active int
-	if err = s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM agent_network_profiles WHERE agent_id=?)+(SELECT COUNT(*) FROM meridian_endpoints WHERE id='restore-endpoint' AND runtime_healthy=1)`, node.ID).Scan(&active); err != nil || active != 0 {
-		t.Fatal("runtime receipt activated network/business")
-	}
-	var address string
-	if err = s.db.QueryRow(`SELECT endpoint FROM services WHERE id='restore-service'`).Scan(&address); err != nil || address != "10.0.0.7:10443" {
-		t.Fatal("runtime receipt published replacement address")
-	}
-	if _, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
-		t.Fatalf("runtime released work fence: %v", err)
-	}
-	directory := s.dataDir
-	if err = s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err = Open(directory)
+	encoded, err := json.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	replay, err = s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil || replay.CommandID != receipt.CommandID || replay.State != "succeeded" {
-		t.Fatalf("restart lost receipt: %+v %v", replay, err)
+	if bytes.Contains(encoded, []byte(restoreNativeID)) || bytes.Contains(encoded, []byte("original-private-key")) {
+		t.Fatal("recovery UI exposed credentials")
+	}
+	if len(plan.Applications) != 1 || plan.Applications[0].Recovery != "restore_data" || plan.Applications[0].Preparation != nil {
+		t.Fatal("generic plan resumed application-owned restoration")
+	}
+	var address string
+	if err := s.db.QueryRow(`SELECT endpoint FROM services WHERE id='restore-service'`).Scan(&address); err != nil || address != "10.0.0.7:10443" {
+		t.Fatalf("retired result published a replacement backend: %v", err)
 	}
 }
 
@@ -370,109 +358,92 @@ func TestAgentReinstallRuntimeSealingRejectsTaskSubstitution(t *testing.T) {
 	}
 }
 
-func TestAgentReinstallRuntimeStartupHeartbeatRefreshesNetworkBeforeApproval(t *testing.T) {
-	s, node, input := reinstallRuntimeNetworkFixture(t, true)
+func TestReinstallHeartbeatUpdatesNetworkWithoutRenewingRetiredProxyEvidence(t *testing.T) {
+	s, node, _ := reinstallRuntimeNetworkFixture(t, true)
 	ctx := context.Background()
-	if _, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatal(err)
-	}
-	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
-	if response := submitReinstallRuntimeResult(t, s, node, task, result, true); response != nil {
-		t.Fatal(response)
-	}
 	var key []byte
-	if err = s.db.QueryRow(`SELECT x25519_public_key FROM agents WHERE id=?`, node.ID).Scan(&key); err != nil {
+	if err := s.db.QueryRow(`SELECT x25519_public_key FROM agents WHERE id=?`, node.ID).Scan(&key); err != nil {
 		t.Fatal(err)
 	}
-	heartbeat := NodeHeartbeat{Startup: true, Version: Version, PublicKey: key, Capabilities: NodeCapabilities{Docker: true}, Roles: []string{"worker"}, NetworkCandidates: []networking.Candidate{{Address: "10.0.0.8", Interface: "eth0", Kind: "lan"}}, MeridianRuntime: &result}
-	if err = s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
-		t.Fatalf("startup deadlocked before network refresh: %v", err)
+	read := func() string {
+		t.Helper()
+		var raw string
+		if err := s.db.QueryRow(`SELECT json_array(hex(p.runtime_observation),e.desired_revision,e.applied_revision,e.runtime_healthy,hex(e.source_peer_json)) FROM agent_reinstall_app_preparations p JOIN meridian_endpoints e ON e.application_id=p.application_id`).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		return raw
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
+	before := read()
+	heartbeat := NodeHeartbeat{Startup: true, Version: Version, PublicKey: key, Capabilities: NodeCapabilities{Docker: true}, Roles: []string{"worker"}, NetworkCandidates: []networking.Candidate{{Address: "10.0.0.8", Interface: "eth0", Kind: networking.KindLAN}}, MeridianRuntime: &meridianruntime.Result{Receipt: glivela.AppliedReceipt{Revision: 999, ConfigSHA256: strings.Repeat("f", 64), RuntimeReady: true}}}
+	if err := s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatalf("management heartbeat blocked by retired runtime data: %v", err)
 	}
-	_, err = s.currentReinstallRuntimeObservation(ctx, tx, task.ID, *task.MeridianRuntime)
-	tx.Rollback()
-	if err == nil {
-		t.Fatal("startup retained stale acceptance evidence")
-	}
+	now := s.now().UTC().Add(time.Minute)
+	s.now = func() time.Time { return now }
 	heartbeat.Startup = false
-	heartbeat.PublicEgress = &networking.PublicEgress{Address: "198.51.100.8", BindAddress: "10.0.0.8", Mode: networking.PublicModeNAT, ObservedAt: s.now().UTC()}
-	if err = s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
-		t.Fatalf("fresh observation rejected: %v", err)
+	heartbeat.PublicEgress = &networking.PublicEgress{Address: "198.51.100.8", BindAddress: "10.0.0.8", Mode: networking.PublicModeNAT, ObservedAt: now}
+	if err := s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatalf("fresh management network observation rejected: %v", err)
 	}
-	tx, err = s.db.BeginTx(ctx, nil)
-	if err != nil {
+	if read() != before {
+		t.Fatal("heartbeat renewed or rewrote the frozen proxy evidence")
+	}
+	var address, observed string
+	if err := s.db.QueryRow(`SELECT public_egress_address,public_egress_observed_at FROM agents WHERE id=?`, node.ID).Scan(&address, &observed); err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.currentReinstallRuntimeObservation(ctx, tx, task.ID, *task.MeridianRuntime)
-	tx.Rollback()
-	if err != nil {
-		t.Fatalf("fresh approved runtime unavailable: %v", err)
+	timestamp, err := time.Parse(time.RFC3339Nano, observed)
+	if err != nil || address != "198.51.100.8" || !timestamp.Equal(now) {
+		t.Fatal("generic network observation did not refresh")
 	}
 }
 
-func TestAgentReinstallRuntimeReviewedSuccessorPreservesReceipt(t *testing.T) {
+func TestArchivedRuntimeReviewChangePreservesOriginalReceiptWithoutSuccessor(t *testing.T) {
 	s, node, input := reinstallRuntimeFixture(t)
 	ctx := context.Background()
-	first, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil {
-		t.Fatal(err)
+	seedSuccessfulHistoricalRuntime(t, s, node, input)
+	var id string
+	var original []byte
+	if err := s.db.QueryRow(`SELECT runtime_command_id,runtime_observation FROM agent_reinstall_app_preparations WHERE application_id=?`, input.ApplicationID).Scan(&id, &original); err != nil || len(original) == 0 {
+		t.Fatalf("historical sealed evidence missing: %v", err)
 	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatal(err)
-	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response != nil {
-		t.Fatal(response)
-	}
-	var originalReceipt []byte
-	if err = s.db.QueryRow(`SELECT sealed_result FROM task_executions WHERE task_id=?`, first.CommandID).Scan(&originalReceipt); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.db.Exec(`UPDATE meridian_endpoints SET desired_revision=desired_revision+1 WHERE id='restore-endpoint'`); err != nil {
+	if _, err := s.db.Exec(`UPDATE meridian_endpoints SET desired_revision=desired_revision+1 WHERE id='restore-endpoint'`); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil || plan.Applications[0].Preparation.Runtime.State != "review_changed" {
-		t.Fatalf("changed review: %v", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err = s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err == nil {
-		t.Fatal("accepted stale review")
+	history := readHistoricalReinstallPreparation(t, s, node, input)
+	if history.Runtime == nil || history.Runtime.State != "review_changed" || plan.Applications[0].Preparation != nil {
+		t.Fatal("changed historical review was reused as current authority")
 	}
-	input.PlanRevision = plan.Revision
-	next, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil || next.CommandID == first.CommandID {
-		t.Fatalf("successor: %v", err)
+	if _, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
+		t.Fatalf("old runtime successor dispatched: %v", err)
 	}
-	repeat, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil || repeat != next {
-		t.Fatal("duplicate review replayed task", err)
+	read := func() {
+		t.Helper()
+		var savedID, state string
+		var sealed []byte
+		var count int
+		if err := s.db.QueryRow(`SELECT p.runtime_command_id,p.runtime_observation,c.state,(SELECT count(*) FROM application_commands WHERE kind='meridian.runtime.apply') FROM agent_reinstall_app_preparations p JOIN application_commands c ON c.id=p.runtime_command_id WHERE p.application_id=?`, input.ApplicationID).Scan(&savedID, &sealed, &state, &count); err != nil {
+			t.Fatal(err)
+		}
+		if savedID != id || !bytes.Equal(sealed, original) || state != "succeeded" || count != 1 {
+			t.Fatal("historical receipt overwritten or successor manufactured")
+		}
 	}
-	var retainedReceipt []byte
-	var oldState string
-	if err = s.db.QueryRow(`SELECT sealed_result FROM task_executions WHERE task_id=?`, first.CommandID).Scan(&retainedReceipt); err != nil || !bytes.Equal(originalReceipt, retainedReceipt) {
-		t.Fatal("changed old receipt", err)
+	read()
+	directory := s.dataDir
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
 	}
-	if err = s.db.QueryRow(`SELECT state FROM application_commands WHERE id=?`, first.CommandID).Scan(&oldState); err != nil || oldState != "succeeded" {
-		t.Fatal("changed old command", err)
+	s, err = Open(directory)
+	if err != nil {
+		t.Fatal(err)
 	}
-	task, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil || task.ID != next.CommandID {
-		t.Fatal("claim successor", err)
-	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response != nil {
-		t.Fatal(response)
-	}
-	plan, err = s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil || plan.Recovery.State != "review_required" || plan.Applications[0].Preparation.Runtime.State != "succeeded" {
-		t.Fatal("successor bypassed final acceptance", err)
-	}
+	defer s.Close()
+	read()
 }
 
 func seedCompletedHistoricalPreparation(t *testing.T, s *Store, node AgentCredential, input AgentReinstallApplicationInput) {

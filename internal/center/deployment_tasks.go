@@ -547,6 +547,9 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectRetiredApplicationPreparation(ctx, tx, agentID, task.ID); err != nil {
+		return nil, err
+	}
 	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, task.ID, false)
 	if err != nil {
 		return nil, err
@@ -924,6 +927,9 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 	}
 	preparation, err := s.validateReinstallPreparation(ctx, tx, agentID, taskID)
 	if err != nil {
+		return "", nil, err
+	}
+	if err := rejectRetiredApplicationPreparation(ctx, tx, agentID, taskID); err != nil {
 		return "", nil, err
 	}
 	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, taskID, false)

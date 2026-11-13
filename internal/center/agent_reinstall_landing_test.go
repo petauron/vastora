@@ -384,15 +384,12 @@ func TestAgentReinstallLandingRuntimeRejectsChangedAuthorization(t *testing.T) {
 	}
 }
 
-func TestAgentReinstallLandingRuntimeRequiresExactHealthyTransport(t *testing.T) {
+func TestRetiredLandingRuntimeRejectsAllTransportReceipts(t *testing.T) {
 	for _, mode := range []string{"healthy", "blocked", "stale", "wrong-source", "missing-peer"} {
 		t.Run(mode, func(t *testing.T) {
-			s, node, _ := queueReinstallLandingRuntime(t)
+			s, node, input := queueReinstallLandingRuntime(t)
 			ctx := context.Background()
-			task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-			if err != nil || task == nil {
-				t.Fatal(err)
-			}
+			task := readHistoricalRuntimeTask(t, s, node)
 			result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
 			switch mode {
 			case "blocked":
@@ -404,57 +401,51 @@ func TestAgentReinstallLandingRuntimeRequiresExactHealthyTransport(t *testing.T)
 			case "missing-peer":
 				result.Peers = nil
 			}
-			response := submitReinstallRuntimeResult(t, s, node, task, result, true)
-			invalid := mode == "wrong-source" || mode == "missing-peer"
-			if (response != nil) != invalid {
-				t.Fatalf("result %v: %v", mode, response)
+			if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, task.ID); err != nil {
+				t.Fatal(err)
 			}
+			assertRetiredMeridianResultPreservesState(t, s, meridianRuntimeProjection{agentID: node.ID}, task.ID, result)
 			plan, err := s.AgentReinstallPlan(ctx, node.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			state := plan.Applications[0].Preparation.Runtime.State
-			if mode == "healthy" && state != "succeeded" || mode != "healthy" && state == "succeeded" {
-				t.Fatalf("runtime state %s: %s", mode, state)
+			if plan.Recovery.State != "review_required" || plan.Applications[0].Preparation != nil {
+				t.Fatal("old transport proof released recovery or revived retired controls")
 			}
-			if !invalid {
-				var body string
-				if err = s.db.QueryRow(`SELECT result_json FROM application_commands WHERE id=?`, task.ID).Scan(&body); err != nil {
-					t.Fatal(err)
-				}
-				if !strings.Contains(body, "replacement-entry") || !strings.Contains(body, "receipt") {
-					t.Fatal("discarded applied runtime or transport evidence")
-				}
+			input.PlanRevision = plan.Revision
+			if _, err := s.ActivateAgentReinstallAccess(ctx, node.ID, "reinstall-review-admin", input); err == nil {
+				t.Fatal("late legacy receipt activated an address")
 			}
-			if plan.Recovery.State != "review_required" {
-				t.Fatal("transport receipt finished client acceptance")
-			}
-			if mode == "blocked" || mode == "stale" {
-				input := AgentReinstallApplicationInput{OperationID: plan.Recovery.ID, ApplicationID: "retained-meridian", PlanRevision: plan.Revision}
-				if _, err = s.ActivateAgentReinstallAccess(ctx, node.ID, "reinstall-review-admin", input); err == nil {
-					t.Fatal("activated address with unverified transport")
-				}
-				var commandState string
-				if err = s.db.QueryRow(`SELECT state FROM application_commands WHERE id=?`, task.ID).Scan(&commandState); err != nil || commandState != "succeeded" {
-					t.Fatal("rewrote applied execution as failure")
-				}
+			var state string
+			var attempt int
+			if err := s.db.QueryRow(`SELECT state,attempt FROM application_commands WHERE id=?`, task.ID).Scan(&state, &attempt); err != nil || state != "running" || attempt != 1 {
+				t.Fatal("retired receipt rewrote original in-flight evidence")
 			}
 		})
 	}
 }
 
-func TestAgentReinstallLandingRuntimeRecoversFromStartupTransportFailure(t *testing.T) {
-	s, node, _ := queueReinstallLandingRuntime(t)
+func TestHistoricalTransportObservationValidationDoesNotReplayExecution(t *testing.T) {
+	s, node, input := queueReinstallLandingRuntime(t)
 	ctx := context.Background()
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatal(err)
-	}
+	task := readHistoricalRuntimeTask(t, s, node)
 	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
 	result.Peers[0].Status.State = "blocked"
-	response := submitReinstallRuntimeResult(t, s, node, task, result, true)
-	if response != nil {
-		t.Fatalf("startup result: %v", response)
+	// Seed recorded pre-upgrade state; no current dispatcher/result handler
+	// is allowed to accept this as a newly completed operation.
+	if _, err := s.db.Exec(`UPDATE application_commands SET state='succeeded',attempt=1 WHERE id=?`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.recordReinstallRuntimeObservation(ctx, tx, node.ID, result, s.now()); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 	for _, healthy := range []bool{true, false} {
 		result = meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
@@ -481,8 +472,9 @@ func TestAgentReinstallLandingRuntimeRecoversFromStartupTransportFailure(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		if (plan.Applications[0].Preparation.Runtime.State == "succeeded") != healthy {
-			t.Fatal("runtime readiness did not follow current observation")
+		history := readHistoricalReinstallPreparation(t, s, node, input)
+		if history.Runtime == nil || (history.Runtime.State == "succeeded") != healthy || plan.Applications[0].Preparation != nil {
+			t.Fatal("historical validation changed or old controls revived")
 		}
 		var attempt int
 		var state string

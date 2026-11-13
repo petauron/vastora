@@ -576,7 +576,7 @@ func TestUncertainMeridianRuntimeFailureExposesEndpointRecovery(t *testing.T) {
 	}
 }
 
-func TestExpiredMeridianRuntimeLeaseProjectsFailedEndpointForRecovery(t *testing.T) {
+func TestExpiredLegacyRuntimeLeaseRetainsApplicationStateForNewOwner(t *testing.T) {
 	store := openOrchestrationStore(t)
 	t.Cleanup(func() { _ = store.Close() })
 	ctx := context.Background()
@@ -612,9 +612,18 @@ func TestExpiredMeridianRuntimeLeaseProjectsFailedEndpointForRecovery(t *testing
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
-	if err != nil || task == nil || task.ID != commandID || task.MeridianRuntime == nil {
-		t.Fatalf("claimed Glivela task=%#v err=%v", task, err)
+	claimTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.claimApplicationCommand(ctx, claimTx, node.ID)
+	_ = claimTx.Rollback()
+	if err != nil || task != nil {
+		t.Fatalf("retired command dispatched: %v %v", task, err)
+	}
+	// Model an attempt issued before the upgrade, rather than claiming it now.
+	if _, err := store.db.Exec(`UPDATE application_commands SET state='running',attempt=1,lease_expires_at=? WHERE id=?`, clock.Add(taskLeaseDuration).Format(time.RFC3339Nano), commandID); err != nil {
+		t.Fatal(err)
 	}
 	clock = clock.Add(taskLeaseDuration + time.Second)
 	if err := store.recoverExpiredTasks(ctx, node.ID); err != nil {
@@ -631,10 +640,10 @@ func TestExpiredMeridianRuntimeLeaseProjectsFailedEndpointForRecovery(t *testing
 	if err := store.db.QueryRowContext(ctx, `SELECT status,runtime_healthy,last_error FROM meridian_endpoints WHERE id=?`, endpoint.ID).Scan(&endpointStatus, &runtimeHealthy, &lastError); err != nil {
 		t.Fatal(err)
 	}
-	if endpointStatus != "failed" || runtimeHealthy != 0 || !strings.Contains(lastError, "manual verification") {
+	if endpointStatus != "pending" || runtimeHealthy != 0 || lastError != "" {
 		t.Fatalf("expired endpoint status=%q healthy=%d error=%q", endpointStatus, runtimeHealthy, lastError)
 	}
-	if err := store.db.QueryRowContext(ctx, `SELECT status FROM meridian_deployments WHERE command_id=?`, commandID).Scan(&deploymentStatus); err != nil || deploymentStatus != "failed" {
+	if err := store.db.QueryRowContext(ctx, `SELECT status FROM meridian_deployments WHERE command_id=?`, commandID).Scan(&deploymentStatus); err != nil || deploymentStatus != "pending" {
 		t.Fatalf("expired deployment status=%q err=%v", deploymentStatus, err)
 	}
 }
