@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.438](https://github.com/petauron/vastora/compare/v0.1.0-alpha.437...v0.1.0-alpha.438) (2026-11-13)
+
+
+### Bug Fixes
+
+* **center:** recover reviewed identical package upgrades ([#1263](https://github.com/petauron/vastora/issues/1263)) ([0e260f8](https://github.com/petauron/vastora/commit/0e260f8bc2bfaa67e9e4623a15abb80f81622a04))
+
 ## [0.1.0-alpha.437](https://github.com/petauron/vastora/compare/v0.1.0-alpha.436...v0.1.0-alpha.437) (2026-11-13)
 
 
