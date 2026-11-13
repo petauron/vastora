@@ -9,11 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
 )
 
-func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
+func TestRetiredSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -46,131 +45,10 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := claimTask(t, store, node)
-	if task.Kind != "application.command" || task.SubscriptionCommand == nil || task.ApplicationCommand != nil {
-		t.Fatalf("unexpected subscription task: %#v", task)
+	if command.ID == "" {
+		t.Fatal("missing retained command identity")
 	}
-	label := strings.TrimSuffix(task.SubscriptionCommand.Domain, ".example.test")
-	if len(label) != 26 || strings.Trim(label, "abcdefghijklmnopqrstuvwxyz234567") != "" || task.SubscriptionCommand.BaseURI != "https://"+task.SubscriptionCommand.Domain+"/sub/" {
-		t.Fatalf("unexpected subscription settings: %#v", task.SubscriptionCommand)
-	}
-	result, _ := json.Marshal(ApplicationTaskResult{SubscriptionCommand: &SubscriptionCommandResult{Domain: task.SubscriptionCommand.Domain, BaseURI: task.SubscriptionCommand.BaseURI}})
-	session := "subscription-confirmation-original-session"
-	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, session, controlplane.ExecutionProtocol); err != nil {
-		t.Fatal(err)
-	}
-	auth, err := store.PersistExecutionAuthorization(ctx, node.ID, session, *task)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.StartExecution(ctx, node.ID, session, auth.ID, auth.Digest); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, result, true, false, "", nil, false); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.db.Exec(`UPDATE task_executions SET state='unknown' WHERE id=?`, auth.ID); err != nil {
-		t.Fatal(err)
-	}
-	cookie, _, err := store.CreateFirstAdmin(ctx, "subscription-confirmation-admin", "test-only-strong-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	adminID, err := store.SessionAdminID(ctx, cookie)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decision := controlplane.ExecutionDisposition{Action: "confirm-completed", ExecutionStopped: true, Note: "Verified stopped executor and subscription configuration."}
-	if _, err := store.db.Exec(`CREATE TRIGGER reject_subscription_confirmation BEFORE UPDATE ON task_executions WHEN NEW.disposition='confirm-completed' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END`); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ConfirmExecution(ctx, auth.ID, adminID, decision); err == nil {
-		t.Fatal("confirmation ignored failed audit")
-	}
-	var failedProjectionState, failedProjectionResult, failedDisposition string
-	if err := store.db.QueryRow(`SELECT state,result_json FROM application_commands WHERE id=?`, task.ID).Scan(&failedProjectionState, &failedProjectionResult); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.db.QueryRow(`SELECT disposition FROM task_executions WHERE id=?`, auth.ID).Scan(&failedDisposition); err != nil {
-		t.Fatal(err)
-	}
-	if failedProjectionState != "running" || failedProjectionResult != "{}" || failedDisposition != "" {
-		t.Fatal("failed confirmation left partial command projection")
-	}
-	if _, err := store.db.Exec(`DROP TRIGGER reject_subscription_confirmation`); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ConfirmExecution(ctx, auth.ID, adminID, decision); err != nil {
-		t.Fatal(err)
-	}
-	var historyState, disposition string
-	if err := store.db.QueryRow(`SELECT state,disposition FROM task_executions WHERE id=?`, auth.ID).Scan(&historyState, &disposition); err != nil {
-		t.Fatal(err)
-	}
-	if historyState != "unknown" || disposition != "confirm-completed" {
-		t.Fatal("manual confirmation rewrote historical execution")
-	}
-	completed, err := store.ApplicationCommand(ctx, command.ID)
-	if err != nil || completed.State != "succeeded" || completed.PublicationID == "" {
-		t.Fatalf("unexpected completed subscription command: %#v err=%v", completed, err)
-	}
-	publication, err := store.Publication(ctx, completed.PublicationID)
-	if err != nil || publication.ServiceID != "three-x-ui-subscription" || publication.TLSEnabled != true {
-		t.Fatalf("subscription publication = %#v, err=%v", publication, err)
-	}
-	resyncInput := SubscriptionCommandInput{ApplicationID: "three-x-ui-subscription", GatewayNodeID: node.ID, Hostname: publication.Hostname, Kind: publicationPublic, DNSProvider: "manual"}
-	resync, err := store.CreateSubscriptionCommand(ctx, resyncInput)
-	if err != nil || resync.PublicationID != publication.ID {
-		t.Fatalf("subscription resync = %#v, err=%v", resync, err)
-	}
-	// A failed configuration task must not revoke a previously working entry.
-	snapshot := func() string {
-		var value string
-		if err := store.db.QueryRow(`SELECT json_object('status',status,'desired',desired_revision,'applied',applied_revision,'updated',updated_at) FROM publications WHERE id=?`, publication.ID).Scan(&value); err != nil {
-			t.Fatal(err)
-		}
-		return value
-	}
-	before := snapshot()
-	failedTask := claimTask(t, store, node)
-	if failedTask.ID != resync.ID {
-		t.Fatalf("wrong resync task: %s", failedTask.Kind)
-	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, failedTask.ID, failedTask.Attempt, false, "subscription API failed", nil, failedTask.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-	if after := snapshot(); after != before {
-		t.Fatalf("failed task changed publication: %s -> %s", before, after)
-	}
-	failed, err := store.ApplicationCommand(ctx, resync.ID)
-	if err != nil || failed.State != "failed" {
-		t.Fatalf("failure not recorded: %s %v", failed.State, err)
-	}
-	// Failure while recording another explicit command must likewise not undo
-	// the reused publication. No compensation is authorized by a database error.
-	if _, err := store.db.Exec(`CREATE TRIGGER reject_subscription_insert BEFORE INSERT ON application_commands WHEN NEW.kind='3xui.subscription.configure' BEGIN SELECT RAISE(ABORT,'command storage unavailable'); END`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.CreateSubscriptionCommand(ctx, resyncInput); err == nil {
-		t.Fatal("injected command failure was ignored")
-	}
-	if after := snapshot(); after != before {
-		t.Fatalf("failed command creation changed publication: %s -> %s", before, after)
-	}
-	var subscriptionPublications int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE service_id = 'three-x-ui-subscription' AND status <> 'stopped'`).Scan(&subscriptionPublications); err != nil {
-		t.Fatal(err)
-	}
-	if subscriptionPublications != 1 {
-		t.Fatalf("active subscription publications = %d", subscriptionPublications)
-	}
-	var panelPublications int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE service_id = 'three-x-ui-panel' AND status <> 'stopped'`).Scan(&panelPublications); err != nil {
-		t.Fatal(err)
-	}
-	if panelPublications != 0 {
-		t.Fatal("3x-ui management panel was published with the subscription service")
-	}
+	assertRetiredProxyCommandChannel(t, store, node.ID)
 }
 
 func TestMeridianSubscriptionIsServedByCenterWithoutAgentCommand(t *testing.T) {
@@ -330,7 +208,7 @@ func TestGatewayCertificatePrivateKeyIsAbsentFromDesiredStateAndActions(t *testi
 	}
 }
 
-func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
+func TestRetiredRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -345,25 +223,10 @@ func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := claimTask(t, store, node)
-	if task.ApplicationCommand == nil || task.ApplicationCommand.Action != "rename" || task.ApplicationCommand.InboundID != 9 || task.ApplicationCommand.RegionCode != "US" || task.ApplicationCommand.DisplayName != "🇺🇸 美国｜Provider A" {
-		t.Fatalf("unexpected rename task: %#v", task)
+	if command.ID == "" {
+		t.Fatal("missing retained command identity")
 	}
-	encoded, _ := json.Marshal(ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "rename", InboundID: 9, DisplayName: "🇺🇸 美国｜Provider A"}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded, task.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-	completed, err := store.ApplicationCommand(ctx, command.ID)
-	if err != nil || completed.State != "succeeded" || completed.RegionCode != "US" || completed.DisplayName != "🇺🇸 美国｜Provider A" {
-		t.Fatalf("unexpected completed rename: %#v err=%v", completed, err)
-	}
-	var displayName, region, serviceName, endpoint string
-	if err := store.db.QueryRowContext(ctx, `SELECT display_name, region_code, name, endpoint FROM services WHERE id = 'reality-service'`).Scan(&displayName, &region, &serviceName, &endpoint); err != nil {
-		t.Fatal(err)
-	}
-	if displayName != "🇺🇸 美国｜Provider A" || region != "US" || serviceName != "inbound-9" || endpoint != "10.0.0.71:32009" {
-		t.Fatalf("renamed service = display %q, region %q, identity %q, endpoint %q", displayName, region, serviceName, endpoint)
-	}
+	assertRetiredProxyCommandChannel(t, store, node.ID)
 }
 
 func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {

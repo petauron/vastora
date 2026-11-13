@@ -262,8 +262,5 @@ func (s *Store) StartPublicationVerifications(ctx context.Context) error {
 	if err := s.startRealityGuardHardening(ctx); err != nil {
 		return err
 	}
-	if err := s.resumeSucceededRealityPublications(ctx); err != nil {
-		return err
-	}
 	return s.resumePublicationVerifications(ctx)
 }

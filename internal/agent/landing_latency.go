@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/landing"
 )
 
@@ -37,33 +36,6 @@ func (s *Store) landingLatencyTargetSnapshot() ([]landing.LatencyTarget, <-chan 
 
 // Each target has its own clock and reports immediately. No probe or report
 // blocks the management heartbeat, and only four probes run at once.
-func (c Client) RunLandingLatencyChecks(ctx context.Context, store *Store, report func(error)) {
-	checker := landing.NewLinkChecker()
-	defer checker.Close()
-	slots := make(chan struct{}, 4)
-	store.runLandingLatencyChecks(ctx, time.Minute, func(ctx context.Context, target landing.LatencyTarget) {
-		select {
-		case slots <- struct{}{}:
-		case <-ctx.Done():
-			return
-		}
-		result := checker.Check(ctx, target.Peer)
-		<-slots
-		if ctx.Err() != nil {
-			return
-		}
-		observation := landing.LatencyObservation{Target: target, State: result.State, LatencyMS: result.LatencyMS, CheckedAt: result.CheckedAt}
-		requestContext, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		connection, err := store.Connection(requestContext)
-		if err == nil {
-			err = c.callAgentRPC(requestContext, connection, rpcLandingLatency, "", observation, nil, controlplane.MaxJSONPayload, false)
-		}
-		if err != nil && ctx.Err() == nil && report != nil {
-			report(err)
-		}
-	})
-}
 
 func (s *Store) runLandingLatencyChecks(ctx context.Context, interval time.Duration, probe func(context.Context, landing.LatencyTarget)) {
 	type worker struct {

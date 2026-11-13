@@ -80,7 +80,7 @@ func authorizeReinstallTestPackage(t *testing.T, store *Store, deploymentID stri
 func TestAgentReinstallPlanKeepsSavedVersionsAndRecoveryRequirements(t *testing.T) {
 	store, node := reinstallPlanFixture(t)
 	cases := []struct{ id, key, version, recovery, requirement string }{
-		{"meridian", meridianAppKey, "0.1.0-alpha.12", "rebuild_configuration", "validate_saved_meridian_intent_and_credentials"},
+		{"meridian", meridianAppKey, "0.1.0-alpha.12", "restore_data", "restore_backup_on_replacement"},
 		{"collector", senulunAgentAppKey, "0.1.0-alpha.5", "restore_data", "restore_backup_on_replacement"},
 		{"monitor", senulunAppKey, "0.1.0-alpha.5", "restore_data", "restore_backup_on_replacement"},
 		{"cpa", "vastora-official/cpa", "7.2.130", "restore_data", "restore_backup_on_replacement"},

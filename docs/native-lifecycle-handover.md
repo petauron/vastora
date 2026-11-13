@@ -29,3 +29,18 @@ databases, freeze the old writer, import the frozen data through Glivela, and
 verify the new controller/node identity and real proxy routes. Source CI is not
 production acceptance. This change does not authorize production deployment or
 cleanup of old installations, databases, histories or backups.
+
+## Retired embedded proxy controls
+
+Agent heartbeats carry generic host/application state only; they do not contact
+the old proxy API, collect proxy traffic/peer health or use its monitor cadence.
+Independent Glivela owns those observations and its processes. Old REALITY,
+3x-ui mutation and Xray authority-recovery HTTP entrypoints are removed. Retained
+command/recovery records remain readable as historical evidence, but cannot be
+claimed or replayed through the generic task channel. Explicit abandonment keeps
+the original evidence; it does not manufacture success or restore a proxy writer.
+
+Normal signed installation/upgrade recovery, website/shared-gateway recovery,
+Agent identity and OS reinstall recovery, and Senlun monitoring tasks retain
+their existing owner and authorization. No business table or credential is
+deleted by this source cleanup.

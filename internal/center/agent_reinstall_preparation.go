@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -308,12 +307,6 @@ func (s *Store) claimAgentReinstallTask(ctx context.Context, agentID, credential
 	if err != nil {
 		return nil, err
 	}
-	if strings.HasPrefix(id, "node-listener-") {
-		return s.claimReinstallListener(ctx, tx, agentID, id, commitTask)
-	}
-	if strings.HasPrefix(id, "reinstall-runtime-") {
-		return s.claimReinstallRuntime(ctx, tx, agentID, id, commitTask)
-	}
 	pending, err := readPendingApplicationDeployment(ctx, tx, agentID, id)
 	if err != nil {
 		return nil, err
@@ -321,39 +314,13 @@ func (s *Store) claimAgentReinstallTask(ctx context.Context, agentID, credential
 	return s.claimApplicationDeployment(ctx, tx, agentID, generation, pending, commitTask)
 }
 
-func (s *Server) handleAgentReinstallPreparation(writer http.ResponseWriter, request *http.Request) {
-	var input AgentReinstallApplicationInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	adminID, err := s.requestAdminID(request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
-		return
-	}
-	result, err := s.store.QueueAgentReinstallPreparation(request.Context(), request.PathValue("id"), adminID, input)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, result)
-}
-
 func pendingAgentReinstallTask(ctx context.Context, tx *sql.Tx, agentID, requiredTaskID string) (string, error) {
 	var id string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM (
- SELECT d.id,d.created_at FROM agent_reinstall_app_preparations p JOIN deployments d ON d.id=p.deployment_id JOIN agent_reinstall_operations op ON op.id=p.operation_id
- WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND d.attempt=0
- UNION ALL SELECT c.id,c.created_at FROM agent_reinstall_app_preparations p JOIN application_commands c ON c.id=p.runtime_command_id JOIN agent_reinstall_operations op ON op.id=p.operation_id
- WHERE c.agent_id=? AND op.agent_id=c.agent_id AND op.state='review_required' AND c.state='pending' AND c.attempt=0
- UNION ALL SELECT p.listener_task_id,n.updated_at FROM agent_reinstall_app_preparations p JOIN agent_reinstall_operations op ON op.id=p.operation_id JOIN node_listener_states n ON n.node_id=op.agent_id
- WHERE op.agent_id=? AND op.state='review_required' AND p.listener_state='pending' AND n.status='pending' AND n.desired_revision=p.listener_revision AND n.attempt=p.listener_attempt-1
- UNION ALL SELECT d.id,d.created_at FROM agent_reinstall_monitor_restorations m JOIN deployments d ON d.id=m.deployment_id JOIN agent_reinstall_monitor_rotations r ON r.command_id=m.rotation_command_id JOIN agent_reinstall_operations op ON op.id=r.operation_id
+ SELECT d.id,d.created_at FROM agent_reinstall_monitor_restorations m JOIN deployments d ON d.id=m.deployment_id JOIN agent_reinstall_monitor_rotations r ON r.command_id=m.rotation_command_id JOIN agent_reinstall_operations op ON op.id=r.operation_id
  WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND d.attempt=0
  UNION ALL SELECT d.id,d.created_at FROM agent_reinstall_current_applications r JOIN deployments d ON d.id=r.deployment_id JOIN agent_reinstall_operations op ON op.id=r.operation_id WHERE d.agent_id=? AND op.agent_id=d.agent_id AND op.state='review_required' AND d.state='pending' AND (d.attempt=0 OR EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=d.id AND e.attempt=d.attempt AND ((e.state='failed' AND e.phase='reported') OR (e.state='unknown' AND e.phase='persist')) AND e.disposition='reexecute'))
- ) WHERE (?='' OR id=?) ORDER BY created_at,id LIMIT 1`, agentID, agentID, agentID, agentID, agentID, requiredTaskID, requiredTaskID).Scan(&id)
+ ) WHERE (?='' OR id=?) ORDER BY created_at,id LIMIT 1`, agentID, agentID, requiredTaskID, requiredTaskID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errExecutionBlocked
 	}

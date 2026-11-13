@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -62,7 +61,7 @@ func claimLocalRemoval(t *testing.T, store *Store, nodeID string) *AgentTask {
 	return task
 }
 
-func TestLocalRealityRemovalRetainsControllerAndFencesStaleHeartbeat(t *testing.T) {
+func TestRetiredLocalRealityRemovalPreservesControllerAndRejectsLateResults(t *testing.T) {
 	store, node := localRealityRemovalFixture(t)
 	ctx := context.Background()
 	for _, id := range []string{"panel", "subscription", "unknown"} {
@@ -78,70 +77,16 @@ func TestLocalRealityRemovalRetainsControllerAndFencesStaleHeartbeat(t *testing.
 	if err != nil || again.ID != command.ID {
 		t.Fatalf("retry did not reuse pending command: %+v %v", again, err)
 	}
-	task := claimLocalRemoval(t, store, node.ID)
-	if task == nil || task.ApplicationCommand == nil || task.ApplicationCommand.InboundID != 9 || task.ApplicationCommand.InboundTag != "local-node" || task.ApplicationCommand.TargetNodeID != 0 {
-		t.Fatalf("unsafe command: %+v", task)
-	}
-	heartbeat := func(observations []ApplicationEndpointObservation) {
-		t.Helper()
-		tx, err := store.db.BeginTx(ctx, nil)
-		if err != nil {
-			t.Fatal(err)
+	assertRetiredProxyCommandChannel(t, store, node.ID)
+	for _, query := range []string{`SELECT status FROM applications WHERE id='controller'`, `SELECT status FROM services WHERE id='panel'`, `SELECT status FROM services WHERE id='subscription'`} {
+		var status string
+		if err := store.db.QueryRowContext(ctx, query).Scan(&status); err != nil || (status != "ready" && status != "running") {
+			t.Fatal("retirement changed controller", status, err)
 		}
-		defer tx.Rollback()
-		var cleanups []publicationCleanup
-		if err := store.reconcileApplicationEndpoints(ctx, tx, node.ID, observations, store.now(), &cleanups); err != nil {
-			t.Fatal(err)
-		}
-		if err := tx.Commit(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	heartbeat(nil)
-	var status string
-	if err := store.db.QueryRowContext(ctx, `SELECT status FROM services WHERE id='local'`).Scan(&status); err != nil || status != "ready" {
-		t.Fatalf("lost removal retry entry: %s %v", status, err)
-	}
-	raw, _ := json.Marshal(ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "remove", InboundID: 9, InboundTag: "local-node"}})
-	if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
-		t.Fatal(err)
-	}
-	stale := []ApplicationEndpointObservation{{AppKey: threeXUIAppKey, Name: "inbound-9", Protocol: "tcp", AppProtocol: "vless/tcp/reality", Listen: "10.0.0.90", Port: 443, Enabled: true, InboundTag: "local-node"}}
-	heartbeat(stale)
-	for _, check := range []struct{ query, want string }{
-		{`SELECT status FROM applications WHERE id='controller'`, "running"},
-		{`SELECT status FROM services WHERE id='local'`, "stopped"},
-		{`SELECT status FROM publications WHERE id='local-entry'`, "stopped"},
-		{`SELECT status FROM services WHERE id='panel'`, "ready"},
-		{`SELECT status FROM services WHERE id='subscription'`, "ready"},
-		{`SELECT status FROM publications WHERE id='panel-entry'`, "ready"},
-		{`SELECT status FROM publications WHERE id='subscription-entry'`, "ready"},
-		{`SELECT controller_application_id FROM three_x_ui_control_plane WHERE id=1`, "controller"},
-	} {
-		if err := store.db.QueryRowContext(ctx, check.query).Scan(&status); err != nil || status != check.want {
-			t.Fatalf("%s: got=%s want=%s err=%v", check.query, status, check.want, err)
-		}
-	}
-	var encoded []byte
-	if err := store.db.QueryRowContext(ctx, `SELECT desired_json FROM node_listener_states WHERE node_id=?`, node.ID).Scan(&encoded); err != nil {
-		t.Fatal(err)
-	}
-	var listener gateway.NodeListenerState
-	if json.Unmarshal(encoded, &listener) != nil || len(listener.Listener.Routes) != 0 {
-		t.Fatal("local listener route was retained")
-	}
-	// Reusing a numeric inbound id with a new tag must remain possible.
-	stale[0].InboundTag = "new-local-node"
-	heartbeat(stale)
-	if err := store.db.QueryRowContext(ctx, `SELECT inbound_tag FROM three_x_ui_inbound_plans WHERE service_id='local'`).Scan(&status); err != nil || status != "new-local-node" {
-		t.Fatalf("new inbound was fenced: %s %v", status, err)
 	}
 }
 
-func TestLocalRealityRemovalWaitsForLandingRestoration(t *testing.T) {
+func TestRetiredLocalRealityRemovalNeverResumesAfterLandingRestoration(t *testing.T) {
 	store, node := localRealityRemovalFixture(t)
 	ctx := context.Background()
 	state := landing.DesiredState{NodeID: node.ID, Revision: 1, Proxy: &landing.ProxyPlan{ApplicationID: "controller", InboundTags: []string{"local-node"}, Peer: landing.PeerIdentity{ID: "landing", PublicKey: "key", Address: "100.64.0.8"}}}
@@ -169,7 +114,5 @@ func TestLocalRealityRemovalWaitsForLandingRestoration(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE landing_proxy_states SET status='stopped',applied_revision=desired_revision WHERE node_id=?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if task := claimLocalRemoval(t, store, node.ID); task == nil {
-		t.Fatal("restored node removal did not proceed")
-	}
+	assertRetiredProxyCommandChannel(t, store, node.ID)
 }
