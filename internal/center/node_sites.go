@@ -28,7 +28,9 @@ const nodeSiteSchema = `CREATE TABLE node_sites (
  not_after TEXT NOT NULL DEFAULT '',
  ca_directory TEXT NOT NULL,
  error TEXT NOT NULL DEFAULT '',
- updated_at TEXT NOT NULL
+ updated_at TEXT NOT NULL,
+ migration_from TEXT NOT NULL DEFAULT '',
+ migration_previous BLOB NOT NULL DEFAULT X''
 );
 CREATE TABLE node_site_tasks (
  id TEXT PRIMARY KEY,
@@ -51,6 +53,7 @@ CREATE TABLE node_site_certmagic_storage (
 );`
 
 type NodeSiteView struct {
+	MigrationFrom   string `json:"migrationFrom,omitempty"`
 	ApplicationID   string `json:"applicationId"`
 	Hostname        string `json:"hostname"`
 	Port            int    `json:"port"`
@@ -64,9 +67,10 @@ type NodeSiteView struct {
 }
 
 type nodeSiteInput struct {
-	Hostname    string `json:"hostname"`
-	Port        int    `json:"port"`
-	CADirectory string `json:"caDirectory"`
+	PreviousHostname string `json:"previousHostname,omitempty"`
+	Hostname         string `json:"hostname"`
+	Port             int    `json:"port"`
+	CADirectory      string `json:"caDirectory"`
 }
 
 func (s *Store) NodeSite(ctx context.Context, id string) (NodeSiteView, error) {
@@ -78,6 +82,9 @@ func (s *Store) NodeSite(ctx context.Context, id string) (NodeSiteView, error) {
 		if errors.Is(err, sql.ErrNoRows) {
 			err = nil
 		}
+	}
+	if err == nil && v.State != "unconfigured" {
+		err = s.db.QueryRowContext(ctx, `SELECT migration_from FROM node_sites WHERE application_id=?`, id).Scan(&v.MigrationFrom)
 	}
 	return v, err
 }
@@ -111,7 +118,7 @@ func (s *Server) handleNodeSiteAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err)
 		return
 	}
-	if input.Action != "inspect" && input.Action != "rollback" && input.Action != "cancel" {
+	if input.Action != "inspect" && input.Action != "rollback" && input.Action != "cancel" && input.Action != "accept-migration" && input.Action != "cancel-migration" {
 		writeError(w, 400, errors.New("center: invalid node site action"))
 		return
 	}
@@ -122,6 +129,10 @@ func (s *Server) handleNodeSiteAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	if err = s.store.validateNodeSiteMigrationAction(r.Context(), tx, id, input.Action); err != nil {
+		writeError(w, 400, err)
+		return
+	}
 	if input.Action == "cancel" {
 		var blocked bool
 		err = tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM node_site_tasks WHERE application_id=? AND state='running') OR EXISTS(SELECT 1 FROM task_executions WHERE agent_id=(SELECT agent_id FROM node_sites WHERE application_id=?) AND disposition='' AND state IN ('offered','running','helper_running','unknown','failed'))`, id, id).Scan(&blocked)
@@ -153,6 +164,9 @@ func (s *Server) handleNodeSiteAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Store) configureNodeSite(ctx context.Context, id string, in nodeSiteInput) (NodeSiteView, error) {
+	if in.PreviousHostname != "" {
+		return s.prepareNodeSiteMigration(ctx, id, in)
+	}
 	if !nodesite.ValidHostname(in.Hostname) || in.Port < 1024 || in.Port > 65535 {
 		return NodeSiteView{}, errors.New("center: exact hostname and high loopback TLS port are required")
 	}
@@ -169,6 +183,10 @@ func (s *Store) configureNodeSite(ctx context.Context, id string, in nodeSiteInp
 	}
 	if err = nodeSiteIdle(ctx, tx, id, agentID); err != nil {
 		return NodeSiteView{}, err
+	}
+	var migration string
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT migration_from FROM node_sites WHERE application_id=?),'')`, id).Scan(&migration); err != nil || migration != "" {
+		return NodeSiteView{}, errors.New("center: complete or cancel the pending website migration first")
 	}
 	directory := in.CADirectory
 	if directory == "" {
@@ -240,6 +258,12 @@ func (s *Store) nodeSiteTask(ctx context.Context, tx *sql.Tx, id, action string)
 		return t, "", err
 	}
 	t.Action = action
+	if err = tx.QueryRowContext(ctx, `SELECT migration_from FROM node_sites WHERE application_id=?`, id).Scan(&t.PreviousHostname); err != nil {
+		return t, "", err
+	}
+	if action == "apply" && t.PreviousHostname != "" {
+		t.Action = "prepare-migration"
+	}
 	if action == "apply" {
 		key, e := secret.Open(s.key, sealed, []byte("node-site-certificate:"+id))
 		if e != nil {
@@ -318,6 +342,11 @@ func (s *Store) projectNodeSite(ctx context.Context, tx *sql.Tx, commit projecti
 	if err = tx.QueryRowContext(ctx, `SELECT t.input_json,t.state,t.application_id FROM node_site_tasks t JOIN node_sites n ON n.application_id=t.application_id JOIN applications a ON a.id=n.application_id WHERE t.id=? AND t.agent_id=? AND t.attempt=? AND n.revision=t.revision AND n.agent_id=t.agent_id AND a.node_id=t.agent_id AND a.status='running'`, id, agentID, attempt).Scan(&encoded, &state, &app); err != nil {
 		return err
 	}
+	// Completion may intentionally replace the current hostname binding. Replay
+	// the already authenticated immutable execution before hydrating that binding.
+	if (state == "succeeded" && succeeded) || (state == "failed" && !succeeded) {
+		return commit(tx)
+	}
 	var command nodeSiteCommand
 	if json.Unmarshal([]byte(encoded), &command) != nil {
 		return errors.New("center: invalid saved node site command")
@@ -349,12 +378,12 @@ func (s *Store) projectNodeSite(ctx context.Context, tx *sql.Tx, commit projecti
 	if succeeded {
 		v := envelope.NodeSite
 		switch t.Action {
-		case "apply", "inspect":
+		case "apply", "prepare-migration", "inspect":
 			var expected string
 			if err = tx.QueryRowContext(ctx, `SELECT fingerprint FROM node_sites WHERE application_id=? AND revision=?`, t.ApplicationID, t.Revision).Scan(&expected); err != nil {
 				return err
 			}
-			if v.State != "applied" || v.Fingerprint == "" || v.Fingerprint != expected {
+			if (v.State != "applied" && !(t.Action == "prepare-migration" && v.State == "prepared")) || v.Fingerprint == "" || v.Fingerprint != expected {
 				succeeded = false
 				taskError = "Agent certificate does not match desired state"
 				break
@@ -368,6 +397,14 @@ func (s *Store) projectNodeSite(ctx context.Context, tx *sql.Tx, commit projecti
 				return errors.New("center: Agent did not confirm rollback")
 			}
 			nextState = "rolled_back"
+		case "accept-migration", "cancel-migration":
+			if v.State != "applied" {
+				return errors.New("center: Agent did not confirm website migration completion")
+			}
+			nextState, err = s.finishNodeSiteMigration(ctx, tx, t.ApplicationID, t.Action, v.Fingerprint)
+			if err != nil {
+				return err
+			}
 		}
 		if succeeded {
 			taskState = "succeeded"

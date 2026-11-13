@@ -3167,6 +3167,9 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
+                    "migrationFrom": {
+                      "type": "string"
+                    },
                     "applicationId": {
                       "type": "string"
                     },
@@ -3228,7 +3231,8 @@
               "minLength": 1
             }
           }
-        ]
+        ],
+        "description": "Exact application-owned website certificate lifecycle. An explicit previousHostname prepares a second binding without replacing the installed site. Configure only the prepared hostname, verify public website/REALITY/subscription, then accept; cancellation requires the original installed binding. No provider credentials are sent to nodes."
       },
       "put": {
         "tags": [
@@ -3269,6 +3273,9 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
+                    "migrationFrom": {
+                      "type": "string"
+                    },
                     "applicationId": {
                       "type": "string"
                     },
@@ -3340,6 +3347,9 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "previousHostname": {
+                    "type": "string"
+                  },
                   "hostname": {
                     "type": "string"
                   },
@@ -3353,7 +3363,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Exact application-owned website certificate lifecycle. An explicit previousHostname prepares a second binding without replacing the installed site. Configure only the prepared hostname, verify public website/REALITY/subscription, then accept; cancellation requires the original installed binding. No provider credentials are sent to nodes."
       }
     },
     "/api/v1/applications/{id}/node-site-certificate/actions": {
@@ -3396,6 +3407,9 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
+                    "migrationFrom": {
+                      "type": "string"
+                    },
                     "applicationId": {
                       "type": "string"
                     },
@@ -3460,21 +3474,31 @@
         ],
         "requestBody": {
           "required": true,
-          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "additionalProperties": false,
+                "required": [
+                  "action"
+                ],
                 "properties": {
                   "action": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                      "inspect",
+                      "rollback",
+                      "cancel",
+                      "accept-migration",
+                      "cancel-migration"
+                    ]
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
-        }
+        },
+        "description": "Exact application-owned website certificate lifecycle. An explicit previousHostname prepares a second binding without replacing the installed site. Configure only the prepared hostname, verify public website/REALITY/subscription, then accept; cancellation requires the original installed binding. No provider credentials are sent to nodes."
       }
     },
     "/api/v1/application-commands/reality": {

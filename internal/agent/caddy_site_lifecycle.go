@@ -19,7 +19,12 @@ func (s *Store) syncSharedDaylight(ctx context.Context, installed AppliedInstall
 	state, err := s.readCaddySite(ctx, installed.ApplicationID)
 	if err == nil && state.Site != nil {
 		if state.Site.Hostname != host.site.Hostname {
-			return errors.New("agent: changing a website hostname requires an explicit site migration")
+			migration, err := s.preparedWebsiteBinding(ctx, installed.ApplicationID, host.site.Hostname)
+			if err != nil {
+				return err
+			}
+			host.site.TLSPort, host.site.Certificate, host.site.PublicListen = migration.TLSPort, migration.Certificate, migration.PublicListen
+			return s.updateCaddySite(ctx, installed.ApplicationID, &host.site, func(ctx context.Context) error { return probeCaddySite(ctx, host.site) })
 		}
 		host.site.TLSPort, host.site.Certificate = state.Site.TLSPort, state.Site.Certificate
 		return s.updateCaddySite(ctx, installed.ApplicationID, &host.site, func(ctx context.Context) error { return probeCaddySite(ctx, host.site) })

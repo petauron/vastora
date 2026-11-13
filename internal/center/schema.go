@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 131
+const centerSchemaVersion = 132
 
 //go:embed schema_retirement.sql
 var currentRetirementSchema string

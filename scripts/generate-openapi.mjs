@@ -848,6 +848,10 @@ for (const route of routes) {
   if (["handleNodeSite", "handleConfigureNodeSite", "handleNodeSiteAction"].includes(route.handler)) {
     const status = route.handler === "handleNodeSite" ? "200" : "202";
     operation.responses[status] = { description: "Managed node website certificate state", headers: noStoreHeaders, content: { "application/json": { schema: schemaForGoType("NodeSiteView") } } };
+    operation.description = "Exact application-owned website certificate lifecycle. An explicit previousHostname prepares a second binding without replacing the installed site. Configure only the prepared hostname, verify public website/REALITY/subscription, then accept; cancellation requires the original installed binding. No provider credentials are sent to nodes.";
+    if (route.handler === "handleNodeSiteAction") {
+      operation.requestBody = { required: true, content: { "application/json": { schema: { type: "object", required: ["action"], properties: { action: { type: "string", enum: ["inspect", "rollback", "cancel", "accept-migration", "cancel-migration"] } }, additionalProperties: false } } } };
+    }
   }
   if (route.handler === "handleNodeSecurity" || route.handler === "handleQueueNodeSecurity") {
     const status = route.handler === "handleNodeSecurity" ? "200" : "202";
