@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.443](https://github.com/petauron/vastora/compare/v0.1.0-alpha.442...v0.1.0-alpha.443) (2026-11-13)
+
+
+### Bug Fixes
+
+* **websites:** migrate shared Caddy hostnames through prepared bindings ([#1277](https://github.com/petauron/vastora/issues/1277)) ([832d757](https://github.com/petauron/vastora/commit/832d757f6fbb3ca519dd3cf2f87788b758e388ec))
+
 ## [0.1.0-alpha.442](https://github.com/petauron/vastora/compare/v0.1.0-alpha.441...v0.1.0-alpha.442) (2026-11-13)
 
 
