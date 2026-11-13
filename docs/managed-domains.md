@@ -14,7 +14,9 @@ region label such as `us-abcdefghij.example.com`. Names are persisted and reused
 on retries, restarts and upgrades; they are not regenerated on every request.
 
 An optional `hostname` adopts a previous domain only when the matching Cloudflare
-record belongs to this application's retained publication. With no explicit
+record belongs to this application's retained publication or a verified same-node
+predecessor recorded by the existing execution handover. A shared IP or display
+name alone never grants ownership. With no explicit
 hostname or prefix, a retained long random publication is preferred. A previous
 address may be supplied as `expectedRecordAddress` when a verified machine
 migration requires updating that exact owned record. Foreign records and records

@@ -52,6 +52,20 @@ func TestManagedDomainAdoptionRetryAndSafeRetirement(t *testing.T) {
 	s.cloudflareOAuth = cloudflareOAuthConfig{APIURL: api.URL, HTTPClient: api.Client()}
 	storeCloudflareOAuthIntegration(t, s, cloudflareOAuthToken{AccessToken: "synthetic", RefreshToken: "synthetic", Scope: "dns.write", ExpiresAt: time.Now().Add(time.Hour)})
 	input := ManagedDomainInput{ApplicationID: "verification-app", Key: "entry", Address: "1.1.1.1"}
+
+	// A same-node application cannot take a historical record merely because
+	// its address matches. Only the existing verified handover authorizes it.
+	if _, err := s.db.Exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,created_at,updated_at) SELECT 'replacement-app','Native replacement',node_id,site_id,'test/native-replacement','running',created_at,updated_at FROM applications WHERE id='verification-app'`); err != nil {
+		t.Fatal(err)
+	}
+	input.ApplicationID = "replacement-app"
+	input.Hostname = host
+	if _, err := s.EnsureManagedDomain(ctx, input); err == nil || writes != 0 {
+		t.Fatal("unrelated application adopted an existing record")
+	}
+	if _, err := s.db.Exec(`INSERT INTO application_execution_retirements(application_id,replacement_application_id,evidence_json,verified_at,created_at) VALUES('verification-app','replacement-app','{}','verified','before')`); err != nil {
+		t.Fatal(err)
+	}
 	first, err := s.EnsureManagedDomain(ctx, input)
 	if err != nil || first.Hostname != host || first.Status != "ready" || first.Revision != 1 {
 		t.Fatalf("adopt: %+v %v", first, err)
