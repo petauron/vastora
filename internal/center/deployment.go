@@ -354,8 +354,14 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	}
 	if request.Operation == "configure" && manifest.Runtime != nil && (manifest.Runtime.Kind == "systemd" || manifest.Runtime.Kind == "native") && manifest.Runtime.Version == 2 {
-		if err := validateNativeServicePortConfigure(manifest, request.Config); err != nil {
+		website, err := s.validateWebsiteHostnameConfigure(ctx, request, manifest)
+		if err != nil {
 			return DeploymentView{}, err
+		}
+		if !website {
+			if err := validateNativeServicePortConfigure(manifest, request.Config); err != nil {
+				return DeploymentView{}, err
+			}
 		}
 	}
 	var grants []string

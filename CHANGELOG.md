@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.1.0-alpha.444](https://github.com/petauron/vastora/compare/v0.1.0-alpha.443...v0.1.0-alpha.444) (2026-11-13)
+
+
+### Bug Fixes
+
+* **websites:** execute verified native hostname configuration ([#1279](https://github.com/petauron/vastora/issues/1279)) ([5d45f0f](https://github.com/petauron/vastora/commit/5d45f0f724b6b4f0ae04f5184d9ba0cfc7b6cf5b))
+
+## [0.1.0-alpha.443](https://github.com/petauron/vastora/compare/v0.1.0-alpha.442...v0.1.0-alpha.443) (2026-11-13)
+
+
+### Bug Fixes
+
+* **websites:** migrate shared Caddy hostnames through prepared bindings ([#1277](https://github.com/petauron/vastora/issues/1277)) ([832d757](https://github.com/petauron/vastora/commit/832d757f6fbb3ca519dd3cf2f87788b758e388ec))
+
+## [0.1.0-alpha.442](https://github.com/petauron/vastora/compare/v0.1.0-alpha.441...v0.1.0-alpha.442) (2026-11-13)
+
+
+### Bug Fixes
+
+* **apps:** preserve retired proxy ledger during SNI sync ([a989b3b](https://github.com/petauron/vastora/commit/a989b3bb819c85586b2b9d1d0c1c61bc0a845138))
+
+## [0.1.0-alpha.441](https://github.com/petauron/vastora/compare/v0.1.0-alpha.440...v0.1.0-alpha.441) (2026-11-13)
+
+
+### Bug Fixes
+
+* **apps:** reconcile Glivela SNI and verify upgraded native entries ([#1271](https://github.com/petauron/vastora/issues/1271)) ([b4180de](https://github.com/petauron/vastora/commit/b4180de19fd062ffd921011cdd9356380c59f7ba))
+
 ## [0.1.0-alpha.440](https://github.com/petauron/vastora/compare/v0.1.0-alpha.439...v0.1.0-alpha.440) (2026-11-13)
 
 

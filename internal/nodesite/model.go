@@ -15,14 +15,15 @@ const TaskPrefix = "node-site-"
 var hostnamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
 type Task struct {
-	ApplicationID  string `json:"applicationId"`
-	AppKey         string `json:"appKey"`
-	Hostname       string `json:"hostname"`
-	Port           int    `json:"port"`
-	Revision       int64  `json:"revision"`
-	Action         string `json:"action"`
-	CertificatePEM string `json:"certificatePem,omitempty"`
-	PrivateKeyPEM  string `json:"privateKeyPem,omitempty"`
+	PreviousHostname string `json:"previousHostname,omitempty"`
+	ApplicationID    string `json:"applicationId"`
+	AppKey           string `json:"appKey"`
+	Hostname         string `json:"hostname"`
+	Port             int    `json:"port"`
+	Revision         int64  `json:"revision"`
+	Action           string `json:"action"`
+	CertificatePEM   string `json:"certificatePem,omitempty"`
+	PrivateKeyPEM    string `json:"privateKeyPem,omitempty"`
 }
 
 type Result struct {
@@ -38,12 +39,22 @@ func (t Task) Validate() error {
 	if t.ApplicationID == "" || len(t.ApplicationID) > 256 || strings.ContainsAny(t.ApplicationID, "\x00\r\n") || (t.AppKey != "vastora-official/daylight" && t.AppKey != "vastora-official/daylight-https") || !ValidHostname(t.Hostname) || t.Revision < 1 || t.Port < 1024 || t.Port > 65535 {
 		return errors.New("node site: invalid task identity")
 	}
+	if t.PreviousHostname != "" && (!ValidHostname(t.PreviousHostname) || t.PreviousHostname == t.Hostname || t.Action == "apply" || t.Action == "rollback") {
+		return errors.New("node site: invalid previous hostname")
+	}
 	switch t.Action {
+	case "accept-migration", "cancel-migration":
+		if !ValidHostname(t.PreviousHostname) || t.PreviousHostname == t.Hostname || t.CertificatePEM != "" || t.PrivateKeyPEM != "" {
+			return errors.New("node site: invalid migration completion")
+		}
 	case "inspect", "rollback":
 		if t.CertificatePEM != "" || t.PrivateKeyPEM != "" {
 			return errors.New("node site: unexpected certificate")
 		}
-	case "apply":
+	case "apply", "prepare-migration":
+		if t.Action == "prepare-migration" && (!ValidHostname(t.PreviousHostname) || t.PreviousHostname == t.Hostname) {
+			return errors.New("node site: exact previous hostname is required")
+		}
 		if len(t.CertificatePEM) == 0 || len(t.CertificatePEM) > 65536 || len(t.PrivateKeyPEM) == 0 || len(t.PrivateKeyPEM) > 16384 {
 			return errors.New("node site: certificate and private key are required")
 		}
