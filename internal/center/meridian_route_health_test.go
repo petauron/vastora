@@ -260,7 +260,7 @@ func assertRetiredProxyCommandChannel(t *testing.T, store *Store, agentID string
 	if err != nil || task != nil {
 		t.Fatal("retired proxy command was claimable", err)
 	}
-	rows, err := store.db.QueryContext(ctx, `SELECT id FROM application_commands WHERE agent_id=? AND kind NOT IN ('pulse.reporting.inspect','pulse.enrollment.rotate','pulse.enrollment.inspect','pulse.enrollment.configure') ORDER BY id`, agentID)
+	rows, err := store.db.QueryContext(ctx, `SELECT id FROM application_commands WHERE agent_id=? AND state IN ('pending','running') AND kind NOT IN ('pulse.node.reporting','pulse.node.rotate','pulse.enrollment.inspect','pulse.enrollment.create') ORDER BY id`, agentID)
 	if err != nil {
 		t.Fatal(err)
 	}
