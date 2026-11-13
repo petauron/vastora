@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.437](https://github.com/petauron/vastora/compare/v0.1.0-alpha.436...v0.1.0-alpha.437) (2026-11-13)
+
+
+### Bug Fixes
+
+* **agent:** initialize empty environment for new dormant native worker ([#1261](https://github.com/petauron/vastora/issues/1261)) ([a2b2853](https://github.com/petauron/vastora/commit/a2b28536f6718313b03482262de3513128b0bf7c))
+
 ## [0.1.0-alpha.436](https://github.com/petauron/vastora/compare/v0.1.0-alpha.435...v0.1.0-alpha.436) (2026-11-12)
 
 
