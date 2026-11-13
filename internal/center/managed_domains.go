@@ -46,6 +46,13 @@ type ManagedDomainView struct {
 	LastError             string `json:"lastError,omitempty"`
 }
 
+// A verified execution handover, not a shared IP or display name, authorizes
+// the native replacement to retain its predecessor's publication DNS.
+const managedDomainPublicationOwnerSQL = `(v.application_id=? OR v.application_id IN (
+ SELECT r.application_id FROM application_execution_retirements r
+ JOIN applications retired ON retired.id=r.application_id
+ WHERE r.replacement_application_id=? AND retired.node_id=?))`
+
 const managedDomainColumns = `id,COALESCE(application_id,''),COALESCE(agent_id,''),resource_key,prefix,hostname,address,record_type,zone_id,record_id,source_publication_id,expected_record_address,desired_revision,applied_revision,status,last_error`
 
 func scanManagedDomain(row interface{ Scan(...any) error }) (ManagedDomainView, error) {
@@ -164,9 +171,9 @@ func (s *Store) EnsureManagedDomain(ctx context.Context, in ManagedDomainInput) 
 		}
 		hostname, sourceID := in.Hostname, ""
 		if hostname == "" && in.Prefix == "" {
-			// Only reuse names owned by this application. Short vendor/region labels
+			// Reuse this application or its verified predecessor. Short vendor/region labels
 			// are deliberately not treated as old random ingress domains.
-			lookupErr := s.db.QueryRowContext(ctx, `SELECT p.hostname,p.id FROM publications p JOIN services v ON v.id=p.service_id WHERE v.application_id=? AND p.entry_node_id=? AND p.dns_provider='cloudflare' AND p.cleanup_pending=0 AND length(substr(p.hostname,1,instr(p.hostname,'.')-1))>=24 AND p.hostname LIKE ? ORDER BY p.status='ready' DESC,p.updated_at DESC LIMIT 1`, in.ApplicationID, agentID, "%."+zoneName).Scan(&hostname, &sourceID)
+			lookupErr := s.db.QueryRowContext(ctx, `SELECT p.hostname,p.id FROM publications p JOIN services v ON v.id=p.service_id WHERE `+managedDomainPublicationOwnerSQL+` AND p.entry_node_id=? AND p.dns_provider='cloudflare' AND p.cleanup_pending=0 AND length(substr(p.hostname,1,instr(p.hostname,'.')-1))>=24 AND p.hostname LIKE ? ORDER BY p.status='ready' DESC,p.updated_at DESC LIMIT 1`, in.ApplicationID, in.ApplicationID, agentID, agentID, "%."+zoneName).Scan(&hostname, &sourceID)
 			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
 				return current, lookupErr
 			}
@@ -185,7 +192,7 @@ func (s *Store) EnsureManagedDomain(ctx context.Context, in ManagedDomainInput) 
 			return current, errors.New("center: managed domain is outside the configured zone")
 		}
 		if sourceID == "" {
-			lookupErr := s.db.QueryRowContext(ctx, `SELECT p.id FROM publications p JOIN services v ON v.id=p.service_id WHERE v.application_id=? AND p.entry_node_id=? AND p.hostname=? AND p.dns_provider='cloudflare' AND p.cleanup_pending=0 ORDER BY p.updated_at DESC LIMIT 1`, in.ApplicationID, agentID, hostname).Scan(&sourceID)
+			lookupErr := s.db.QueryRowContext(ctx, `SELECT p.id FROM publications p JOIN services v ON v.id=p.service_id WHERE `+managedDomainPublicationOwnerSQL+` AND p.entry_node_id=? AND p.hostname=? AND p.dns_provider='cloudflare' AND p.cleanup_pending=0 ORDER BY p.updated_at DESC LIMIT 1`, in.ApplicationID, in.ApplicationID, agentID, agentID, hostname).Scan(&sourceID)
 			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
 				return current, lookupErr
 			}
@@ -256,6 +263,14 @@ func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) err
 		_, err = s.db.ExecContext(ctx, `DELETE FROM managed_domains WHERE id=?`, id)
 		return err
 	}
+	// Recover a previously refused adoption after its normal native handover
+	// was recorded. Do not replace an established source or remote identity.
+	if v.SourcePublicationID == "" && v.RecordID == "" {
+		lookup := s.db.QueryRowContext(ctx, `SELECT p.id FROM publications p JOIN services v ON v.id=p.service_id WHERE `+managedDomainPublicationOwnerSQL+` AND p.entry_node_id=? AND p.hostname=? AND p.dns_provider='cloudflare' AND p.cleanup_pending=0 ORDER BY p.updated_at DESC LIMIT 1`, v.ApplicationID, v.ApplicationID, v.AgentID, v.AgentID, v.Hostname).Scan(&v.SourcePublicationID)
+		if lookup != nil && !errors.Is(lookup, sql.ErrNoRows) {
+			return lookup
+		}
+	}
 	if err = s.validateManagedDomainAddress(ctx, v.AgentID, v.Address); err != nil {
 		return err
 	}
@@ -266,7 +281,7 @@ func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) err
 			return errors.New("center: an incompatible DNS record already exists")
 		}
 		var foreignReferences int
-		if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services x ON x.id=p.service_id WHERE p.dns_record_id=? AND p.hostname=? AND (x.application_id<>? OR p.entry_node_id<>? OR p.cleanup_pending<>0)`, record.ID, v.Hostname, v.ApplicationID, v.AgentID).Scan(&foreignReferences); err != nil {
+		if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services v ON v.id=p.service_id WHERE p.dns_record_id=? AND p.hostname=? AND (NOT `+managedDomainPublicationOwnerSQL+` OR p.entry_node_id<>? OR p.cleanup_pending<>0)`, record.ID, v.Hostname, v.ApplicationID, v.ApplicationID, v.AgentID, v.AgentID).Scan(&foreignReferences); err != nil {
 			return err
 		}
 		if foreignReferences != 0 {
@@ -275,7 +290,7 @@ func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) err
 		if record.Comment != marker {
 			var owned int
 			if v.SourcePublicationID != "" {
-				err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services x ON x.id=p.service_id WHERE p.id=? AND x.application_id=? AND p.entry_node_id=? AND p.hostname=? AND p.dns_provider='cloudflare' AND p.cleanup_pending=0 AND p.dns_record_id=?`, v.SourcePublicationID, v.ApplicationID, v.AgentID, v.Hostname, record.ID).Scan(&owned)
+				err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services v ON v.id=p.service_id WHERE p.id=? AND `+managedDomainPublicationOwnerSQL+` AND p.entry_node_id=? AND p.hostname=? AND p.dns_provider='cloudflare' AND p.cleanup_pending=0 AND p.dns_record_id=?`, v.SourcePublicationID, v.ApplicationID, v.ApplicationID, v.AgentID, v.AgentID, v.Hostname, record.ID).Scan(&owned)
 				if err != nil {
 					return err
 				}
@@ -325,13 +340,13 @@ func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) err
 			return errors.New("center: source publication cleanup raced with DNS adoption; retry after cleanup")
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE managed_domains SET record_id=?,expected_record_address='',applied_revision=desired_revision,status=CASE WHEN application_id IS NULL OR agent_id IS NULL THEN 'retiring' ELSE 'ready' END,attempt=0,retry_at='',last_error='',updated_at=? WHERE id=? AND desired_revision=?`, applied.ID, s.now().UTC().Format(time.RFC3339Nano), id, v.Revision); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE managed_domains SET record_id=?,source_publication_id=?,expected_record_address='',applied_revision=desired_revision,status=CASE WHEN application_id IS NULL OR agent_id IS NULL THEN 'retiring' ELSE 'ready' END,attempt=0,retry_at='',last_error='',updated_at=? WHERE id=? AND desired_revision=?`, applied.ID, v.SourcePublicationID, s.now().UTC().Format(time.RFC3339Nano), id, v.Revision); err != nil {
 		return err
 	}
 	if v.SourcePublicationID != "" {
 		// The publication retains its route. DNS lifecycle is now delegated to
 		// this generic resource, so stopping the old route cannot delete its DNS.
-		if _, err = tx.ExecContext(ctx, `UPDATE publications SET dns_record_id='',managed_domain_id=? WHERE hostname=? AND entry_node_id=? AND cleanup_pending=0 AND (id=? OR dns_record_id=?) AND service_id IN (SELECT id FROM services WHERE application_id=?)`, id, v.Hostname, v.AgentID, v.SourcePublicationID, applied.ID, v.ApplicationID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE publications SET dns_record_id='',managed_domain_id=? WHERE hostname=? AND entry_node_id=? AND cleanup_pending=0 AND (id=? OR dns_record_id=?) AND service_id IN (SELECT v.id FROM services v WHERE `+managedDomainPublicationOwnerSQL+`)`, id, v.Hostname, v.AgentID, v.SourcePublicationID, applied.ID, v.ApplicationID, v.ApplicationID, v.AgentID); err != nil {
 			return err
 		}
 	}
