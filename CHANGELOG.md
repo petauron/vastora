@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.442](https://github.com/petauron/vastora/compare/v0.1.0-alpha.441...v0.1.0-alpha.442) (2026-11-13)
+
+
+### Bug Fixes
+
+* **apps:** preserve retired proxy ledger during SNI sync ([a989b3b](https://github.com/petauron/vastora/commit/a989b3bb819c85586b2b9d1d0c1c61bc0a845138))
+
 ## [0.1.0-alpha.441](https://github.com/petauron/vastora/compare/v0.1.0-alpha.440...v0.1.0-alpha.441) (2026-11-13)
 
 
