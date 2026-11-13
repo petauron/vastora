@@ -121,11 +121,11 @@ func TestMeridianExportCompletesWithOpaqueApplicationCommandID(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='import',subscription_authority='legacy',legacy_controller_application_id=?,updated_at=? WHERE id=1`, applicationID, stamp); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, "opaque-export-command", 1, false, "export rejected", nil, false); err != nil {
-		t.Fatalf("opaque Glivela export command did not complete: %v", err)
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, "opaque-export-command", 1, false, "export rejected", nil, false); err == nil {
+		t.Fatal("retired opaque export command accepted a new result")
 	}
 	var state string
-	if err := store.db.QueryRowContext(ctx, `SELECT state FROM application_commands WHERE id='opaque-export-command'`).Scan(&state); err != nil || state != "failed" {
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM application_commands WHERE id='opaque-export-command'`).Scan(&state); err != nil || state != "running" {
 		t.Fatalf("export command state=%q err=%v", state, err)
 	}
 }
@@ -724,11 +724,19 @@ func TestLegacyRetirementTaskNeverRemovesVerifiedEndpointFromSubscriptions(t *te
 		}
 	}
 	assertReady("queued retirement")
-	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
-	if err != nil || task == nil || task.ID != commandID || task.MeridianRuntime == nil || !task.MeridianRuntime.RetireLegacy {
-		t.Fatalf("claimed retirement task=%#v err=%v", task, err)
+	claimTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	assertReady("claimed retirement")
+	task, err := store.claimApplicationCommand(ctx, claimTx, node.ID)
+	_ = claimTx.Rollback()
+	if err != nil || task != nil {
+		t.Fatalf("retired cleanup task dispatched: %v %v", task, err)
+	}
+	assertReady("retired task not claimed")
+	if _, err := store.db.Exec(`UPDATE application_commands SET state='running',attempt=1,lease_expires_at=? WHERE id=?`, clock.Add(taskLeaseDuration).Format(time.RFC3339Nano), commandID); err != nil {
+		t.Fatal(err)
+	}
 	clock = clock.Add(taskLeaseDuration + time.Second)
 	if err := store.recoverExpiredTasks(ctx, node.ID); err != nil {
 		t.Fatal(err)

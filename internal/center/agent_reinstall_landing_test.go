@@ -68,21 +68,21 @@ func reinstallLandingFixture(t *testing.T, sameAddress bool) (*Store, AgentCrede
 func applyReinstallLanding(t *testing.T, s *Store, egress AgentCredential, success bool) {
 	t.Helper()
 	ctx := context.Background()
-	session := "landing-recovery-session"
-	if err := s.RegisterExecutionSession(ctx, egress.ID, egress.Credential, session, controlplane.ExecutionProtocol); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := s.claimExecutionTask(ctx, egress.ID, egress.Credential, session, 0)
-	if err != nil || task == nil || task.Kind != "landing.server.apply" {
-		t.Fatalf("claim landing: %+v %v", task, err)
+	task, err := s.claimLandingServerTask(ctx, tx, egress.ID)
+	if err != nil || task == nil {
+		_ = tx.Rollback()
+		t.Fatalf("historical landing transition: %v", err)
 	}
-	if err = s.StartExecution(ctx, egress.ID, session, task.Authorization.ID, task.Authorization.Digest); err != nil {
+	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	peer := landing.PeerIdentity{ID: "tailnet-" + egress.ID, PublicKey: "nodekey:test-" + egress.ID, Address: "100.64.0.62"}
-	body, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": session, "attempt": task.Attempt, "succeeded": success, "result": map[string]any{"landingPeer": peer}})
-	if err := completeAgentTaskGRPCTest(ctx, s, egress, task.ID, body); err != nil {
-		t.Fatalf("result: %v", err)
+	if err := s.completeLandingServer(ctx, commitProjectionOnlyForTest, egress.ID, task.Revision, task.Attempt, success, &peer); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -110,8 +110,9 @@ func TestAgentReinstallLandingWithdrawalThenAuthorization(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.Applications[0].Preparation.Landing.State != "withdrawn" {
-				t.Fatalf("not withdrawn: %+v", plan.Applications[0].Preparation.Landing)
+			history := readHistoricalReinstallPreparation(t, s, node, input)
+			if history.Landing == nil || history.Landing.State != "withdrawn" || plan.Applications[0].Preparation != nil {
+				t.Fatal("historical withdrawal lost or old controls revived")
 			}
 			input.PlanRevision = plan.Revision
 			second, err := s.UpdateAgentReinstallLandingSource(ctx, node.ID, "reinstall-review-admin", input, true)
@@ -123,24 +124,26 @@ func TestAgentReinstallLandingWithdrawalThenAuthorization(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.Applications[0].Preparation.Landing.State != "authorized" {
-				t.Fatalf("not authorized: %+v", plan.Applications[0].Preparation.Landing)
+			history = readHistoricalReinstallPreparation(t, s, node, input)
+			if history.Landing == nil || history.Landing.State != "authorized" || plan.Applications[0].Preparation != nil {
+				t.Fatal("historical authorization lost or old controls revived")
 			}
 			input.PlanRevision = plan.Revision
 			receipt, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input)
 			if err != nil {
 				t.Fatal(err)
 			}
-			task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-			if err != nil || task == nil || task.ID != receipt.CommandID {
-				t.Fatalf("native runtime: %v", err)
+			task := readHistoricalRuntimeTask(t, s, node)
+			if task.ID != receipt.CommandID {
+				t.Fatal("historical runtime identity changed")
 			}
 			if !strings.Contains(string(task.MeridianRuntime.Desired.Config), restoreRouteID) || task.MeridianRuntime.Source == nil || task.MeridianRuntime.Source.PublicKey != "nodekey:replacement-entry" || len(task.MeridianRuntime.Peers) != 1 || task.MeridianRuntime.Peers[0].EgressID != egress.ID {
 				t.Fatal("reviewed fixed route or exact replacement identity missing from restored runtime")
 			}
-			if resp := submitRestoredRuntime(t, s, node, task, true, true); resp != nil {
-				t.Fatal(resp)
+			if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, task.ID); err != nil {
+				t.Fatal(err)
 			}
+			assertRetiredMeridianResultPreservesState(t, s, meridianRuntimeProjection{agentID: node.ID}, task.ID, meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now(), true))
 			var healthy int
 			if err = s.db.QueryRow(`SELECT runtime_healthy FROM meridian_route_grants WHERE id='restore-grant'`).Scan(&healthy); err != nil || healthy != 0 {
 				t.Fatalf("invented route health %d %v", healthy, err)
@@ -157,9 +160,9 @@ func TestAgentReinstallLandingWithdrawalThenAuthorization(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			repeat, err = s.UpdateAgentReinstallLandingSource(ctx, node.ID, "reinstall-review-admin", input, true)
-			if err != nil || repeat.State != "authorized" {
-				t.Fatalf("restart repeat %+v %v", repeat, err)
+			history = readHistoricalReinstallPreparation(t, s, node, input)
+			if history.Landing == nil || history.Landing.State != "authorized" {
+				t.Fatal("restart changed the retained landing authorization")
 			}
 			var count int
 			if err = s.db.QueryRow(`SELECT COUNT(*) FROM task_events WHERE kind='meridian.source.recover'`).Scan(&count); err != nil || count != 1 {
@@ -316,7 +319,8 @@ func TestAgentReinstallLandingClaimDoesNotGrantChangedAuthority(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.Applications[0].Preparation.Landing.State == "authorized" {
+			history := readHistoricalReinstallPreparation(t, s, node, input)
+			if plan.Applications[0].Preparation != nil || history.Landing == nil || history.Landing.State == "authorized" {
 				t.Fatal("changed authority reported applied")
 			}
 		})
@@ -357,8 +361,8 @@ func TestAgentReinstallLandingRuntimeRejectsChangedAuthorization(t *testing.T) {
 			var task *AgentTask
 			var err error
 			if stage == "result" {
-				task, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-				if err != nil || task == nil {
+				task = readHistoricalRuntimeTask(t, s, node)
+				if _, err = s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, task.ID); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -371,10 +375,7 @@ func TestAgentReinstallLandingRuntimeRejectsChangedAuthorization(t *testing.T) {
 					t.Fatal("runtime claimed missing landing approval")
 				}
 			} else {
-				response := submitRestoredRuntime(t, s, node, task, true, true)
-				if response == nil {
-					t.Fatal("runtime projected with missing landing approval")
-				}
+				assertRetiredMeridianResultPreservesState(t, s, meridianRuntimeProjection{agentID: node.ID}, task.ID, meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now(), true))
 			}
 			var healthy int
 			if err = s.db.QueryRow(`SELECT runtime_healthy FROM meridian_endpoints WHERE id='restore-endpoint'`).Scan(&healthy); err != nil || healthy != 0 {

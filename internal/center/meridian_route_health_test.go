@@ -174,18 +174,10 @@ func TestMeridianRuntimeSuccessNeedsPeerEvidenceAndHeartbeatRenewsWithoutRevisio
 }
 
 func TestMeridianCompletionRejectsMissingTransportProof(t *testing.T) {
-	store, projection, commandID, grantID := openMeridianHealthCompletionFixture(t)
+	store, projection, commandID, _ := openMeridianHealthCompletionFixture(t)
 	result := meridianHealthResult(projection, store.now(), true)
 	result.Peers = nil
-	completeMeridianHealthFixture(t, store, projection, commandID, result)
-	var state string
-	var healthy, expiry int64
-	if err := store.db.QueryRow(`SELECT state FROM application_commands WHERE id=?`, commandID).Scan(&state); err != nil || state != "failed" {
-		t.Fatalf("incomplete proof accepted: state=%s err=%v", state, err)
-	}
-	if err := store.db.QueryRow(`SELECT runtime_healthy,health_expires_unix_ms FROM meridian_route_grants WHERE id=?`, grantID).Scan(&healthy, &expiry); err != nil || healthy != 0 || expiry != 0 {
-		t.Fatalf("incomplete proof became healthy: health=%d expiry=%d err=%v", healthy, expiry, err)
-	}
+	assertRetiredMeridianResultPreservesState(t, store, projection, commandID, result)
 }
 
 func TestMeridianCompletionCrossingQuotaQueuesNewDesiredRevision(t *testing.T) {

@@ -649,8 +649,8 @@ func TestHeartbeatKeepsCenterConnectedWhenThreeXUIObservationFails(t *testing.T)
 	if heartbeatErr != nil {
 		t.Fatalf("observation failure blocked heartbeat: %v", heartbeatErr)
 	}
-	if observationErr == nil || heartbeats != 1 {
-		t.Fatalf("observation error was not isolated: err=%v heartbeats=%d", observationErr, heartbeats)
+	if observationErr != nil || heartbeats != 1 {
+		t.Fatalf("retired observation affected heartbeat: err=%v heartbeats=%d", observationErr, heartbeats)
 	}
 }
 

@@ -69,7 +69,7 @@ func TestAgentReinstallRemainingDistinguishesMissingMonitorAndBackups(t *testing
 }
 
 func TestAgentReinstallRemainingReadPreservesRevisionAndFence(t *testing.T) {
-	s, node, _ := reinstallEntryCheckFixture(t)
+	s, node, _ := replacementNetworkFixture(t)
 	ctx := context.Background()
 	first, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
