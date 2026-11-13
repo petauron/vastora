@@ -72,13 +72,8 @@ func (s *Store) reconcileNativeEntryPublicationsInTx(ctx context.Context, tx *sq
 		return nil, err
 	}
 	stamp := s.now().UTC().Format(time.RFC3339Nano)
-	names, err := json.Marshal(evidence.ServerNames)
-	if err != nil {
-		return nil, err
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE meridian_endpoints SET server_names_json=? WHERE id=? AND application_id=? AND CAST(server_names_json AS TEXT)<>?`, names, endpointID, applicationID, string(names)); err != nil {
-		return nil, err
-	}
+	// Retired proxy records pin the enrolled identity only. Glivela owns the
+	// live configuration; never write back into its frozen predecessor ledger.
 	for i := range targets {
 		target := &targets[i]
 		updated, err := tx.ExecContext(ctx, `UPDATE publications SET sni_hostname=?,desired_revision=desired_revision+1,status='pending',last_error='',updated_at=? WHERE id=? AND desired_revision=? AND status<>'stopped'`, evidence.ServerNames[0], stamp, target.id, target.revision)
