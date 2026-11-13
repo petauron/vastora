@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.439](https://github.com/petauron/vastora/compare/v0.1.0-alpha.438...v0.1.0-alpha.439) (2026-11-13)
+
+
+### Features
+
+* **dns:** manage stable independent application domains ([#1266](https://github.com/petauron/vastora/issues/1266)) ([86863a4](https://github.com/petauron/vastora/commit/86863a46ccf0e07c5b52c3d80a0eff4db5ac0470))
+
 ## [0.1.0-alpha.438](https://github.com/petauron/vastora/compare/v0.1.0-alpha.437...v0.1.0-alpha.438) (2026-11-13)
 
 
