@@ -195,6 +195,9 @@ Existing Glivela business installations require the [final data handover](docs/G
 Independent application ingress and region-random website names: [managed DNS resources](docs/managed-domains.md) (#1265).
 
 Node-local Daylight certificates and shared Caddy ownership: [configuration, handover and recovery](docs/node-site-certificates.md) (#1128).
+
+Website hostname changes retain the original site until explicit acceptance:
+[managed hostname migration](docs/node-site-migrations.md) (#1265).
 Alpine/OpenRC 的原生套件契约和隔离验收边界见 [Alpine/OpenRC MVP](docs/alpine-openrc.md)（#1182；无 TUN 用户态管理接续 #1214，源码验收不代表生产发布）。
 
 Vastora 自动管理的运行目录、开机准备和共享资源卸载边界见 [运行目录生命周期](docs/runtime-directories.md)（#356）。

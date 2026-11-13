@@ -98,7 +98,7 @@ export const api = {
   ensureManagedDomain: (input: ManagedDomainInput) => request<ManagedDomain>("/api/v1/managed-domains", { method: "POST", body: JSON.stringify(input) }),
   nodeSiteCertificate: (id: string, signal?: AbortSignal) => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate`, { signal }),
   configureNodeSiteCertificate: (id: string, input: NodeSiteCertificateInput) => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate`, { method: "PUT", body: JSON.stringify(input) }),
-  nodeSiteCertificateAction: (id: string, action: "inspect" | "rollback" | "cancel") => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate/actions`, { method: "POST", body: JSON.stringify({ action }) }),
+  nodeSiteCertificateAction: (id: string, action: "inspect" | "rollback" | "cancel" | "accept-migration" | "cancel-migration") => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate/actions`, { method: "POST", body: JSON.stringify({ action }) }),
 
   nodeSSHProtection(applicationId: string, signal?: AbortSignal) {
     return request<SSHProtectionInventory>(`/api/v1/applications/${encodeURIComponent(applicationId)}/panel/v1/admin/business`, { method: "POST", body: "{}", signal });

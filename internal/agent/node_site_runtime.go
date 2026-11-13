@@ -22,13 +22,15 @@ import (
 )
 
 type nodeSiteJournal struct {
-	Runtime     int           `json:"runtime,omitempty"`
-	Task        nodesite.Task `json:"task"`
-	State       string        `json:"state"`
-	Previous    []byte        `json:"previous"`
-	Candidate   []byte        `json:"candidate"`
-	Fingerprint string        `json:"fingerprint"`
-	NotAfter    string        `json:"notAfter"`
+	CompletedMigration *nodesite.Task `json:"completedMigration,omitempty"`
+	MigrationPrevious  []byte         `json:"migrationPrevious,omitempty"`
+	Runtime            int            `json:"runtime,omitempty"`
+	Task               nodesite.Task  `json:"task"`
+	State              string         `json:"state"`
+	Previous           []byte         `json:"previous"`
+	Candidate          []byte         `json:"candidate"`
+	Fingerprint        string         `json:"fingerprint"`
+	NotAfter           string         `json:"notAfter"`
 }
 type nodeSiteHost struct{ site CaddySite }
 
@@ -208,6 +210,9 @@ func (s *Store) executeNodeSiteLocked(ctx context.Context, task nodesite.Task) (
 	host, err := s.nodeSiteHost(ctx, task)
 	if err != nil {
 		return nodesite.Result{}, err
+	}
+	if task.PreviousHostname != "" {
+		return s.executeWebsiteMigration(ctx, task, host)
 	}
 	if host.site.Hostname != task.Hostname {
 		return nodesite.Result{}, errors.New("agent: website hostname differs from the installed package")

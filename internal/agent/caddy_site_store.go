@@ -170,6 +170,13 @@ func (s *Store) SharedCaddySites(ctx context.Context) ([]CaddySite, error) {
 	for _, state := range states {
 		if state.Site != nil {
 			result = append(result, *state.Site)
+			migration, err := s.migrationCompanion(ctx, state.Site)
+			if err != nil {
+				return nil, err
+			}
+			if migration != nil {
+				result = append(result, *migration)
+			}
 		}
 	}
 	return result, nil

@@ -357,7 +357,7 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if err := e.Backend.Prepare(ctx, task, receipt); err != nil {
 		return result, err
 	}
-	if task.Operation == "configure" && (task.Manifest.Runtime.Kind == "systemd" || task.Manifest.Runtime.Kind == "native") && task.Manifest.Runtime.Version == 2 {
+	if task.Operation == "configure" && !sharedWebsiteConfigure(task) && (task.Manifest.Runtime.Kind == "systemd" || task.Manifest.Runtime.Kind == "native") && task.Manifest.Runtime.Version == 2 {
 		backend, ok := e.Backend.(*NativeServicesPackageBackend)
 		if !ok || receipt.State != "ready" {
 			return result, errors.New("agent: native service port update requires a ready owned bundle")
