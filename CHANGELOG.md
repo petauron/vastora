@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.445](https://github.com/petauron/vastora/compare/v0.1.0-alpha.444...v0.1.0-alpha.445) (2026-11-13)
+
+
+### Bug Fixes
+
+* **runtime:** retire superseded proxy control paths while preserving recovery history ([#1274](https://github.com/petauron/vastora/issues/1274)) ([668ca4e](https://github.com/petauron/vastora/commit/668ca4e84be439487aa147b3b427265880821105))
+
 ## [0.1.0-alpha.444](https://github.com/petauron/vastora/compare/v0.1.0-alpha.443...v0.1.0-alpha.444) (2026-11-13)
 
 
