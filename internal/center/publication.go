@@ -44,6 +44,8 @@ type PublicationInput struct {
 }
 
 type PublicationView struct {
+	nativeMetadataError error
+
 	ID                   string                    `json:"id"`
 	ServiceID            string                    `json:"serviceId"`
 	Kind                 string                    `json:"kind"`
@@ -575,6 +577,10 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 }
 
 func (s *Store) Publication(ctx context.Context, id string) (PublicationView, error) {
+	metadataErrors, syncErr := s.syncNativeEntryPublicationMetadata(ctx, id)
+	if syncErr != nil {
+		return PublicationView{}, syncErr
+	}
 	var value PublicationView
 	var gatewayID sql.NullString
 	var tls int
@@ -618,6 +624,7 @@ func (s *Store) Publication(ctx context.Context, id string) (PublicationView, er
 	if err != nil {
 		return PublicationView{}, err
 	}
+	nativeEntryMetadataUnavailable(&value, metadataErrors[value.ID])
 	if value.Status == "ready" {
 		value.AccessURL, err = s.publicationAccessURL(ctx, value)
 		if err != nil {
@@ -698,6 +705,10 @@ func degradeUnavailablePublicationAddress(value *PublicationView) {
 }
 
 func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]PublicationView, error) {
+	metadataErrors, err := s.syncNativeEntryPublicationMetadata(ctx, "")
+	if err != nil {
+		return nil, err
+	}
 	homepagePaths := map[string]string{}
 	for _, app := range apps {
 		if app.App.Homepage != nil {
@@ -759,6 +770,7 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 		if err != nil {
 			return nil, errors.New("center: invalid publication update timestamp")
 		}
+		nativeEntryMetadataUnavailable(&value, metadataErrors[value.ID])
 		if value.Status == "ready" && (protocol == "http" || protocol == "https") {
 			path := homepagePaths[appKey+"\x00"+serviceName]
 			if path == "" {

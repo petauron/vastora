@@ -146,8 +146,17 @@ func (s *Store) projectRetainedExecutionResult(ctx context.Context, id string, r
 		}
 	case "application.apply":
 		_, _, err = s.projectApplicationDeployment(ctx, tx, agentID, taskID, attempt, true, "", evidence.Result, false, *evidence.ApplicationRuntimeGeneration)
+		var targets []publicationVerificationTarget
+		if err == nil {
+			targets, err = nativeEntryVerificationTargetsForDeployment(ctx, tx, taskID)
+		}
 		if err == nil {
 			err = commit(tx)
+		}
+		if err == nil {
+			for _, target := range targets {
+				s.schedulePublicationVerification(target.id, target.revision)
+			}
 		}
 	case "landing.server.apply":
 		var result struct {
