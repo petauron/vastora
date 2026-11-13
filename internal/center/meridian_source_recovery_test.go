@@ -43,7 +43,7 @@ func applyRecoveryLanding(t *testing.T, f meridianRecoveryFixture) {
 func openMeridianRecoveryFixture(t *testing.T) meridianRecoveryFixture {
 	t.Helper()
 	store, projection, commandID, grantID := openMeridianHealthCompletionFixture(t)
-	completeMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
+	seedHistoricalMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
 	f := meridianRecoveryFixture{store: store, entryID: projection.agentID, egressID: projection.task.Peers[0].EgressID, grantID: grantID, peer: projection.task.Peers[0].Identity}
 	var err error
 	f.session, f.csrf, err = store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple")

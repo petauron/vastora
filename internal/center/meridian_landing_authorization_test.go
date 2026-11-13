@@ -232,12 +232,12 @@ func completeMeridianAuthorizationEndpoint(t *testing.T, store *Store, endpointI
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	completeMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
+	seedHistoricalMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
 }
 
 func TestMeridianServerSourceOutlivesEachAccountUntilFinalRouteRevocationApplies(t *testing.T) {
 	store, projection, commandID, grantA := openMeridianHealthCompletionFixture(t)
-	completeMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
+	seedHistoricalMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
 	egressID := projection.task.Peers[0].EgressID
 	grantB, err := store.CreateMeridianRouteGrant(context.Background(), MeridianRouteGrantInput{AccountID: sharedSnapshotAccountB, EndpointID: sharedSnapshotEndpointID, EgressNodeID: egressID})
 	if err != nil {
@@ -370,7 +370,7 @@ func TestMeridianSamePeerServerReceiptWakesOnlyNewlyAuthorizedEntry(t *testing.T
 
 func TestMeridianSuccessfulReceiptSurvivesAnotherEntrySourceCleanupFailure(t *testing.T) {
 	store, initial, initialCommand, grantID := openMeridianHealthCompletionFixture(t)
-	completeMeridianHealthFixture(t, store, initial, initialCommand, meridianHealthResult(initial, store.now(), true))
+	seedHistoricalMeridianHealthFixture(t, store, initial, initialCommand, meridianHealthResult(initial, store.now(), true))
 	ctx := context.Background()
 	egressID := initial.task.Peers[0].EgressID
 	if err := store.RevokeMeridianRouteGrant(ctx, grantID); err != nil {
@@ -441,7 +441,7 @@ func TestMeridianSuccessfulReceiptSurvivesAnotherEntrySourceCleanupFailure(t *te
 			}
 		}
 	}
-	completeMeridianHealthFixture(t, store, projection, commandID, result)
+	seedHistoricalMeridianHealthFixture(t, store, projection, commandID, result)
 	var commandState string
 	var receiptJSON []byte
 	if err := store.db.QueryRow(`SELECT state,result_json FROM application_commands WHERE id=?`, commandID).Scan(&commandState, &receiptJSON); err != nil {

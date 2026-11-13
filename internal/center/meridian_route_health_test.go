@@ -62,13 +62,42 @@ func meridianHealthResult(projection meridianRuntimeProjection, now time.Time, h
 	return result
 }
 
-func completeMeridianHealthFixture(t *testing.T, store *Store, projection meridianRuntimeProjection, commandID string, result meridianruntime.Result) {
+// Seed synthetic pre-handover history for reader/identity tests. This is not
+// an Agent acknowledgement and must not exercise the retired command dispatcher.
+func seedHistoricalMeridianHealthFixture(t *testing.T, store *Store, projection meridianRuntimeProjection, commandID string, result meridianruntime.Result) {
 	t.Helper()
-	raw, err := json.Marshal(ApplicationTaskResult{MeridianRuntime: &result, Resources: mockIntegratedResources(t, store, commandID)})
+	ctx := context.Background()
+	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.completeApplicationCommand(context.Background(), commitProjectionOnlyForTest, projection.agentID, commandID, 1, true, "", raw, false); err != nil {
+	defer tx.Rollback()
+	var endpointID string
+	if err := tx.QueryRowContext(ctx, `SELECT endpoint_id FROM meridian_deployments WHERE command_id=?`, commandID).Scan(&endpointID); err != nil {
+		t.Fatal(err)
+	}
+	quota, err := meridianEndpointQuotaEnabledInTx(ctx, tx, endpointID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := glivela.ParseXrayUserCounters(projection.materials, result.Stats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.observeMeridianUsageInTx(ctx, tx, endpointID, snapshots, store.now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.projectVerifiedMeridianRuntime(ctx, tx, endpointID, commandID, projection, &result, quota, store.now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(result.Receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state='succeeded',result_json=?,lease_expires_at='',error='' WHERE id=?`, raw, commandID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -187,6 +216,8 @@ func assertRetiredApplicationResultPreservesState(t *testing.T, store *Store, ag
  'routes',(SELECT json_group_array(json_array(id,desired_revision,applied_revision,runtime_healthy,health_expires_unix_ms,status)) FROM (SELECT * FROM meridian_route_grants ORDER BY id)),
  'commands',(SELECT json_group_array(json_array(id,state,attempt,hex(input_json),hex(result_json),result_secret_id,reconciliation_required,reconciliation_requested,error)) FROM (SELECT * FROM application_commands ORDER BY id)),
  'checks',(SELECT json_group_array(json_array(command_id,hex(input_json),hex(result_json))) FROM (SELECT * FROM agent_reinstall_client_checks ORDER BY command_id)),
+ 'services',(SELECT json_group_array(json_array(id,application_id,name,endpoint,status)) FROM (SELECT * FROM services ORDER BY id)),
+ 'publications',(SELECT json_group_array(json_array(id,service_id,hostname,status)) FROM (SELECT * FROM publications ORDER BY id)),
  'secrets',(SELECT json_group_array(json_array(id,hex(sealed))) FROM (SELECT * FROM secrets ORDER BY id)),
  'events',(SELECT json_group_array(json_array(id,task_id,event,message)) FROM (SELECT * FROM task_events ORDER BY id)))`
 	read := func() string {
@@ -198,8 +229,8 @@ func assertRetiredApplicationResultPreservesState(t *testing.T, store *Store, ag
 		return value
 	}
 	before := read()
-	if err := store.completeApplicationCommand(context.Background(), commitProjectionOnlyForTest, agentID, commandID, 1, succeeded, "", raw, false); err == nil {
-		t.Fatal("retired runtime receipt was interpreted")
+	if err := store.completeApplicationCommand(context.Background(), commitProjectionOnlyForTest, agentID, commandID, 1, succeeded, "", raw, false); err == nil || err != errExecutionBlocked && !strings.Contains(err.Error(), "retired") {
+		t.Fatal("retired runtime receipt did not reach its ownership fence", err)
 	}
 	if read() != before {
 		t.Fatal("retired receipt changed preserved identity, subscription, configuration, traffic or history")
@@ -213,4 +244,45 @@ func assertRetiredMeridianResultPreservesState(t *testing.T, store *Store, proje
 		t.Fatal(err)
 	}
 	assertRetiredApplicationResultPreservesState(t, store, projection.agentID, commandID, true, raw)
+}
+
+// Load a synthetic active pre-handover command, then verify both ordinary claim
+// and late success/failure are denied without rewriting the retained snapshot.
+func assertRetiredProxyCommandChannel(t *testing.T, store *Store, agentID string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.claimApplicationCommand(ctx, tx, agentID)
+	_ = tx.Rollback()
+	if err != nil || task != nil {
+		t.Fatal("retired proxy command was claimable", err)
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT id FROM application_commands WHERE agent_id=? AND kind NOT IN ('pulse.reporting.inspect','pulse.enrollment.rotate','pulse.enrollment.inspect','pulse.enrollment.configure') ORDER BY id`, agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) == 0 {
+		t.Fatal("missing retained proxy intent")
+	}
+	for _, id := range ids {
+		if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, id); err != nil {
+			t.Fatal(err)
+		}
+		assertRetiredApplicationResultPreservesState(t, store, agentID, id, true, json.RawMessage(`{}`))
+		assertRetiredApplicationResultPreservesState(t, store, agentID, id, false, json.RawMessage(`{}`))
+	}
 }

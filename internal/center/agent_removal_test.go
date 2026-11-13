@@ -222,7 +222,7 @@ func TestRemoveOfflineAgentKeepsSharedSecret(t *testing.T) {
 	}
 }
 
-func TestRemoveOfflineAgentRetainsApplicationInventoryWithoutLegacyCleanup(t *testing.T) {
+func TestOfflineLegacyRemovalPreservesUnconfirmedSubscriptionHistory(t *testing.T) {
 	s := openOrchestrationStore(t)
 	defer s.Close()
 	ctx := context.Background()
@@ -272,22 +272,32 @@ func TestRemoveOfflineAgentRetainsApplicationInventoryWithoutLegacyCleanup(t *te
 		}
 	}))
 	expireRemovalNode(t, s, worker.ID)
-	if err = s.StartAgentRemoval(ctx, worker.ID, "expired-worker"); !errors.Is(err, errNodeRemovalRetainedData) {
-		t.Fatal("active application data did not fence permanent removal", err)
+	if err = s.StartAgentRemoval(ctx, worker.ID, "expired-worker"); err != nil {
+		t.Fatal(err)
 	}
-	if privateDeletes != 0 || removalCount(t, s, `SELECT COUNT(*) FROM agent_removals WHERE agent_id=?`, worker.ID) != 0 {
-		t.Fatal("blocked removal touched private identity or durable intent")
+	// Resume a removal left failed by the incorrect user/legacy-tag check.
+	if _, err = s.db.Exec(`UPDATE agent_removals SET state='failed',last_error='center: private node is not owned by Vastora' WHERE agent_id=?`, worker.ID); err != nil {
+		t.Fatal(err)
 	}
-	if err = s.authenticateAgent(ctx, worker.ID, worker.Credential); err != nil {
-		t.Fatal("blocked removal revoked the retained node", err)
+	if err = s.StartAgentRemoval(ctx, worker.ID, "expired-worker"); err != nil {
+		t.Fatal(err)
 	}
-	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id IN (?,?)`, workerApplicationID, masterApplicationID) != 2 ||
-		removalCount(t, s, `SELECT COUNT(*) FROM three_x_ui_nodes WHERE worker_application_id=? AND remote_node_id=7 AND status='ready'`, workerApplicationID) != 1 ||
-		removalCount(t, s, `SELECT COUNT(*) FROM application_commands WHERE application_id=?`, workerApplicationID) != 0 {
-		t.Fatal("blocked removal changed topology or queued retired proxy work")
+	if err = s.resumeAgentRemovals(ctx); err != nil {
+		t.Fatal(err)
 	}
-	// The owner's eventual retirement is a separate operation. An upgrade must
-	// neither guess completion nor purge the inventory to make removal succeed.
+	if privateDeletes != 1 {
+		t.Fatal("tagged private identity was not removed before subscription cleanup")
+	}
+	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=?`, workerApplicationID) != 1 {
+		t.Fatal("worker deleted before remote receipt")
+	}
+	assertRetiredProxyCommandChannel(t, s, master.ID)
+	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=?`, workerApplicationID) != 1 {
+		t.Fatal("unconfirmed legacy inventory was removed")
+	}
+	if removalCount(t, s, `SELECT COUNT(*) FROM three_x_ui_nodes WHERE worker_application_id=?`, workerApplicationID) != 1 {
+		t.Fatal("retained topology was removed")
+	}
 }
 
 func TestRemoveOfflineMeridianAgentAfterFailedLegacyCleanup(t *testing.T) {
