@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/nodesite"
 )
 
@@ -226,6 +227,30 @@ func TestNodeSiteHostnameConfigureRetainsOtherInputsAndSecrets(t *testing.T) {
 		}
 		if err = backend.verifyWebsiteConfiguration(ctx, change, receipt); err != nil {
 			t.Fatal(kind, err)
+		}
+	}
+	// A failed configure retains its installed configuration and migration.
+	// Only the operator-reviewed next attempt may use that ownership receipt.
+	retry := change
+	retry.ID, retry.Kind, retry.Attempt = "website-configure", "application.apply", 2
+	retry.Authorization = controlplane.ExecutionAuthorization{ID: "new-execution", Protocol: controlplane.ExecutionProtocol, Digest: sha256String([]byte("retry authorization"))}
+	retry.PackageRecovery = &controlplane.PackageRecovery{ExecutionID: "failed-execution", TaskID: retry.ID, Attempt: 1}
+	retained := *receipt
+	retained.State, retained.TaskID = "review-required", retry.ID
+	retained.Resources = []RuntimeResource{{Kind: "file", Path: "/owned/website-config"}}
+	if err = backend.verifyWebsiteConfiguration(ctx, retry, &retained); err != nil {
+		t.Fatal("reviewed configure retry refused", err)
+	}
+	for _, mutate := range []func(*DeploymentTask){
+		func(v *DeploymentTask) { v.PackageRecovery = nil },
+		func(v *DeploymentTask) { v.Attempt++ },
+		func(v *DeploymentTask) { v.ID = "different-task" },
+		func(v *DeploymentTask) { v.ManifestSHA256 = sha256String([]byte("different retry package")) },
+	} {
+		invalid := retry
+		mutate(&invalid)
+		if err = backend.verifyWebsiteConfiguration(ctx, invalid, &retained); err == nil {
+			t.Fatal("unreviewed or changed configure retry accepted")
 		}
 	}
 	for _, mutate := range []func(*DeploymentTask){

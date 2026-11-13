@@ -32,8 +32,10 @@ func (s *Store) preparedWebsiteBinding(ctx context.Context, id, hostname string)
 }
 
 func (b *NativeServicesPackageBackend) verifyWebsiteConfiguration(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
-	invalid := errors.New("agent: website configure may change only its prepared hostname on the ready installed package")
-	if b.Store == nil || receipt == nil || receipt.State != "ready" || receipt.ManifestSHA256 != task.ManifestSHA256 || receipt.PackageRevision != task.PackageRevision || receipt.PackageVersion != task.Manifest.Version {
+	invalid := errors.New("agent: website configure requires its prepared hostname and the ready or explicitly reviewed installed package")
+	// Failed attempts retain review-required ownership. Reuse the normal
+	// task-bound recovery proof; never rewrite that receipt to look ready.
+	if b.Store == nil || receipt == nil || (receipt.State != "ready" && !reviewedPackageRecovery(task, receipt)) || receipt.ManifestSHA256 != task.ManifestSHA256 || receipt.PackageRevision != task.PackageRevision || receipt.PackageVersion != task.Manifest.Version {
 		return invalid
 	}
 	installed, err := b.Store.AppliedInstallation(ctx, task.AppKey)
