@@ -240,6 +240,11 @@ func TestRetiredMeridianSourceRevocationCannotReplayArchivedRuntime(t *testing.T
 	if err := store.RevokeMeridianRouteGrant(context.Background(), grantID); err != nil {
 		t.Fatal(err)
 	}
+	// Model a pre-handover attempt still in flight against the retained snapshot.
+	// Revocation itself must not be mistaken for a newly dispatched proxy task.
+	if _, err := store.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, commandID); err != nil {
+		t.Fatal(err)
+	}
 	assertRetiredProxyCommandChannel(t, store, projection.agentID)
 }
 
