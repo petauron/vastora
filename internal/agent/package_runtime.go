@@ -325,7 +325,10 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if receipt == nil {
 		receipt = &InstanceResources{Version: 1, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Runtime: task.Manifest.Runtime.Kind, RuntimeVersion: task.Manifest.Runtime.Version}
 	} else if task.Manifest.Runtime != nil && receipt.Runtime != task.Manifest.Runtime.Kind {
-		backend, ok := e.Backend.(*NativeServicesPackageBackend)
+		// Package-specific backends retain the same verified native migration.
+		backend, ok := e.Backend.(interface {
+			migrateSystemdReceipt(context.Context, DeploymentTask, *InstanceResources) (*InstanceResources, error)
+		})
 		if !ok {
 			return result, errors.New("agent: changing executor requires explicit instance migration")
 		}
