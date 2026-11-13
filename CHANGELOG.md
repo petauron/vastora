@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.447](https://github.com/petauron/vastora/compare/v0.1.0-alpha.446...v0.1.0-alpha.447) (2026-11-13)
+
+
+### Bug Fixes
+
+* **agent:** allow verified Senlun native executor handover ([#1284](https://github.com/petauron/vastora/issues/1284)) ([f685da4](https://github.com/petauron/vastora/commit/f685da4ba8b207e954e5517f0f88cbeb580c6ded))
+
 ## [0.1.0-alpha.446](https://github.com/petauron/vastora/compare/v0.1.0-alpha.445...v0.1.0-alpha.446) (2026-11-13)
 
 
