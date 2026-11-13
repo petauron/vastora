@@ -240,6 +240,10 @@ func TestRetiredMeridianSourceRevocationCannotReplayArchivedRuntime(t *testing.T
 	if err := store.RevokeMeridianRouteGrant(context.Background(), grantID); err != nil {
 		t.Fatal(err)
 	}
+	var agentID string
+	if err := store.db.QueryRow(`SELECT agent_id FROM application_commands WHERE id=?`, commandID).Scan(&agentID); err != nil {
+		t.Fatal(err)
+	}
 	assertRetiredProxyCommandChannel(t, store, agentID)
 }
 
