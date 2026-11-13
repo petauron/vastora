@@ -20,6 +20,7 @@ import { AgentUpdateCard } from "./AgentUpdateCard";
 import { CenterUpdateCard } from "./CenterUpdateCard";
 import { TailscaleUpdateCard } from "./TailscaleUpdateCard";
 import { isInstalledApplication } from "./appAccess";
+import { ManagedDomainSettings } from "./ManagedDomainSettings";
 import { SystemDomainSettings } from "./SystemDomainSettings";
 import { AppIcon } from "@/components/desktop/AppIcon";
 
@@ -102,6 +103,7 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
       <section className="mac-settings-panel" id="settings-domains" hidden={section !== "domains"} aria-label={copy(language, "域名与访问", "Domains & Access")}>
         <PageHeading title={copy(language, "域名与访问", "Domains & Access")} />
         <SystemDomainSettings domain={data.systemDomain} language={language} />
+        {section === "domains" ? <ManagedDomainSettings applications={data.applications} agents={data.agents} language={language} /> : null}
       </section>
       <section className="mac-settings-panel" id="settings-catalog" hidden={section !== "catalog"} aria-label={copy(language, "应用目录", "App Catalogs")}>
         <PageHeading title={copy(language, "应用目录", "App Catalogs")} />
