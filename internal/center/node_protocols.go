@@ -26,20 +26,6 @@ func (s *Server) handleNodeProtocols(w http.ResponseWriter, request *http.Reques
 	writeJSON(w, http.StatusOK, value)
 }
 
-func (s *Server) handleConfigureNodeProtocols(w http.ResponseWriter, request *http.Request) {
-	var input nodeprotocol.Selection
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	value, err := s.store.ConfigureNodeProtocols(request.Context(), request.PathValue("id"), input)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, value)
-}
-
 func (s *Store) NodeProtocols(ctx context.Context, serviceID string) (nodeprotocol.View, error) {
 	value := nodeprotocol.View{Selection: nodeprotocol.Selection{VLESS: true}, State: "succeeded"}
 	var appKey string

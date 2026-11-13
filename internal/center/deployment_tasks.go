@@ -205,16 +205,6 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, err
 	}
 	if executionBlocked {
-		recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
-		if recoveryErr != nil {
-			return nil, recoveryErr
-		}
-		if recovery != nil {
-			if err := commitTask(tx, recovery); err != nil {
-				return nil, err
-			}
-			return recovery, nil
-		}
 		if requiredTaskID == "" {
 			updateBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, agentVersion)
 			if err != nil {
@@ -423,16 +413,6 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 					return nil, decommissionErr
 				}
 				if decommissionTask == nil {
-					recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
-					if recoveryErr != nil {
-						return nil, recoveryErr
-					}
-					if recovery != nil {
-						if err := commitTask(tx, recovery); err != nil {
-							return nil, err
-						}
-						return recovery, nil
-					}
 					updateTask, updateErr := s.claimTailscaleUpdate(ctx, tx, agentID)
 					if updateErr != nil {
 						return nil, updateErr
@@ -817,7 +797,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 		return s.completeNodeDiagnostic(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
 	}
 	if strings.HasPrefix(taskID, "xray-recovery-") {
-		return s.completeXrayConfigurationRecovery(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
+		return errors.New("center: retired Xray recovery requires explicit execution disposition")
 	}
 	if taskID == agentDecommissionTaskID(agentID) {
 		if succeeded || reconciliationRequired {

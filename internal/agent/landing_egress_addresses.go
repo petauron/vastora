@@ -9,14 +9,6 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-func discoverLandingEgressAddresses() ([]landing.EgressAddress, error) {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return nil, err
-	}
-	return landingEgressAddresses(interfaces, func(iface net.Interface) ([]net.Addr, error) { return iface.Addrs() })
-}
-
 func landingEgressAddresses(interfaces []net.Interface, addresses func(net.Interface) ([]net.Addr, error)) ([]landing.EgressAddress, error) {
 	result := []landing.EgressAddress{}
 	seen := map[string]bool{}

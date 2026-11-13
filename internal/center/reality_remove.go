@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -14,20 +13,6 @@ import (
 
 type RealityRemoveCommandInput struct {
 	ServiceID string `json:"serviceId"`
-}
-
-func (s *Server) handleRemoveRealityCommand(writer http.ResponseWriter, request *http.Request) {
-	var input RealityRemoveCommandInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	value, err := s.store.CreateRealityRemoveCommand(request.Context(), input)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(writer, http.StatusAccepted, value)
 }
 
 func (s *Store) CreateRealityRemoveCommand(ctx context.Context, input RealityRemoveCommandInput) (ApplicationCommandView, error) {

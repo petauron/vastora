@@ -22,7 +22,6 @@ import (
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/hostservice"
-	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/tailscalehost"
 	"github.com/sethvargo/go-retry"
@@ -631,7 +630,6 @@ func runAgent(arguments []string) error {
 			if !capabilities.LandingOnly && !hostState.TailscaleEnrolled && hostState.TailscaleOwnership == "none" {
 				client.OSReinstaller = osReinstallerForHost(*dataDir, executable)
 			}
-			client.LandingServer = agent.NativeLandingServer{}
 		}
 		if !capabilities.LandingOnly {
 			client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}, Store: store}
@@ -643,11 +641,8 @@ func runAgent(arguments []string) error {
 		client.Capabilities.BandwidthDiagnostics = !capabilities.LandingOnly && runtime.GOOS == "linux" && iperfErr == nil
 		client.Capabilities.NativeEgress = (capabilities.Docker || capabilities.LandingOnly) && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.LandingEgressIP = runtime.GOOS == "linux" && os.Geteuid() == 0
-		client.Capabilities.MeridianLinkBandwidth = capabilities.Docker && runtime.GOOS == "linux"
-		client.Capabilities.MeridianLinkRevision = nodediagnostics.LinkBandwidthRevision
 		client.Capabilities.SenulunInspection = capabilities.Docker && runtime.GOOS == "linux"
 		client.Capabilities.SenulunRotation = client.Capabilities.SenulunInspection
-		client.Capabilities.MeridianAcceptance = client.Capabilities.Docker
 		client.Capabilities.SenulunReporting = client.Capabilities.SenulunInspection
 		client.Capabilities.SenulunRestore = capabilities.Docker && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.HostProfile = !capabilities.LandingOnly && runtime.GOOS == "linux"
@@ -746,9 +741,6 @@ func runAgent(arguments []string) error {
 				}
 				time.Sleep(time.Second)
 			}
-			go client.RunLandingLatencyChecks(context.Background(), store, func(err error) {
-				controlLogger.Error("Landing latency report failed", "event", "landing.latency", "error", controlplane.SafeError(err.Error()))
-			})
 			go client.RunHeartbeats(context.Background(), store, *heartbeatInterval, func(err error) {
 				controlLogger.Error("Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
 			})

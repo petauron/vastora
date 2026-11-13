@@ -235,7 +235,7 @@ func TestMigrateEnrollmentReplacesOnlyCenterConnection(t *testing.T) {
 	}
 }
 
-func TestObserveProxyRuntimeSynchronizesLegacyEnabledInboundsWithoutChangingThem(t *testing.T) {
+func TestHeartbeatPreservesLegacyInboundsWithoutObservingThem(t *testing.T) {
 	requestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		requestCount++
@@ -264,18 +264,31 @@ func TestObserveProxyRuntimeSynchronizesLegacyEnabledInboundsWithoutChangingThem
 		t.Fatal(err)
 	}
 
-	observed, err := observeProxyRuntime(context.Background(), store)
-	if err != nil {
+	control := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(request.Json, &payload); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"applicationEndpoints", "applicationEndpointsObserved", "meridianRuntime", "landingHealth", "landingClientRuntime", "landingServerHealth", "landingEgressAddresses"} {
+			if _, ok := payload[key]; ok {
+				t.Fatalf("retired observation emitted: %s", key)
+			}
+		}
+		return &agentpb.Document{Json: []byte(`{}`)}, nil
+	}})
+	defer control.Close()
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", control.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
-	if requestCount != 1 || len(observed) != 2 {
-		t.Fatalf("unexpected 3x-ui observation: requests=%d values=%#v", requestCount, observed)
+	if err := (Client{}).Heartbeat(context.Background(), store); err != nil {
+		t.Fatal(err)
 	}
-	if observed[0].Name != "inbound-7" || observed[0].AppProtocol != "vless/tcp/reality" || observed[0].Protocol != "tcp" || !observed[0].Enabled || observed[0].Port != 443 || observed[0].InboundTag != "vastora-reality-7" || observed[0].InboundTotalBytes != 1073741824 {
-		t.Fatalf("enabled inbound was not synchronized: %#v", observed[0])
+	if requestCount != 0 {
+		t.Fatal("heartbeat contacted the retired proxy API")
 	}
-	if observed[1].Name != "inbound-8" || observed[1].AppProtocol != "vmess/ws" || observed[1].Enabled {
-		t.Fatalf("disabled inbound state was not preserved: %#v", observed[1])
+	retained, err := store.AppliedInstallation(context.Background(), threeXUIKey)
+	if err != nil || string(retained.Config) != string(config) || string(retained.Secrets) != `{"api_token":"local-token"}` {
+		t.Fatal("retained configuration changed", err)
 	}
 }
 
@@ -293,7 +306,7 @@ func TestHeartbeatAllowsMeridianSubscriptionHostWithoutLocalXrayRuntime(t *testi
 		if err := json.Unmarshal(request.Json, &payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload.ApplicationEndpointsObserved || len(payload.ApplicationEndpoints) != 0 || string(payload.MeridianRuntime) != "null" {
+		if payload.ApplicationEndpointsObserved || len(payload.ApplicationEndpoints) != 0 || len(payload.MeridianRuntime) != 0 {
 			t.Fatalf("controller-only Glivela package reported a proxy runtime: %#v", payload)
 		}
 		heartbeats++
