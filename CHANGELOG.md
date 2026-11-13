@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.440](https://github.com/petauron/vastora/compare/v0.1.0-alpha.439...v0.1.0-alpha.440) (2026-11-13)
+
+
+### Bug Fixes
+
+* **dns:** reuse domains across verified native handover ([#1268](https://github.com/petauron/vastora/issues/1268)) ([d82d6c3](https://github.com/petauron/vastora/commit/d82d6c3dc00a8b0856e1ae563737d5ae8032b257))
+
 ## [0.1.0-alpha.439](https://github.com/petauron/vastora/compare/v0.1.0-alpha.438...v0.1.0-alpha.439) (2026-11-13)
 
 
