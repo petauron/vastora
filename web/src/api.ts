@@ -1,3 +1,4 @@
+import type { ManagedDomain, ManagedDomainInput } from "./managed-domain-types";
 import type { NodeSiteCertificate, NodeSiteCertificateInput } from "./node-site-types";
 type OSReinstallTask = { id: string; agentId: string; state: "pending" | "running" | "backup_ready" | "armed" | "succeeded" | "failed" | "unknown" | "cancelled"; error?: string; canRecheck: boolean; updatedAt: string };
 import type { SSHProtectionInventory } from "./node-ssh-protection-types";
@@ -93,6 +94,8 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
+  managedDomains: (applicationId: string, signal?: AbortSignal) => request<{ domains: ManagedDomain[] }>(`/api/v1/managed-domains?applicationId=${encodeURIComponent(applicationId)}`, { signal }),
+  ensureManagedDomain: (input: ManagedDomainInput) => request<ManagedDomain>("/api/v1/managed-domains", { method: "POST", body: JSON.stringify(input) }),
   nodeSiteCertificate: (id: string, signal?: AbortSignal) => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate`, { signal }),
   configureNodeSiteCertificate: (id: string, input: NodeSiteCertificateInput) => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate`, { method: "PUT", body: JSON.stringify(input) }),
   nodeSiteCertificateAction: (id: string, action: "inspect" | "rollback" | "cancel") => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate/actions`, { method: "POST", body: JSON.stringify({ action }) }),

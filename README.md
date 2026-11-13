@@ -192,6 +192,8 @@ Existing Glivela business installations require the [final data handover](docs/G
 地址的保护配置、运行修订与最后上报。该只读快照不代表 SSH 登录验证；宿主登录
 安全基线仍单独管理。读取失败或缺少节点映射时显示未知，可手动刷新。
 
+Independent application ingress and region-random website names: [managed DNS resources](docs/managed-domains.md) (#1265).
+
 Node-local Daylight certificates and shared Caddy ownership: [configuration, handover and recovery](docs/node-site-certificates.md) (#1128).
 Alpine/OpenRC 的原生套件契约和隔离验收边界见 [Alpine/OpenRC MVP](docs/alpine-openrc.md)（#1182；无 TUN 用户态管理接续 #1214，源码验收不代表生产发布）。
 
