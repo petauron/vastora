@@ -214,34 +214,6 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 	return AgentReinstallRuntime{CommandID: id, State: "pending"}, nil
 }
 
-func (s *Store) claimReinstallRuntime(ctx context.Context, tx *sql.Tx, agentID, id string, commitTask func(*sql.Tx, *AgentTask) error) (*AgentTask, error) {
-	task, err := s.reinstallRuntimeTask(ctx, tx, agentID, id, false)
-	if err != nil {
-		return nil, err
-	}
-	if task == nil {
-		return nil, errExecutionAuthorization
-	}
-	now := s.now().UTC()
-	update, err := tx.ExecContext(ctx, `UPDATE application_commands SET state='running',attempt=1,lease_expires_at=?,updated_at=? WHERE id=? AND state='pending' AND attempt=0`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), id)
-	if err != nil {
-		return nil, err
-	}
-	if n, _ := update.RowsAffected(); n != 1 {
-		return nil, errExecutionAuthorization
-	}
-	if err = s.recordReinstallRuntimeProgress(ctx, tx, id); err != nil {
-		return nil, err
-	}
-	if err = s.recordTaskEvent(ctx, tx, id, agentID, task.Kind, task.Revision, "claimed", "Restore approved runtime"); err != nil {
-		return nil, err
-	}
-	if err = commitTask(tx, task); err != nil {
-		return nil, err
-	}
-	return task, nil
-}
-
 func (s *Store) recordReinstallRuntimeProgress(ctx context.Context, tx *sql.Tx, id string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_operations SET updated_at=? WHERE id=(SELECT operation_id FROM agent_reinstall_app_preparations WHERE runtime_command_id=?)`, s.now().UTC().Format(time.RFC3339Nano), id)
 	return err

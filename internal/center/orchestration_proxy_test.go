@@ -223,6 +223,9 @@ func TestRetiredRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	if command.ID == "" {
+		t.Fatal("missing retained command identity")
+	}
 	assertRetiredProxyCommandChannel(t, store, node.ID)
 }
 
