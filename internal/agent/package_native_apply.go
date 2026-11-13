@@ -21,7 +21,8 @@ func applyNativePackage(ctx context.Context, manager SystemdHostApplicationManag
 // The one-time local handover stages the same verified resources without
 // enabling or starting services. Ordinary application tasks always activate.
 func installNativePackage(ctx context.Context, manager SystemdHostApplicationManager, task DeploymentTask, prepared nativePreparedPackage, receipt *InstanceResources, persist func() error, activate bool) error {
-	if task.Operation != "install" && task.Operation != "upgrade" {
+	websiteConfigure := task.ID != "" && prepared.WebsiteConfigureTaskID == task.ID && sharedWebsiteConfigure(task)
+	if task.Operation != "install" && task.Operation != "upgrade" && !websiteConfigure {
 		return errors.New("agent: native bundles support install or upgrade only")
 	}
 	if err := inspectNativeCollisions(ctx, manager, task.ApplicationID, prepared, receipt); err != nil {
@@ -34,7 +35,7 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 	}
 	// Check all configuration paths before stopping anything. An upgrade must
 	// not initialize missing configuration or overwrite application edits.
-	if task.Operation == "upgrade" {
+	if task.Operation == "upgrade" || websiteConfigure {
 		for _, file := range prepared.Files {
 			if !file.ApplicationOwned {
 				continue
