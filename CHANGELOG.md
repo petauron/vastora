@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.453](https://github.com/petauron/vastora/compare/v0.1.0-alpha.452...v0.1.0-alpha.453) (2026-11-14)
+
+
+### Bug Fixes
+
+* **center:** correct removed entry history query grouping ([#1297](https://github.com/petauron/vastora/issues/1297)) ([2ff0973](https://github.com/petauron/vastora/commit/2ff09730469f8e5bfbde081910d1fd32181830b4))
+
 ## [0.1.0-alpha.452](https://github.com/petauron/vastora/compare/v0.1.0-alpha.451...v0.1.0-alpha.452) (2026-11-14)
 
 
