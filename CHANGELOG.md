@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.454](https://github.com/petauron/vastora/compare/v0.1.0-alpha.453...v0.1.0-alpha.454) (2026-11-14)
+
+
+### Bug Fixes
+
+* **center:** remove retired reinstall application references before owners ([#1299](https://github.com/petauron/vastora/issues/1299)) ([65eae68](https://github.com/petauron/vastora/commit/65eae68e28a40fa2f1f46a324027118c7476a556))
+
 ## [0.1.0-alpha.453](https://github.com/petauron/vastora/compare/v0.1.0-alpha.452...v0.1.0-alpha.453) (2026-11-14)
 
 
