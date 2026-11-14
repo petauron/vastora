@@ -71,6 +71,9 @@ func addWebsiteDockerPorts(exposed dockernetwork.PortSet, bindings dockernetwork
 			port := dockernetwork.MustParsePort(strconv.Itoa(endpoint.port) + "/tcp")
 			binding := dockernetwork.PortBinding{HostIP: address.Unmap(), HostPort: strconv.Itoa(endpoint.port)}
 			for existingPort, values := range bindings {
+				if existingPort.Proto() != port.Proto() {
+					continue
+				}
 				for _, existing := range values {
 					if existing.HostIP == binding.HostIP && existing.HostPort == binding.HostPort && existingPort != port {
 						return errors.New("agent: website conflicts with a gateway listener")

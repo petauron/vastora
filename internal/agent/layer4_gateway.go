@@ -110,6 +110,9 @@ func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.D
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if driver.Caddy.SiteRuntime != nil && !driver.Caddy.SiteContainer && (len(desired.Listeners) != 0 || len(desired.Routes) != 0 || desired.SharedHTTPS != nil) {
+		return errors.New("agent: native website Caddy requires an explicit gateway runtime migration")
+	}
 	if desired.SharedHTTPS == nil {
 		runtimeDesired := desired
 		driver.mu.RLock()

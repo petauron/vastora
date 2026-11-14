@@ -29,3 +29,14 @@ Lost responses replay the same operation; unresolved executions prevent another
 migration. Failed preparation keeps the original site. An interrupted handover
 uses the existing recovery journal instead of replacing application state by
 guessing. Schema changes are forward-only.
+
+Website changes retain the recorded Caddy runtime owner. Installing Docker or a
+protocol-only HAProxy frontend does not move an existing native Caddy service
+into a container. Native websites keep their protected admin socket and service
+lifecycle; a real Docker gateway transition is rejected before runtime mutation
+until it has an explicit migration. Containers and native services must not race
+for the same website listeners.
+
+Docker listener conflict checks compare sockets within the same transport.
+HTTPS on TCP 443 can coexist with HTTP/3 on UDP 443. Two different TCP container
+listeners claiming the same host address and port remain a conflict.
