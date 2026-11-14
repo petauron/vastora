@@ -22,7 +22,7 @@ func runCenter(arguments []string) error {
 		return errors.New("center command is required")
 	}
 	switch arguments[0] {
-	case "purge-removed-landing-history":
+	case "purge-removed-landing-history", "purge-removed-entry-history":
 		flags := flag.NewFlagSet("center purge-removed-landing-history", flag.ContinueOnError)
 		dataDir := flags.String("data-dir", "", "Center state directory")
 		nodeID := flags.String("node-id", "", "exact permanently removed landing identity")
@@ -39,8 +39,14 @@ func runCenter(arguments []string) error {
 			return err
 		}
 		defer store.Close()
-		if err := store.PurgeRemovedLandingHistory(context.Background(), *nodeID, *confirmation, *confirmed); err != nil {
-			return err
+		var purgeErr error
+		if arguments[0] == "purge-removed-entry-history" {
+			purgeErr = store.PurgeRemovedEntryHistory(context.Background(), *nodeID, *confirmation, *confirmed)
+		} else {
+			purgeErr = store.PurgeRemovedLandingHistory(context.Background(), *nodeID, *confirmation, *confirmed)
+		}
+		if purgeErr != nil {
+			return purgeErr
 		}
 		fmt.Println("Removed landing history and unshared credentials purged; no remote host contacted")
 		return nil
