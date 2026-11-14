@@ -1,5 +1,7 @@
 package controlplane
 
+import "slices"
+
 // NativeLifecycleAllowed is the narrow application lifecycle available to a
 // container-free, restricted host. Actual catalog validation and the ordinary
 // sealed execution authorization remain mandatory at their existing boundaries.
@@ -24,4 +26,11 @@ func NativeLifecycleAllowed(runtimeKind string, version int, operation string, g
 		}
 	}
 	return native
+}
+
+// NativeWebsiteConfigureAllowed only admits the existing owned website backend.
+// Center must first verify the prepared hostname migration. The Agent backend
+// independently verifies its prepared journal, unchanged settings and secrets.
+func NativeWebsiteConfigureAllowed(appKey, runtimeKind string, version int, operation string, grants []string) bool {
+	return operation == "configure" && (appKey == "vastora-official/daylight" || appKey == "vastora-official/daylight-https") && slices.Contains(grants, "shared-caddy") && NativeLifecycleAllowed(runtimeKind, version, "upgrade", grants)
 }

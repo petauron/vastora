@@ -307,7 +307,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	updateHandedOff := false
 	tailscaleUpdateHandedOff := false
 	osReinstallHandedOff := false
-	nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
+	nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && (controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities) || controlplane.NativeWebsiteConfigureAllowed(task.AppKey, task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities))
 	if len(publicRules) > 0 {
 		err = nodesecurity.NewHost().CheckPorts(publicRules)
 	}
