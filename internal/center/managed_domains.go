@@ -25,6 +25,7 @@ type ManagedDomainInput struct {
 	Address               string `json:"address"`
 	ExpectedRevision      int64  `json:"expectedRevision,omitempty"`
 	ExpectedRecordAddress string `json:"expectedRecordAddress,omitempty"`
+	MigrateAddressFamily  bool   `json:"migrateAddressFamily,omitempty"`
 }
 
 type ManagedDomainView struct {
@@ -151,12 +152,14 @@ func (s *Store) EnsureManagedDomain(ctx context.Context, in ManagedDomainInput) 
 				newType = "AAAA"
 			}
 			if newType != current.Type {
-				return current, errors.New("center: an existing domain cannot silently change ingress family")
+				if !in.MigrateAddressFamily || in.Hostname != current.Hostname || in.ExpectedRecordAddress != current.Address || current.RecordID == "" || current.Status != "ready" || current.AppliedRevision != current.Revision {
+					return current, errors.New("center: address family migration requires the exact ready domain, revision and verified previous address")
+				}
 			}
 			if in.ExpectedRevision != current.Revision {
 				return current, errors.New("center: managed domain revision changed")
 			}
-			_, err = s.db.ExecContext(ctx, `UPDATE managed_domains SET address=?,expected_record_address=?,desired_revision=desired_revision+1,status='pending',attempt=0,retry_at='',updated_at=? WHERE id=? AND desired_revision=?`, in.Address, current.Address, stamp, current.ID, current.Revision)
+			_, err = s.db.ExecContext(ctx, `UPDATE managed_domains SET address=?,record_type=?,expected_record_address=?,desired_revision=desired_revision+1,status='pending',attempt=0,retry_at='',updated_at=? WHERE id=? AND desired_revision=?`, in.Address, newType, current.Address, stamp, current.ID, current.Revision)
 			if err != nil {
 				return current, err
 			}
@@ -166,7 +169,7 @@ func (s *Store) EnsureManagedDomain(ctx context.Context, in ManagedDomainInput) 
 		if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM managed_domains WHERE application_id=?`, in.ApplicationID).Scan(&count); err != nil {
 			return current, err
 		}
-		if count >= 64 || in.ExpectedRevision != 0 {
+		if count >= 64 || in.ExpectedRevision != 0 || in.MigrateAddressFamily {
 			return current, invalid
 		}
 		hostname, sourceID := in.Hostname, ""
@@ -228,6 +231,20 @@ type managedCloudflareRecord struct {
 	Comment string `json:"comment"`
 }
 
+// A pending family migration retains the exact previous remote tuple. Only an
+// established owned record can match it; adoption and foreign records cannot.
+func previousManagedDomainFamilyRecord(v ManagedDomainView, r managedCloudflareRecord) bool {
+	oldIP := net.ParseIP(v.ExpectedRecordAddress)
+	if oldIP == nil || v.RecordID == "" || r.ID != v.RecordID || r.Comment != "vastora-managed-domain:"+v.ID || r.Content != v.ExpectedRecordAddress {
+		return false
+	}
+	oldType := "A"
+	if oldIP.To4() == nil {
+		oldType = "AAAA"
+	}
+	return oldType != v.Type && r.Type == oldType
+}
+
 func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) error {
 	v, err := s.ManagedDomain(ctx, id)
 	if err != nil {
@@ -253,7 +270,7 @@ func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) err
 	if retiring {
 		if len(records) == 1 {
 			r := records[0]
-			if v.RecordID != "" && r.ID != v.RecordID || r.Comment != marker || r.Type != v.Type || r.Name != v.Hostname || r.Content != v.Address || r.Proxied {
+			if v.RecordID != "" && r.ID != v.RecordID || r.Comment != marker || r.Name != v.Hostname || r.Proxied || (!(r.Type == v.Type && r.Content == v.Address) && !previousManagedDomainFamilyRecord(v, r)) {
 				return errors.New("center: DNS ownership changed; record was not deleted")
 			}
 			if err = client.deleteDNSRecord(ctx, r.ID); err != nil {
@@ -277,7 +294,7 @@ func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) err
 	var record managedCloudflareRecord
 	if len(records) == 1 {
 		record = records[0]
-		if record.Name != v.Hostname || record.Type != v.Type || record.Proxied {
+		if record.Name != v.Hostname || record.Proxied || record.Type != v.Type && !previousManagedDomainFamilyRecord(v, record) {
 			return errors.New("center: an incompatible DNS record already exists")
 		}
 		var foreignReferences int
@@ -321,7 +338,7 @@ func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) err
 	if err = client.do(ctx, method, target, body, &applied); err != nil {
 		return err
 	}
-	if applied.ID == "" || applied.Name != v.Hostname || applied.Type != v.Type || applied.Content != v.Address || applied.Proxied || applied.Comment != marker {
+	if applied.ID == "" || record.ID != "" && applied.ID != record.ID || applied.Name != v.Hostname || applied.Type != v.Type || applied.Content != v.Address || applied.Proxied || applied.Comment != marker {
 		return errors.New("center: DNS provider returned an unexpected managed record")
 	}
 	// Persist external identity even when the owner was concurrently removed.

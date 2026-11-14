@@ -155,3 +155,127 @@ func TestManagedDomainRegionNameAndLostResponseReuse(t *testing.T) {
 		t.Fatalf("recovery: %+v %v creates=%d", again, err, creates)
 	}
 }
+
+func TestManagedDomainExplicitFamilyMigrationPreservesRecordAndRecoversLostResponse(t *testing.T) {
+	s := openOrchestrationStore(t)
+	defer s.Close()
+	n := seedVerificationPublication(t, s, publicationShared443, "manual", 1, 1, "ready")
+	const oldAddress = "2001:4860:4860::8888"
+	if _, err := s.db.Exec(`UPDATE agent_network_profiles SET public_address=? WHERE agent_id=?`, oldAddress, n.ID); err != nil {
+		t.Fatal(err)
+	}
+	var record managedCloudflareRecord
+	writes := 0
+	loseResponse := false
+	failBeforeWrite := false
+	deletes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var result any
+		if r.Method == http.MethodPut && failBeforeWrite {
+			failBeforeWrite = false
+			w.WriteHeader(502)
+			return
+		}
+		if r.Method == http.MethodGet {
+			rows := []managedCloudflareRecord{}
+			if record.ID != "" {
+				rows = append(rows, record)
+			}
+			result = rows
+		} else if r.Method == http.MethodPost || r.Method == http.MethodPut {
+			writes++
+			if err := json.NewDecoder(r.Body).Decode(&record); err != nil {
+				t.Error(err)
+			}
+			record.ID = "owned-record"
+			result = record
+			if loseResponse {
+				loseResponse = false
+				w.WriteHeader(502)
+				return
+			}
+		} else if r.Method == http.MethodDelete {
+			deletes++
+			result = map[string]any{}
+		} else {
+			t.Errorf("unexpected DNS operation %s", r.Method)
+			w.WriteHeader(400)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": result, "errors": []any{}})
+	}))
+	defer server.Close()
+	s.cloudflareOAuth = cloudflareOAuthConfig{APIURL: server.URL, HTTPClient: server.Client()}
+	storeCloudflareOAuthIntegration(t, s, cloudflareOAuthToken{AccessToken: "synthetic", RefreshToken: "synthetic", Scope: "dns.write", ExpiresAt: time.Now().Add(time.Hour)})
+	in := ManagedDomainInput{ApplicationID: "verification-app", Key: "reality-site", Prefix: "sg", Address: oldAddress}
+	initial, err := s.EnsureManagedDomain(context.Background(), in)
+	if err != nil || initial.Type != "AAAA" || initial.Status != "ready" {
+		t.Fatal(initial, err)
+	}
+	if _, err = s.db.Exec(`UPDATE agent_network_profiles SET public_address='8.8.8.8' WHERE agent_id=?`, n.ID); err != nil {
+		t.Fatal(err)
+	}
+	in.Address = "8.8.8.8"
+	in.Hostname = initial.Hostname
+	in.ExpectedRevision = initial.Revision
+	before := writes
+	if _, err = s.EnsureManagedDomain(context.Background(), in); err == nil || writes != before {
+		t.Fatal("implicit family change accepted")
+	}
+	in.MigrateAddressFamily = true
+	if _, err = s.EnsureManagedDomain(context.Background(), in); err == nil || writes != before {
+		t.Fatal("unverified old address accepted")
+	}
+	in.ExpectedRecordAddress = oldAddress
+	in.ExpectedRevision = 0
+	if _, err = s.EnsureManagedDomain(context.Background(), in); err == nil || writes != before {
+		t.Fatal("stale revision accepted")
+	}
+	in.ExpectedRevision = initial.Revision
+	loseResponse = true
+	if _, err = s.EnsureManagedDomain(context.Background(), in); err == nil {
+		t.Fatal("lost response reported as success")
+	}
+	updated, err := s.EnsureManagedDomain(context.Background(), in)
+	if err != nil || updated.ID != initial.ID || updated.RecordID != initial.RecordID || updated.Hostname != initial.Hostname || updated.Revision != 2 || updated.Status != "ready" || record.Type != "A" || record.Content != in.Address {
+		t.Fatal("family migration failed", updated, err)
+	}
+	in.Address = oldAddress
+	in.ExpectedRecordAddress = "8.8.8.8"
+	in.ExpectedRevision = updated.Revision
+	if _, err = s.db.Exec(`UPDATE agent_network_profiles SET public_address=? WHERE agent_id=?`, oldAddress, n.ID); err != nil {
+		t.Fatal(err)
+	}
+	record.Comment = "foreign-owner"
+	before = writes
+	if _, err = s.EnsureManagedDomain(context.Background(), in); err == nil || writes != before {
+		t.Fatal("foreign record overwritten during migration")
+	}
+	record.Comment = "vastora-managed-domain:" + initial.ID
+	restored, err := s.EnsureManagedDomain(context.Background(), in)
+	if err != nil || restored.RecordID != initial.RecordID || restored.Hostname != initial.Hostname || restored.Revision != 3 || restored.Status != "ready" || record.Type != "AAAA" || record.Content != oldAddress {
+		t.Fatal("retry did not retain migration identity", restored, err)
+	}
+	// A migration that failed before the provider write retains the old owned
+	// tuple for safe retirement; a changed owner must still prevent deletion.
+	if _, err = s.db.Exec(`UPDATE agent_network_profiles SET public_address='8.8.8.8' WHERE agent_id=?`, n.ID); err != nil {
+		t.Fatal(err)
+	}
+	in.Address = "8.8.8.8"
+	in.ExpectedRecordAddress = oldAddress
+	in.ExpectedRevision = restored.Revision
+	failBeforeWrite = true
+	if _, err = s.EnsureManagedDomain(context.Background(), in); err == nil {
+		t.Fatal("failed provider write reported ready")
+	}
+	record.Comment = "foreign-owner"
+	if err = s.RetireManagedDomain(context.Background(), initial.ID); err == nil || deletes != 0 {
+		t.Fatal("foreign prior-family record deleted")
+	}
+	record.Comment = "vastora-managed-domain:" + initial.ID
+	if err = s.RetireManagedDomain(context.Background(), initial.ID); err != nil || deletes != 1 {
+		t.Fatal("owned prior-family retirement failed", err, deletes)
+	}
+
+}

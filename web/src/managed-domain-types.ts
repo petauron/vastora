@@ -1,2 +1,2 @@
 export type ManagedDomain = { id: string; applicationId?: string; agentId?: string; key: string; prefix?: string; hostname: string; address: string; type: "A" | "AAAA"; revision: number; appliedRevision: number; status: "pending" | "ready" | "failed" | "retiring"; lastError?: string };
-export type ManagedDomainInput = { applicationId: string; key: string; prefix?: string; hostname?: string; address: string; expectedRevision?: number; expectedRecordAddress?: string };
+export type ManagedDomainInput = { applicationId: string; key: string; prefix?: string; hostname?: string; address: string; expectedRevision?: number; expectedRecordAddress?: string; migrateAddressFamily?: boolean };

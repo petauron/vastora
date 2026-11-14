@@ -4037,6 +4037,9 @@
                   },
                   "expectedRecordAddress": {
                     "type": "string"
+                  },
+                  "migrateAddressFamily": {
+                    "type": "boolean"
                   }
                 }
               }
