@@ -20,13 +20,114 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/gatewayruntime"
 	"github.com/petauron/vastora/internal/nodesite"
 )
+
+func TestSharedCaddyNativeRuntimeKeepsProtocolFrontendIndependent(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	state := gateway.NodeListenerState{Revision: 1, NodeID: "node-a", Listener: gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, RejectUnmatched: true, Routes: []gateway.Layer4Route{{ID: "route", Hostname: "site.example.com", ApplicationNodeID: "node-a", ManagedReality: true, ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "100.64.0.2", Port: 10443}}}}}}
+	if err := store.RecordNodeListenerState(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	for _, container := range []bool{false, true} {
+		driver := &CaddyGatewayDriver{SiteContainer: container, SiteRuntime: func(_ context.Context, desired gateway.DesiredState, _ []CaddySite) error {
+			if (desired.SharedHTTPS != nil) != container {
+				t.Fatal("protocol frontend changed the native website runtime")
+			}
+			return nil
+		}}
+		if err := store.ConfigureSharedCaddy(driver); err != nil {
+			t.Fatal(err)
+		}
+		if err := driver.SiteRuntime(ctx, gateway.DesiredState{}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A real gateway transition is rejected before it starts a competing
+	// Docker runtime or changes the existing protocol frontend.
+	runtime := &fakeGatewayRuntimeProvisioner{}
+	layer4 := &fakeLayer4Provisioner{}
+	driver := &ManagedGatewayDriver{Caddy: &CaddyGatewayDriver{SiteRuntime: func(context.Context, gateway.DesiredState, []CaddySite) error { return nil }}, Runtime: runtime, Layer4: layer4}
+	if err := driver.ApplyConfiguration(ctx, gatewayState(1, 3000), nil); err == nil || len(runtime.states) != 0 || layer4.removed != 0 {
+		t.Fatalf("unapproved runtime migration mutated services: %v", err)
+	}
+}
+
+func TestSharedCaddyNativeRuntimeSelectionRequiresPrivateReceipt(t *testing.T) {
+	root := packageTestDirectory(t)
+	if found, err := NativeCaddyRuntimeConfigured(root); err != nil || found {
+		t.Fatalf("absent native runtime = %v, %v", found, err)
+	}
+	path := filepath.Join(root, "shared-caddy", "runtime.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []int{1, 2} {
+		raw, _ := json.Marshal(nativeCaddyReceipt{Version: version, SHA256: strings.Repeat("a", 64), UnitSHA256: strings.Repeat("b", 64), BootstrapSHA256: strings.Repeat("c", 64)})
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if found, err := NativeCaddyRuntimeConfigured(root); err != nil || !found {
+			t.Fatalf("existing native runtime %d = %v, %v", version, found, err)
+		}
+	}
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NativeCaddyRuntimeConfigured(root); err == nil {
+		t.Fatal("accepted an exposed runtime receipt")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing", path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NativeCaddyRuntimeConfigured(root); err == nil {
+		t.Fatal("accepted a symlink runtime receipt")
+	}
+}
+
+func TestSharedCaddyWebsitePortConflictsRespectTransport(t *testing.T) {
+	key, private := nodeSiteTestKey(t)
+	certificate, err := nodeSiteCertificate("site.example.com", nodeSiteTestChain(t, key, "site.example.com"), private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	site := CaddySite{ApplicationID: "site-instance", Hostname: certificate.Hostname, Address: "100.64.0.2", HTTPPort: 24481, TLSPort: 24483, PublicListen: "203.0.113.2:443", HTML: "owned site", Certificate: certificate}
+	state := gateway.DesiredState{Revision: 1, Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.2", HTTPPort: 80, HTTPSPort: 443}}}
+	exposed, bindings, err := gatewayruntime.DockerPorts(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = addWebsiteDockerPorts(exposed, bindings, state, []CaddySite{site}); err != nil {
+		t.Fatalf("TCP website must coexist with gateway HTTPS/HTTP3: %v", err)
+	}
+	if len(bindings[dockernetwork.MustParsePort("443/udp")]) != 1 {
+		t.Fatal("website changed the existing HTTP3 listener")
+	}
+	// A different container TCP listener claiming the same host socket remains
+	// an actual conflict; allowing UDP coexistence must not weaken this guard.
+	tcp := dockernetwork.MustParsePort("443/tcp")
+	bindings[dockernetwork.MustParsePort("8443/tcp")] = bindings[tcp]
+	delete(bindings, tcp)
+	if err = addWebsiteDockerPorts(exposed, bindings, state, []CaddySite{site}); err == nil {
+		t.Fatal("website accepted a conflicting TCP gateway binding")
+	}
+}
 
 func nodeSiteTestChain(t *testing.T, key *ecdsa.PrivateKey, host string) string {
 	t.Helper()

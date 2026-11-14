@@ -71,6 +71,63 @@ type nativeCaddyReceipt struct {
 type NativeCaddySiteRuntime struct {
 	StateDirectory string
 	Manager        SystemdHostApplicationManager
+	Sites          func(context.Context) ([]CaddySite, error)
+}
+
+func (runtime NativeCaddySiteRuntime) Ensure(ctx context.Context) error {
+	return runtime.Reconcile(ctx, gateway.DesiredState{})
+}
+
+func (runtime NativeCaddySiteRuntime) Reconcile(ctx context.Context, desired gateway.DesiredState) error {
+	if runtime.Sites == nil {
+		return errors.New("agent: native Caddy website source is unavailable")
+	}
+	sites, err := runtime.Sites(ctx)
+	if err != nil {
+		return err
+	}
+	return runtime.ReconcileWebsites(ctx, desired, sites)
+}
+
+func (runtime NativeCaddySiteRuntime) Remove(ctx context.Context) error {
+	if runtime.Sites == nil {
+		return errors.New("agent: native Caddy website source is unavailable")
+	}
+	sites, err := runtime.Sites(ctx)
+	if err != nil {
+		return err
+	}
+	if len(sites) != 0 {
+		return errors.New("agent: native Caddy still serves managed websites")
+	}
+	return runtime.Idle(ctx)
+}
+
+// NativeCaddyRuntimeConfigured preserves the existing website runtime when
+// Docker is installed later (for example, for a protocol frontend). Selection
+// alone grants no ownership: ReconcileWebsites still verifies the exact unit,
+// bootstrap, binary and, on OpenRC, account before touching the runtime.
+func NativeCaddyRuntimeConfigured(stateDirectory string) (bool, error) {
+	path := filepath.Join(stateDirectory, "shared-caddy", "runtime.json")
+	if err := checkPackageParents(path); err != nil {
+		return false, err
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 4096 {
+		return false, errors.New("agent: unsafe native Caddy ownership receipt")
+	}
+	raw, err := os.ReadFile(path)
+	var receipt nativeCaddyReceipt
+	if err != nil || json.Unmarshal(raw, &receipt) != nil || (receipt.Version != 1 && receipt.Version != 2) || len(receipt.SHA256) != 64 || len(receipt.UnitSHA256) != 64 || len(receipt.BootstrapSHA256) != 64 {
+		return false, errors.New("agent: invalid native Caddy ownership receipt")
+	}
+	return true, nil
 }
 
 func sha256String(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }

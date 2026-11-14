@@ -50,7 +50,12 @@ func (s *Store) ConfigureSharedCaddy(driver *CaddyGatewayDriver) error {
 						return errors.New("agent: website public socket has no owned Caddy fallback")
 					}
 				}
-				desired.SharedHTTPS = &listener.Desired.Listener
+				// Container networking needs the frontend socket to avoid a
+				// duplicate host binding. A native website runtime keeps its own
+				// existing listeners; a protocol-only frontend is not a gateway.
+				if driver.SiteContainer {
+					desired.SharedHTTPS = &listener.Desired.Listener
+				}
 			}
 			return runtime(ctx, desired, sites)
 		}

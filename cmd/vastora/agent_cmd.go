@@ -652,8 +652,22 @@ func runAgent(arguments []string) error {
 		if capabilities.Docker {
 			client.NodeListener = agent.DockerLayer4Provisioner{Image: *haproxyImage}
 		}
+		nativeWebsiteRuntime := false
+		if runtime.GOOS == "linux" && os.Geteuid() == 0 {
+			nativeWebsiteRuntime, err = agent.NativeCaddyRuntimeConfigured(*dataDir)
+			if err != nil {
+				return err
+			}
+		}
 		if capabilities.Gateway {
-			caddyDriver, err := agent.NewCaddyGatewayDriver(*caddyAdmin)
+			admin := *caddyAdmin
+			if nativeWebsiteRuntime {
+				admin, err = agent.NativeCaddyAdminURL()
+				if err != nil {
+					return err
+				}
+			}
+			caddyDriver, err := agent.NewCaddyGatewayDriver(admin)
 			if err != nil {
 				return err
 			}
@@ -662,21 +676,29 @@ func runAgent(arguments []string) error {
 			caddyDriver.SystemGateway = caddyProvisioner
 			caddyDriver.SiteContainer = true
 			caddyDriver.SiteRuntime = caddyProvisioner.ReconcileWebsites
+			var gatewayProvisioner agent.GatewayProvisioner = caddyProvisioner
+			var runtimeProvisioner agent.GatewayRuntimeProvisioner = caddyProvisioner
+			if nativeWebsiteRuntime {
+				provisioner := agent.NativeCaddySiteRuntime{StateDirectory: *dataDir, Sites: store.SharedCaddySites}
+				caddyDriver.SystemGateway, caddyDriver.SiteContainer = nil, false
+				caddyDriver.SiteRuntime, caddyDriver.SiteIdle = provisioner.ReconcileWebsites, provisioner.Idle
+				gatewayProvisioner, runtimeProvisioner = provisioner, provisioner
+			}
 			layer4 := agent.DockerLayer4Provisioner{Image: *haproxyImage}
-			managedDriver := &agent.ManagedGatewayDriver{Caddy: caddyDriver, Layer4: layer4, Runtime: caddyProvisioner}
+			managedDriver := &agent.ManagedGatewayDriver{Caddy: caddyDriver, Layer4: layer4, Runtime: runtimeProvisioner}
 			if err := store.ConfigureManagedCaddy(managedDriver); err != nil {
 				return err
 			}
 			client.GatewayDriver = managedDriver
 			client.GatewayProvisioner = agent.ManagedGatewayProvisioner{
-				Caddy:  caddyProvisioner,
+				Caddy:  gatewayProvisioner,
 				Layer4: layer4,
 				Driver: managedDriver,
 			}
 		}
 		if !capabilities.Gateway && runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			admin := *caddyAdmin
-			if !capabilities.Docker {
+			if !capabilities.Docker || nativeWebsiteRuntime {
 				var err error
 				admin, err = agent.NativeCaddyAdminURL()
 				if err != nil {
@@ -687,7 +709,7 @@ func runAgent(arguments []string) error {
 			if err != nil {
 				return err
 			}
-			if capabilities.Docker {
+			if capabilities.Docker && !nativeWebsiteRuntime {
 				provisioner := agent.DockerGatewayProvisioner{Image: *caddyImage, AdminListen: driver.AdminListen, AdminSocketPath: driver.AdminSocketPath, Sites: store.SharedCaddySites}
 				driver.SystemGateway, driver.SiteRuntime, driver.SiteContainer = provisioner, provisioner.ReconcileWebsites, true
 				driver.SiteIdle = provisioner.Remove
