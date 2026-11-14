@@ -33,7 +33,7 @@ require (
 
 require (
 	github.com/caddyserver/zerossl v0.1.6 // indirect
-	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
+	github.com/klauspost/cpuid/v2 v2.4.2 // indirect
 	github.com/libdns/libdns v1.1.1 // indirect
 	github.com/mholt/acmez/v3 v3.1.7 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
