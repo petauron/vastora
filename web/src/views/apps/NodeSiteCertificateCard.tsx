@@ -28,6 +28,7 @@ export function NodeSiteCertificateCard({ applicationId, language, mutate, disab
   const [migrationPort, setMigrationPort] = useState("24483");
   const [port, setPort] = useState("24482");
   const [staging, setStaging] = useState(false);
+  const [tlsLoopbackOnly, setTLSLoopbackOnly] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -45,6 +46,7 @@ export function NodeSiteCertificateCard({ applicationId, language, mutate, disab
           setHostname(next.hostname);
           setPort(String(next.port || 24482));
           setStaging(next.caDirectory === stagingCA);
+          setTLSLoopbackOnly(Boolean(next.tlsLoopbackOnly));
         }
       } catch (failure) {
         if (!controller.signal.aborted) setError(userError(language, failure));
@@ -60,7 +62,7 @@ export function NodeSiteCertificateCard({ applicationId, language, mutate, disab
     if (busy || disabled) return;
     setBusy(true); setError("");
     try {
-      await mutate(async () => { const next = await operation(); setView(next); setHostname(next.migrationFrom || next.hostname); setPort(String(next.port || 24482)); }, undefined, { reportError: false });
+      await mutate(async () => { const next = await operation(); setView(next); setTLSLoopbackOnly(Boolean(next.tlsLoopbackOnly)); setHostname(next.migrationFrom || next.hostname); setPort(String(next.port || 24482)); }, undefined, { reportError: false });
       setConfirmed(false); setAction(null);
     } catch (failure) { setError(userError(language, failure)); }
     finally { setBusy(false); }
@@ -68,7 +70,7 @@ export function NodeSiteCertificateCard({ applicationId, language, mutate, disab
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!confirmed) return;
-    void run(() => api.configureNodeSiteCertificate(applicationId, { hostname: hostname.trim(), port: Number(port), caDirectory: staging ? stagingCA : productionCA }));
+    void run(() => api.configureNodeSiteCertificate(applicationId, { hostname: hostname.trim(), port: Number(port), caDirectory: staging ? stagingCA : productionCA, ...(tlsLoopbackOnly !== Boolean(view?.tlsLoopbackOnly) ? { tlsLoopbackOnly } : {}) }));
   };
   const active = view?.state === "issuing" || view?.state === "pending";
   const labels: Record<NodeSiteCertificate["state"], string> = {
@@ -86,6 +88,7 @@ export function NodeSiteCertificateCard({ applicationId, language, mutate, disab
       <form onSubmit={submit}><FieldGroup>
         <Field><FieldLabel htmlFor={`${id}-hostname`}>{copy(language, "已安装站点域名", "Installed site hostname")}</FieldLabel><Input id={`${id}-hostname`} value={hostname} readOnly /><FieldDescription>{copy(language, "仅为管理员已绑定的精确域名申请，不共享通配符私钥。", "Only the exact administrator-bound hostname is eligible. No shared wildcard key.")}</FieldDescription></Field>
         <Field><FieldLabel htmlFor={`${id}-port`}>{copy(language, "本机 TLS 端口", "Loopback TLS port")}</FieldLabel><Input id={`${id}-port`} value={port} onChange={(event) => setPort(event.target.value)} type="number" min={1024} max={65535} required disabled={disabled || busy || active} /><FieldDescription>{copy(language, "监听 127.0.0.1，请选择未被占用的高位端口。", "Binds to 127.0.0.1. Choose an unused high port.")}</FieldDescription></Field>
+        <Field orientation="horizontal"><Checkbox id={`${id}-loopback-only`} checked={tlsLoopbackOnly} disabled={disabled || busy || active || Boolean(view?.migrationFrom)} onCheckedChange={value => { setTLSLoopbackOnly(value === true); setConfirmed(false); }} /><FieldLabel htmlFor={`${id}-loopback-only`}>{copy(language, "TLS 仅监听本机，公网 443 由代理承接", "Loopback TLS only; proxy owns public443")}</FieldLabel><FieldDescription>{copy(language, "保留证书和网站内容，释放 Caddy 的公网 TLS 监听。请先核对代理的 HTTPS 回落及恢复方案。", "Keep the certificate and website content while releasing Caddy public TLS listeners. Verify the proxy HTTPS fallback and recovery plan first.")}</FieldDescription></Field>
         <Field orientation="horizontal"><Switch id={`${id}-staging`} checked={staging} onCheckedChange={setStaging} disabled={disabled || busy || active} /><FieldLabel htmlFor={`${id}-staging`}>{copy(language, "使用 ACME 测试环境", "Use ACME staging")}</FieldLabel></Field>
         {staging ? <FieldDescription>{copy(language, "测试证书不受浏览器信任，仅用于独立验收，不应用于正在承载代理的站点。", "Staging certificates are not browser-trusted. Use an isolated site, not an active proxy target.")}</FieldDescription> : null}
         <Field orientation="horizontal"><Checkbox id={`${id}-confirmed`} checked={confirmed} onCheckedChange={(value) => setConfirmed(value === true)} disabled={disabled || busy || active} /><FieldLabel htmlFor={`${id}-confirmed`}>{copy(language, "已核对恢复点，允许更新本站点证书", "Recovery point verified; allow updating this site's certificate")}</FieldLabel></Field>

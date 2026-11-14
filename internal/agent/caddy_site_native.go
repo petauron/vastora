@@ -245,7 +245,7 @@ func (runtime NativeCaddySiteRuntime) ReconcileWebsites(ctx context.Context, des
 		if err := waitForBindAddress(ctx, site.Address); err != nil {
 			return err
 		}
-		if site.TLSPort != 0 && site.PublicListen != "" {
+		if site.TLSPort != 0 && site.PublicListen != "" && !site.TLSLoopbackOnly {
 			address, _, _ := net.SplitHostPort(site.PublicListen)
 			if err := waitForBindAddress(ctx, address); err != nil {
 				return err

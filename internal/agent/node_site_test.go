@@ -129,6 +129,41 @@ func TestSharedCaddyWebsitePortConflictsRespectTransport(t *testing.T) {
 	}
 }
 
+func TestLoopbackTLSDockerHandoffPreservesUDP443(t *testing.T) {
+	key, private := nodeSiteTestKey(t)
+	certificate, err := nodeSiteCertificate("site.example.com", nodeSiteTestChain(t, key, "site.example.com"), private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	site := CaddySite{ApplicationID: "site-instance", Hostname: certificate.Hostname, Address: "100.64.0.2", HTTPPort: 24481, TLSPort: 24483, PublicListen: "203.0.113.2:443", HTML: "owned site", Certificate: certificate, TLSLoopbackOnly: true}
+	state := gateway.DesiredState{Revision: 1, Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.2", HTTPPort: 80, HTTPSPort: 443}}}
+	exposed, bindings, err := gatewayruntime.DockerPorts(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	udp := dockernetwork.MustParsePort("443/udp")
+	originalUDP := append([]dockernetwork.PortBinding(nil), bindings[udp]...)
+	if err = addWebsiteDockerPorts(exposed, bindings, state, []CaddySite{site}); err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings[dockernetwork.MustParsePort("443/tcp")]) != 0 {
+		t.Fatal("Caddy retained delegated TCP443")
+	}
+	if len(bindings[udp]) != len(originalUDP) || len(originalUDP) != 1 || bindings[udp][0] != originalUDP[0] {
+		t.Fatal("UDP443 changed")
+	}
+	if len(bindings[dockernetwork.MustParsePort("24483/tcp")]) != 1 {
+		t.Fatal("private TLS backend missing")
+	}
+	site.TLSLoopbackOnly = false
+	if err = addWebsiteDockerPorts(exposed, bindings, state, []CaddySite{site}); err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings[dockernetwork.MustParsePort("443/tcp")]) != 1 {
+		t.Fatal("forward restore lost public443")
+	}
+}
+
 func nodeSiteTestChain(t *testing.T, key *ecdsa.PrivateKey, host string) string {
 	t.Helper()
 	now := time.Now()

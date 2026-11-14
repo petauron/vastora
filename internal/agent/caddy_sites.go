@@ -23,21 +23,25 @@ var errSharedCaddyRuntimeAbsent = errors.New("agent: shared Caddy runtime is abs
 // persisted only inside the encrypted node-site journal. Website packages supply
 // the document; Agent owns listeners, routing, headers and certificate loading.
 type CaddySite struct {
-	ApplicationID string              `json:"applicationId"`
-	Hostname      string              `json:"hostname"`
-	Address       string              `json:"address"`
-	HTTPPort      int                 `json:"httpPort"`
-	TLSPort       int                 `json:"tlsPort,omitempty"`
-	PublicListen  string              `json:"publicListen,omitempty"`
-	HTML          string              `json:"html"`
-	Certificate   gateway.Certificate `json:"certificate"`
-	CaddyPath     string              `json:"caddyPath"`
-	CaddySHA256   string              `json:"caddySha256"`
+	TLSLoopbackOnly bool                `json:"tlsLoopbackOnly,omitempty"`
+	ApplicationID   string              `json:"applicationId"`
+	Hostname        string              `json:"hostname"`
+	Address         string              `json:"address"`
+	HTTPPort        int                 `json:"httpPort"`
+	TLSPort         int                 `json:"tlsPort,omitempty"`
+	PublicListen    string              `json:"publicListen,omitempty"`
+	HTML            string              `json:"html"`
+	Certificate     gateway.Certificate `json:"certificate"`
+	CaddyPath       string              `json:"caddyPath"`
+	CaddySHA256     string              `json:"caddySha256"`
 }
 
 func (site CaddySite) validate() error {
 	if site.ApplicationID == "" || len(site.ApplicationID) > 256 || strings.ContainsAny(site.ApplicationID, "\x00\r\n") || !nodesite.ValidHostname(site.Hostname) || !networking.IsPrivateServiceAddress(site.Address) || site.HTTPPort < 1024 || site.HTTPPort > 65535 || site.TLSPort < 0 || site.TLSPort > 65535 || (site.TLSPort != 0 && site.TLSPort < 1024) || site.HTTPPort == site.TLSPort || len(site.HTML) == 0 || len(site.HTML) > 512<<10 || !utf8.ValidString(site.HTML) {
 		return errors.New("agent: invalid owned Caddy website")
+	}
+	if site.TLSLoopbackOnly && site.TLSPort == 0 {
+		return errors.New("agent: loopback TLS requires an active owned certificate")
 	}
 	if site.TLSPort != 0 {
 		if site.Certificate.Hostname != site.Hostname {
@@ -117,6 +121,9 @@ func composeCaddySites(raw []byte, desired gateway.DesiredState, sites []CaddySi
 		return nil, errors.New("agent: invalid shared Caddy base configuration")
 	}
 	servers := caddyObject(caddyObject(caddyObject(config, "apps"), "http"), "servers")
+	if err := removeDelegatedCaddyPublicServers(servers, desired, sites, container); err != nil {
+		return nil, err
+	}
 	sites = append([]CaddySite(nil), sites...)
 	sort.Slice(sites, func(i, j int) bool { return sites[i].ApplicationID < sites[j].ApplicationID })
 	seenID, seenHost := map[string]bool{}, map[string]bool{}
@@ -186,7 +193,7 @@ func composeCaddySites(raw []byte, desired gateway.DesiredState, sites []CaddySi
 		if err := mergeSiteServer(servers, "site-"+packageIdentity(site.ApplicationID)+"-tls", https); err != nil {
 			return nil, err
 		}
-		if site.PublicListen != "" {
+		if site.PublicListen != "" && !site.TLSLoopbackOnly {
 			public := map[string]any{}
 			for key, value := range https {
 				public[key] = value

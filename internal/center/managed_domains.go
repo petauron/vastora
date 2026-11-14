@@ -18,33 +18,37 @@ var managedDomainPrefix = regexp.MustCompile(`^[a-z]{2,8}$`)
 // DNS is a host resource. These fields contain no application credentials,
 // protocol configuration, TLS keys, account information or traffic ledgers.
 type ManagedDomainInput struct {
-	ApplicationID         string `json:"applicationId"`
-	Key                   string `json:"key"`
-	Prefix                string `json:"prefix,omitempty"`
-	Hostname              string `json:"hostname,omitempty"`
-	Address               string `json:"address"`
-	ExpectedRevision      int64  `json:"expectedRevision,omitempty"`
-	ExpectedRecordAddress string `json:"expectedRecordAddress,omitempty"`
-	MigrateAddressFamily  bool   `json:"migrateAddressFamily,omitempty"`
+	SecondaryAddress      *string `json:"secondaryAddress,omitempty"`
+	ApplicationID         string  `json:"applicationId"`
+	Key                   string  `json:"key"`
+	Prefix                string  `json:"prefix,omitempty"`
+	Hostname              string  `json:"hostname,omitempty"`
+	Address               string  `json:"address"`
+	ExpectedRevision      int64   `json:"expectedRevision,omitempty"`
+	ExpectedRecordAddress string  `json:"expectedRecordAddress,omitempty"`
+	MigrateAddressFamily  bool    `json:"migrateAddressFamily,omitempty"`
 }
 
 type ManagedDomainView struct {
-	ID                    string `json:"id"`
-	ApplicationID         string `json:"applicationId,omitempty"`
-	AgentID               string `json:"agentId,omitempty"`
-	Key                   string `json:"key"`
-	Prefix                string `json:"prefix,omitempty"`
-	Hostname              string `json:"hostname"`
-	Address               string `json:"address"`
-	Type                  string `json:"type"`
-	ZoneID                string `json:"zoneId"`
-	RecordID              string `json:"recordId,omitempty"`
-	SourcePublicationID   string `json:"-"`
-	ExpectedRecordAddress string `json:"-"`
-	Revision              int64  `json:"revision"`
-	AppliedRevision       int64  `json:"appliedRevision"`
-	Status                string `json:"status"`
-	LastError             string `json:"lastError,omitempty"`
+	SecondaryAddress         string `json:"secondaryAddress,omitempty"`
+	SecondaryRecordID        string `json:"-"`
+	SecondaryExpectedAddress string `json:"-"`
+	ID                       string `json:"id"`
+	ApplicationID            string `json:"applicationId,omitempty"`
+	AgentID                  string `json:"agentId,omitempty"`
+	Key                      string `json:"key"`
+	Prefix                   string `json:"prefix,omitempty"`
+	Hostname                 string `json:"hostname"`
+	Address                  string `json:"address"`
+	Type                     string `json:"type"`
+	ZoneID                   string `json:"zoneId"`
+	RecordID                 string `json:"recordId,omitempty"`
+	SourcePublicationID      string `json:"-"`
+	ExpectedRecordAddress    string `json:"-"`
+	Revision                 int64  `json:"revision"`
+	AppliedRevision          int64  `json:"appliedRevision"`
+	Status                   string `json:"status"`
+	LastError                string `json:"lastError,omitempty"`
 }
 
 // A verified execution handover, not a shared IP or display name, authorizes
@@ -54,11 +58,11 @@ const managedDomainPublicationOwnerSQL = `(v.application_id=? OR v.application_i
  JOIN applications retired ON retired.id=r.application_id
  WHERE r.replacement_application_id=? AND retired.node_id=?))`
 
-const managedDomainColumns = `id,COALESCE(application_id,''),COALESCE(agent_id,''),resource_key,prefix,hostname,address,record_type,zone_id,record_id,source_publication_id,expected_record_address,desired_revision,applied_revision,status,last_error`
+const managedDomainColumns = `id,COALESCE(application_id,''),COALESCE(agent_id,''),resource_key,prefix,hostname,address,record_type,zone_id,record_id,source_publication_id,expected_record_address,desired_revision,applied_revision,status,last_error,secondary_address,secondary_record_id,secondary_expected_address`
 
 func scanManagedDomain(row interface{ Scan(...any) error }) (ManagedDomainView, error) {
 	var v ManagedDomainView
-	err := row.Scan(&v.ID, &v.ApplicationID, &v.AgentID, &v.Key, &v.Prefix, &v.Hostname, &v.Address, &v.Type, &v.ZoneID, &v.RecordID, &v.SourcePublicationID, &v.ExpectedRecordAddress, &v.Revision, &v.AppliedRevision, &v.Status, &v.LastError)
+	err := row.Scan(&v.ID, &v.ApplicationID, &v.AgentID, &v.Key, &v.Prefix, &v.Hostname, &v.Address, &v.Type, &v.ZoneID, &v.RecordID, &v.SourcePublicationID, &v.ExpectedRecordAddress, &v.Revision, &v.AppliedRevision, &v.Status, &v.LastError, &v.SecondaryAddress, &v.SecondaryRecordID, &v.SecondaryExpectedAddress)
 	return v, err
 }
 
@@ -137,6 +141,21 @@ func (s *Store) EnsureManagedDomain(ctx context.Context, in ManagedDomainInput) 
 	if err := s.validateManagedDomainAddress(ctx, agentID, in.Address); err != nil {
 		return ManagedDomainView{}, err
 	}
+	secondary := ""
+	if in.SecondaryAddress != nil {
+		secondary = strings.TrimSpace(*in.SecondaryAddress)
+		if secondary != "" {
+			ip := net.ParseIP(secondary)
+			primary := net.ParseIP(in.Address)
+			if ip == nil || primary == nil || (ip.To4() == nil) == (primary.To4() == nil) {
+				return ManagedDomainView{}, invalid
+			}
+			secondary = ip.String()
+			if err := s.validateManagedDomainAddress(ctx, agentID, secondary); err != nil {
+				return ManagedDomainView{}, err
+			}
+		}
+	}
 	if err := s.db.QueryRowContext(ctx, `SELECT endpoint,zone_id FROM network_integrations WHERE kind='cloudflare' AND status='configured'`).Scan(&zoneName, &zoneID); err != nil {
 		return ManagedDomainView{}, errors.New("center: configure managed DNS first")
 	}
@@ -146,13 +165,25 @@ func (s *Store) EnsureManagedDomain(ctx context.Context, in ManagedDomainInput) 
 		if current.AgentID != agentID || current.ZoneID != zoneID || current.Prefix != in.Prefix || in.Hostname != "" && current.Hostname != in.Hostname || current.Status == "retiring" {
 			return current, errors.New("center: managed domain ownership changed")
 		}
+		if in.SecondaryAddress != nil && secondary != current.SecondaryAddress {
+			if in.ExpectedRevision != current.Revision || in.Hostname != current.Hostname || in.Address != current.Address || current.Status != "ready" || current.AppliedRevision != current.Revision || in.MigrateAddressFamily {
+				return current, errors.New("center: dual-stack change requires the exact ready domain and revision")
+			}
+			result, e := s.db.ExecContext(ctx, `UPDATE managed_domains SET secondary_address=?,secondary_expected_address=secondary_address,desired_revision=desired_revision+1,status='pending',attempt=0,retry_at='',updated_at=? WHERE id=? AND desired_revision=?`, secondary, stamp, current.ID, current.Revision)
+			if e != nil {
+				return current, e
+			}
+			if count, e := result.RowsAffected(); e != nil || count != 1 {
+				return current, errors.New("center: managed DNS revision changed")
+			}
+		}
 		if current.Address != in.Address {
 			newType := "A"
 			if net.ParseIP(in.Address).To4() == nil {
 				newType = "AAAA"
 			}
 			if newType != current.Type {
-				if !in.MigrateAddressFamily || in.Hostname != current.Hostname || in.ExpectedRecordAddress != current.Address || current.RecordID == "" || current.Status != "ready" || current.AppliedRevision != current.Revision {
+				if current.SecondaryAddress != "" || current.SecondaryRecordID != "" || !in.MigrateAddressFamily || in.Hostname != current.Hostname || in.ExpectedRecordAddress != current.Address || current.RecordID == "" || current.Status != "ready" || current.AppliedRevision != current.Revision {
 					return current, errors.New("center: address family migration requires the exact ready domain, revision and verified previous address")
 				}
 			}
@@ -208,7 +239,7 @@ func (s *Store) EnsureManagedDomain(ctx context.Context, in ManagedDomainInput) 
 		if net.ParseIP(in.Address).To4() == nil {
 			recordType = "AAAA"
 		}
-		_, err = s.db.ExecContext(ctx, `INSERT INTO managed_domains(id,application_id,agent_id,resource_key,prefix,hostname,address,record_type,zone_id,source_publication_id,expected_record_address,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)`, id, in.ApplicationID, agentID, in.Key, in.Prefix, hostname, in.Address, recordType, zoneID, sourceID, in.ExpectedRecordAddress, stamp, stamp)
+		_, err = s.db.ExecContext(ctx, `INSERT INTO managed_domains(id,application_id,agent_id,resource_key,prefix,hostname,address,record_type,zone_id,source_publication_id,expected_record_address,status,created_at,updated_at,secondary_address) VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)`, id, in.ApplicationID, agentID, in.Key, in.Prefix, hostname, in.Address, recordType, zoneID, sourceID, in.ExpectedRecordAddress, stamp, stamp, secondary)
 		if err != nil {
 			return current, err
 		}
@@ -264,9 +295,11 @@ func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) err
 		return err
 	}
 	retiring := v.Status == "retiring" || v.ApplicationID == "" || v.AgentID == ""
-	if len(records) > 1 {
-		return errors.New("center: conflicting records prevent managed DNS reconciliation")
+	primaryRecords, secondaryRecord, err := s.managedDomainRecordSet(ctx, v, records)
+	if err != nil {
+		return err
 	}
+	records = primaryRecords
 	if retiring {
 		if len(records) == 1 {
 			r := records[0]
@@ -274,6 +307,11 @@ func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) err
 				return errors.New("center: DNS ownership changed; record was not deleted")
 			}
 			if err = client.deleteDNSRecord(ctx, r.ID); err != nil {
+				return err
+			}
+		}
+		if secondaryRecord != nil {
+			if err = client.deleteDNSRecord(ctx, secondaryRecord.ID); err != nil {
 				return err
 			}
 		}
@@ -341,6 +379,14 @@ func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) err
 	if applied.ID == "" || record.ID != "" && applied.ID != record.ID || applied.Name != v.Hostname || applied.Type != v.Type || applied.Content != v.Address || applied.Proxied || applied.Comment != marker {
 		return errors.New("center: DNS provider returned an unexpected managed record")
 	}
+	// Persist the primary identity before the second provider operation. A lost
+	// response or partial pair remains pending and reuses this exact record.
+	if _, err = s.db.ExecContext(ctx, `UPDATE managed_domains SET record_id=? WHERE id=? AND desired_revision=?`, applied.ID, v.ID, v.Revision); err != nil {
+		return err
+	}
+	if err = s.reconcileManagedSecondary(ctx, client, v, secondaryRecord, path, marker); err != nil {
+		return err
+	}
 	// Persist external identity even when the owner was concurrently removed.
 	// SET NULL leaves a cleanup tombstone rather than orphaning a remote record.
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -357,7 +403,7 @@ func (s *Store) reconcileManagedDomainLocked(ctx context.Context, id string) err
 			return errors.New("center: source publication cleanup raced with DNS adoption; retry after cleanup")
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE managed_domains SET record_id=?,source_publication_id=?,expected_record_address='',applied_revision=desired_revision,status=CASE WHEN application_id IS NULL OR agent_id IS NULL THEN 'retiring' ELSE 'ready' END,attempt=0,retry_at='',last_error='',updated_at=? WHERE id=? AND desired_revision=?`, applied.ID, v.SourcePublicationID, s.now().UTC().Format(time.RFC3339Nano), id, v.Revision); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE managed_domains SET record_id=?,source_publication_id=?,expected_record_address='',secondary_expected_address='',applied_revision=desired_revision,status=CASE WHEN application_id IS NULL OR agent_id IS NULL THEN 'retiring' ELSE 'ready' END,attempt=0,retry_at='',last_error='',updated_at=? WHERE id=? AND desired_revision=?`, applied.ID, v.SourcePublicationID, s.now().UTC().Format(time.RFC3339Nano), id, v.Revision); err != nil {
 		return err
 	}
 	if v.SourcePublicationID != "" {

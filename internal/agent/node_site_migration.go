@@ -47,7 +47,7 @@ func (s *Store) migrationCompanion(ctx context.Context, primary *CaddySite) (*Ca
 func (s *Store) executeWebsiteMigration(ctx context.Context, task nodesite.Task, host nodeSiteHost) (nodesite.Result, error) {
 	s.gatewayMutationMu.Lock()
 	defer s.gatewayMutationMu.Unlock()
-	result := nodesite.Result{Action: task.Action, Revision: task.Revision, Hostname: task.Hostname}
+	result := nodesite.Result{Action: task.Action, Revision: task.Revision, Hostname: task.Hostname, TLSLoopbackOnly: task.TLSLoopbackOnly}
 	if s.sharedCaddy == nil || s.reloadSharedCaddy == nil {
 		return result, errors.New("agent: managed shared Caddy is required before website migration")
 	}

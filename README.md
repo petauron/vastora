@@ -47,6 +47,9 @@ when the Center is unavailable.
   mixed-architecture Sites and architecture-aware Agent updates. The one-line
   Agent installer installs Docker from its official repository when missing.
 
+See [managed TLS delegation and dual-stack DNS](docs/public-ingress-delegation.md)
+for explicit public443 ownership handoff.
+
 ## Development
 
 Frontend work follows the [Vastora design language](docs/design-language.md), including
