@@ -168,7 +168,7 @@ func TestNodeSiteHostnameSchema132PreservesReadyBinding(t *testing.T) {
 	if err = s.db.QueryRow(`SELECT sealed_key FROM node_sites WHERE application_id=?`, app).Scan(&sealed); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`ALTER TABLE node_sites DROP COLUMN migration_from; ALTER TABLE node_sites DROP COLUMN migration_previous; DELETE FROM goose_db_version WHERE version_id=132; PRAGMA user_version=131;`); err != nil {
+	if _, err = s.db.Exec(`ALTER TABLE managed_domains DROP COLUMN secondary_address; ALTER TABLE managed_domains DROP COLUMN secondary_record_id; ALTER TABLE managed_domains DROP COLUMN secondary_expected_address; ALTER TABLE node_sites DROP COLUMN tls_loopback_only; ALTER TABLE node_sites DROP COLUMN migration_from; ALTER TABLE node_sites DROP COLUMN migration_previous; DELETE FROM goose_db_version WHERE version_id>=132; PRAGMA user_version=131;`); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Close(); err != nil {

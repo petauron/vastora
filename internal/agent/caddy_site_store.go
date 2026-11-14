@@ -38,7 +38,7 @@ func (s *Store) ConfigureSharedCaddy(driver *CaddyGatewayDriver) error {
 			}
 			if err == nil && len(listener.Desired.Listener.Routes) != 0 {
 				for _, site := range sites {
-					if site.TLSPort == 0 || site.PublicListen == "" {
+					if site.TLSPort == 0 || site.PublicListen == "" || site.TLSLoopbackOnly {
 						continue
 					}
 					address, port, _ := net.SplitHostPort(site.PublicListen)

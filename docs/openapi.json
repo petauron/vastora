@@ -2988,6 +2988,9 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
+                    "tlsLoopbackOnly": {
+                      "type": "boolean"
+                    },
                     "migrationFrom": {
                       "type": "string"
                     },
@@ -3094,6 +3097,9 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
+                    "tlsLoopbackOnly": {
+                      "type": "boolean"
+                    },
                     "migrationFrom": {
                       "type": "string"
                     },
@@ -3168,6 +3174,16 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "tlsLoopbackOnly": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "previousHostname": {
                     "type": "string"
                   },
@@ -3228,6 +3244,9 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
+                    "tlsLoopbackOnly": {
+                      "type": "boolean"
+                    },
                     "migrationFrom": {
                       "type": "string"
                     },
@@ -3843,6 +3862,9 @@
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
+                          "secondaryAddress": {
+                            "type": "string"
+                          },
                           "id": {
                             "type": "string"
                           },
@@ -3945,6 +3967,9 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
+                    "secondaryAddress": {
+                      "type": "string"
+                    },
                     "id": {
                       "type": "string"
                     },
@@ -4017,6 +4042,16 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "secondaryAddress": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "applicationId": {
                     "type": "string"
                   },
@@ -4071,6 +4106,9 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
+                    "secondaryAddress": {
+                      "type": "string"
+                    },
                     "id": {
                       "type": "string"
                     },

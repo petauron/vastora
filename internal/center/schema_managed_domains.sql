@@ -19,6 +19,9 @@ CREATE TABLE managed_domains (
  last_error TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
+ secondary_address TEXT NOT NULL DEFAULT '',
+ secondary_record_id TEXT NOT NULL DEFAULT '',
+ secondary_expected_address TEXT NOT NULL DEFAULT '',
  UNIQUE(application_id,resource_key)
 );
 CREATE INDEX managed_domains_pending ON managed_domains(status,retry_at,updated_at);

@@ -220,7 +220,7 @@ func (s *Store) executeNodeSiteLocked(ctx context.Context, task nodesite.Task) (
 	return s.executeNodeSiteOnHost(ctx, task, host)
 }
 func (s *Store) executeNodeSiteOnHost(ctx context.Context, task nodesite.Task, host nodeSiteHost) (nodesite.Result, error) {
-	result := nodesite.Result{Action: task.Action, Revision: task.Revision, Hostname: task.Hostname}
+	result := nodesite.Result{Action: task.Action, Revision: task.Revision, Hostname: task.Hostname, TLSLoopbackOnly: task.TLSLoopbackOnly}
 	journal, journalErr := s.readNodeSiteJournal(ctx, task.ApplicationID)
 	if journalErr != nil && !errors.Is(journalErr, sql.ErrNoRows) {
 		return result, journalErr
@@ -237,7 +237,7 @@ func (s *Store) executeNodeSiteOnHost(ctx context.Context, task nodesite.Task, h
 		return result, err
 	}
 	if task.Action == "inspect" {
-		if journalErr != nil || journal.Task.Revision != task.Revision || journal.Task.Port != task.Port {
+		if journalErr != nil || journal.Task.Revision != task.Revision || journal.Task.Port != task.Port || journal.Task.TLSLoopbackOnly != task.TLSLoopbackOnly {
 			return result, errors.New("agent: website inspection revision is not installed")
 		}
 		result.State, result.Fingerprint, result.NotAfter = journal.State, journal.Fingerprint, journal.NotAfter
@@ -260,7 +260,7 @@ func (s *Store) executeNodeSiteOnHost(ctx context.Context, task nodesite.Task, h
 		return result, err
 	}
 	fingerprint := nodesite.Fingerprint(leaf.Raw)
-	if journalErr == nil && journal.Task.Revision == task.Revision && journal.Fingerprint != fingerprint {
+	if journalErr == nil && journal.Task.Revision == task.Revision && (journal.Fingerprint != fingerprint || journal.Task.TLSLoopbackOnly != task.TLSLoopbackOnly) {
 		return result, errors.New("agent: node site revision content changed")
 	}
 	if journalErr == nil && journal.Runtime == 2 && journal.Task.Revision == task.Revision {
@@ -280,6 +280,10 @@ func (s *Store) executeNodeSiteOnHost(ctx context.Context, task nodesite.Task, h
 	}
 	candidate := host.site
 	candidate.TLSPort, candidate.Certificate = task.Port, certificate
+	candidate.TLSLoopbackOnly = task.TLSLoopbackOnly
+	if candidate.PublicListen == "" {
+		candidate.PublicListen = previous.PublicListen
+	}
 	previousBytes, _ := json.Marshal(previous)
 	candidateBytes, _ := json.Marshal(candidate)
 	journal = nodeSiteJournal{Runtime: 2, Task: task, State: "applying", Previous: previousBytes, Candidate: candidateBytes, Fingerprint: fingerprint, NotAfter: leaf.NotAfter.UTC().Format(time.RFC3339Nano)}

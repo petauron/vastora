@@ -15,6 +15,7 @@ const TaskPrefix = "node-site-"
 var hostnamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
 type Task struct {
+	TLSLoopbackOnly  bool   `json:"tlsLoopbackOnly,omitempty"`
 	PreviousHostname string `json:"previousHostname,omitempty"`
 	ApplicationID    string `json:"applicationId"`
 	AppKey           string `json:"appKey"`
@@ -27,12 +28,13 @@ type Task struct {
 }
 
 type Result struct {
-	Action      string `json:"action"`
-	Revision    int64  `json:"revision"`
-	Hostname    string `json:"hostname"`
-	Fingerprint string `json:"fingerprint,omitempty"`
-	NotAfter    string `json:"notAfter,omitempty"`
-	State       string `json:"state"`
+	TLSLoopbackOnly bool   `json:"tlsLoopbackOnly,omitempty"`
+	Action          string `json:"action"`
+	Revision        int64  `json:"revision"`
+	Hostname        string `json:"hostname"`
+	Fingerprint     string `json:"fingerprint,omitempty"`
+	NotAfter        string `json:"notAfter,omitempty"`
+	State           string `json:"state"`
 }
 
 func (t Task) Validate() error {
