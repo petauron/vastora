@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.450](https://github.com/petauron/vastora/compare/v0.1.0-alpha.449...v0.1.0-alpha.450) (2026-11-14)
+
+
+### Bug Fixes
+
+* **agent:** preserve migrated website public listener ([3d0e14f](https://github.com/petauron/vastora/commit/3d0e14f019be5866e1454d684465beedc4fdddf8))
+
 ## [0.1.0-alpha.449](https://github.com/petauron/vastora/compare/v0.1.0-alpha.448...v0.1.0-alpha.449) (2026-11-14)
 
 
