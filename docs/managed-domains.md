@@ -65,3 +65,18 @@ The maintenance worker retries provider work with bounded backoff. It never prob
 application traffic, withdraws a running subscription, or changes protocol keys.
 This feature uses schema 131 and the normal forward-only migration/backup process.
 Implementation and provider readback alone do not establish a deployed migration.
+
+
+An address-family migration is explicit: submit `migrateAddressFamily: true`
+with the exact existing hostname, current revision and verified previous address.
+The resource must be ready and have an established provider record identity.
+The target remains a confirmed/fresh public address of the same node. Default
+requests still refuse a family change. The UI requires a separate confirmation
+that resets when the migration inputs change.
+
+Reconciliation accepts the prior A/AAAA tuple only for the exact stored record ID
+and ownership marker. It updates that record in place, verifies the result and
+retains the pending prior tuple across errors or a lost response. Foreign IDs,
+markers, conflicting records and stale revisions remain rejected. This changes
+DNS only; website listeners, proxy ingress, certificates and subscriptions are
+not automatically changed.
