@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.451](https://github.com/petauron/vastora/compare/v0.1.0-alpha.450...v0.1.0-alpha.451) (2026-11-14)
+
+
+### Features
+
+* delegate owned website TLS and manage dual-stack DNS ([#1293](https://github.com/petauron/vastora/issues/1293)) ([94af989](https://github.com/petauron/vastora/commit/94af98946180fc4bbb5dc45b635071f0a1d12368))
+
 ## [0.1.0-alpha.450](https://github.com/petauron/vastora/compare/v0.1.0-alpha.449...v0.1.0-alpha.450) (2026-11-14)
 
 
