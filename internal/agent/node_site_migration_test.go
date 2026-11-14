@@ -13,6 +13,7 @@ import (
 
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/nodesite"
 )
 
@@ -61,7 +62,7 @@ func TestNodeSiteHostnameMigrationKeepsOldSiteAndReplaysCompletion(t *testing.T)
 	if err = s.saveNodeSiteJournal(ctx, nodeSiteJournal{Runtime: 2, Task: oldTask, State: "applied"}); err != nil {
 		t.Fatal(err)
 	}
-	s.sharedCaddy = &CaddyGatewayDriver{}
+	s.sharedCaddy = &CaddyGatewayDriver{state: gateway.DesiredState{Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.2", HTTPSPort: 443, HTTPPort: 80}}}}
 	loads := 0
 	s.reloadSharedCaddy = func(ctx context.Context) error {
 		loads++
@@ -103,6 +104,19 @@ func TestNodeSiteHostnameMigrationKeepsOldSiteAndReplaysCompletion(t *testing.T)
 	if sites, err = s.SharedCaddySites(ctx); err != nil || len(sites) != 2 {
 		t.Fatal("old binding was retired before acceptance", err)
 	}
+	// The package's base Daylight configuration has no HTTPSListen. A later
+	// content refresh must not erase the migration-owned public route, even
+	// when it is reconciled repeatedly before acceptance.
+	for range 2 {
+		if err = s.syncSharedDaylightHost(ctx, AppliedInstallation{ApplicationID: old.ApplicationID}, nodeSiteHost{site: next}); err != nil {
+			t.Fatal("refresh prepared website", err)
+		}
+		current, err := s.readCaddySite(ctx, old.ApplicationID)
+		if err != nil || current.Site == nil || current.Site.PublicListen != "203.0.113.2:443" || current.Site.Certificate.Hostname != next.Hostname {
+			t.Fatal("content refresh lost the prepared public TLS binding", err)
+		}
+	}
+
 	reload := s.reloadSharedCaddy
 	failedLoads := 0
 	s.reloadSharedCaddy = func(ctx context.Context) error {
