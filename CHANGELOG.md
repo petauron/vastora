@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.452](https://github.com/petauron/vastora/compare/v0.1.0-alpha.451...v0.1.0-alpha.452) (2026-11-14)
+
+
+### Bug Fixes
+
+* **center:** purge returned entry history after revocation ([#1295](https://github.com/petauron/vastora/issues/1295)) ([9dcc2cc](https://github.com/petauron/vastora/commit/9dcc2cccb31d1034a5626e608a3ac06d43c67492))
+
 ## [0.1.0-alpha.451](https://github.com/petauron/vastora/compare/v0.1.0-alpha.450...v0.1.0-alpha.451) (2026-11-14)
 
 
