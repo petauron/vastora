@@ -119,7 +119,7 @@ func (s *Store) purgeRemovedProxyHistory(ctx context.Context, id, confirmation s
 			case "meridian_route_health_events":
 				scopes[i].query += " OR g.endpoint_id IN(" + endpoint + ")"
 			case "meridian_line_usage", "meridian_usage_watermarks":
-				scopes[i].query = strings.TrimSuffix(scopes[i].query, ")") + " OR c.endpoint_id IN(" + endpoint + "))"
+				scopes[i].query += " OR c.endpoint_id IN(" + endpoint + ")"
 			case "meridian_route_grants", "meridian_credentials":
 				scopes[i].query += " OR endpoint_id IN(" + endpoint + ")"
 			}
