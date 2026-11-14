@@ -64,6 +64,7 @@ func deleteAgentRemovalRecords(ctx context.Context, tx *sql.Tx, id string) error
 		`DELETE FROM agent_reinstall_monitor_restorations WHERE rotation_command_id IN(SELECT command_id FROM agent_reinstall_monitor_rotations WHERE operation_id IN(SELECT id FROM agent_reinstall_operations WHERE agent_id=?))`,
 		`DELETE FROM agent_reinstall_monitor_rotations WHERE operation_id IN(SELECT id FROM agent_reinstall_operations WHERE agent_id=?)`,
 		`DELETE FROM agent_reinstall_client_checks WHERE operation_id IN(SELECT id FROM agent_reinstall_operations WHERE agent_id=?)`,
+		`DELETE FROM agent_reinstall_current_applications WHERE operation_id IN(SELECT id FROM agent_reinstall_operations WHERE agent_id=?)`,
 		`DELETE FROM task_events WHERE task_id IN(SELECT id FROM application_commands WHERE gateway_node_id=? OR application_id IN(SELECT id FROM applications WHERE node_id=?))`,
 		`DELETE FROM three_x_ui_migrations WHERE source_application_id IN(SELECT id FROM applications WHERE node_id=?) OR target_application_id IN(SELECT id FROM applications WHERE node_id=?)`,
 		`DELETE FROM three_x_ui_control_plane WHERE controller_application_id IN(SELECT id FROM applications WHERE node_id=?)`,
