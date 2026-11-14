@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.449](https://github.com/petauron/vastora/compare/v0.1.0-alpha.448...v0.1.0-alpha.449) (2026-11-14)
+
+
+### Bug Fixes
+
+* **center:** explicitly migrate owned DNS address families ([40316c6](https://github.com/petauron/vastora/commit/40316c6ec96332fcb174c99a4f8e5745ec90724d))
+
 ## [0.1.0-alpha.448](https://github.com/petauron/vastora/compare/v0.1.0-alpha.447...v0.1.0-alpha.448) (2026-11-14)
 
 
