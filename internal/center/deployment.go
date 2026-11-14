@@ -353,11 +353,13 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, fmt.Errorf("center: catalog version %s is older than installed version %s; downgrade is not allowed", manifest.Version, active.Version)
 		}
 	}
+	websiteConfigure := false
 	if request.Operation == "configure" && manifest.Runtime != nil && (manifest.Runtime.Kind == "systemd" || manifest.Runtime.Kind == "native") && manifest.Runtime.Version == 2 {
 		website, err := s.validateWebsiteHostnameConfigure(ctx, request, manifest)
 		if err != nil {
 			return DeploymentView{}, err
 		}
+		websiteConfigure = website
 		if !website {
 			if err := validateNativeServicePortConfigure(manifest, request.Config); err != nil {
 				return DeploymentView{}, err
@@ -382,7 +384,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if err != nil {
 		return DeploymentView{}, err
 	}
-	if landingOnly && (manifest.Runtime == nil || !controlplane.NativeLifecycleAllowed(manifest.Runtime.Kind, manifest.Runtime.Version, request.Operation, grants)) {
+	if landingOnly && (manifest.Runtime == nil || !(controlplane.NativeLifecycleAllowed(manifest.Runtime.Kind, manifest.Runtime.Version, request.Operation, grants) || websiteConfigure && controlplane.NativeWebsiteConfigureAllowed(request.AppKey, manifest.Runtime.Kind, manifest.Runtime.Version, request.Operation, grants))) {
 		return DeploymentView{}, errors.New("center: landing-only host permits only reviewed native installation, upgrade and uninstall")
 	}
 	grantsJSON, err := json.Marshal(grants)
