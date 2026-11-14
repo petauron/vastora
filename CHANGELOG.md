@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.448](https://github.com/petauron/vastora/compare/v0.1.0-alpha.447...v0.1.0-alpha.448) (2026-11-14)
+
+
+### Bug Fixes
+
+* **agent:** allow verified website migrations on restricted hosts ([4158bf7](https://github.com/petauron/vastora/commit/4158bf7230f3413e99ce3825be04eb652712436a))
+* **agent:** preserve owned Caddy runtime during website migrations ([09ee4d2](https://github.com/petauron/vastora/commit/09ee4d2cb0f4df3ceb02f8a7c6d53f4880dad76c))
+
 ## [0.1.0-alpha.447](https://github.com/petauron/vastora/compare/v0.1.0-alpha.446...v0.1.0-alpha.447) (2026-11-13)
 
 
