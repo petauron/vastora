@@ -16,6 +16,10 @@ func (s *Store) syncSharedDaylight(ctx context.Context, installed AppliedInstall
 	if err != nil {
 		return err
 	}
+	return s.syncSharedDaylightHost(ctx, installed, host)
+}
+
+func (s *Store) syncSharedDaylightHost(ctx context.Context, installed AppliedInstallation, host nodeSiteHost) error {
 	state, err := s.readCaddySite(ctx, installed.ApplicationID)
 	if err == nil && state.Site != nil {
 		if state.Site.Hostname != host.site.Hostname {
@@ -27,6 +31,11 @@ func (s *Store) syncSharedDaylight(ctx context.Context, installed AppliedInstall
 			return s.updateCaddySite(ctx, installed.ApplicationID, &host.site, func(ctx context.Context) error { return probeCaddySite(ctx, host.site) })
 		}
 		host.site.TLSPort, host.site.Certificate = state.Site.TLSPort, state.Site.Certificate
+		// Base Daylight has no public-listen input. Its exact public binding is
+		// owned by the prepared migration and must survive content refreshes.
+		if host.site.PublicListen == "" {
+			host.site.PublicListen = state.Site.PublicListen
+		}
 		return s.updateCaddySite(ctx, installed.ApplicationID, &host.site, func(ctx context.Context) error { return probeCaddySite(ctx, host.site) })
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
