@@ -147,7 +147,7 @@ func (s *Store) PurgeSupersededGlivelaHistory(ctx context.Context, oldID, newID,
 		ids           []string
 		original      string
 	}
-	scopes := []scope{{table: "glivela_pilot_checkpoint", column: "endpoint_id", ids: []string{endpointID}}, {table: "meridian_line_usage", column: "credential_id", ids: credentials}, {table: "meridian_usage_watermarks", column: "credential_id", ids: credentials}, {table: "meridian_credentials", column: "id", ids: credentials}, {table: "meridian_endpoints", column: "id", ids: []string{endpointID}}}
+	scopes := []scope{{table: "meridian_deployments", column: "endpoint_id", ids: []string{endpointID}}, {table: "glivela_pilot_checkpoint", column: "endpoint_id", ids: []string{endpointID}}, {table: "meridian_line_usage", column: "credential_id", ids: credentials}, {table: "meridian_usage_watermarks", column: "credential_id", ids: credentials}, {table: "meridian_credentials", column: "id", ids: credentials}, {table: "meridian_endpoints", column: "id", ids: []string{endpointID}}}
 	for i := range scopes {
 		item := &scopes[i]
 		item.original, err = allowFrozenHistoryDelete(ctx, tx, item.table, item.column, item.ids)
