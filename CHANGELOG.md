@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.455](https://github.com/petauron/vastora/compare/v0.1.0-alpha.454...v0.1.0-alpha.455) (2026-11-15)
+
+
+### Bug Fixes
+
+* **apps:** show Glivela controller and node only ([#1303](https://github.com/petauron/vastora/issues/1303)) ([235626b](https://github.com/petauron/vastora/commit/235626b9b33ce873248fbc95a760a7c456f950d4))
+
 ## [0.1.0-alpha.454](https://github.com/petauron/vastora/compare/v0.1.0-alpha.453...v0.1.0-alpha.454) (2026-11-14)
 
 
