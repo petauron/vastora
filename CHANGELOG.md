@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.468](https://github.com/petauron/vastora/compare/v0.1.0-alpha.467...v0.1.0-alpha.468) (2026-11-15)
+
+
+### Bug Fixes
+
+* **agent:** recover gateway userland proxy bind failures ([#1340](https://github.com/petauron/vastora/issues/1340)) ([3500542](https://github.com/petauron/vastora/commit/3500542c4d29c3826d2bf58fadcc2604093341e5))
+
 ## [0.1.0-alpha.467](https://github.com/petauron/vastora/compare/v0.1.0-alpha.466...v0.1.0-alpha.467) (2026-11-15)
 
 
