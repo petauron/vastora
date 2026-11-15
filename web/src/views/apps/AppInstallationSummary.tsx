@@ -4,16 +4,28 @@ import type { Language } from "@/translations";
 import { publicationNeedsAttention, serviceNeedsAttention, type InstalledAppGroup } from "../installed-apps-model";
 import { copy } from "../shared";
 
-export function AppInstallationSummary({ group, language, compact = false }: { group: InstalledAppGroup; language: Language; compact?: boolean }) {
+export function AppInstallationSummary({ group, language, compact = false, byNode = false }: { group: InstalledAppGroup; language: Language; compact?: boolean; byNode?: boolean }) {
   const attention = (instance: InstalledAppGroup["instances"][number]) =>
     ["failed", "degraded"].includes(instance.application.status) || instance.activeChange?.reconciliationRequired
     || Boolean(instance.agent && (!instance.agent.connected || instance.agent.credentialRevoked))
     || instance.application.nodeSyncStatus === "failed" || ["pending", "blocked"].includes(instance.application.adoptionState ?? "")
     || instance.services.some(serviceNeedsAttention) || instance.publications.some(publicationNeedsAttention);
-  const affected = group.instances.filter(attention).length;
-  const changing = group.instances.filter((instance) => instance.activeChange && !attention(instance)).length;
-  const running = group.instances.filter((instance) => instance.application.status === "running" && !instance.activeChange && (!instance.agent || (instance.agent.connected && !instance.agent.credentialRevoked))).length;
-  const updates = group.instances.filter((instance) => instance.application.updateAvailable).length;
+  const units: InstalledAppGroup["instances"][] = [];
+  const hosts = new Map<string, InstalledAppGroup["instances"]>();
+  for (const instance of group.instances) {
+    if (!byNode) { units.push([instance]); continue; }
+    const host = hosts.get(instance.application.nodeId);
+    if (host) host.push(instance);
+    else {
+      const instances = [instance];
+      hosts.set(instance.application.nodeId, instances);
+      units.push(instances);
+    }
+  }
+  const affected = units.filter((instances) => instances.some(attention)).length;
+  const changing = units.filter((instances) => instances.some((instance) => instance.activeChange) && !instances.some(attention)).length;
+  const running = units.filter((instances) => instances.every((instance) => instance.application.status === "running" && !instance.activeChange && (!instance.agent || (instance.agent.connected && !instance.agent.credentialRevoked)))).length;
+  const updates = units.filter((instances) => instances.some((instance) => instance.application.updateAvailable)).length;
   if (compact) {
     const label = affected ? copy(language, `${affected} 台需处理`, `${affected} need attention`)
       : changing ? copy(language, `${changing} 台处理中`, `${changing} in progress`)
@@ -29,7 +41,7 @@ export function AppInstallationSummary({ group, language, compact = false }: { g
     <div className="flex flex-wrap gap-1.5">
       {affected ? <Badge variant="destructive"><CircleAlertIcon aria-hidden="true" data-icon="inline-start" />{copy(language, `${affected} 台需处理`, `${affected} need attention`)}</Badge> : null}
       {changing ? <Badge variant="secondary">{copy(language, `${changing} 台处理中`, `${changing} in progress`)}</Badge> : null}
-      {!changing && !affected && !running ? <Badge variant="secondary">{copy(language, "未运行", "Not running")}</Badge> : <Badge variant="outline">{running === group.instances.length ? copy(language, "运行中", "Running") : copy(language, `运行 ${running}/${group.instances.length}`, `Running ${running}/${group.instances.length}`)}</Badge>}
+      {!changing && !affected && !running ? <Badge variant="secondary">{copy(language, "未运行", "Not running")}</Badge> : <Badge variant="outline">{running === units.length ? copy(language, "运行中", "Running") : copy(language, `运行 ${running}/${units.length}`, `Running ${running}/${units.length}`)}</Badge>}
       {updates ? <Badge variant="secondary"><ArrowUpCircleIcon aria-hidden="true" data-icon="inline-start" />{copy(language, `${updates} 台可更新`, `${updates} updatable`)}</Badge> : null}
     </div>
   </div>;

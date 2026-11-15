@@ -185,6 +185,11 @@ export function installBlocker(data: AppData, appKey: string, language: Language
 }
 
 export function localized(app: AppView, language: Language, field: "name" | "description") {
+  if (field === "name" && app.sourceId === "vastora-official"
+    && app.key === `vastora-official/${app.app.id}`
+    && ["glivela-entry", "glivela-node", "glivela-dual"].includes(app.app.id)) {
+    return copy(language, "Glivela 节点端", "Glivela Node");
+  }
   return app.app[field][language] || app.app[field].en;
 }
 
