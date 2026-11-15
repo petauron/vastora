@@ -2008,6 +2008,18 @@
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
+                          "nodeSiteStatus": {
+                            "type": "string",
+                            "enum": [
+                              "unconfigured",
+                              "issuing",
+                              "pending",
+                              "ready",
+                              "action_required",
+                              "rolled_back"
+                            ],
+                            "description": "Read-only managed website summary. ready requires a running application, matching site ownership, confirmed desired/applied revision and an unexpired certificate. Does not create a publication or probe a node."
+                          },
                           "id": {
                             "type": "string"
                           },

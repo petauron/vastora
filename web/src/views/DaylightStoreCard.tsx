@@ -48,7 +48,7 @@ export function DaylightStoreCard({ data, groups, language, onInstall, onOpen, o
         {group ? <><AppInstallationSummary group={group} language={language} byNode /><div className="divide-y rounded-xl border">{instances.map((instance) => <div className="flex flex-wrap items-center gap-3 p-4" key={instance.application.id}>
           <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{instance.agent?.name ?? instance.application.nodeId}</p><p className="mt-1 text-xs text-muted-foreground">v{instance.application.installedVersion} · {instance.siteName}</p></div>
           <ApplicationStatus instance={instance} language={language} onUpgrade={(application) => { setOpen(false); onUpgrade(application); }} />
-          <AccessStatus services={instance.services} publications={instance.publications} language={language} threeXUI={false} />
+          <AccessStatus application={instance.application} nodeConnected={instance.agent?.connected ?? false} services={instance.services} publications={instance.publications} language={language} threeXUI={false} />
           <Button aria-label={copy(language, `管理 Daylight：${instance.agent?.name ?? instance.application.nodeId}`, `Manage Daylight: ${instance.agent?.name ?? instance.application.nodeId}`)} onClick={() => { setOpen(false); onManage(instance.application); }} size="sm" variant="outline">{copy(language, "管理", "Manage")}</Button>
         </div>)}</div></> : <p className="text-sm text-muted-foreground">{copy(language, "尚未安装", "Not installed")}</p>}
         {officialApp ? <div className="flex flex-col gap-2">

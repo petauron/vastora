@@ -610,8 +610,18 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		CASE WHEN a.app_key = 'vastora-official/3x-ui' AND a.role = 'worker' AND COALESCE(n.master_application_id, '') <> COALESCE(control.controller_application_id, '') THEN 'VLESS node is linked to a legacy controller; finish global convergence first' ELSE COALESCE(n.last_error, '') END,
 		COALESCE(b.state, ''), COALESCE(b.updated_at, ''),
 		COALESCE(CASE WHEN latest.operation IN ('install', 'upgrade', 'configure') THEN latest.app_version ELSE '' END, ''),
-		a.created_at, a.updated_at, COALESCE(latest.package_revision,0), COALESCE(resources.adoption_state,''), COALESCE(resources.last_error,''), COALESCE(resources.resources_json,'{}'), COALESCE(retirement.replacement_application_id,'')
+		a.created_at, a.updated_at, COALESCE(latest.package_revision,0), COALESCE(resources.adoption_state,''), COALESCE(resources.last_error,''), COALESCE(resources.resources_json,'{}'), COALESCE(retirement.replacement_application_id,''),
+		CASE WHEN a.app_key IN ('vastora-official/daylight','vastora-official/daylight-https') THEN
+		 CASE WHEN site.application_id IS NULL OR site.hostname='' OR site.state='unconfigured' THEN 'unconfigured'
+		 WHEN a.status<>'running' OR site.error<>'' OR site.state='action_required' THEN 'action_required'
+		 WHEN site.state='issuing' THEN 'issuing'
+		 WHEN site.state='pending' OR (site.state='ready' AND site.revision>0 AND site.applied_revision<>site.revision) THEN 'pending'
+		 WHEN site.state='rolled_back' THEN 'rolled_back'
+		 WHEN site.state='ready' AND site.revision>0 AND site.applied_revision=site.revision
+		  AND site.fingerprint<>'' AND julianday(site.not_after)>julianday(?) THEN 'ready'
+		 ELSE 'action_required' END ELSE '' END
 		FROM applications a
+		LEFT JOIN node_sites site ON site.application_id=a.id AND site.agent_id=a.node_id
 		LEFT JOIN application_resources resources ON resources.application_id=a.id
 		LEFT JOIN application_execution_retirements retirement ON retirement.application_id=a.id
 		LEFT JOIN three_x_ui_nodes n ON n.worker_application_id = a.id
@@ -623,7 +633,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 			ORDER BY candidate.created_at DESC, candidate.rowid DESC LIMIT 1
 		)
 		WHERE NOT EXISTS(SELECT 1 FROM agent_removals r WHERE r.agent_id=a.node_id AND r.state='complete')
-		ORDER BY a.name, a.id`)
+		ORDER BY a.name, a.id`, s.now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -634,7 +644,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		var created, updated string
 		var restorePointAt string
 		var resourcesRaw []byte
-		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated, &value.InstalledPackageRevision, &value.AdoptionState, &value.AdoptionError, &resourcesRaw, &value.ReplacementApplicationID); err != nil {
+		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated, &value.InstalledPackageRevision, &value.AdoptionState, &value.AdoptionError, &resourcesRaw, &value.ReplacementApplicationID, &value.NodeSiteStatus); err != nil {
 			return nil, err
 		}
 		value.LegacyGlivela = value.AppKey == meridianAppKey && legacyGlivelaReceipt(resourcesRaw)

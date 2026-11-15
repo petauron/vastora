@@ -50,7 +50,7 @@ export function ApplicationStatus({ instance, language, onUpgrade }: { instance:
   </div>;
 }
 
-export function AccessStatus({ services, publications, language, threeXUI }: { services: Service[]; publications: Publication[]; language: Language; threeXUI: boolean }) {
+export function AccessStatus({ services, publications, language, threeXUI, application, nodeConnected }: { services: Service[]; publications: Publication[]; language: Language; threeXUI: boolean; application?: Application; nodeConnected?: boolean }) {
   const attention = publications.some(publicationNeedsAttention) || services.some(serviceNeedsAttention);
   const changing = publications.find((publication) => publication.status === "pending" || publication.status === "applying");
   const hardening = services.some((service) => service.guardStatus === "pending" || service.guardStatus === "hardening");
@@ -59,6 +59,20 @@ export function AccessStatus({ services, publications, language, threeXUI }: { s
     <span className="inline-flex items-center gap-1.5 text-sm text-destructive"><ShieldAlertIcon aria-hidden="true" className="size-4 shrink-0" />{copy(language, "入口待处理", "Access needs attention")}</span>
     
   </div>;
+  if (application && isDaylightAppKey(application.appKey)) {
+    const state = nodeConnected === false ? "pending" : application.nodeSiteStatus ?? "unconfigured";
+    const labels = {
+      ready: copy(language, "站点已就绪", "Site ready"),
+      unconfigured: copy(language, "站点未配置", "Site not configured"),
+      issuing: copy(language, "证书签发或续期中", "Issuing or renewing certificate"),
+      pending: copy(language, nodeConnected === false ? "节点离线，站点待确认" : "等待站点生效", nodeConnected === false ? "Node offline; site unverified" : "Awaiting site activation"),
+      action_required: copy(language, "站点或证书需检查", "Review site or certificate"),
+      rolled_back: copy(language, "站点已回滚，待核对", "Site rolled back; review required"),
+    };
+    return <span className={cn("inline-flex items-center gap-2 text-xs", state === "action_required" || state === "rolled_back" ? "text-destructive" : "text-muted-foreground")}>
+      {state === "ready" ? <span aria-hidden="true" className="apps-status-dot bg-latency-fast" /> : null}{labels[state]}
+    </span>;
+  }
   if (hardening) return <StateBadge language={language} value="applying" />;
   if (changing) return <StateBadge language={language} value={changing.status} />;
   if (publications.length > 0) return <span className="inline-flex items-center gap-2 text-muted-foreground">{!threeXUI ? <span aria-hidden="true" className="apps-status-dot bg-latency-fast" /> : null}{copy(language, "就绪", "Ready")}</span>;
