@@ -22,6 +22,8 @@ func runCenter(arguments []string) error {
 		return errors.New("center command is required")
 	}
 	switch arguments[0] {
+	case "purge-superseded-glivela-history":
+		return runCenterSupersededHistoryPurge(arguments[1:])
 	case "purge-removed-landing-history", "purge-removed-entry-history":
 		flags := flag.NewFlagSet("center purge-removed-landing-history", flag.ContinueOnError)
 		dataDir := flags.String("data-dir", "", "Center state directory")
