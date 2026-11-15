@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.462](https://github.com/petauron/vastora/compare/v0.1.0-alpha.461...v0.1.0-alpha.462) (2026-11-15)
+
+
+### Bug Fixes
+
+* **center:** purge superseded Meridian history without changing Glivela ([2da6dca](https://github.com/petauron/vastora/commit/2da6dca274aebe9441cdb2238d2ee6a01039cbf6)), closes [#1321](https://github.com/petauron/vastora/issues/1321)
+
 ## [0.1.0-alpha.461](https://github.com/petauron/vastora/compare/v0.1.0-alpha.460...v0.1.0-alpha.461) (2026-11-15)
 
 
