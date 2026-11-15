@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.466](https://github.com/petauron/vastora/compare/v0.1.0-alpha.465...v0.1.0-alpha.466) (2026-11-15)
+
+
+### Bug Fixes
+
+* **center:** clean retired Meridian projections without losing disposed audits ([#1333](https://github.com/petauron/vastora/issues/1333)) ([685c182](https://github.com/petauron/vastora/commit/685c182240e23a9ceb16f38c372c12f62c6c7bc2))
+
 ## [0.1.0-alpha.465](https://github.com/petauron/vastora/compare/v0.1.0-alpha.464...v0.1.0-alpha.465) (2026-11-15)
 
 
