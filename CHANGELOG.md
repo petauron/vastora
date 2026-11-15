@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.459](https://github.com/petauron/vastora/compare/v0.1.0-alpha.458...v0.1.0-alpha.459) (2026-11-15)
+
+
+### Bug Fixes
+
+* **apps:** show confirmed Daylight site readiness ([#1315](https://github.com/petauron/vastora/issues/1315)) ([8552b5c](https://github.com/petauron/vastora/commit/8552b5cb02183fa46487748dd4fff7bd7fd16c0c))
+
 ## [0.1.0-alpha.458](https://github.com/petauron/vastora/compare/v0.1.0-alpha.457...v0.1.0-alpha.458) (2026-11-15)
 
 
