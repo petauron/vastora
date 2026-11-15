@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.464](https://github.com/petauron/vastora/compare/v0.1.0-alpha.463...v0.1.0-alpha.464) (2026-11-15)
+
+
+### Bug Fixes
+
+* **retirement:** recognize retained legacy entry owners ([#1328](https://github.com/petauron/vastora/issues/1328)) ([c4a0931](https://github.com/petauron/vastora/commit/c4a0931cf4a3ef5e56596ea5f81e951935999307))
+
 ## [0.1.0-alpha.463](https://github.com/petauron/vastora/compare/v0.1.0-alpha.462...v0.1.0-alpha.463) (2026-11-15)
 
 
