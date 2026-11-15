@@ -16,8 +16,9 @@ import (
 // No archive is made: the operator explicitly discards the old installation's
 // history. The independent Glivela identity and ledger are never changed.
 type SupersededHistoryPurgeResult struct {
-	Committed bool             `json:"committed"`
-	Deleted   map[string]int64 `json:"deleted"`
+	Committed           bool             `json:"committed"`
+	Deleted             map[string]int64 `json:"deleted"`
+	PreservedExecutions int64            `json:"preservedExecutions"`
 }
 
 func (s *Store) PurgeSupersededGlivelaHistory(ctx context.Context, oldID, newID, confirmation string, commit bool) (SupersededHistoryPurgeResult, error) {
@@ -45,7 +46,7 @@ func (s *Store) PurgeSupersededGlivelaHistory(ctx context.Context, oldID, newID,
 	if err != nil {
 		return result, refused
 	}
-	if oldKey != meridianAppKey || newKey != "vastora-official/glivela-entry" || oldNode != newNode || name != confirmation || agentState != "active" || revoked != "" || newState != "running" || (oldState != "pending" && oldState != "stopped") {
+	if oldKey != meridianAppKey || newKey != "vastora-official/glivela-entry" || oldNode != newNode || name != confirmation || agentState != "active" || revoked != "" || newState != "running" || (oldState != "pending" && oldState != "stopped" && oldState != "running") {
 		return result, refused
 	}
 	var evidence GlivelaExecutionRetirement
@@ -56,6 +57,9 @@ func (s *Store) PurgeSupersededGlivelaHistory(ctx context.Context, oldID, newID,
 		State         string `json:"state"`
 	}
 	if json.Unmarshal(evidenceRaw, &evidence) != nil || evidence.ApplicationID != oldID || evidence.ReplacementApplicationID != newID || !evidence.LegacyStopped || !evidence.RestartDisabled || !evidence.NativeReady || !legacyGlivelaReceipt(sourceRaw) || rawManifestDigest(sourceRaw) != evidence.SourceReceiptSHA256 {
+		return result, refused
+	}
+	if oldState == "running" && evidence.LegacyState != "execution-retired" {
 		return result, refused
 	}
 	if json.Unmarshal(replacementRaw, &receipt) != nil || receipt.ApplicationID != newID || receipt.AppKey != newKey || receipt.Runtime != "native" || receipt.State != "ready" {
@@ -71,8 +75,25 @@ func (s *Store) PurgeSupersededGlivelaHistory(ctx context.Context, oldID, newID,
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_endpoints WHERE application_id=?`, oldID).Scan(&n); err != nil || n != 1 {
 		return result, refused
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_endpoints e JOIN services v ON v.id=e.service_id WHERE e.id=? AND v.application_id=?`, endpointID, newID).Scan(&n); err != nil || n != 1 {
+	var serviceID, serviceOwner string
+	if err := tx.QueryRowContext(ctx, `SELECT v.id,v.application_id FROM meridian_endpoints e JOIN services v ON v.id=e.service_id WHERE e.id=?`, endpointID).Scan(&serviceID, &serviceOwner); err != nil || (serviceOwner != oldID && serviceOwner != newID) {
 		return result, refused
+	}
+	oldService := ""
+	if serviceOwner == oldID {
+		oldService = serviceID
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE application_id=?`, oldID).Scan(&n); err != nil || n != 1 {
+			return result, errors.New("center: unexpected obsolete service ownership")
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE service_id=? AND (status<>'stopped' OR cleanup_pending<>0)`, oldService).Scan(&n); err != nil || n != 0 {
+			return result, errors.New("center: withdraw obsolete publications before history purge")
+		}
+		if err := requireOnlyHistoryReferences(ctx, tx, "services", []string{oldService}, map[string]bool{"publications/service_id": true, "meridian_endpoints/service_id": true, "landing_client_grants/service_id": true, "three_x_ui_reality_guards/service_id": true, "three_x_ui_inbound_plans/service_id": true, "three_x_ui_node_protocols/service_id": true}); err != nil {
+			return result, err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_endpoints WHERE service_id=? AND id<>?`, oldService, endpointID).Scan(&n); err != nil || n != 0 {
+			return result, errors.New("center: obsolete service is shared")
+		}
 	}
 	for _, table := range []string{"deployments", "application_commands", "application_adoptions", "application_maintenance"} {
 		var pending int
@@ -83,42 +104,62 @@ func (s *Store) PurgeSupersededGlivelaHistory(ctx context.Context, oldID, newID,
 			return result, errors.New("center: resolve pending installation work before history purge")
 		}
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_route_grants WHERE endpoint_id=? OR base_credential_id IN(SELECT id FROM meridian_credentials WHERE endpoint_id=?) OR route_credential_id IN(SELECT id FROM meridian_credentials WHERE endpoint_id=?)`, endpointID, endpointID, endpointID).Scan(&n); err != nil || n != 0 {
+	// Frozen route flags are historical after permanent handover. A route
+	// owned by another endpoint must still block removal of shared credentials.
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_route_grants g JOIN meridian_credentials c ON c.id IN(g.base_credential_id,g.route_credential_id) WHERE c.endpoint_id=? AND g.endpoint_id<>?`, endpointID, endpointID).Scan(&n); err != nil || n != 0 {
 		return result, errors.New("center: shared route still references obsolete history")
 	}
-	if err := requireOnlyHistoryReferences(ctx, tx, "applications", []string{oldID}, map[string]bool{"deployments/application_id": true, "application_commands/application_id": true, "application_resources/application_id": true, "application_execution_retirements/application_id": true, "meridian_endpoints/application_id": true}); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_route_grants g WHERE g.endpoint_id=? AND (NOT EXISTS(SELECT 1 FROM meridian_credentials c WHERE c.id=g.base_credential_id AND c.endpoint_id=?) OR NOT EXISTS(SELECT 1 FROM meridian_credentials c WHERE c.id=g.route_credential_id AND c.endpoint_id=?))`, endpointID, endpointID, endpointID).Scan(&n); err != nil || n != 0 {
+		return result, errors.New("center: obsolete route uses another endpoint's credential")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM landing_client_grants WHERE (application_id=? AND service_id<>?) OR (service_id=? AND application_id<>?)`, oldID, oldService, serviceID, oldID).Scan(&n); err != nil || n != 0 {
+		return result, errors.New("center: retained landing grant crosses installation ownership")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM xray_configuration_recoveries WHERE application_id=? AND state NOT IN('succeeded','failed')`, oldID).Scan(&n); err != nil || n != 0 {
+		return result, errors.New("center: resolve obsolete configuration recovery first")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_adoptions WHERE deployment_id IN(SELECT id FROM deployments WHERE application_id=?) AND application_id<>?`, oldID, oldID).Scan(&n); err != nil || n != 0 {
+		return result, errors.New("center: deployment is shared with a retained adoption")
+	}
+	if err := requireOnlyHistoryReferences(ctx, tx, "applications", []string{oldID}, map[string]bool{"deployments/application_id": true, "application_commands/application_id": true, "application_resources/application_id": true, "application_execution_retirements/application_id": true, "meridian_endpoints/application_id": true, "services/application_id": true, "three_x_ui_nodes/worker_application_id": true, "application_secrets/application_id": true, "landing_client_grants/application_id": true, "landing_proxy_states/application_id": true, "xray_configuration_recoveries/application_id": true, "application_adoptions/application_id": true}); err != nil {
 		return result, err
 	}
-	tasks, err := historyStrings(ctx, tx, `SELECT id FROM deployments WHERE application_id=? UNION ALL SELECT id FROM application_commands WHERE application_id=?`, oldID, oldID)
+	tasks, err := historyStrings(ctx, tx, `SELECT id FROM deployments WHERE application_id=? UNION ALL SELECT id FROM application_commands WHERE application_id=? UNION ALL SELECT id FROM application_adoptions WHERE application_id=? UNION ALL SELECT id FROM xray_configuration_recoveries WHERE application_id=?`, oldID, oldID, oldID, oldID)
 	if err != nil {
 		return result, err
 	}
-	for _, table := range []string{"deployments", "application_commands"} {
+	for _, table := range []string{"deployments", "application_commands", "application_adoptions", "xray_configuration_recoveries"} {
 		ids, err := historyStrings(ctx, tx, "SELECT id FROM "+table+" WHERE application_id=?", oldID)
 		if err != nil {
 			return result, err
 		}
-		if err := requireOnlyHistoryReferences(ctx, tx, table, ids, nil); err != nil {
+		allowed := map[string]bool{}
+		if table == "deployments" {
+			allowed["application_adoptions/deployment_id"] = true
+		}
+		if err := requireOnlyHistoryReferences(ctx, tx, table, ids, allowed); err != nil {
 			return result, err
 		}
 	}
-	// Already disposed execution audits are out of scope, even when a task ID matches.
+	// Disposed executions are independent immutable audit envelopes. Keep the
+	// entire task's executions/events when any attempt has a disposition; never
+	// change their task ID, ciphertext, actor or historical identity.
 	for _, id := range tasks {
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_executions WHERE task_id=? AND (state NOT IN('failed','succeeded') OR disposition<>'')`, id).Scan(&n); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_executions WHERE task_id=? AND disposition='' AND state NOT IN('failed','succeeded')`, id).Scan(&n); err != nil {
 			return result, err
 		}
 		if n != 0 {
-			return result, errors.New("center: obsolete task has unresolved or previously disposed execution")
+			return result, errors.New("center: obsolete task has an unresolved execution")
 		}
 	}
-	if err := requireOnlyHistoryReferences(ctx, tx, "meridian_endpoints", []string{endpointID}, map[string]bool{"meridian_credentials/endpoint_id": true, "meridian_deployments/endpoint_id": true, "glivela_pilot_checkpoint/endpoint_id": true}); err != nil {
+	if err := requireOnlyHistoryReferences(ctx, tx, "meridian_endpoints", []string{endpointID}, map[string]bool{"meridian_credentials/endpoint_id": true, "meridian_deployments/endpoint_id": true, "glivela_pilot_checkpoint/endpoint_id": true, "meridian_route_grants/endpoint_id": true}); err != nil {
 		return result, err
 	}
 	credentials, err := historyStrings(ctx, tx, `SELECT id FROM meridian_credentials WHERE endpoint_id=?`, endpointID)
 	if err != nil {
 		return result, err
 	}
-	if err := requireOnlyHistoryReferences(ctx, tx, "meridian_credentials", credentials, map[string]bool{"meridian_usage_watermarks/credential_id": true, "meridian_line_usage/credential_id": true}); err != nil {
+	if err := requireOnlyHistoryReferences(ctx, tx, "meridian_credentials", credentials, map[string]bool{"meridian_usage_watermarks/credential_id": true, "meridian_line_usage/credential_id": true, "meridian_route_grants/base_credential_id": true, "meridian_route_grants/route_credential_id": true}); err != nil {
 		return result, err
 	}
 	var secrets []string
@@ -135,21 +176,22 @@ func (s *Store) PurgeSupersededGlivelaHistory(ctx context.Context, oldID, newID,
 		}
 		secrets = append(secrets, ids...)
 	}
-	for _, q := range []string{`SELECT secret_id FROM deployments WHERE application_id=? AND secret_id IS NOT NULL`, `SELECT result_secret_id FROM application_commands WHERE application_id=? AND result_secret_id IS NOT NULL`} {
+	for _, q := range []string{`SELECT secret_id FROM deployments WHERE application_id=? AND secret_id IS NOT NULL`, `SELECT result_secret_id FROM application_commands WHERE application_id=? AND result_secret_id IS NOT NULL`, `SELECT secret_id FROM application_secrets WHERE application_id=?`, `SELECT credential_secret_id FROM landing_client_grants WHERE application_id=?`, `SELECT material_secret_id FROM landing_client_grants WHERE application_id=? AND material_secret_id IS NOT NULL`, `SELECT certificate_secret_id FROM three_x_ui_node_protocols WHERE service_id IN(SELECT id FROM services WHERE application_id=?) AND certificate_secret_id IS NOT NULL`} {
 		ids, err := historyStrings(ctx, tx, q, oldID)
 		if err != nil {
 			return result, err
 		}
 		secrets = append(secrets, ids...)
 	}
-	type scope struct {
-		table, column string
-		ids           []string
-		original      string
+	scopes, err := supersededHistoryScopes(ctx, tx, oldID, endpointID, oldService, credentials)
+	if err != nil {
+		return result, err
 	}
-	scopes := []scope{{table: "meridian_deployments", column: "endpoint_id", ids: []string{endpointID}}, {table: "glivela_pilot_checkpoint", column: "endpoint_id", ids: []string{endpointID}}, {table: "meridian_line_usage", column: "credential_id", ids: credentials}, {table: "meridian_usage_watermarks", column: "credential_id", ids: credentials}, {table: "meridian_credentials", column: "id", ids: credentials}, {table: "meridian_endpoints", column: "id", ids: []string{endpointID}}}
 	for i := range scopes {
 		item := &scopes[i]
+		if !item.frozen {
+			continue
+		}
 		item.original, err = allowFrozenHistoryDelete(ctx, tx, item.table, item.column, item.ids)
 		if err != nil {
 			return result, err
@@ -165,6 +207,17 @@ func (s *Store) PurgeSupersededGlivelaHistory(ctx context.Context, oldID, newID,
 		return err
 	}
 	for _, id := range tasks {
+		var disposed, preserved int64
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_executions WHERE task_id=? AND disposition<>''`, id).Scan(&disposed); err != nil {
+			return result, err
+		}
+		if disposed != 0 {
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_executions WHERE task_id=?`, id).Scan(&preserved); err != nil {
+				return result, err
+			}
+			result.PreservedExecutions += preserved
+			continue
+		}
 		if err := remove("task_events", `DELETE FROM task_events WHERE task_id=?`, id); err != nil {
 			return result, err
 		}
@@ -180,7 +233,7 @@ func (s *Store) PurgeSupersededGlivelaHistory(ctx context.Context, oldID, newID,
 		}
 	}
 	// Historical receipt/commands/deployments cascade only after their dependencies
-	// above have been proven absent. Current services belong to the replacement.
+	// above have been proven absent. Current replacement services remain untouched.
 	if err := remove("application_execution_retirements", `DELETE FROM application_execution_retirements WHERE application_id=? AND replacement_application_id=?`, oldID, newID); err != nil {
 		return result, err
 	}
