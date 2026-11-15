@@ -52,7 +52,17 @@ func (s *Store) purgeRemovedProxyHistory(ctx context.Context, id, confirmation s
 		return err
 	}
 	var entryApps, controllers int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(app_key='vastora-official/glivela-entry'),0),COALESCE(SUM(app_key IN('vastora-official/glivela','vastora-official/glivela-controller','vastora-official/meridian')),0) FROM applications WHERE node_id=?`, id).Scan(&entryApps, &controllers); err != nil {
+	// Legacy entry installations also used the meridian key. Only classify one
+	// as an entry when its retained services positively identify that role;
+	// unknown owners, management services and controller references stay fenced.
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(a.app_key='vastora-official/glivela-entry'),0),
+		COALESCE(SUM(a.app_key IN('vastora-official/glivela','vastora-official/glivela-controller') OR
+		(a.app_key='vastora-official/meridian' AND (
+		 a.role IN('master','controller') OR
+		 NOT EXISTS(SELECT 1 FROM services s WHERE s.application_id=a.id AND s.app_protocol='meridian/entry') OR
+		 EXISTS(SELECT 1 FROM services s WHERE s.application_id=a.id AND (s.management=1 OR s.app_protocol<>'meridian/entry')) OR
+		 EXISTS(SELECT 1 FROM three_x_ui_nodes n WHERE n.master_application_id=a.id)
+		))),0) FROM applications a WHERE a.node_id=?`, id).Scan(&entryApps, &controllers); err != nil {
 		return err
 	}
 	if (!entry && entries != 0) || (entry && entries == 0 && entryApps == 0) || controllers != 0 || active != 0 {
@@ -124,7 +134,11 @@ func (s *Store) purgeRemovedProxyHistory(ctx context.Context, id, confirmation s
 				scopes[i].query += " OR endpoint_id IN(" + endpoint + ")"
 			}
 		}
-		scopes = append(scopes, scope{table: "meridian_endpoints", column: "id", query: "SELECT id FROM meridian_endpoints WHERE id IN(" + endpoint + ")"})
+		scopes = append(scopes,
+			scope{table: "meridian_deployments", column: "endpoint_id", query: "SELECT endpoint_id FROM meridian_deployments WHERE endpoint_id IN(" + endpoint + ")"},
+			scope{table: "glivela_pilot_checkpoint", column: "endpoint_id", query: "SELECT endpoint_id FROM glivela_pilot_checkpoint WHERE endpoint_id IN(" + endpoint + ")"},
+			scope{table: "meridian_endpoints", column: "id", query: "SELECT id FROM meridian_endpoints WHERE id IN(" + endpoint + ")"},
+		)
 	}
 	for i := range scopes {
 		item := &scopes[i]
