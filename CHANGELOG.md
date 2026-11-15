@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.458](https://github.com/petauron/vastora/compare/v0.1.0-alpha.457...v0.1.0-alpha.458) (2026-11-15)
+
+
+### Bug Fixes
+
+* **center:** reconcile stopped website attention state ([#1311](https://github.com/petauron/vastora/issues/1311)) ([c56ace7](https://github.com/petauron/vastora/commit/c56ace7e757fd3dd1475354885802793c02a55d8))
+
 ## [0.1.0-alpha.457](https://github.com/petauron/vastora/compare/v0.1.0-alpha.456...v0.1.0-alpha.457) (2026-11-15)
 
 
