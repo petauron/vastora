@@ -35,7 +35,7 @@ export function AppInstallationSummary({ group, language, compact = false, byNod
     return <span className={affected ? "text-destructive" : undefined}>{label}</span>;
   }
   const versions = [...new Set(group.instances.map(({ application }) =>
-    `v${application.installedVersion} · r${application.installedPackageRevision ?? 0}`))];
+    `v${application.installedVersion}`))];
   return <div className="flex flex-col gap-2">
     <p className="break-words text-xs" title={versions.join(" / ")}>{copy(language, "已安装", "Installed")} {versions.length === 1 ? versions[0] : copy(language, `${versions.length} 种版本`, `${versions.length} versions`)}</p>
     <div className="flex flex-wrap gap-1.5">
