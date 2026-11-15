@@ -211,11 +211,14 @@ func validatePackageTask(task DeploymentTask) error {
 		return errors.New("agent: unsupported package executor protocol")
 	}
 	for _, capability := range runtime.RequiredCapabilities {
-		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy"}, capability) {
+		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy", "host-tcp-budget"}, capability) {
 			return errors.New("agent: unsupported runtime capability")
 		}
 		if capability == "meridian-runtime" && task.AppKey != meridianKey {
 			return errors.New("agent: Glivela integration capability is reserved for its reviewed package")
+		}
+		if capability == "host-tcp-budget" && (!budgetManifest(task.AppKey, task.Manifest)) {
+			return errors.New("agent: host TCP budget is reserved for the reviewed native manager")
 		}
 		if capability == "shared-caddy" && !daylightKey(task.AppKey) {
 			return errors.New("agent: shared Caddy is reserved for its reviewed website packages")
@@ -488,4 +491,20 @@ func reviewedPackageRecovery(task DeploymentTask, receipt *InstanceResources) bo
 	}
 	digest, err := controlplane.PackageReceiptDigest(raw)
 	return err == nil && digest == recovery.ReceiptSHA256
+}
+
+// A portable recipe may carry this reviewed permission on OpenRC or in a
+// container. The host-side writer is available only on a verified systemd VM.
+func budgetManifest(key string, app catalog.AppManifest) bool {
+	r := app.Runtime
+	if r == nil || r.Version != 2 || r.NativeServices == nil || r.NativeServices.Namespace != "glivela" || key != "vastora-official/"+app.ID {
+		return false
+	}
+	switch app.ID {
+	case "glivela-entry", "glivela-node":
+		return r.Kind == "native"
+	case "glivela-dual":
+		return r.Kind == "systemd"
+	}
+	return false
 }

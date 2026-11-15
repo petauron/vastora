@@ -23,7 +23,7 @@ func requireCatalogRuntime(manifest catalog.AppManifest) error {
 	}
 	result := catalog.CheckRuntimeSupport(manifest, catalog.ExecutorSupport{
 		Versions:     map[string]int{"docker": 1, "systemd": 2, "native": 2},
-		Capabilities: []string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy"},
+		Capabilities: []string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy", "host-tcp-budget"},
 	})
 	if !result.Supported {
 		return fmt.Errorf("center: unsupported package: %s", strings.Join(result.Reasons, "; "))
