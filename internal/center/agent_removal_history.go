@@ -143,24 +143,8 @@ func (s *Store) purgeRemovedProxyHistory(ctx context.Context, id, confirmation s
 		if len(item.ids) == 0 {
 			continue
 		}
-		trigger := "retired_proxy_" + item.table + "_delete"
-		if err := tx.QueryRowContext(ctx, `SELECT sql FROM sqlite_schema WHERE type='trigger' AND name=?`, trigger).Scan(&item.original); err != nil {
-			return err
-		}
-		prefix := "CREATE TRIGGER " + trigger + " BEFORE DELETE ON " + item.table + " WHEN EXISTS(SELECT 1 FROM retired_proxy_business WHERE id=1)"
-		suffix := " BEGIN SELECT RAISE(ABORT,'proxy business permanently handed over to Glivela'); END"
-		if strings.TrimSuffix(item.original, ";") != prefix+suffix {
-			return errors.New("center: frozen history guard differs")
-		}
-		values := make([]string, len(item.ids))
-		for j, key := range item.ids {
-			values[j] = "'" + strings.ReplaceAll(key, "'", "''") + "'"
-		}
-		if _, err := tx.ExecContext(ctx, "DROP TRIGGER "+trigger); err != nil {
-			return err
-		}
-		guard := prefix + " AND OLD." + item.column + " NOT IN (" + strings.Join(values, ",") + ")" + suffix
-		if _, err := tx.ExecContext(ctx, guard); err != nil {
+		item.original, err = allowFrozenHistoryDelete(ctx, tx, item.table, item.column, item.ids)
+		if err != nil {
 			return err
 		}
 	}
@@ -198,10 +182,7 @@ func (s *Store) purgeRemovedProxyHistory(ctx context.Context, id, confirmation s
 		if item.original == "" {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, "DROP TRIGGER retired_proxy_"+item.table+"_delete"); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, item.original); err != nil {
+		if err := restoreFrozenHistoryDelete(ctx, tx, item.table, item.original); err != nil {
 			return err
 		}
 	}
