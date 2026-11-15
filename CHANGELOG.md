@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.463](https://github.com/petauron/vastora/compare/v0.1.0-alpha.462...v0.1.0-alpha.463) (2026-11-15)
+
+
+### Bug Fixes
+
+* **center:** include retired deployment projection in scoped purge ([3ea5133](https://github.com/petauron/vastora/commit/3ea5133614d6d785f063d2663bf773563c9e8e69)), closes [#1321](https://github.com/petauron/vastora/issues/1321)
+
 ## [0.1.0-alpha.462](https://github.com/petauron/vastora/compare/v0.1.0-alpha.461...v0.1.0-alpha.462) (2026-11-15)
 
 
