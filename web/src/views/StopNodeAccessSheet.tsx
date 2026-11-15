@@ -18,7 +18,7 @@ export function StopNodeAccessSheet({ agent, language, mutate, onClose }: { agen
   const [error, setError] = useState("");
   const nameMatches = confirmation.trim() === agent.name.trim();
   const invalidName = confirmation.length > 0 && !nameMatches;
-  const stateChanged = agent.status !== "active" || agent.connected;
+  const stateChanged = agent.status !== "active" || agent.credentialRevoked;
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy || !nameMatches || stateChanged) return;

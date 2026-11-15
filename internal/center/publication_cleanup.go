@@ -98,7 +98,7 @@ func (s *Store) finishPublicationCleanup(ctx context.Context, value publicationC
 		if _, err := s.db.ExecContext(ctx, `UPDATE publications SET cleanup_pending = 1, cleanup_attempt = cleanup_attempt + 1, cleanup_retry_at = '', action_required = 1, last_error = ?, updated_at = ? WHERE id = ? AND status = 'stopped'`, message, now.Format(time.RFC3339Nano), value.ID); err != nil {
 			return errors.Join(operationErr, err)
 		}
-	} else if _, err := s.db.ExecContext(ctx, `UPDATE publications SET cleanup_pending = 0, cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ? WHERE id = ? AND status = 'stopped'`, now.Format(time.RFC3339Nano), value.ID); err != nil {
+	} else if _, err := s.db.ExecContext(ctx, `UPDATE publications SET cleanup_pending = 0, cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', action_required = 0, updated_at = ? WHERE id = ? AND status = 'stopped'`, now.Format(time.RFC3339Nano), value.ID); err != nil {
 		return err
 	}
 	return errors.Join(operationErr, s.recordDNSRemoval(ctx, value.ID, value.GatewayID, value.Revision, provider, operationErr))

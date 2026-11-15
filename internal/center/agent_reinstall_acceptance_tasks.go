@@ -138,49 +138,6 @@ func (s *Store) queueReinstallClientChecks(ctx context.Context, tx *sql.Tx, targ
 	return receipts, nil
 }
 
-func (s *Store) completeReinstallAcceptance(ctx context.Context, commit projectionCommit, tx *sql.Tx, id, verifier string, succeeded bool, raw json.RawMessage) error {
-	task, err := s.validateReinstallAcceptance(ctx, tx, verifier, id)
-	if err != nil {
-		return err
-	}
-	receipt := AgentReinstallClientCheck{CommandID: id, State: "failed"}
-	if succeeded {
-		var envelope struct {
-			Acceptance *meridianruntime.AcceptanceResult `json:"meridianAcceptance"`
-		}
-		if json.Unmarshal(raw, &envelope) != nil || envelope.Acceptance == nil || envelope.Acceptance.Validate(task) != nil {
-			return errors.New("center: invalid recovery client result")
-		}
-		receipt.State = "succeeded"
-		receipt.CheckedAt = s.now().UTC().Format(time.RFC3339Nano)
-	}
-	encoded, _ := json.Marshal(receipt)
-	if _, err = tx.ExecContext(ctx, `UPDATE agent_reinstall_client_checks SET result_json=? WHERE command_id=?`, encoded, id); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE application_commands SET state=?,result_json='{}',error='',lease_expires_at='',updated_at=? WHERE id=?`, receipt.State, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
-		return err
-	}
-	if err = s.recordTaskEvent(ctx, tx, id, verifier, "application.command", 1, receipt.State, "Recovery client request finished; remaining recovery requirements still apply"); err != nil {
-		return err
-	}
-	if succeeded {
-		var rawInput []byte
-		var admin string
-		if err = tx.QueryRowContext(ctx, `SELECT c.input_json,op.authorized_by FROM application_commands c JOIN agent_reinstall_client_checks a ON a.command_id=c.id JOIN agent_reinstall_operations op ON op.id=a.operation_id WHERE c.id=?`, id).Scan(&rawInput, &admin); err != nil {
-			return err
-		}
-		var command reinstallAcceptanceCommand
-		if err = json.Unmarshal(rawInput, &command); err != nil {
-			return err
-		}
-		if _, err = s.queueReinstallClientChecks(ctx, tx, task.TargetAgentID, verifier, admin, command.RequestID, AgentReinstallApplicationInput{OperationID: command.OperationID, PlanRevision: command.PlanRevision, ApplicationID: command.ApplicationID}); err != nil {
-			return err
-		}
-	}
-	return commit(tx)
-}
-
 // A successful command row alone is not proof. Require its authenticated
 // execution evidence, current reconstructed task and a bounded Center-clock age.
 func (s *Store) readReinstallClientCheck(ctx context.Context, tx *sql.Tx, verifier, id string) (AgentReinstallClientCheck, error) {

@@ -42,6 +42,12 @@ export function userError(language: Language, error: unknown) {
     "center: current replacement network approval is required": "请先确认当前新机器的网络地址。",
     "center: an uninstalled application still has running state": "应保持卸载的应用仍显示运行中，请核对后再完成恢复。",
 
+    "center: explicitly review the previous private peer ID and public key": "请明确核对旧私网节点 ID 和公钥。",
+    "center: recovery progress changed; refresh before reviewing the previous private peer": "恢复进度已变化，请刷新后重新核对旧私网身份。",
+    "center: reviewed private peer cannot replace saved recovery evidence": "核对结果与已保存的旧身份不一致，不能替换原证据。",
+    "center: reviewed previous private identity is ambiguous or changed": "旧私网身份存在歧义或已变化，恢复保持暂停。",
+    "center: reviewed previous private peer is not present on the saved controller": "在原私网控制面未找到核对的旧节点，恢复保持暂停。",
+    "center: recovery evidence changed during private peer review": "核对期间恢复证据已变化，请刷新后继续。",
     "center: authenticated previous private identity evidence is missing": "缺少旧机器已认证的私网身份记录，无法安全撤销旧身份。恢复已暂停。",
     "center: previous private network is externally managed; verify its isolation before recovery": "旧私网由外部管理，请先核对旧机器的访问权限是否已撤销。",
     "center: previous private address is assigned to another node": "原私网地址已属于另一节点，恢复已暂停。",

@@ -21,7 +21,8 @@ func applyNativePackage(ctx context.Context, manager SystemdHostApplicationManag
 // The one-time local handover stages the same verified resources without
 // enabling or starting services. Ordinary application tasks always activate.
 func installNativePackage(ctx context.Context, manager SystemdHostApplicationManager, task DeploymentTask, prepared nativePreparedPackage, receipt *InstanceResources, persist func() error, activate bool) error {
-	if task.Operation != "install" && task.Operation != "upgrade" {
+	websiteConfigure := task.ID != "" && prepared.WebsiteConfigureTaskID == task.ID && sharedWebsiteConfigure(task)
+	if task.Operation != "install" && task.Operation != "upgrade" && !websiteConfigure {
 		return errors.New("agent: native bundles support install or upgrade only")
 	}
 	if err := inspectNativeCollisions(ctx, manager, task.ApplicationID, prepared, receipt); err != nil {
@@ -34,12 +35,15 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 	}
 	// Check all configuration paths before stopping anything. An upgrade must
 	// not initialize missing configuration or overwrite application edits.
-	if task.Operation == "upgrade" {
+	if task.Operation == "upgrade" || websiteConfigure {
 		for _, file := range prepared.Files {
 			if !file.ApplicationOwned {
 				continue
 			}
 			owned := resourceNamed(receipt, "file", file.LogicalName)
+			if owned == nil && newDormantWorkerEnvironment(prepared, receipt, file) {
+				continue
+			}
 			if owned == nil || owned.Path != file.Path {
 				return errors.New("agent: new native configuration requires explicit migration")
 			}
@@ -199,4 +203,25 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		}
 	}
 	return nil
+}
+
+// A newly declared manual worker has no application-edited environment to
+// preserve. Only its empty installer-created file may be initialized; existing
+// workers, root processes, credentials and generated configurations remain fenced.
+func newDormantWorkerEnvironment(prepared nativePreparedPackage, receipt *InstanceResources, file nativePreparedFile) bool {
+	if file.Kind != "file" || file.Mode.Perm() != 0600 || len(file.Data) != 0 {
+		return false
+	}
+	for _, unit := range prepared.Plan.Units {
+		if unit.Automatic || unit.Process.User == "root" || len(unit.Process.Environment) != 0 || len(unit.Process.Credentials) != 0 || len(unit.Process.ConfigFiles) != 0 ||
+			resourceNamed(receipt, "unit", unit.LogicalName) != nil || file.LogicalName != unit.LogicalName+":environment" || file.Path != filepath.Join(unit.ConfigDirectory, "environment") {
+			continue
+		}
+		for _, user := range prepared.Plan.Users {
+			if user != "" && unit.Process.User == user {
+				return true
+			}
+		}
+	}
+	return false
 }

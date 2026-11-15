@@ -99,7 +99,11 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 			if err != nil {
 				return ApplicationTaskResult{}, err
 			}
-			return (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: backend}).Deploy(ctx, task)
+			result, err := (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: backend}).Deploy(ctx, task)
+			if err == nil && task.SenulunRestore != nil {
+				result.SenulunRestored = &senulun.RestoreResult{NodeID: task.SenulunRestore.NodeID}
+			}
+			return result, err
 		}
 		version := 1
 		if task.Manifest.Runtime != nil {
@@ -170,7 +174,8 @@ func (e ApplicationExecutor) PackageCapabilities(dockerAvailable bool) (map[stri
 	}
 	capabilities := []string{"root", "host-network", "host-path", "devices"}
 	if versions["systemd"] == 2 || versions["native"] == 2 {
-		capabilities = append(capabilities, "native-services")
+		// Recognize the permission even on read-only hosts; the socket enforces host eligibility.
+		capabilities = append(capabilities, "native-services", "host-tcp-budget")
 		if e.Store != nil && e.Store.sharedCaddy != nil {
 			capabilities = append(capabilities, "shared-caddy")
 		}

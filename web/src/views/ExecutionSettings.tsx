@@ -18,7 +18,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 
 function actionLabel(language: Language, action: ExecutionAction, kind = "") {
-  if ((kind === "node.security" || kind === "tailscale.update") && action === "abandon") return copy(language, "核对后放弃", "Abandon after review");
+  if ((kind === "node.security" || kind === "tailscale.update" || kind === "node.site.certificate") && action === "abandon") return copy(language, "核对后放弃", "Abandon after review");
   if (action === "confirm-completed") return copy(language, "确认已完成", "Confirm completed");
   return action === "abandon" ? copy(language, "放弃任务", "Abandon task") : copy(language, "重新执行", "Execute again");
 }
@@ -31,6 +31,7 @@ function kindLabel(language: Language, kind: string) {
     "landing.proxy.apply": ["落地连接", "Landing connection"], "landing.server.apply": ["落地服务", "Landing service"],
     "gateway.routes.apply": ["网关路由", "Gateway routes"], "gateway.component.apply": ["网关配置", "Gateway configuration"],
     "node.listener.apply": ["节点入口", "Node entry"], "tunnel.state.apply": ["隧道配置", "Tunnel configuration"],
+    "node.site.certificate": ["节点站点证书", "Node website certificate"],
     "xray.configuration.inspect": ["Xray 配置检查", "Xray configuration inspection"],
     "xray.configuration.apply": ["Xray 配置恢复", "Xray configuration recovery"],
     "legacy.receipt": ["旧执行记录", "Legacy execution"], "node.ip-quality": ["IP 质量检测", "IP quality check"],

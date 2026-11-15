@@ -67,6 +67,14 @@ func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, do
 	if err != nil {
 		return gatewayReplacement{}, err
 	}
+	hostTCP, err := gatewayruntime.DockerHostTCPProfile(ctx, docker, installer.CaddyImage)
+	if err != nil {
+		return gatewayReplacement{}, err
+	}
+	tcpProfile, _, err := gatewayruntime.ContainerTCPProfile(ctx, docker, hostTCP, existing)
+	if err != nil {
+		return gatewayReplacement{}, err
+	}
 	legacy, err := inspectManagedContainer(ctx, docker, gatewayruntime.LegacyCenterCaddyContainer, "center-headscale-gateway")
 	if err != nil {
 		return gatewayReplacement{}, err
@@ -133,6 +141,7 @@ func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, do
 			NetworkMode:   container.NetworkMode(dockerruntime.NetworkName),
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
 			PortBindings:  portBindings,
+			Sysctls:       tcpProfile,
 			Mounts: []mount.Mount{
 				{Type: mount.TypeVolume, Source: installer.CaddyDataVolume, Target: "/data"},
 				{Type: mount.TypeVolume, Source: installer.CaddyConfigVolume, Target: "/config"},
@@ -203,6 +212,9 @@ func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, do
 			return gatewayReplacement{}, errors.Join(fmt.Errorf("deployer: start unified gateway: %w", err), rollbackErr)
 		}
 		return gatewayReplacement{}, fmt.Errorf("deployer: start unified gateway: %w", err)
+	}
+	if err := gatewayruntime.VerifyContainerTCPProfile(ctx, docker, created.ID, tcpProfile); err != nil {
+		return gatewayReplacement{}, errors.Join(err, replacement.rollback(context.WithoutCancel(ctx), docker))
 	}
 	return replacement, nil
 }

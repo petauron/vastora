@@ -131,7 +131,7 @@ func (b *NativeServicesPackageBackend) prepareWebsite(ctx context.Context, task 
 			return nil, err
 		}
 	}
-	if task.Operation != "upgrade" {
+	if task.Operation != "upgrade" && !sharedWebsiteConfigure(task) {
 		return h, nil
 	}
 	installed, err := b.Store.AppliedInstallation(ctx, task.AppKey)

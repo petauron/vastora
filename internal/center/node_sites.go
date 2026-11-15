@@ -28,7 +28,10 @@ const nodeSiteSchema = `CREATE TABLE node_sites (
  not_after TEXT NOT NULL DEFAULT '',
  ca_directory TEXT NOT NULL,
  error TEXT NOT NULL DEFAULT '',
- updated_at TEXT NOT NULL
+ updated_at TEXT NOT NULL,
+ migration_from TEXT NOT NULL DEFAULT '',
+ migration_previous BLOB NOT NULL DEFAULT X'',
+ tls_loopback_only INTEGER NOT NULL DEFAULT 0 CHECK(tls_loopback_only IN (0,1))
 );
 CREATE TABLE node_site_tasks (
  id TEXT PRIMARY KEY,
@@ -51,6 +54,8 @@ CREATE TABLE node_site_certmagic_storage (
 );`
 
 type NodeSiteView struct {
+	TLSLoopbackOnly bool   `json:"tlsLoopbackOnly"`
+	MigrationFrom   string `json:"migrationFrom,omitempty"`
 	ApplicationID   string `json:"applicationId"`
 	Hostname        string `json:"hostname"`
 	Port            int    `json:"port"`
@@ -64,20 +69,25 @@ type NodeSiteView struct {
 }
 
 type nodeSiteInput struct {
-	Hostname    string `json:"hostname"`
-	Port        int    `json:"port"`
-	CADirectory string `json:"caDirectory"`
+	TLSLoopbackOnly  *bool  `json:"tlsLoopbackOnly,omitempty"`
+	PreviousHostname string `json:"previousHostname,omitempty"`
+	Hostname         string `json:"hostname"`
+	Port             int    `json:"port"`
+	CADirectory      string `json:"caDirectory"`
 }
 
 func (s *Store) NodeSite(ctx context.Context, id string) (NodeSiteView, error) {
 	v := NodeSiteView{ApplicationID: id, State: "unconfigured"}
-	err := s.db.QueryRowContext(ctx, `SELECT n.hostname,n.port,n.revision,n.applied_revision,CASE WHEN a.status='running' THEN n.state ELSE 'action_required' END,n.fingerprint,n.not_after,CASE WHEN a.status='running' THEN n.error ELSE 'Daylight application is not running' END,n.ca_directory FROM node_sites n JOIN applications a ON a.id=n.application_id WHERE n.application_id=?`, id).Scan(&v.Hostname, &v.Port, &v.Revision, &v.AppliedRevision, &v.State, &v.Fingerprint, &v.NotAfter, &v.Error, &v.CADirectory)
+	err := s.db.QueryRowContext(ctx, `SELECT n.hostname,n.port,n.revision,n.applied_revision,CASE WHEN a.status='running' THEN n.state ELSE 'action_required' END,n.fingerprint,n.not_after,CASE WHEN a.status='running' THEN n.error ELSE 'Daylight application is not running' END,n.ca_directory,n.tls_loopback_only FROM node_sites n JOIN applications a ON a.id=n.application_id WHERE n.application_id=?`, id).Scan(&v.Hostname, &v.Port, &v.Revision, &v.AppliedRevision, &v.State, &v.Fingerprint, &v.NotAfter, &v.Error, &v.CADirectory, &v.TLSLoopbackOnly)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Read the already installed identity without issuing anything on a GET.
 		err = s.db.QueryRowContext(ctx, `SELECT COALESCE(json_extract(d.config_json,'$.hostname'),'') FROM applications a JOIN deployments d ON d.application_id=a.id WHERE a.id=? AND a.app_key IN ('vastora-official/daylight','vastora-official/daylight-https') AND d.state='succeeded' AND d.operation<>'uninstall' ORDER BY d.updated_at DESC LIMIT 1`, id).Scan(&v.Hostname)
 		if errors.Is(err, sql.ErrNoRows) {
 			err = nil
 		}
+	}
+	if err == nil && v.State != "unconfigured" {
+		err = s.db.QueryRowContext(ctx, `SELECT migration_from FROM node_sites WHERE application_id=?`, id).Scan(&v.MigrationFrom)
 	}
 	return v, err
 }
@@ -111,7 +121,7 @@ func (s *Server) handleNodeSiteAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err)
 		return
 	}
-	if input.Action != "inspect" && input.Action != "rollback" && input.Action != "cancel" {
+	if input.Action != "inspect" && input.Action != "rollback" && input.Action != "cancel" && input.Action != "accept-migration" && input.Action != "cancel-migration" {
 		writeError(w, 400, errors.New("center: invalid node site action"))
 		return
 	}
@@ -122,6 +132,10 @@ func (s *Server) handleNodeSiteAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	if err = s.store.validateNodeSiteMigrationAction(r.Context(), tx, id, input.Action); err != nil {
+		writeError(w, 400, err)
+		return
+	}
 	if input.Action == "cancel" {
 		var blocked bool
 		err = tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM node_site_tasks WHERE application_id=? AND state='running') OR EXISTS(SELECT 1 FROM task_executions WHERE agent_id=(SELECT agent_id FROM node_sites WHERE application_id=?) AND disposition='' AND state IN ('offered','running','helper_running','unknown','failed'))`, id, id).Scan(&blocked)
@@ -153,6 +167,9 @@ func (s *Server) handleNodeSiteAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Store) configureNodeSite(ctx context.Context, id string, in nodeSiteInput) (NodeSiteView, error) {
+	if in.PreviousHostname != "" {
+		return s.prepareNodeSiteMigration(ctx, id, in)
+	}
 	if !nodesite.ValidHostname(in.Hostname) || in.Port < 1024 || in.Port > 65535 {
 		return NodeSiteView{}, errors.New("center: exact hostname and high loopback TLS port are required")
 	}
@@ -170,6 +187,10 @@ func (s *Store) configureNodeSite(ctx context.Context, id string, in nodeSiteInp
 	if err = nodeSiteIdle(ctx, tx, id, agentID); err != nil {
 		return NodeSiteView{}, err
 	}
+	var migration string
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT migration_from FROM node_sites WHERE application_id=?),'')`, id).Scan(&migration); err != nil || migration != "" {
+		return NodeSiteView{}, errors.New("center: complete or cancel the pending website migration first")
+	}
 	directory := in.CADirectory
 	if directory == "" {
 		directory = certmagic.LetsEncryptProductionCA
@@ -179,14 +200,19 @@ func (s *Store) configureNodeSite(ctx context.Context, id string, in nodeSiteInp
 	}
 	var previousHost, previousDirectory, previousState, previousExpiry, previousChain string
 	var previousPort int
+	var previousLoopback bool
 	var previousKey []byte
-	existingErr := tx.QueryRowContext(ctx, `SELECT hostname,port,ca_directory,state,not_after,certificate_pem,sealed_key FROM node_sites WHERE application_id=?`, id).Scan(&previousHost, &previousPort, &previousDirectory, &previousState, &previousExpiry, &previousChain, &previousKey)
+	existingErr := tx.QueryRowContext(ctx, `SELECT hostname,port,ca_directory,state,not_after,certificate_pem,sealed_key,tls_loopback_only FROM node_sites WHERE application_id=?`, id).Scan(&previousHost, &previousPort, &previousDirectory, &previousState, &previousExpiry, &previousChain, &previousKey, &previousLoopback)
 	if existingErr != nil && !errors.Is(existingErr, sql.ErrNoRows) {
 		return NodeSiteView{}, existingErr
 	}
+	loopback := previousLoopback
+	if in.TLSLoopbackOnly != nil {
+		loopback = *in.TLSLoopbackOnly
+	}
 	sameBinding := existingErr == nil && previousHost == in.Hostname && previousDirectory == directory
 	expiry, expiryErr := time.Parse(time.RFC3339Nano, previousExpiry)
-	if sameBinding && previousPort == in.Port && (previousState == "ready" || previousState == "issuing") {
+	if sameBinding && previousPort == in.Port && previousLoopback == loopback && (previousState == "ready" || previousState == "issuing") {
 		if err = tx.Commit(); err != nil {
 			return NodeSiteView{}, err
 		}
@@ -195,14 +221,14 @@ func (s *Store) configureNodeSite(ctx context.Context, id string, in nodeSiteInp
 	// Explicit retries and port-only changes reuse the managed pair. CertMagic,
 	// rather than this API, decides whether that pair also needs renewal.
 	if sameBinding && expiryErr == nil && expiry.After(s.now()) && previousChain != "" && len(previousKey) > 0 {
-		if _, err = tx.ExecContext(ctx, `UPDATE node_sites SET port=?,revision=revision+1,state='pending',error='',updated_at=? WHERE application_id=?`, in.Port, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE node_sites SET port=?,tls_loopback_only=?,revision=revision+1,state='pending',error='',updated_at=? WHERE application_id=?`, in.Port, loopback, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
 			return NodeSiteView{}, err
 		}
 		if err = s.queueNodeSitePhase(ctx, tx, id, "apply"); err != nil {
 			return NodeSiteView{}, err
 		}
 	} else {
-		_, err = tx.ExecContext(ctx, `INSERT INTO node_sites(application_id,agent_id,hostname,port,revision,state,ca_directory,updated_at) VALUES(?,?,?,?,1,'issuing',?,?) ON CONFLICT(application_id) DO UPDATE SET agent_id=excluded.agent_id,hostname=excluded.hostname,port=excluded.port,revision=node_sites.revision+1,state='issuing',sealed_key=X'',certificate_pem='',fingerprint='',not_after='',error='',ca_directory=excluded.ca_directory,updated_at=excluded.updated_at`, id, agentID, in.Hostname, in.Port, directory, s.now().UTC().Format(time.RFC3339Nano))
+		_, err = tx.ExecContext(ctx, `INSERT INTO node_sites(application_id,agent_id,hostname,port,revision,state,ca_directory,updated_at,tls_loopback_only) VALUES(?,?,?,?,1,'issuing',?,?,?) ON CONFLICT(application_id) DO UPDATE SET agent_id=excluded.agent_id,hostname=excluded.hostname,port=excluded.port,revision=node_sites.revision+1,state='issuing',sealed_key=X'',certificate_pem='',fingerprint='',not_after='',error='',ca_directory=excluded.ca_directory,updated_at=excluded.updated_at,tls_loopback_only=excluded.tls_loopback_only`, id, agentID, in.Hostname, in.Port, directory, s.now().UTC().Format(time.RFC3339Nano), loopback)
 		if err != nil {
 			return NodeSiteView{}, err
 		}
@@ -235,11 +261,17 @@ func (s *Store) nodeSiteTask(ctx context.Context, tx *sql.Tx, id, action string)
 	var t nodesite.Task
 	var agentID string
 	var sealed []byte
-	err := tx.QueryRowContext(ctx, `SELECT n.application_id,a.app_key,n.agent_id,n.hostname,n.port,n.revision,n.certificate_pem,n.sealed_key FROM node_sites n JOIN applications a ON a.id=n.application_id WHERE n.application_id=? AND a.node_id=n.agent_id AND a.status='running'`, id).Scan(&t.ApplicationID, &t.AppKey, &agentID, &t.Hostname, &t.Port, &t.Revision, &t.CertificatePEM, &sealed)
+	err := tx.QueryRowContext(ctx, `SELECT n.application_id,a.app_key,n.agent_id,n.hostname,n.port,n.revision,n.certificate_pem,n.sealed_key,n.tls_loopback_only FROM node_sites n JOIN applications a ON a.id=n.application_id WHERE n.application_id=? AND a.node_id=n.agent_id AND a.status='running'`, id).Scan(&t.ApplicationID, &t.AppKey, &agentID, &t.Hostname, &t.Port, &t.Revision, &t.CertificatePEM, &sealed, &t.TLSLoopbackOnly)
 	if err != nil {
 		return t, "", err
 	}
 	t.Action = action
+	if err = tx.QueryRowContext(ctx, `SELECT migration_from FROM node_sites WHERE application_id=?`, id).Scan(&t.PreviousHostname); err != nil {
+		return t, "", err
+	}
+	if action == "apply" && t.PreviousHostname != "" {
+		t.Action = "prepare-migration"
+	}
 	if action == "apply" {
 		key, e := secret.Open(s.key, sealed, []byte("node-site-certificate:"+id))
 		if e != nil {
@@ -318,6 +350,11 @@ func (s *Store) projectNodeSite(ctx context.Context, tx *sql.Tx, commit projecti
 	if err = tx.QueryRowContext(ctx, `SELECT t.input_json,t.state,t.application_id FROM node_site_tasks t JOIN node_sites n ON n.application_id=t.application_id JOIN applications a ON a.id=n.application_id WHERE t.id=? AND t.agent_id=? AND t.attempt=? AND n.revision=t.revision AND n.agent_id=t.agent_id AND a.node_id=t.agent_id AND a.status='running'`, id, agentID, attempt).Scan(&encoded, &state, &app); err != nil {
 		return err
 	}
+	// Completion may intentionally replace the current hostname binding. Replay
+	// the already authenticated immutable execution before hydrating that binding.
+	if (state == "succeeded" && succeeded) || (state == "failed" && !succeeded) {
+		return commit(tx)
+	}
 	var command nodeSiteCommand
 	if json.Unmarshal([]byte(encoded), &command) != nil {
 		return errors.New("center: invalid saved node site command")
@@ -349,12 +386,12 @@ func (s *Store) projectNodeSite(ctx context.Context, tx *sql.Tx, commit projecti
 	if succeeded {
 		v := envelope.NodeSite
 		switch t.Action {
-		case "apply", "inspect":
+		case "apply", "prepare-migration", "inspect":
 			var expected string
 			if err = tx.QueryRowContext(ctx, `SELECT fingerprint FROM node_sites WHERE application_id=? AND revision=?`, t.ApplicationID, t.Revision).Scan(&expected); err != nil {
 				return err
 			}
-			if v.State != "applied" || v.Fingerprint == "" || v.Fingerprint != expected {
+			if (v.State != "applied" && !(t.Action == "prepare-migration" && v.State == "prepared")) || v.Fingerprint == "" || v.Fingerprint != expected || v.TLSLoopbackOnly != t.TLSLoopbackOnly {
 				succeeded = false
 				taskError = "Agent certificate does not match desired state"
 				break
@@ -368,6 +405,14 @@ func (s *Store) projectNodeSite(ctx context.Context, tx *sql.Tx, commit projecti
 				return errors.New("center: Agent did not confirm rollback")
 			}
 			nextState = "rolled_back"
+		case "accept-migration", "cancel-migration":
+			if v.State != "applied" {
+				return errors.New("center: Agent did not confirm website migration completion")
+			}
+			nextState, err = s.finishNodeSiteMigration(ctx, tx, t.ApplicationID, t.Action, v.Fingerprint)
+			if err != nil {
+				return err
+			}
 		}
 		if succeeded {
 			taskState = "succeeded"

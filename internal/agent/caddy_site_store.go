@@ -38,7 +38,7 @@ func (s *Store) ConfigureSharedCaddy(driver *CaddyGatewayDriver) error {
 			}
 			if err == nil && len(listener.Desired.Listener.Routes) != 0 {
 				for _, site := range sites {
-					if site.TLSPort == 0 || site.PublicListen == "" {
+					if site.TLSPort == 0 || site.PublicListen == "" || site.TLSLoopbackOnly {
 						continue
 					}
 					address, port, _ := net.SplitHostPort(site.PublicListen)
@@ -50,7 +50,12 @@ func (s *Store) ConfigureSharedCaddy(driver *CaddyGatewayDriver) error {
 						return errors.New("agent: website public socket has no owned Caddy fallback")
 					}
 				}
-				desired.SharedHTTPS = &listener.Desired.Listener
+				// Container networking needs the frontend socket to avoid a
+				// duplicate host binding. A native website runtime keeps its own
+				// existing listeners; a protocol-only frontend is not a gateway.
+				if driver.SiteContainer {
+					desired.SharedHTTPS = &listener.Desired.Listener
+				}
 			}
 			return runtime(ctx, desired, sites)
 		}
@@ -170,6 +175,13 @@ func (s *Store) SharedCaddySites(ctx context.Context) ([]CaddySite, error) {
 	for _, state := range states {
 		if state.Site != nil {
 			result = append(result, *state.Site)
+			migration, err := s.migrationCompanion(ctx, state.Site)
+			if err != nil {
+				return nil, err
+			}
+			if migration != nil {
+				result = append(result, *migration)
+			}
 		}
 	}
 	return result, nil

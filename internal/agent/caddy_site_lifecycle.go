@@ -16,12 +16,28 @@ func (s *Store) syncSharedDaylight(ctx context.Context, installed AppliedInstall
 	if err != nil {
 		return err
 	}
+	return s.syncSharedDaylightHost(ctx, installed, host)
+}
+
+func (s *Store) syncSharedDaylightHost(ctx context.Context, installed AppliedInstallation, host nodeSiteHost) error {
 	state, err := s.readCaddySite(ctx, installed.ApplicationID)
 	if err == nil && state.Site != nil {
 		if state.Site.Hostname != host.site.Hostname {
-			return errors.New("agent: changing a website hostname requires an explicit site migration")
+			migration, err := s.preparedWebsiteBinding(ctx, installed.ApplicationID, host.site.Hostname)
+			if err != nil {
+				return err
+			}
+			host.site.TLSPort, host.site.Certificate, host.site.PublicListen = migration.TLSPort, migration.Certificate, migration.PublicListen
+			host.site.TLSLoopbackOnly = migration.TLSLoopbackOnly
+			return s.updateCaddySite(ctx, installed.ApplicationID, &host.site, func(ctx context.Context) error { return probeCaddySite(ctx, host.site) })
 		}
 		host.site.TLSPort, host.site.Certificate = state.Site.TLSPort, state.Site.Certificate
+		host.site.TLSLoopbackOnly = state.Site.TLSLoopbackOnly
+		// Base Daylight has no public-listen input. Its exact public binding is
+		// owned by the prepared migration and must survive content refreshes.
+		if host.site.PublicListen == "" {
+			host.site.PublicListen = state.Site.PublicListen
+		}
 		return s.updateCaddySite(ctx, installed.ApplicationID, &host.site, func(ctx context.Context) error { return probeCaddySite(ctx, host.site) })
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -34,6 +50,7 @@ func (s *Store) syncSharedDaylight(ctx context.Context, installed AppliedInstall
 		}
 		if journal.Runtime == 2 {
 			host.site.TLSPort = journal.Task.Port
+			host.site.TLSLoopbackOnly = journal.Task.TLSLoopbackOnly
 			certificate, err := nodeSiteCertificate(host.site.Hostname, journal.Task.CertificatePEM, journal.Task.PrivateKeyPEM)
 			if err != nil {
 				return err

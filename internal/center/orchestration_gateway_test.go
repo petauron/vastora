@@ -165,7 +165,7 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 	}
 }
 
-func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testing.T) {
+func TestRetiredRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -175,45 +175,13 @@ func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := claimTask(t, store, node)
-	if task.Kind != "application.command" || task.ApplicationCommand == nil {
-		t.Fatalf("unexpected command task: %#v", task)
+	if command.ID == "" {
+		t.Fatal("missing retained command identity")
 	}
-	if task.ApplicationCommand.TargetHost != "www.example.com" || task.ApplicationCommand.ServerName != "www.example.com" {
-		t.Fatalf("explicit REALITY target was not preserved: %#v", task.ApplicationCommand)
-	}
-	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BD%EF%BD%9CEdge"
-	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国｜Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 443, TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true, GuardStatus: "ready", ProxyProtocol: true, ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
-	encoded, _ := json.Marshal(result)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded, task.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-	completed, err := store.ApplicationCommand(ctx, command.ID)
-	if err != nil || completed.State != "succeeded" || !completed.ResultAvailable || completed.ServerName != "www.example.com" || completed.GuardStatus != "ready" {
-		t.Fatalf("unexpected completed command: %#v err=%v", completed, err)
-	}
-	publications, err := store.ListPublications(ctx)
-	if err != nil || len(publications) != 1 || publications[0].Hostname != "reality.edge.site.example.test" || publications[0].SNIHostname != "www.example.com" {
-		t.Fatalf("connection hostname and SNI were not kept separate: %#v err=%v", publications, err)
-	}
-	const deliveryOwner = "test-administrator"
-	const deliveryKey = "reality-result-operation-1"
-	link, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey)
-	if err != nil || link != shareURI {
-		t.Fatalf("one-time link = %q, err=%v", link, err)
-	}
-	if replay, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err != nil || replay != shareURI {
-		t.Fatalf("replayed one-time link = %q, err=%v", replay, err)
-	}
-	if err := store.AcknowledgeApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err == nil {
-		t.Fatal("acknowledged one-time link remained available")
-	}
+	assertRetiredProxyCommandChannel(t, store, node.ID)
 }
 
-func TestRealityCommandAllocatesRandomHostnameInsideSingleConnectionTransaction(t *testing.T) {
+func TestRetiredRealityCommandAllocatesRandomHostnameInsideSingleConnectionTransaction(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -231,8 +199,5 @@ func TestRealityCommandAllocatesRandomHostnameInsideSingleConnectionTransaction(
 	if _, err := createVerifiedRealityCommand(t, store, deadline, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Random", ClientName: "MacBook", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"}); err != nil {
 		t.Fatalf("random hostname allocation blocked inside the command transaction: %v", err)
 	}
-	task := claimTask(t, store, node)
-	if task.ApplicationCommand == nil || !strings.HasSuffix(task.ApplicationCommand.ConnectHostname, ".example.test") {
-		t.Fatalf("random connection hostname = %#v", task.ApplicationCommand)
-	}
+	assertRetiredProxyCommandChannel(t, store, node.ID)
 }

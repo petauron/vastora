@@ -211,11 +211,14 @@ func validatePackageTask(task DeploymentTask) error {
 		return errors.New("agent: unsupported package executor protocol")
 	}
 	for _, capability := range runtime.RequiredCapabilities {
-		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy"}, capability) {
+		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy", "host-tcp-budget"}, capability) {
 			return errors.New("agent: unsupported runtime capability")
 		}
 		if capability == "meridian-runtime" && task.AppKey != meridianKey {
 			return errors.New("agent: Glivela integration capability is reserved for its reviewed package")
+		}
+		if capability == "host-tcp-budget" && !budgetManifest(task.AppKey, task.Manifest) {
+			return errors.New("agent: host TCP budget is reserved for the reviewed native manager")
 		}
 		if capability == "shared-caddy" && !daylightKey(task.AppKey) {
 			return errors.New("agent: shared Caddy is reserved for its reviewed website packages")
@@ -261,6 +264,9 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	}
 	if receipt != nil && (receipt.ApplicationID != task.ApplicationID || receipt.AppKey != task.AppKey) {
 		return result, errors.New("agent: package ownership conflict")
+	}
+	if task.CurrentRecoveryResume {
+		return e.resumeCurrentSite(ctx, task, receipt)
 	}
 	if receipt != nil && receipt.IntegrationState == "execution-retired" {
 		return result, errors.New("agent: legacy execution registration is retired; retained data is not an executable installation")
@@ -322,7 +328,10 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if receipt == nil {
 		receipt = &InstanceResources{Version: 1, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Runtime: task.Manifest.Runtime.Kind, RuntimeVersion: task.Manifest.Runtime.Version}
 	} else if task.Manifest.Runtime != nil && receipt.Runtime != task.Manifest.Runtime.Kind {
-		backend, ok := e.Backend.(*NativeServicesPackageBackend)
+		// Package-specific backends retain the same verified native migration.
+		backend, ok := e.Backend.(interface {
+			migrateSystemdReceipt(context.Context, DeploymentTask, *InstanceResources) (*InstanceResources, error)
+		})
 		if !ok {
 			return result, errors.New("agent: changing executor requires explicit instance migration")
 		}
@@ -354,7 +363,7 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if err := e.Backend.Prepare(ctx, task, receipt); err != nil {
 		return result, err
 	}
-	if task.Operation == "configure" && (task.Manifest.Runtime.Kind == "systemd" || task.Manifest.Runtime.Kind == "native") && task.Manifest.Runtime.Version == 2 {
+	if task.Operation == "configure" && !sharedWebsiteConfigure(task) && (task.Manifest.Runtime.Kind == "systemd" || task.Manifest.Runtime.Kind == "native") && task.Manifest.Runtime.Version == 2 {
 		backend, ok := e.Backend.(*NativeServicesPackageBackend)
 		if !ok || receipt.State != "ready" {
 			return result, errors.New("agent: native service port update requires a ready owned bundle")
@@ -482,4 +491,20 @@ func reviewedPackageRecovery(task DeploymentTask, receipt *InstanceResources) bo
 	}
 	digest, err := controlplane.PackageReceiptDigest(raw)
 	return err == nil && digest == recovery.ReceiptSHA256
+}
+
+// A portable recipe may carry this reviewed permission on OpenRC or in a
+// container. The host-side writer is available only on a verified systemd VM.
+func budgetManifest(key string, app catalog.AppManifest) bool {
+	r := app.Runtime
+	if r == nil || r.Version != 2 || r.NativeServices == nil || r.NativeServices.Namespace != "glivela" || key != "vastora-official/"+app.ID {
+		return false
+	}
+	switch app.ID {
+	case "glivela-entry":
+		return r.Kind == "native"
+	case "glivela-dual", "glivela-node":
+		return r.Kind == "systemd"
+	}
+	return false
 }

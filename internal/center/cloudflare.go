@@ -210,6 +210,16 @@ func (s *Store) CloudflareZones(ctx context.Context) ([]CloudflareZone, error) {
 }
 
 func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationID string, revision int64) error {
+	var managedDomainID string
+	if err := s.db.QueryRowContext(ctx, `SELECT managed_domain_id FROM publications WHERE id=? AND desired_revision=? AND status<>'stopped'`, publicationID, revision).Scan(&managedDomainID); errors.Is(err, sql.ErrNoRows) {
+		return errStalePublicationReconcile
+	} else if err != nil {
+		return err
+	}
+	if managedDomainID != "" {
+		return s.reconcileManagedDomainLocked(ctx, managedDomainID)
+	}
+
 	var kind, ingressOwner, gatewayID, hostname, dnsRecordID, accessApplicationID, appKey, serviceName string
 	if err := s.db.QueryRowContext(ctx, `SELECT p.kind, p.ingress_owner, COALESCE(p.entry_node_id, ''), p.hostname, p.dns_record_id, p.access_application_id, a.app_key, s.name
 		FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id

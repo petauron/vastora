@@ -47,6 +47,9 @@ when the Center is unavailable.
   mixed-architecture Sites and architecture-aware Agent updates. The one-line
   Agent installer installs Docker from its official repository when missing.
 
+See [managed TLS delegation and dual-stack DNS](docs/public-ingress-delegation.md)
+for explicit public443 ownership handoff.
+
 ## Development
 
 Frontend work follows the [Vastora design language](docs/design-language.md), including
@@ -160,8 +163,8 @@ For backup-bound native replacements and retained public service identity, see
 [installation handover](docs/native-lifecycle-handover.md).
 For verified retirement of old Glivela proxy execution records while retaining
 their services and history, see [execution retirement](docs/glivela-execution-retirement.md).
-For controller-plus-pilot upgrades, configure the persistent
-[Agent update scope](docs/agent-update-scope.md) before upgrading Center.
+Center upgrades and all-or-selected Agent update pushes are separate actions. Preserve
+[explicit Agent update pauses](docs/agent-update-pauses.md) for maintenance holds.
 For IPv6-only Agent onboarding, see the explicitly configured
 [Headscale control IPv6 address](docs/tailscale-compatibility.md#ipv6-only-control-connectivity-1206).
 
@@ -192,9 +195,21 @@ Existing Glivela business installations require the [final data handover](docs/G
 地址的保护配置、运行修订与最后上报。该只读快照不代表 SSH 登录验证；宿主登录
 安全基线仍单独管理。读取失败或缺少节点映射时显示未知，可手动刷新。
 
+Independent application ingress and region-random website names: [managed DNS resources](docs/managed-domains.md) (#1265).
+
 Node-local Daylight certificates and shared Caddy ownership: [configuration, handover and recovery](docs/node-site-certificates.md) (#1128).
+
+Website hostname changes retain the original site until explicit acceptance:
+[managed hostname migration](docs/node-site-migrations.md) (#1265).
 Alpine/OpenRC 的原生套件契约和隔离验收边界见 [Alpine/OpenRC MVP](docs/alpine-openrc.md)（#1182；无 TUN 用户态管理接续 #1214，源码验收不代表生产发布）。
 
 Vastora 自动管理的运行目录、开机准备和共享资源卸载边界见 [运行目录生命周期](docs/runtime-directories.md)（#356）。
 Linux Agent 和共址 Center 的开机引导依赖系统 iproute2（`ip`）；安装器会检查，不自动下载或更改已有网络身份。
 新购 KVM VPS 的网页重装条件、网络恢复边界与操作步骤见 [KVM Debian 13 网页重装](docs/os-reinstall.md)。系统盘将被清空，生产重装仍须单独确认。
+
+On enrolled Linux hosts the reviewed Glivela node manager can request the fixed
+TCP memory budget through a local Agent socket when its installation receipt
+includes `host-tcp-budget`. This is a per-host operation: inspect, apply the
+tier for actual RAM, or restore the recorded values. It accepts no sysctl name,
+path, command or custom watermarks. Containers and unsupported init systems
+do not start a writer; the managed application's systemd sandbox is unchanged.

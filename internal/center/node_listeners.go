@@ -110,7 +110,7 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 // A recovering host has no active profile or published service binding yet.
 // Only the reviewed, restored Meridian backend may enter its fresh listener.
 type nodeListenerRestoreTarget struct {
-	ApplicationID, BackendAddress, BindAddress string
+	ApplicationID, PreviousBackendAddress, BackendAddress, BindAddress string
 }
 
 func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID string, revision int64, restore *nodeListenerRestoreTarget) (gateway.NodeListenerState, error) {
@@ -147,7 +147,7 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 			return gateway.NodeListenerState{}, errors.New("center: node-direct listener upstream belongs to another Agent")
 		}
 		route.ApplicationNodeID = applicationNodeID
-		if runtime == "host" && restore == nil {
+		if runtime == "host" {
 			// Native packages report their own private service endpoint and the
 			// signed recipe declares forwarding metadata. Do not infer a proxy
 			// component, fixed port or Docker alias from the application's key.
@@ -156,10 +156,22 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 			if err != nil || portErr != nil || port < 1 || port > 65535 || serviceProtocol != "tcp" || !networking.IsPrivateServiceAddress(host) || net.ParseIP(host).IsLoopback() || (serviceForwarding != "" && serviceForwarding != gateway.ProxyProtocolV2) {
 				return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("native shared listener requires a declared private TCP service")}
 			}
-			var address string
 			var owned int
-			if err := tx.QueryRowContext(ctx, `SELECT p.service_address,EXISTS(SELECT 1 FROM application_resources r WHERE r.application_id=? AND r.adoption_state='ready' AND json_extract(r.resources_json,'$.applicationId')=? AND json_extract(r.resources_json,'$.appKey')=? AND json_extract(r.resources_json,'$.runtime') IN ('systemd','native') AND json_extract(r.resources_json,'$.state')='ready' AND json_extract(r.resources_json,'$.manifestSha256')=r.manifest_sha256) FROM agent_network_profiles p WHERE p.agent_id=?`, applicationID, applicationID, appKey, nodeID).Scan(&address, &owned); err != nil || owned != 1 || address != host {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_resources r WHERE r.application_id=? AND r.adoption_state='ready' AND json_extract(r.resources_json,'$.applicationId')=? AND json_extract(r.resources_json,'$.appKey')=? AND json_extract(r.resources_json,'$.runtime') IN ('systemd','native') AND json_extract(r.resources_json,'$.state')='ready' AND json_extract(r.resources_json,'$.manifestSha256')=r.manifest_sha256)`, applicationID, applicationID, appKey).Scan(&owned); err != nil || owned != 1 {
 				return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("native shared backend must match its ready installation and confirmed node service address")}
+			}
+			if restore != nil {
+				// Reinstall withdraws the active profile until business acceptance.
+				// Match its explicitly approved retained address before migration.
+				if applicationID != restore.ApplicationID || appKey != "vastora-official/glivela-entry" || actionRequired != 0 || restore.PreviousBackendAddress == "" || host != restore.PreviousBackendAddress {
+					return gateway.NodeListenerState{}, errors.New("center: native recovery must retain its original publication")
+				}
+				host = restore.BackendAddress
+			} else {
+				var address string
+				if err := tx.QueryRowContext(ctx, `SELECT service_address FROM agent_network_profiles WHERE agent_id=?`, nodeID).Scan(&address); err != nil || address != host {
+					return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("native shared backend must match its ready installation and confirmed node service address")}
+				}
 			}
 			route.ManagedReality = false
 			route.ProxyProtocol = serviceForwarding
@@ -483,7 +495,7 @@ func (s *Store) projectNodeListenerState(ctx context.Context, tx *sql.Tx, commit
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return err
 	} else if blocked || recoveryTask {
-		return s.completeReinstallListener(ctx, tx, commit, agentID, revision, expectedAttempt, succeeded, taskError)
+		return errExecutionBlocked
 	}
 	var err error
 	var desired, applied, attempt int64
@@ -569,13 +581,26 @@ func (s *Store) queueMismatchedNodeListenerReconcile(ctx context.Context, tx *sq
 	if healthy && liveRevision == appliedRevision && liveHash == expectedHash {
 		return nil
 	}
+	profile, err := networkProfile(ctx, tx, nodeID)
+	if err != nil {
+		return fmt.Errorf("center: inspect node-listener network profile: %w", err)
+	}
 	reason := "node-direct listener state differs from Center; queued for reconcile"
 	if !healthy {
 		reason = "node-direct listener health check failed; queued for reconcile"
 	}
+	if profile == nil {
+		reason = "Node network is recovering"
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'degraded', last_error = ?, updated_at = ?
 		WHERE ingress_owner = 'application_node' AND entry_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped'`, reason, now.Format(time.RFC3339Nano), nodeID); err != nil {
 		return fmt.Errorf("center: mark unhealthy node-direct publications: %w", err)
+	}
+	if profile == nil {
+		// Commit fresh heartbeat/address observations while the normal network
+		// confirmation flow restores the prerequisite. Do not queue an
+		// unverified listener or roll back the observations needed to repair it.
+		return nil
 	}
 	if err := s.queueNodeListenerState(ctx, tx, nodeID, now); err != nil {
 		return fmt.Errorf("center: queue mismatched live node-listener state: %w", err)

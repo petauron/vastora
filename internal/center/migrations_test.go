@@ -42,7 +42,7 @@ func TestFreshAndMigratedDatabasesHaveEquivalentSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Reconstruct schema 122 before the tables introduced by later migrations.
-	if _, err := old.db.Exec(`DROP TABLE application_execution_retirements; DROP TABLE node_site_certmagic_storage; DROP TABLE node_site_tasks; DROP TABLE node_sites; DROP TABLE tailscale_update_tasks; DROP TABLE os_reinstall_tasks; DROP TABLE agent_gateway_promotions; DELETE FROM goose_db_version; INSERT INTO goose_db_version(version_id,is_applied) VALUES(0,1),(122,1); PRAGMA user_version=122;`); err != nil {
+	if _, err := old.db.Exec(`DROP TABLE managed_domains; ALTER TABLE publications DROP COLUMN managed_domain_id; DROP TABLE application_execution_retirements; DROP TABLE node_site_certmagic_storage; DROP TABLE node_site_tasks; DROP TABLE node_sites; DROP TABLE tailscale_update_tasks; DROP TABLE os_reinstall_tasks; DROP TABLE agent_gateway_promotions; DELETE FROM goose_db_version; INSERT INTO goose_db_version(version_id,is_applied) VALUES(0,1),(122,1); PRAGMA user_version=122;`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := old.db.Exec(`INSERT INTO secrets(id,sealed,created_at,updated_at) VALUES('baseline-preserved',X'0001FF','before','before')`); err != nil {
@@ -56,11 +56,20 @@ func TestFreshAndMigratedDatabasesHaveEquivalentSchema(t *testing.T) {
 	snapshot := func(db *sql.DB) map[string][]string {
 		t.Helper()
 		result := map[string][]string{}
-		for name := range databaseSchemaShape(t, db) {
+		for name, table := range databaseSchemaShape(t, db) {
 			if name == "goose_db_version" {
 				continue
 			}
-			rows, err := db.Query(`SELECT * FROM "` + strings.ReplaceAll(name, `"`, `""`) + `"`)
+			selectedColumns := []string{}
+			for _, column := range table.Columns {
+				// The new empty linkage is validated by schema equivalence below;
+				// compare all retained pre-migration business columns verbatim.
+				if name == "publications" && column.Name == "managed_domain_id" {
+					continue
+				}
+				selectedColumns = append(selectedColumns, `"`+strings.ReplaceAll(column.Name, `"`, `""`)+`"`)
+			}
+			rows, err := db.Query(`SELECT ` + strings.Join(selectedColumns, ",") + ` FROM "` + strings.ReplaceAll(name, `"`, `""`) + `"`)
 			if err != nil {
 				t.Fatal(err)
 			}

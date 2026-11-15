@@ -100,24 +100,33 @@ export type CenterUpdateStatus = {
   automatic: boolean;
   state: "idle" | "queued" | "applying" | "succeeded" | "failed";
   targetVersion?: string;
-  phase?: "queued" | "downloading" | "verifying" | "installing" | "validating" | "pulling" | "agent" | "restarting" | "health" | "reconciling" | "finalizing" | "agents" | "completed";
+  phase?: "queued" | "downloading" | "verifying" | "installing" | "validating" | "pulling" | "agent" | "restarting" | "health" | "reconciling" | "finalizing" | "completed";
   progress?: number;
   message?: string;
   checkedAt?: string;
   updatedAt?: string;
   error?: string;
-  agentRollout?: {
-    targetVersion: string;
-    total: number;
-    updated: number;
-    updating: number;
-    pending: number;
-    failed: number;
-    offline: number;
-    manual: number;
-    blocked: number;
-    claimsPaused: boolean;
-  };
+
+};
+
+export type AgentUpdateRollout = {
+  targetVersion: string; total: number; updated: number; updating: number;
+  pending: number; failed: number; offline: number; manual: number;
+  blocked: number; claimsPaused: boolean; paused: boolean; excluded: number;
+};
+export type AgentUpdateTarget = {
+  id: string; name: string; version: string; eligible: boolean;
+  state: "available" | "current" | "newer" | "paused" | "disabled" | "offline" | "pending" | "updating" | "failed" | "manual" | "blocked";
+};
+export type AgentUpdatesStatus = {
+  targetVersion: string; available: boolean; pushPaused: boolean;
+  rollout: AgentUpdateRollout; targets: AgentUpdateTarget[];
+};
+export type AgentUpdatePushInput = { targetVersion: string } & (
+  { mode: "all"; agentIds?: never } | { mode: "selected"; agentIds: string[] }
+);
+export type AgentUpdatePushResult = {
+  queuedAgentIds: string[]; skippedAgentIds: string[]; error?: string; status: AgentUpdatesStatus;
 };
 
 export type AssistantProvider = {
@@ -335,28 +344,6 @@ export type AgentUpdate = {
   updatedAt: string;
 };
 
-export type XrayConfigurationRecovery = {
-  agentId: string;
-  applicationId: string;
-  id: string;
-  action: "inspect" | "runtime" | "agent_state";
-  state: "pending" | "running" | "awaiting_decision" | "succeeded" | "failed";
-  error?: string;
-  updatedAt: string;
-  result?: {
-    action: "inspect" | "runtime" | "agent_state";
-    applicationId: string;
-    runtimeSha256: string;
-    agentSha256: string;
-    agentRevision: number;
-    runtimeImportable: boolean;
-    matches: boolean;
-    runtimeInbounds: Array<{ tag: string; protocol: string; port: number; clients: number }>;
-    agentInbounds: Array<{ tag: string; protocol: string; port: number; clients: number }>;
-    differences: Array<{ kind: string; inbound?: string; field?: string; runtime?: string; agent?: string }>;
-    appliedSource?: "runtime" | "agent_state";
-  };
-};
 
 export type AgentReinstallOperation = {
   id: string; planRevision: string; state: "preparing" | "awaiting_enrollment" | "review_required" | "failed";
@@ -478,7 +465,7 @@ export type Site = { id: string; organizationId: string; name: string; code: str
 export type ThreeXUIRole = "master" | "worker";
 export type ThreeXUIBackup = { applicationId: string; revision: number; state: "pending" | "ready" | "failed"; sha256?: string; size: number; lastError?: string; updatedAt: string };
 export type ThreeXUIControllerMigration = { id: string; kind: "replace" | "consolidate"; siteId: string; sourceApplicationId: string; targetApplicationId: string; backupRevision: number; state: "backing_up" | "restoring" | "switching" | "ready" | "failed"; step: "backup" | "restore" | "cleanup" | "convert_worker" | "switch" | "complete"; lastError?: string; failedWorkerApplicationId?: string; backup?: ThreeXUIBackup; createdAt: string; updatedAt: string };
-export type Application = { id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; role?: ThreeXUIRole; legacyGlivela?: boolean; executionRetired?: boolean; replacementApplicationId?: string; controllerApplicationId?: string; nodeSyncStatus?: "pending" | "applying" | "ready" | "failed" | "stopped"; nodeSyncError?: string; restorePointState?: "pending" | "ready" | "failed"; restorePointAt?: string; installedVersion?: string; installedPackageRevision?: number; availablePackageRevision?: number; adoptionState?: "pending" | "ready" | "blocked"; adoptionError?: string; availableVersion?: string; updateAvailable: boolean; createdAt: string; updatedAt: string };
+export type Application = { nodeSiteStatus?: "unconfigured" | "issuing" | "pending" | "ready" | "action_required" | "rolled_back"; id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; role?: ThreeXUIRole; legacyGlivela?: boolean; executionRetired?: boolean; replacementApplicationId?: string; controllerApplicationId?: string; nodeSyncStatus?: "pending" | "applying" | "ready" | "failed" | "stopped"; nodeSyncError?: string; restorePointState?: "pending" | "ready" | "failed"; restorePointAt?: string; installedVersion?: string; installedPackageRevision?: number; availablePackageRevision?: number; adoptionState?: "pending" | "ready" | "blocked"; adoptionError?: string; availableVersion?: string; updateAvailable: boolean; createdAt: string; updatedAt: string };
 export type ApplicationCredentials = { kind: "three_x_ui"; username: string; password: string } | { kind: "cpa"; managementKey: string; clientApiKey: string };
 export type ApplicationCredentialRotation = { id: string; applicationId: string; target: "management" | "client"; state: "preparing" | "pending" | "succeeded" | "failed" | "action_required"; cpaDeploymentId?: string; keeperDeploymentId?: string; lastError?: string; createdAt: string; updatedAt: string };
 export type Service = { protocols?: ("vless" | "hy2")[]; id: string; applicationId: string; siteId: string; name: string; displayName?: string; regionCode?: string; protocol: "http" | "https" | "tcp" | "udp"; containerPort: number; hostPort: number; endpoint: string; source: "catalog" | "observed"; appProtocol?: string; management: boolean; observedListen?: string; status: string; lastError?: string; guardStatus?: "pending" | "hardening" | "ready" | "action_required"; guardSummary?: string; actionRequiredReason?: string; createdAt: string; updatedAt: string };

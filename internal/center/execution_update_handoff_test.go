@@ -215,7 +215,7 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 				}
 				post("result", result, codes.FailedPrecondition)
 				if mode == "abandon" {
-					if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.125"); err != nil || len(queued) != 1 {
+					if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.125", nil); err != nil || len(queued) != 1 {
 						t.Fatalf("verified abandoned intent was not replaced by a fresh rollout: %v %v", queued, err)
 					}
 				}

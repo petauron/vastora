@@ -407,7 +407,7 @@ func TestMeridianRetirementWaitRequiresFreshPeerEvidenceAndPreservesJournalOnTim
 	}
 }
 
-func TestMeridianHeartbeatCadencePreservesNativeAndCapsPeerPlans(t *testing.T) {
+func TestHeartbeatCadenceUsesGenericInterval(t *testing.T) {
 	peers := meridianLandingFixture()
 	native := meridianRuntimeState{Applied: peers.Applied}
 	for _, test := range []struct {
@@ -417,12 +417,12 @@ func TestMeridianHeartbeatCadencePreservesNativeAndCapsPeerPlans(t *testing.T) {
 	}{
 		{0, native, 15 * time.Second},
 		{12 * time.Second, native, 12 * time.Second},
-		{15 * time.Second, peers, landing.CheckInterval},
+		{15 * time.Second, peers, 15 * time.Second},
 		{2 * time.Second, peers, 2 * time.Second},
-		{0, peers, landing.CheckInterval},
+		{0, peers, 15 * time.Second},
 		{15 * time.Second, meridianRuntimeState{Pending: peers.Applied, PendingPeers: peers.AppliedPeers}, 15 * time.Second},
 	} {
-		if got := meridianHeartbeatInterval(test.configured, test.state); got != test.want {
+		if got := heartbeatInterval(test.configured); got != test.want {
 			t.Fatalf("cadence=%s want=%s", got, test.want)
 		}
 	}

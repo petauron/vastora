@@ -1,6 +1,7 @@
 import type { AgentView, AppView, AppData, Deployment, PublicationKind, Service } from "../types";
 import type { Language } from "../translations";
 import { copy } from "./shared";
+import { isDaylightCatalogApp } from "./daylight";
 
 export function publicationOptions(data: AppData, service: Service | null, language: Language) {
   if (!service) return [];
@@ -100,7 +101,7 @@ export function gatewaysForKind(data: AppData, service: Service, kind: Publicati
 export function packageNodeBlocker(agent: AgentView, app: AppView | undefined, language: Language) {
   const runtime = app?.app.runtime;
   if (!runtime) return copy(language, "需要 schema 4 安装配方。", "A schema 4 recipe is required.");
-  if (agent.capabilities.landingOnly && ((runtime.kind !== "systemd" && runtime.kind !== "native") || runtime.version !== 2 || !runtime.requiredCapabilities?.includes("native-services") || runtime.requiredCapabilities.some((value) => value !== "native-services" && value !== "root" && value !== "shared-caddy"))) return copy(language, "此节点仅允许审核授权的原生应用，不启用 Docker、网关或隧道。", "This node permits reviewed native apps only, without Docker, gateways or tunnels.");
+  if (agent.capabilities.landingOnly && ((runtime.kind !== "systemd" && runtime.kind !== "native") || runtime.version !== 2 || !runtime.requiredCapabilities?.includes("native-services") || runtime.requiredCapabilities.some((value) => !["native-services", "root", "shared-caddy", "host-tcp-budget"].includes(value)))) return copy(language, "此节点仅允许审核授权的原生应用，不启用 Docker、网关或隧道。", "This node permits reviewed native apps only, without Docker, gateways or tunnels.");
   const executorVersion = agent.capabilities.executorVersions?.[runtime.kind];
   const supported = executorVersion === runtime.version || (runtime.kind === "systemd" && runtime.version === 1 && executorVersion === 2);
   if (!supported) return copy(language, `节点不支持执行器 ${runtime.kind} v${runtime.version}，请升级 Agent。`, `The node does not support executor ${runtime.kind} v${runtime.version}. Upgrade its Agent.`);
@@ -185,6 +186,12 @@ export function installBlocker(data: AppData, appKey: string, language: Language
 }
 
 export function localized(app: AppView, language: Language, field: "name" | "description") {
+  if (field === "name" && isDaylightCatalogApp(app)) return "Daylight";
+  if (field === "name" && app.sourceId === "vastora-official"
+    && app.key === `vastora-official/${app.app.id}`
+    && ["glivela-entry", "glivela-node", "glivela-dual"].includes(app.app.id)) {
+    return copy(language, "Glivela 节点端", "Glivela Node");
+  }
   return app.app[field][language] || app.app[field].en;
 }
 

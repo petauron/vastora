@@ -22,6 +22,36 @@ func runCenter(arguments []string) error {
 		return errors.New("center command is required")
 	}
 	switch arguments[0] {
+	case "purge-superseded-glivela-history":
+		return runCenterSupersededHistoryPurge(arguments[1:])
+	case "purge-removed-landing-history", "purge-removed-entry-history":
+		flags := flag.NewFlagSet("center purge-removed-landing-history", flag.ContinueOnError)
+		dataDir := flags.String("data-dir", "", "Center state directory")
+		nodeID := flags.String("node-id", "", "exact permanently removed landing identity")
+		confirmation := flags.String("confirm-name", "", "exact retained node name")
+		confirmed := flags.Bool("confirm-glivela-retired", false, "confirm independent Glivela identity and routes have already been permanently retired")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if *dataDir == "" || *nodeID == "" || *confirmation == "" || !*confirmed || flags.NArg() != 0 {
+			return errors.New("data directory, node ID, exact name and Glivela retirement confirmation are required")
+		}
+		store, err := center.Open(*dataDir)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		var purgeErr error
+		if arguments[0] == "purge-removed-entry-history" {
+			purgeErr = store.PurgeRemovedEntryHistory(context.Background(), *nodeID, *confirmation, *confirmed)
+		} else {
+			purgeErr = store.PurgeRemovedLandingHistory(context.Background(), *nodeID, *confirmation, *confirmed)
+		}
+		if purgeErr != nil {
+			return purgeErr
+		}
+		fmt.Println("Removed landing history and unshared credentials purged; no remote host contacted")
+		return nil
 	case "retire-glivela-execution":
 		return runCenterExecutionRetirement(arguments[1:])
 	case "authorize-gateway-promotion":
@@ -224,6 +254,9 @@ func runCenter(arguments []string) error {
 		if err := store.StartPublicationVerifications(maintenanceContext); err != nil {
 			return fmt.Errorf("resume public entry verification: %w", err)
 		}
+		go store.RunManagedDomains(maintenanceContext, func(err error) {
+			fmt.Fprintf(os.Stderr, "Center managed DNS: %v\n", err)
+		})
 		go store.RunAgentRemovals(maintenanceContext, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center node removal: %v\n", err)
 		})
@@ -267,9 +300,7 @@ func runCenter(arguments []string) error {
 				}
 			}()
 		}
-		go centerServer.RunAgentUpdateRollout(maintenanceContext, 5*time.Second, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center Agent update rollout: %v\n", err)
-		})
+
 		handler := centerServer.Handler()
 		server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 		// Keep h2c on a separate private listener. The ordinary web listener

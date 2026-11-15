@@ -273,7 +273,7 @@ func TestCompositeLandingLivenessDoesNotChangeRuntimeOrRejectObservation(t *test
 			result.Peers[i].Status.ExitIP = "2001:4860:4860::8888"
 		}
 	}
-	completeMeridianHealthFixture(t, store, projection, command, result)
+	seedHistoricalMeridianHealthFixture(t, store, projection, command, result)
 	const credential = "synthetic-heartbeat-test"
 	if _, err := store.db.Exec(`UPDATE agents SET credential_hash=? WHERE id=?`, tokenHash(credential), projection.agentID); err != nil {
 		t.Fatal(err)

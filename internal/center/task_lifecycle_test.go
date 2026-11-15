@@ -149,7 +149,7 @@ func TestTaskEncryptionFailureReleasesTheCommittedLease(t *testing.T) {
 	}
 }
 
-func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t *testing.T) {
+func TestRetiredThreeXUICommandQuarantineCannotBeReplayed(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -167,8 +167,8 @@ func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t
 		VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, commandID, applicationID, node.ID, node.ID, clientCommandKind, input, now, now); err != nil {
 		t.Fatal(err)
 	}
-	task := claimTask(t, store, node)
-	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, false, "remote API result is uncertain", nil, true); err != nil {
+	// Retained pre-migration uncertainty is evidence, not a new proxy execution.
+	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='failed',attempt=1,reconciliation_required=1,error='remote API result is uncertain' WHERE id=?`, commandID); err != nil {
 		t.Fatal(err)
 	}
 	command, err := store.ApplicationCommand(ctx, commandID)
@@ -195,16 +195,15 @@ func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t
 	authorizedRequest.Header.Set("X-CSRF-Token", csrf)
 	authorized := httptest.NewRecorder()
 	server.ServeHTTP(authorized, authorizedRequest)
-	if authorized.Code != http.StatusAccepted {
+	if authorized.Code != http.StatusBadRequest {
 		t.Fatalf("authorized reconciliation retry status = %d body=%q", authorized.Code, authorized.Body.String())
 	}
 	command, err = store.ApplicationCommand(ctx, commandID)
-	if err != nil || command.State != "pending" || command.ReconciliationRequired || command.Error != "" {
-		t.Fatalf("retried command was not reset safely: %#v err=%v", command, err)
+	if err != nil || command.State != "failed" || !command.ReconciliationRequired || command.Error != "remote API result is uncertain" {
+		t.Fatalf("retired command evidence was changed: %#v err=%v", command, err)
 	}
-	replayed := claimTask(t, store, node)
-	if replayed.ID != commandID || replayed.Attempt != task.Attempt+1 || !replayed.Reconcile {
-		t.Fatalf("command reconciliation did not preserve task identity and attempt history: first=%#v replay=%#v", task, replayed)
+	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential, commandID); err == nil && task != nil {
+		t.Fatal("retired uncertain command was delivered to the Agent")
 	}
 }
 
@@ -257,41 +256,10 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 	}
 	assertReserved("pending cross-Agent")
 
-	first := claimTask(t, store, previousController)
-	if first.ID != command.ID {
-		t.Fatalf("old Agent claimed command %q, want %q", first.ID, command.ID)
-	}
-	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, previousController.ID, previousController.Credential, first.ID, first.Attempt, false, "remote API state is uncertain", nil, true); err != nil {
-		t.Fatal(err)
-	}
-	assertReserved("reconciliation")
-
-	retry, err := store.RetryTaskReconciliation(ctx, command.ID)
-	if err != nil || !retry.Queued || retry.TaskID != command.ID {
-		t.Fatalf("reconciliation retry = %#v, err=%v", retry, err)
-	}
-	replayed := claimTask(t, store, previousController)
-	if replayed.ID != command.ID || replayed.Attempt != first.Attempt+1 || !replayed.Reconcile {
-		t.Fatalf("reconciliation changed task identity or attempt history: first=%#v replay=%#v", first, replayed)
-	}
-	if err := store.CompleteTask(ctx, previousController.ID, previousController.Credential, replayed.ID, replayed.Attempt, false, "remote mutation was compensated", nil, replayed.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-	var state string
-	var reconciliationRequired, reservations int
-	if err := store.db.QueryRowContext(ctx, `SELECT state, reconciliation_required FROM application_commands WHERE id = ?`, command.ID).Scan(&state, &reconciliationRequired); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands
-		WHERE site_id = ? AND display_name = ? COLLATE NOCASE
-		AND kind IN (?, ?) AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, testSiteID(t, store), "🇺🇸 美国｜edge", realityCommandKind, realityRenameCommandKind).Scan(&reservations); err != nil {
-		t.Fatal(err)
-	}
-	if state != "failed" || reconciliationRequired != 0 || reservations != 0 {
-		t.Fatalf("terminal compensation did not release reservation: state=%q reconciliation=%d reservations=%d", state, reconciliationRequired, reservations)
-	}
-	if released, err := create("edge"); err != nil || released.ID == "" || released.ID == command.ID {
-		t.Fatalf("released display name was not reusable by the current Agent: command=%#v err=%v", released, err)
+	assertRetiredProxyCommandChannel(t, store, previousController.ID)
+	assertReserved("retired command retains unresolved history")
+	if _, err := store.RetryTaskReconciliation(ctx, command.ID); err == nil {
+		t.Fatal("retired proxy intent replayed")
 	}
 }
 
@@ -531,18 +499,11 @@ func TestNetworkProfileChangeAndDeploymentCreationRemainConsistent(t *testing.T)
 	}
 }
 
-func TestTaskLongPollWakesWhenACommandIsQueued(t *testing.T) {
+func TestTaskLongPollWakesWhenADeploymentIsQueued(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "long-poll", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
-	siteID := testSiteID(t, store)
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
-		VALUES('long-poll-controller', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, siteID, threeXUIAppKey, now, now); err != nil {
-		t.Fatal(err)
-	}
-	selectTestThreeXUIController(t, store, "long-poll-controller")
 	result := make(chan *AgentTask, 1)
 	errors := make(chan error, 1)
 	go func() {
@@ -554,33 +515,19 @@ func TestTaskLongPollWakesWhenACommandIsQueued(t *testing.T) {
 		result <- task
 	}()
 	time.Sleep(50 * time.Millisecond)
-	tx, err := store.db.BeginTx(ctx, nil)
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
-		t.Fatal(err)
-	}
-	commandID := "application-command-long-poll"
-	input, _ := json.Marshal(ThreeXUIClientCommandTask{Action: "list", Inbounds: []ThreeXUIClientInbound{}})
-	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
-		VALUES(?, 'long-poll-controller', ?, ?, ?, ?, 'pending', ?, ?)`, commandID, node.ID, node.ID, clientCommandKind, input, now, now); err != nil {
-		tx.Rollback()
-		t.Fatal(err)
-	}
-	if err := store.recordTaskEvent(ctx, tx, commandID, node.ID, "application.command", 1, "queued", "test command queued"); err != nil {
-		tx.Rollback()
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case err := <-errors:
 		t.Fatal(err)
 	case task := <-result:
-		if task == nil || task.ID != commandID || task.ClientCommand == nil || task.ClientCommand.Action != "list" {
+		if task == nil || task.ID != deployment.ID || task.Kind != "application.apply" || task.AppKey != cpaAppKey {
 			t.Fatalf("unexpected long-polled task: %#v", task)
 		}
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("queued task did not wake the Agent long poll")
+		t.Fatal("queued deployment did not wake the Agent long poll")
 	}
 }
 

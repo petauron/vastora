@@ -1,10 +1,12 @@
 package center
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/secret"
@@ -123,9 +125,25 @@ func (s *Store) attachPackageSuccessorRecovery(ctx context.Context, tx *sql.Tx, 
 		if installed {
 			return nil
 		}
-	} else if task.Operation != "upgrade" || !semver.IsValid(canonicalAppVersion(previous.Manifest.Version)) || !semver.IsValid(canonicalAppVersion(task.Manifest.Version)) ||
-		semver.Compare(canonicalAppVersion(task.Manifest.Version), canonicalAppVersion(previous.Manifest.Version)) <= 0 {
-		return nil
+	} else {
+		if task.Operation != "upgrade" || !semver.IsValid(canonicalAppVersion(previous.Manifest.Version)) || !semver.IsValid(canonicalAppVersion(task.Manifest.Version)) {
+			return nil
+		}
+		comparison := semver.Compare(canonicalAppVersion(task.Manifest.Version), canonicalAppVersion(previous.Manifest.Version))
+		if comparison < 0 {
+			return nil
+		}
+		// An Agent fix can make the exact abandoned upgrade executable without
+		// a new application release. Bind that recovery to the unchanged recipe,
+		// permissions, inputs and target, as well as the reviewed receipt below.
+		if comparison == 0 && (task.Manifest.Version != previous.Manifest.Version || task.ManifestSHA256 == "" ||
+			task.ManifestSHA256 != previous.ManifestSHA256 || task.PackageRevision != previous.PackageRevision ||
+			task.SourceReceiptSHA256 != previous.SourceReceiptSHA256 || task.Manifest.Runtime.Version != previous.Manifest.Runtime.Version ||
+			!slices.Equal(task.AuthorizedCapabilities, previous.AuthorizedCapabilities) ||
+			!bytes.Equal(task.Config, previous.Config) || !bytes.Equal(task.Secrets, previous.Secrets) ||
+			task.ApplicationRole != previous.ApplicationRole || task.ServiceAddress != previous.ServiceAddress || task.DeleteData != previous.DeleteData) {
+			return nil
+		}
 	}
 	digest, err := controlplane.PackageReceiptDigest(rawReceipt)
 	if err != nil {

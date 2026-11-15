@@ -1,7 +1,6 @@
 package center
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -232,48 +231,21 @@ func completeMeridianAuthorizationEndpoint(t *testing.T, store *Store, endpointI
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	completeMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
+	seedHistoricalMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
 }
 
-func TestMeridianServerSourceOutlivesEachAccountUntilFinalRouteRevocationApplies(t *testing.T) {
-	store, projection, commandID, grantA := openMeridianHealthCompletionFixture(t)
-	completeMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
-	egressID := projection.task.Peers[0].EgressID
-	grantB, err := store.CreateMeridianRouteGrant(context.Background(), MeridianRouteGrantInput{AccountID: sharedSnapshotAccountB, EndpointID: sharedSnapshotEndpointID, EgressNodeID: egressID})
-	if err != nil {
+func TestRetiredMeridianSourceRevocationCannotReplayArchivedRuntime(t *testing.T) {
+	store, projection, commandID, grantID := openMeridianHealthCompletionFixture(t)
+	seedHistoricalMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
+	if err := store.RevokeMeridianRouteGrant(context.Background(), grantID); err != nil {
 		t.Fatal(err)
 	}
-	completeMeridianAuthorizationEndpoint(t, store, sharedSnapshotEndpointID)
-	assertSourceCount := func(want int) {
-		t.Helper()
-		desired, _, _ := readMeridianAuthorizationServer(t, store, egressID)
-		if desired.Plan == nil || len(desired.Plan.Sources) != want {
-			t.Fatalf("desired sources=%#v, want %d", desired.Plan, want)
-		}
+	// Model a pre-handover attempt still in flight against the retained snapshot.
+	// Revocation itself must not be mistaken for a newly dispatched proxy task.
+	if _, err := store.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, commandID); err != nil {
+		t.Fatal(err)
 	}
-	assertSourceCount(1)
-	for index, grantID := range []string{grantA, grantB.ID} {
-		if err := store.RevokeMeridianRouteGrant(context.Background(), grantID); err != nil {
-			t.Fatal(err)
-		}
-		// Revoking still owns the source until the Agent proves the credential
-		// was removed; account B must not lose its shared authorization early.
-		assertSourceCount(1)
-		completeMeridianAuthorizationEndpoint(t, store, sharedSnapshotEndpointID)
-		var status string
-		if err := store.db.QueryRow(`SELECT status FROM meridian_route_grants WHERE id=?`, grantID).Scan(&status); err != nil || status != "revoked" {
-			t.Fatalf("revoke result status=%s err=%v", status, err)
-		}
-		if index == 0 {
-			assertSourceCount(1)
-		} else {
-			assertSourceCount(0)
-		}
-	}
-	_, applied, status := readMeridianAuthorizationServer(t, store, egressID)
-	if applied.Plan == nil || len(applied.Plan.Sources) != 1 || status != "pending" {
-		t.Fatal("source release fabricated a landing-server apply receipt")
-	}
+	assertRetiredProxyCommandChannel(t, store, projection.agentID)
 }
 
 func TestMeridianQuotaDoesNotRevokeSharedTransportAuthorization(t *testing.T) {
@@ -368,9 +340,9 @@ func TestMeridianSamePeerServerReceiptWakesOnlyNewlyAuthorizedEntry(t *testing.T
 	}
 }
 
-func TestMeridianSuccessfulReceiptSurvivesAnotherEntrySourceCleanupFailure(t *testing.T) {
+func TestRetiredMeridianReceiptCannotRewriteSnapshotDuringUnrelatedSourceFailure(t *testing.T) {
 	store, initial, initialCommand, grantID := openMeridianHealthCompletionFixture(t)
-	completeMeridianHealthFixture(t, store, initial, initialCommand, meridianHealthResult(initial, store.now(), true))
+	seedHistoricalMeridianHealthFixture(t, store, initial, initialCommand, meridianHealthResult(initial, store.now(), true))
 	ctx := context.Background()
 	egressID := initial.task.Peers[0].EgressID
 	if err := store.RevokeMeridianRouteGrant(ctx, grantID); err != nil {
@@ -432,55 +404,5 @@ func TestMeridianSuccessfulReceiptSurvivesAnotherEntrySourceCleanupFailure(t *te
 		t.Fatal(err)
 	}
 
-	result := meridianHealthResult(projection, store.now(), true)
-	for _, material := range projection.materials {
-		if material.Credential.AccountID == sharedSnapshotAccountA && material.Credential.Kind == glivela.NativeCredential {
-			result.Stats, err = json.Marshal(map[string]any{"stat": []any{map[string]any{"name": "user>>>" + material.Credential.User + ">>>traffic>>>uplink", "value": 1000}}})
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	completeMeridianHealthFixture(t, store, projection, commandID, result)
-	var commandState string
-	var receiptJSON []byte
-	if err := store.db.QueryRow(`SELECT state,result_json FROM application_commands WHERE id=?`, commandID).Scan(&commandState, &receiptJSON); err != nil {
-		t.Fatal(err)
-	}
-	var receipt glivela.AppliedReceipt
-	if err := json.Unmarshal(receiptJSON, &receipt); err != nil || commandState != "succeeded" || receipt.Revision != projection.task.Desired.Revision || receipt.ConfigSHA256 != projection.task.Desired.ConfigSHA256 {
-		t.Fatalf("derived cleanup rolled back the accepted receipt: state=%s receipt=%#v err=%v", commandState, receipt, err)
-	}
-	var desiredRevision, appliedRevision uint64
-	if err := store.db.QueryRow(`SELECT desired_revision,applied_revision FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID).Scan(&desiredRevision, &appliedRevision); err != nil {
-		t.Fatal(err)
-	}
-	if appliedRevision != projection.task.Desired.Revision || desiredRevision != appliedRevision+1 {
-		t.Fatalf("receipt or quota-boundary rebuild lost: desired=%d applied=%d", desiredRevision, appliedRevision)
-	}
-	var observedBytes uint64
-	if err := store.db.QueryRow(`SELECT observed_bytes FROM meridian_usage_watermarks WHERE credential_id=?`, sharedSnapshotAccountA+"-native").Scan(&observedBytes); err != nil || observedBytes < 1000 {
-		t.Fatalf("accepted usage was rolled back: bytes=%d err=%v", observedBytes, err)
-	}
-	var grantStatus string
-	var enabled, healthy int
-	if err := store.db.QueryRow(`SELECT status,enabled,runtime_healthy FROM meridian_route_grants WHERE id=?`, grantID).Scan(&grantStatus, &enabled, &healthy); err != nil || grantStatus != "revoked" || enabled != 0 || healthy != 0 {
-		t.Fatalf("completed revoke marker was lost: status=%s enabled=%d healthy=%d err=%v", grantStatus, enabled, healthy, err)
-	}
-	var desiredAfter, appliedAfter []byte
-	var lastError string
-	if err := store.db.QueryRow(`SELECT desired_json,applied_json,last_error FROM landing_server_states WHERE node_id=?`, egressID).Scan(&desiredAfter, &appliedAfter, &lastError); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(desiredBefore, desiredAfter) || !bytes.Equal(appliedBefore, appliedAfter) || lastError != landingSourceReconciliationMessage {
-		t.Fatal("failed derived cleanup partially changed the landing plan or lost its safe repair error")
-	}
-	var missingPin []byte
-	if err := store.db.QueryRow(`SELECT source_peer_json FROM meridian_endpoints WHERE id='snapshot-second-endpoint'`).Scan(&missingPin); err != nil || string(missingPin) != "{}" {
-		t.Fatalf("cleanup silently supplied source authority: pin=%s err=%v", missingPin, err)
-	}
-	_, applied, _ := readMeridianAuthorizationServer(t, store, egressID)
-	if applied.Plan == nil || len(applied.Plan.Sources) != 1 || applied.Plan.Sources[0].Address != initial.task.Source.Address {
-		t.Fatal("unvalidated second source obtained landing authorization")
-	}
+	assertRetiredMeridianResultPreservesState(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
 }
