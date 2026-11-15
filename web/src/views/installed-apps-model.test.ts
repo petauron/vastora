@@ -117,8 +117,8 @@ describe("installed application grouping", () => {
     input.publications = [
       publication("node-ready", "reality"),
       publication("panel-failed", "panel", { kind: "cloudflare_tunnel", ingress: { owner: "tunnel_connector", entryNodeId: "connector" }, status: "failed", lastError: "Origin unavailable" }),
-      publication("old", "reality", { status: "stopped" }),
-      publication("cleanup", "panel", { status: "stopped", actionRequired: true }),
+      publication("old", "reality", { status: "stopped", actionRequired: true }),
+      publication("cleanup", "panel", { status: "stopped", actionRequired: true, lastError: "DNS removal failed" }),
     ];
     const instance = installedAppGroups(input)[0].instances[0];
     expect(instance.services).toHaveLength(2);
