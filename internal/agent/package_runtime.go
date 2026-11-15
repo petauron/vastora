@@ -217,7 +217,7 @@ func validatePackageTask(task DeploymentTask) error {
 		if capability == "meridian-runtime" && task.AppKey != meridianKey {
 			return errors.New("agent: Glivela integration capability is reserved for its reviewed package")
 		}
-		if capability == "host-tcp-budget" && (!budgetManifest(task.AppKey, task.Manifest)) {
+		if capability == "host-tcp-budget" && !budgetManifest(task.AppKey, task.Manifest) {
 			return errors.New("agent: host TCP budget is reserved for the reviewed native manager")
 		}
 		if capability == "shared-caddy" && !daylightKey(task.AppKey) {
@@ -501,9 +501,9 @@ func budgetManifest(key string, app catalog.AppManifest) bool {
 		return false
 	}
 	switch app.ID {
-	case "glivela-entry", "glivela-node":
+	case "glivela-entry":
 		return r.Kind == "native"
-	case "glivela-dual":
+	case "glivela-dual", "glivela-node":
 		return r.Kind == "systemd"
 	}
 	return false

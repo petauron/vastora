@@ -11,7 +11,7 @@ func TestTCPBudgetGrantRequiresReviewedManager(t *testing.T) {
 		version                  int
 		want                     bool
 	}{
-		{"vastora-official/glivela-node", "glivela-node", "native", "glivela", 2, true},
+		{"vastora-official/glivela-node", "glivela-node", "systemd", "glivela", 2, true},
 		{"vastora-official/glivela-entry", "glivela-entry", "native", "glivela", 2, true},
 		{"vastora-official/glivela-dual", "glivela-dual", "systemd", "glivela", 2, true},
 		{"untrusted/glivela-node", "glivela-node", "native", "glivela", 2, false},
