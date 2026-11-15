@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.460](https://github.com/petauron/vastora/compare/v0.1.0-alpha.459...v0.1.0-alpha.460) (2026-11-15)
+
+
+### Features
+
+* **agent:** authorize fixed TCP budgets for managed Glivela nodes ([#1313](https://github.com/petauron/vastora/issues/1313)) ([2b53d25](https://github.com/petauron/vastora/commit/2b53d2531673740d865e9b73f926a2c78c59b7d6))
+
 ## [0.1.0-alpha.459](https://github.com/petauron/vastora/compare/v0.1.0-alpha.458...v0.1.0-alpha.459) (2026-11-15)
 
 
