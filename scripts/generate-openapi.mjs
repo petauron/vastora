@@ -677,6 +677,8 @@ for (const route of routes) {
     const [field, type] = { handleListDeployments: ["deployments", "DeploymentView"], handleListApplications: ["applications", "ApplicationView"], handleListAgents: ["agents", "AgentView"] }[route.handler];
     const item = schemaForGoType(type);
     if (type === "ApplicationView") {
+      item.properties.nodeSiteStatus.enum = ["unconfigured", "issuing", "pending", "ready", "action_required", "rolled_back"];
+      item.properties.nodeSiteStatus.description = "Read-only managed website summary. ready requires a running application, matching site ownership, confirmed desired/applied revision and an unexpired certificate. Does not create a publication or probe a node.";
       item.properties.installedPackageRevision.minimum = 0;
       item.properties.availablePackageRevision.minimum = 0;
       item.properties.adoptionState.enum = ["pending", "ready", "blocked"];

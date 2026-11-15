@@ -9,6 +9,7 @@ export function AppInstallationSummary({ group, language, compact = false, byNod
     ["failed", "degraded"].includes(instance.application.status) || instance.activeChange?.reconciliationRequired
     || Boolean(instance.agent && (!instance.agent.connected || instance.agent.credentialRevoked))
     || instance.application.nodeSyncStatus === "failed" || ["pending", "blocked"].includes(instance.application.adoptionState ?? "")
+    || ["unconfigured", "action_required", "rolled_back"].includes(instance.application.nodeSiteStatus ?? "")
     || instance.services.some(serviceNeedsAttention) || instance.publications.some(publicationNeedsAttention);
   const units: InstalledAppGroup["instances"][] = [];
   const hosts = new Map<string, InstalledAppGroup["instances"]>();
