@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.461](https://github.com/petauron/vastora/compare/v0.1.0-alpha.460...v0.1.0-alpha.461) (2026-11-15)
+
+
+### Bug Fixes
+
+* **apps:** exclude inactive legacy ingress alerts ([#1319](https://github.com/petauron/vastora/issues/1319)) ([d649624](https://github.com/petauron/vastora/commit/d6496240c60318ed00badea23a0bc9d86f7fc12f))
+
 ## [0.1.0-alpha.460](https://github.com/petauron/vastora/compare/v0.1.0-alpha.459...v0.1.0-alpha.460) (2026-11-15)
 
 
