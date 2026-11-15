@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.456](https://github.com/petauron/vastora/compare/v0.1.0-alpha.455...v0.1.0-alpha.456) (2026-11-15)
+
+
+### Bug Fixes
+
+* **apps:** count installed program versions only ([#1305](https://github.com/petauron/vastora/issues/1305)) ([7bb876d](https://github.com/petauron/vastora/commit/7bb876de01c910e38a2d4ac4f4d31499d7718a65))
+
 ## [0.1.0-alpha.455](https://github.com/petauron/vastora/compare/v0.1.0-alpha.454...v0.1.0-alpha.455) (2026-11-15)
 
 
