@@ -172,7 +172,7 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
     </TableCell>
     <TableCell className="min-w-0 whitespace-normal">
       <p className="apps-instance-label">{threeXUI ? copy(language, "公网入口", "Public access") : copy(language, "访问入口", "Access")}</p>
-      {hy2Only ? <Badge variant="outline">{copy(language, "HY2 已配置", "HY2 configured")}</Badge> : <AccessStatus language={language} publications={publications} services={services} threeXUI={threeXUI} />}
+      {hy2Only ? <Badge variant="outline">{copy(language, "HY2 已配置", "HY2 configured")}</Badge> : <AccessStatus application={application} nodeConnected={agent?.connected ?? false} language={language} publications={publications} services={services} threeXUI={threeXUI} />}
     </TableCell>
     <TableCell className="apps-instance-full min-w-0 whitespace-normal">
       <div className="flex flex-wrap items-center justify-end gap-2">

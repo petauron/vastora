@@ -133,6 +133,7 @@ type SiteView struct {
 }
 
 type ApplicationView struct {
+	NodeSiteStatus           string     `json:"nodeSiteStatus,omitempty"`
 	ID                       string     `json:"id"`
 	Name                     string     `json:"name"`
 	NodeID                   string     `json:"nodeId"`
