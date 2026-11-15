@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.457](https://github.com/petauron/vastora/compare/v0.1.0-alpha.456...v0.1.0-alpha.457) (2026-11-15)
+
+
+### Bug Fixes
+
+* **apps:** unify Daylight installation management ([#1308](https://github.com/petauron/vastora/issues/1308)) ([c392f7b](https://github.com/petauron/vastora/commit/c392f7b602aba605bf518b453e909cd7f5c7fb71))
+
 ## [0.1.0-alpha.456](https://github.com/petauron/vastora/compare/v0.1.0-alpha.455...v0.1.0-alpha.456) (2026-11-15)
 
 
