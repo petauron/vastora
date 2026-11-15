@@ -30,7 +30,7 @@ export type InstalledAppGroup = {
 };
 
 export function publicationNeedsAttention(publication: Publication) {
-  return Boolean(publication.actionRequired || publication.lastError || publication.status === "failed" || publication.status === "degraded");
+  return Boolean(publication.lastError || publication.status !== "stopped" && (publication.actionRequired || publication.status === "failed" || publication.status === "degraded"));
 }
 
 export function serviceNeedsAttention(service: Service) {
@@ -70,7 +70,7 @@ export function installedAppGroups(data: Pick<AppData, "applications" | "apps" |
   const agents = new Map(data.agents.map((agent) => [agent.id, agent]));
   const sites = new Map(data.sites.map((site) => [site.id, site]));
   const servicesByApplication = indexBy(data.services.filter((service) => service.status !== "stopped"), (service) => service.applicationId);
-  const publicationsByService = indexBy(data.publications.filter((publication) => publication.status !== "stopped" || publication.actionRequired), (publication) => publication.serviceId);
+  const publicationsByService = indexBy(data.publications.filter((publication) => publication.status !== "stopped" || publicationNeedsAttention(publication)), (publication) => publication.serviceId);
   const deploymentsByApplication = indexBy(data.deployments.filter((deployment) => Boolean(deployment.applicationId)), (deployment) => deployment.applicationId!);
   const instances = new Map<string, InstalledAppInstance>();
 
