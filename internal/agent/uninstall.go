@@ -51,7 +51,7 @@ func PurgeManagedRuntime(ctx context.Context, packageStateDirectory string, dele
 	}
 	steps = append(steps,
 		runtimeCleanupStep{"tunnel", func(ctx context.Context) error {
-			return (DockerTunnelProvisioner{}).Apply(ctx, TunnelDesiredState{Revision: 1, Status: "stopped"})
+			return (DockerTunnelProvisioner{StateDirectory: packageStateDirectory}).Apply(ctx, TunnelDesiredState{Revision: 1, Status: "stopped"})
 		}},
 		runtimeCleanupStep{"gateway", (ManagedGatewayProvisioner{Caddy: DockerGatewayProvisioner{}, Layer4: DockerLayer4Provisioner{}}).Remove},
 		runtimeCleanupStep{"layer4", (DockerLayer4Provisioner{}).Remove},

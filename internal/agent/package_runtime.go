@@ -22,6 +22,7 @@ import (
 // InstanceResources is durable ownership evidence, not a deployment recipe.
 // It deliberately contains no configuration values or credential contents.
 type InstanceResources struct {
+	CPAIngress             *cpaIngress       `json:"cpaIngress,omitempty"`
 	IntegrationState       string            `json:"integrationState,omitempty"`
 	Version                int               `json:"version"`
 	ApplicationID          string            `json:"applicationId"`
@@ -211,11 +212,14 @@ func validatePackageTask(task DeploymentTask) error {
 		return errors.New("agent: unsupported package executor protocol")
 	}
 	for _, capability := range runtime.RequiredCapabilities {
-		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy", "host-tcp-budget"}, capability) {
+		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy", "host-tcp-budget", "cpa-tunnel-identity"}, capability) {
 			return errors.New("agent: unsupported runtime capability")
 		}
 		if capability == "meridian-runtime" && task.AppKey != meridianKey {
 			return errors.New("agent: Glivela integration capability is reserved for its reviewed package")
+		}
+		if capability == "cpa-tunnel-identity" && task.AppKey != cpaKey && task.AppKey != keeperKey {
+			return errors.New("agent: CPA ingress capability is reserved for reviewed CPA and Keeper packages")
 		}
 		if capability == "host-tcp-budget" && !budgetManifest(task.AppKey, task.Manifest) {
 			return errors.New("agent: host TCP budget is reserved for the reviewed native manager")
