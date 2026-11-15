@@ -535,12 +535,31 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 		return err
 	}
 	if status == "stopped" {
-		return errors.New("center: publication is already stopped")
+		// Reconcile only a fully retired website entry. A ready, caught-up
+		// gateway and the absence of routes/external resources prove that
+		// clearing its stale attention flag cannot change the data plane.
+		result, err := tx.ExecContext(ctx, `UPDATE publications SET action_required=0, updated_at=?
+			WHERE id=? AND status='stopped' AND kind='public_direct' AND ingress_owner='site_gateway'
+			AND cleanup_pending=0 AND dns_record_id='' AND access_application_id='' AND last_error=''
+			AND NOT EXISTS(SELECT 1 FROM routes WHERE publication_id=publications.id)
+			AND EXISTS(SELECT 1 FROM gateway_states g WHERE g.gateway_node_id=publications.entry_node_id
+				AND g.status='ready' AND g.desired_revision=g.applied_revision AND g.last_error='')`, s.now().UTC().Format(time.RFC3339Nano), id)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return errors.New("center: stopped entry still needs resource or gateway reconciliation")
+		}
+		return tx.Commit()
 	}
 	now := s.now().UTC()
 	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1,
 		cleanup_pending = CASE WHEN dns_record_id <> '' OR access_application_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
-		cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), id); err != nil {
+		cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', action_required = 0, updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), id); err != nil {
 		return err
 	}
 	if err := s.retireMigratedTunnelConnector(ctx, tx, id, now); err != nil {
