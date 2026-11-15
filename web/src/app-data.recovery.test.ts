@@ -67,7 +67,7 @@ describe("activity data failure isolation", () => {
     const data = { ...emptyAppData(status), ...await loadScreenData("activity") };
     expect(data.desktopDataUnavailable).toBe(true);
     expect(desktopApplications(data, "en")).toEqual([]);
-    expect(applicationLaunchURL(data, "vastora-official/pulse")).toBeUndefined();
+    expect(applicationLaunchURL(data, "vastora-official/senlun")).toBeUndefined();
 
     const refreshed = { ...data, ...await loadScreenData("activity") };
     expect(refreshed.desktopDataUnavailable).toBe(false);

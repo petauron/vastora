@@ -56,12 +56,20 @@ require_line "$ci_workflow" "if: github.event_name != 'pull_request' || needs.ch
 # Version policy is exercised with a fake Go command, never a network/build.
 policy_dir="$(mktemp -d)"
 trap 'rm -rf "$policy_dir"' EXIT HUP INT TERM
-mkdir "$policy_dir/bin"
+mkdir -p "$policy_dir/bin" "$policy_dir/internal/center"
 cat > "$policy_dir/bin/go" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >> "$CI_GO_LOG"
 case "$*" in
-  *-list*) printf 'TestOne\nTestTwo\nExampleOne\nFuzzOne\n' ;;
+  *' -c '*)
+    while [ "$1" != -o ]; do shift; done
+    shift
+    cat > "$1" <<'BINARY'
+#!/bin/sh
+printf '%s\n' "$*" >> "$CI_GO_LOG"
+case "$*" in *-test.list*) printf 'TestOne\nTestTwo\nExampleOne\nFuzzOne\n' ;; esac
+BINARY
+    chmod +x "$1" ;;
   list*) printf 'github.com/petauron/vastora/internal/center\ngithub.com/petauron/vastora/internal/agent\n' ;;
 esac
 EOF
@@ -78,7 +86,7 @@ for version in 0.1.0-alpha.317 0.1.0-alpha 0.1.0-beta.1 0.1.0; do
     *)
       grep -Fq -- 'test -race' "$policy_dir/go.log" ;;
   esac
-  grep -Fq 'internal/center -run' "$policy_dir/go.log"
+  grep -Fq -- '-test.run' "$policy_dir/go.log"
   grep -Fq 'internal/agent' "$policy_dir/go.log"
 done
 
@@ -110,7 +118,13 @@ for suite in center packages; do
 done
 ci_backend="$(printf '%s\n' 'internal/center/server.go' | "$classifier" --files ci)"
 printf '%s\n' "$ci_backend" | grep -Fxq 'go=true'
-printf '%s\n' "$ci_backend" | grep -Fxq 'integration=false'
+printf '%s\n' "$ci_backend" | grep -Fxq 'integration=true'
+for path in internal/center/agent_removal.go internal/center/business_handover.go internal/center/migrations/00124_completed_node_removals.sql cmd/vastora/node_lifecycle_integration_test.go; do
+  classified="$(printf '%s\n' "$path" | "$classifier" --files ci)"
+  printf '%s\n' "$classified" | grep -Fxq 'integration=true'
+done
+require_line "$ci_workflow" '          VASTORA_NODE_LIFECYCLE_INTEGRATION: "1"'
+require_line "$ci_workflow" "        run: go test ./cmd/vastora -run '^TestCenterTwoAgentsLifecycle$' -count=1 -timeout=4m -v"
 ci_host="$(printf '%s\n' 'internal/agent/host.go' | "$classifier" --files ci)"
 printf '%s\n' "$ci_host" | grep -Fxq 'integration=true'
 ci_release="$(printf '%s\n' 'version.txt' | "$classifier" --files ci)"
@@ -242,18 +256,21 @@ if grep -Fq 'target=/go/pkg/mod' "$center_dockerfile"; then
   echo 'Center image dependency downloads must live in an exportable layer, not an unexported cache mount.' >&2
   exit 1
 fi
-# Only the integration job warms compiled caches on main; dependency downloads
-# retain their existing path-filtered workflow. Never run the whole PR matrix.
-require_line "$ci_workflow" '    branches: [main]'
-require_line "$ci_workflow" "      - 'deploy/landing/Dockerfile'"
-require_line "$ci_workflow" "      - '.github/workflows/ci.yml'"
-for job in go-tests go-packages go-quality go-build web deployment security composite-runtime; do
-  condition="$(sed -n "/^  $job:/,/^    needs:/p" "$ci_workflow" | grep '^    if:')"
-  if printf '%s\n' "$condition" | grep -Fq "github.event_name == 'push'"; then
-    echo "$job must not duplicate PR checks on main pushes." >&2
-    exit 1
-  fi
-done
+# Main only compiles cache inputs. PR/manual/scheduled CI retains real tests.
+build_cache_workflow="$project_dir/.github/workflows/build-cache.yml"
+require_line "$build_cache_workflow" '    branches: [main]'
+require_line "$build_cache_workflow" "      - '.github/workflows/build-cache.yml'"
+require_line "$build_cache_workflow" '    name: Warm compiled packages (no tests)'
+require_line "$build_cache_workflow" 'go test -c -tags=integration'
+require_line "$codeql_workflow" '  push:'
+if grep -Fq '  push:' "$ci_workflow"; then
+  echo 'Main pushes must not repeat integration tests for cache warming.' >&2
+  exit 1
+fi
+if grep -E 'sudo | -test\.|go test ' "$build_cache_workflow" | grep -v 'go test -c '; then
+  echo 'Build cache workflow must compile without executing tests.' >&2
+  exit 1
+fi
 for workflow in "$ci_workflow" "$codeql_workflow" "$cache_workflow"; do
   if ! grep -Fq 'timeout-minutes:' "$workflow"; then
     echo "$workflow has no job timeouts." >&2

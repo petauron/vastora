@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -28,8 +27,8 @@ func monitorRotationFixture(t *testing.T) (*Store, AgentCredential, AgentCredent
 	if err != nil || task == nil {
 		t.Fatalf("inspection: %v", err)
 	}
-	if response := submitMonitorInspection(t, s, service, task, successfulInspectionJSON(), true); response.Code != http.StatusOK {
-		t.Fatalf("inspection: %s", response.Body.String())
+	if response := submitMonitorInspection(t, s, service, task, successfulInspectionJSON(), true); response != nil {
+		t.Fatalf("inspection: %v", response)
 	}
 	plan, err := s.AgentReinstallPlan(context.Background(), collector.ID)
 	if err != nil {
@@ -61,8 +60,8 @@ func TestAgentReinstallMonitorRotationKeepsOriginalIdentityAndSealsSecret(t *tes
 	if task.SenulunRotation.NodeID != "11111111-1111-4111-8111-111111111111" || len(task.SenulunRotation.Inspection.EnrollmentIDs) != 1 {
 		t.Fatal("original node lost")
 	}
-	if response := submitMonitorInspection(t, s, service, task, successfulMonitorRotationJSON(), true); response.Code != http.StatusOK {
-		t.Fatalf("rotation result: %s", response.Body.String())
+	if response := submitMonitorInspection(t, s, service, task, successfulMonitorRotationJSON(), true); response != nil {
+		t.Fatalf("rotation result: %v", response)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, collector.ID)
 	if err != nil {
@@ -269,10 +268,10 @@ func TestAgentReinstallMonitorRotationNeverReplaysFailedOrUnknownWrites(t *testi
 					raw = bytes.ReplaceAll(raw, []byte("test-rotated-credential-never-publish"), []byte("short"))
 				}
 				response := submitMonitorInspection(t, s, service, task, raw, mode != "failed")
-				if mode == "failed" && response.Code != http.StatusOK {
-					t.Fatalf("failed result: %s", response.Body.String())
+				if mode == "failed" && response != nil {
+					t.Fatalf("failed result: %v", response)
 				}
-				if mode != "failed" && response.Code == http.StatusOK {
+				if mode != "failed" && response == nil {
 					t.Fatal("invalid result accepted")
 				}
 			}

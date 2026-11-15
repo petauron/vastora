@@ -386,3 +386,65 @@ func TestManagedUpgradeDormantMeridianRequiresAdoptionAndOnlyStagesImage(t *test
 		t.Fatal("staged package identity was not retained")
 	}
 }
+
+func TestCatalogRuntimeRenamedInstanceRetainsDeploymentHistory(t *testing.T) {
+	store, node, app := independentRuntimeStore(t)
+	ctx := context.Background()
+	app.Config = []catalog.ConfigField{
+		{Key: "setting", Type: "string", Label: catalog.LocalizedText{English: "Setting", SimplifiedChinese: "设置"}, Description: catalog.LocalizedText{English: "Setting", SimplifiedChinese: "设置"}},
+		{Key: "token", Type: "string", Secret: true, Label: catalog.LocalizedText{English: "Token", SimplifiedChinese: "令牌"}, Description: catalog.LocalizedText{English: "Token", SimplifiedChinese: "令牌"}},
+	}
+	app.PackageRevision = 2
+	seedIndependentPackage(t, store, app)
+	oldKey := OfficialCatalogSourceID + "/" + app.ID
+	_, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: oldKey, Config: json.RawMessage(`{"setting":"retained","token":"synthetic-secret"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	confirmIndependentTask(t, store, node, task)
+	var originalManifest []byte
+	if err = store.db.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id=?`, task.ID).Scan(&originalManifest); err != nil {
+		t.Fatal(err)
+	}
+
+	app.ID = "renamed-app"
+	app.PackageRevision = 3
+	seedIndependentPackage(t, store, app)
+	newKey := OfficialCatalogSourceID + "/" + app.ID
+	if _, err = store.db.ExecContext(ctx, `UPDATE applications SET app_key=? WHERE id=?`, newKey, task.ApplicationID); err != nil {
+		t.Fatal(err)
+	}
+	active, err := store.activeDeployment(ctx, node.ID, newKey)
+	if err != nil || !active.Installed || active.ID != task.ID || active.PackageRevision != 2 {
+		t.Fatalf("renamed instance lost its installed deployment: %+v, %v", active, err)
+	}
+	apps, err := store.ListApplications(ctx)
+	if err != nil || len(apps) != 1 || apps[0].ID != task.ApplicationID || !apps[0].UpdateAvailable || apps[0].InstalledPackageRevision != 2 || apps[0].AvailablePackageRevision != 3 {
+		t.Fatalf("renamed instance lost upgrade state: %+v, %v", apps, err)
+	}
+	if _, err = store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: newKey, Operation: "configure", Config: json.RawMessage(`{"unused":true}`)}); err == nil || !strings.Contains(err.Error(), "upgrade the renamed application") {
+		t.Fatalf("old manifest was accepted for a renamed application: %v", err)
+	}
+	upgrade, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: newKey, Operation: "upgrade", Config: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var savedConfig []byte
+	var secretID string
+	if err = store.db.QueryRowContext(ctx, `SELECT config_json,secret_id FROM deployments WHERE id=?`, upgrade.ID).Scan(&savedConfig, &secretID); err != nil {
+		t.Fatal(err)
+	}
+	savedSecret, err := store.getSecret(ctx, secretID, "deployment:"+upgrade.ID)
+	if err != nil || string(savedConfig) != `{"setting":"retained"}` || string(savedSecret) != `{"token":"synthetic-secret"}` {
+		t.Fatal("renamed instance lost its prior settings or encrypted secret")
+	}
+	var historicalKey string
+	var historicalManifest []byte
+	if err = store.db.QueryRowContext(ctx, `SELECT app_key,manifest_json FROM deployments WHERE id=?`, task.ID).Scan(&historicalKey, &historicalManifest); err != nil {
+		t.Fatal(err)
+	}
+	if historicalKey != oldKey || string(historicalManifest) != string(originalManifest) {
+		t.Fatal("renaming rewrote historical deployment evidence")
+	}
+}

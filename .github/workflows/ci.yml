@@ -3,20 +3,6 @@ name: CI
 on:
   workflow_dispatch:
   pull_request:
-  # Populate trusted default-branch build caches for subsequent PRs. Only the
-  # integration job runs on these pushes, not the complete PR test matrix.
-  push:
-    branches: [main]
-    paths:
-      - 'cmd/**'
-      - 'internal/**'
-      - 'go.mod'
-      - 'go.sum'
-      - 'deploy/landing/Dockerfile'
-      - 'scripts/build-landing-dante.sh'
-      - 'scripts/install-landing-build-deps.sh'
-      - '.github/actions/setup-go-cached/action.yml'
-      - '.github/workflows/ci.yml'
   schedule:
     - cron: "41 3 * * 1"
 
@@ -43,12 +29,12 @@ jobs:
       release_metadata: ${{ steps.filter.outputs.release_metadata }}
       full: ${{ steps.filter.outputs.full }}
     steps:
-      - if: github.event_name == 'pull_request' || github.event_name == 'push'
+      - if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - id: filter
-        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -134,6 +120,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-go-cached
+      - name: Cache Staticcheck analysis
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/staticcheck
+          key: staticcheck-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum', 'Makefile') }}-${{ github.sha }}
+          restore-keys: |
+            staticcheck-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum', 'Makefile') }}-
       - run: make go-format-check go-static-check
       - name: Check Go dependency vulnerabilities
         if: github.event_name != 'pull_request' || needs.changes.outputs.dependencies == 'true' || needs.changes.outputs.full == 'true'
@@ -141,7 +134,7 @@ jobs:
 
   integration:
     name: Host and network integration
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event_name == 'push' || needs.changes.outputs.integration == 'true' || needs.changes.outputs.full == 'true'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.integration == 'true' || needs.changes.outputs.full == 'true'
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -198,11 +191,16 @@ jobs:
           VASTORA_LANDING_XRAY_IMAGE=$(jq -er '.apps[] | select(.id == "meridian") | .images[] | select(.name == "xray-core") | .reference' internal/center/testdata/reviewed-catalog-v4.json)
           export VASTORA_LANDING_XRAY_IMAGE
           docker pull "$VASTORA_LANDING_XRAY_IMAGE"
-          go test -tags=integration ./internal/landing -run '^TestLandingRoutesAcceptedByCatalogXray$' -count=1
+          sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" VASTORA_PACKAGE_HOST_INTEGRATION=1 VASTORA_LANDING_XRAY_IMAGE="$VASTORA_LANDING_XRAY_IMAGE" "$RUNNER_TEMP/package-systemd.test" -test.run '^TestSenlunVolumeTransferRealDocker$' -test.count=1 -test.v
+          (cd internal/landing && "$RUNNER_TEMP/landing.test" -test.run '^TestLandingRoutesAcceptedByCatalogXray$' -test.count=1)
       - name: Validate generated Headscale config with pinned binary
         env:
           VASTORA_HEADSCALE_CONFIG_INTEGRATION: "1"
         run: go test ./internal/deployer -run '^TestGeneratedHeadscaleConfigAcceptedByPinnedBinary$' -count=1
+      - name: Verify Center and two real Agent processes
+        env:
+          VASTORA_NODE_LIFECYCLE_INTEGRATION: "1"
+        run: go test ./cmd/vastora -run '^TestCenterTwoAgentsLifecycle$' -count=1 -timeout=4m -v
       - name: Verify Agent decommission on real systemd
         run: |
           go test -c -o /tmp/vastora-systemd-decommission.test ./cmd/vastora

@@ -3,7 +3,6 @@ package center
 import (
 	"context"
 	"encoding/json"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,7 +71,7 @@ func TestLandingOnlyLinuxLifecycle(t *testing.T) {
 	}
 	Version = "0.1.0-940lab.1"
 	publish("/opt/vastora940/v1")
-	server := httptest.NewServer(NewServer(store, "", false).WithAgentBinaries(distribution).Handler())
+	server := grpcTestHTTPServer(NewServer(store, "", false).WithAgentBinaries(distribution).Handler())
 	defer server.Close()
 	password, err := randomToken(32)
 	if err != nil {

@@ -1,13 +1,13 @@
-# Glivela and Senulun brand migration
+# Glivela and Senlun brand migration
 
-Meridian is now **Glivela**; Pulse is now **Senulun**. Vastora is unchanged.
+Meridian is now **Glivela**; Pulse is now **Senlun**. Vastora is unchanged.
 This migration changes product labels, not installed application identity.
 
 | Product | Permanent application key | State retained |
 | --- | --- | --- |
 | Glivela | `vastora-official/meridian` | Accounts, subscriptions, quotas, routes, credentials and runtime receipts |
-| Senulun | `vastora-official/pulse` | Dashboard, settings, users, monitoring history and volumes |
-| Senulun Agent | `vastora-official/pulse-agent` | Node identity, enrollment credentials and owned host resources |
+| Senlun | `vastora-official/pulse` | Dashboard, settings, users, monitoring history and volumes |
+| Senlun Agent | `vastora-official/pulse-agent` | Node identity, enrollment credentials and owned host resources |
 
 Keep database table/JSON names, API routes, environment variables,
 executables, units, persisted paths and signed asset names as stable technical
@@ -21,20 +21,20 @@ service names, tasks, configuration, subscriptions, runtime generations and
 catalog trust remain untouched. The existing migration runner backs up before
 applying migrations, fails closed and does not support database downgrade.
 
-The Senulun service has its own backed-up, forward-only default-site-name
+The Senlun service has its own backed-up, forward-only default-site-name
 migration. The catalog updates display metadata using a new package revision;
 it does not change resource names, artifact coordinates or hashes. Changing a
 catalog entry's label does not install, enroll, restart or upgrade an instance.
 
 ## Review and rollout order
 
-1. Review the Glivela, Senulun, Vastora and catalog PRs together. PR creation is
+1. Review the Glivela, Senlun, Vastora and catalog PRs together. PR creation is
    not a production migration. Canonical repositories are `petauron/glivela` and
    `petauron/senulun`; update source consumers and local Git remotes together.
 2. Merge approved source PRs and use their Release Please version PRs and real
    CI on the exact immutable commits. Do not manually bump versions or tags.
 3. Before catalog publication, separately update the Glivela UI source pin and
-   UI version to the new checked release. Publish Senulun through the existing
+   UI version to the new checked release. Publish Senlun through the existing
    verified release-source flow. Never replace assets at an old version.
 4. Obtain explicit authorization for protected catalog signing/publication and
    for managed upgrades. Program release, catalog publication and instance
@@ -51,7 +51,7 @@ fallback or parallel implementation. A pinned pseudo-version permits this
 dependency change without publishing a Glivela version solely for the rename.
 Historical tags retain their original module declarations and must not move.
 
-The catalog's future Senulun source and image registry are `petauron/senulun`
+The catalog's future Senlun source and image registry are `petauron/senulun`
 and `ghcr.io/petauron/senulun`. New attestations must bind that exact repository.
 Old published images, native archive names, catalog fixtures, signatures and
 accepted release coordinates remain immutable. The Glivela UI source checkout

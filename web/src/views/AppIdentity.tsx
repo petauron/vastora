@@ -10,7 +10,7 @@ import { copy, HighPrivilegeBadge } from "./shared";
 export function isOfficialProduct(app: AppView) {
   return app.sourceId === "vastora-official"
     && app.key === `vastora-official/${app.app.id}`
-    && (app.app.id === "pulse" || app.app.id === "pulse-agent");
+    && (app.app.id === "senlun" || app.app.id === "senlun-agent");
 }
 
 export function AppIdentityBadge({ app, language }: { app: AppView; language: Language }) {

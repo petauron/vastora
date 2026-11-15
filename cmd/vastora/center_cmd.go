@@ -22,6 +22,42 @@ func runCenter(arguments []string) error {
 		return errors.New("center command is required")
 	}
 	switch arguments[0] {
+	case "purge-superseded-glivela-history":
+		return runCenterSupersededHistoryPurge(arguments[1:])
+	case "purge-removed-landing-history", "purge-removed-entry-history":
+		flags := flag.NewFlagSet("center purge-removed-landing-history", flag.ContinueOnError)
+		dataDir := flags.String("data-dir", "", "Center state directory")
+		nodeID := flags.String("node-id", "", "exact permanently removed landing identity")
+		confirmation := flags.String("confirm-name", "", "exact retained node name")
+		confirmed := flags.Bool("confirm-glivela-retired", false, "confirm independent Glivela identity and routes have already been permanently retired")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if *dataDir == "" || *nodeID == "" || *confirmation == "" || !*confirmed || flags.NArg() != 0 {
+			return errors.New("data directory, node ID, exact name and Glivela retirement confirmation are required")
+		}
+		store, err := center.Open(*dataDir)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		var purgeErr error
+		if arguments[0] == "purge-removed-entry-history" {
+			purgeErr = store.PurgeRemovedEntryHistory(context.Background(), *nodeID, *confirmation, *confirmed)
+		} else {
+			purgeErr = store.PurgeRemovedLandingHistory(context.Background(), *nodeID, *confirmation, *confirmed)
+		}
+		if purgeErr != nil {
+			return purgeErr
+		}
+		fmt.Println("Removed landing history and unshared credentials purged; no remote host contacted")
+		return nil
+	case "retire-glivela-execution":
+		return runCenterExecutionRetirement(arguments[1:])
+	case "authorize-gateway-promotion":
+		return runCenterGatewayPromotion(arguments[1:])
+	case "check-grpc-cutover":
+		return runCenterGRPCCutoverCheck(arguments[1:])
 	case "capabilities":
 		if len(arguments) != 1 {
 			return errors.New("center capabilities does not accept arguments")
@@ -118,6 +154,7 @@ func runCenter(arguments []string) error {
 		flags.SetOutput(os.Stderr)
 		dataDir := flags.String("data-dir", "", "Center state directory")
 		listen := flags.String("listen", "127.0.0.1:8080", "listen address")
+		grpcListen := flags.String("agent-grpc-listen", "127.0.0.1:8089", "private Agent gRPC listener")
 		webDir := flags.String("web-dir", "web/dist", "compiled React web directory")
 		officialCatalogOrigin := flags.String("official-catalog-origin", catalog.OfficialOrigin, "official TUF metadata HTTPS origin")
 		officialCatalogRoot := flags.String("official-catalog-root", "", "independently provisioned official TUF root metadata file")
@@ -172,6 +209,11 @@ func runCenter(arguments []string) error {
 		if *tlsCert == "" && !loopbackAddress(*listen) && !*allowContainerHTTP {
 			return errors.New("refusing a non-loopback HTTP listener; provide TLS certificate and key")
 		}
+		// This plaintext listener is restricted to loopback or the explicitly
+		// enabled official container bridge; remote Agents use TLS at the gateway.
+		if !loopbackAddress(*grpcListen) && !*allowContainerHTTP {
+			return errors.New("refusing a non-loopback Agent gRPC listener outside the container bridge")
+		}
 		var catalogRoot []byte
 		if *officialCatalogRoot != "" {
 			var err error
@@ -204,29 +246,24 @@ func runCenter(arguments []string) error {
 		if err := store.UseHostNetworkAddresses(*hostNetworkAddresses); err != nil {
 			return err
 		}
+		if err := store.RequireBusinessHandover(context.Background()); err != nil {
+			return err
+		}
 		maintenanceContext, stopMaintenance := context.WithCancel(context.Background())
 		defer stopMaintenance()
 		if err := store.StartPublicationVerifications(maintenanceContext); err != nil {
 			return fmt.Errorf("resume public entry verification: %w", err)
 		}
+		go store.RunManagedDomains(maintenanceContext, func(err error) {
+			fmt.Fprintf(os.Stderr, "Center managed DNS: %v\n", err)
+		})
 		go store.RunAgentRemovals(maintenanceContext, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center node removal: %v\n", err)
-		})
-		go store.RunRouteHealthDiagnostics(maintenanceContext, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center route health diagnostics: %v\n", err)
-		})
-		go store.RunGlivelaPilotReceipts(maintenanceContext, func(err error) {
-			fmt.Fprintln(os.Stderr, "Center Glivela pilot receipt not confirmed; existing lease checks retained")
 		})
 		go store.RunCertificateRenewal(maintenanceContext, 12*time.Hour, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center private HTTPS renewal: %v\n", err)
 		})
-		go store.RunRealityNameReconciliation(maintenanceContext, time.Minute, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center REALITY name reconciliation: %v\n", err)
-		})
-		go store.RunRealityGuardRecovery(maintenanceContext, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center REALITY guard revalidation: %v\n", err)
-		})
+
 		go store.RunThreeXUIInboundPlanResets(maintenanceContext, time.Minute, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center REALITY traffic plan reset: %v\n", err)
 		})
@@ -263,11 +300,28 @@ func runCenter(arguments []string) error {
 				}
 			}()
 		}
-		go centerServer.RunAgentUpdateRollout(maintenanceContext, 5*time.Second, func(err error) {
-			fmt.Fprintf(os.Stderr, "Center Agent update rollout: %v\n", err)
-		})
+
 		handler := centerServer.Handler()
 		server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+		// Keep h2c on a separate private listener. The ordinary web listener
+		// never enables unencrypted HTTP/2; its existing TLS handling is unchanged.
+		privateListener, err := net.Listen("tcp", *grpcListen)
+		if err != nil {
+			return fmt.Errorf("listen for private Agent gRPC: %w", err)
+		}
+		protocols := new(http.Protocols)
+		protocols.SetHTTP1(true)
+		protocols.SetUnencryptedHTTP2(true)
+		privateServer := &http.Server{Handler: handler, Protocols: protocols,
+			HTTP2: &http.HTTP2Config{MaxConcurrentStreams: 32}, ReadHeaderTimeout: 5 * time.Second}
+		defer privateServer.Close()
+		privateError := make(chan error, 1)
+		go func() {
+			if err := privateServer.Serve(privateListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				privateError <- err
+				_ = server.Close()
+			}
+		}()
 		fmt.Printf("Center listening on %s\n", *listen)
 		if *tlsCert != "" {
 			err = server.ListenAndServeTLS(*tlsCert, *tlsKey)
@@ -275,7 +329,12 @@ func runCenter(arguments []string) error {
 			err = server.ListenAndServe()
 		}
 		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+			select {
+			case privateErr := <-privateError:
+				return fmt.Errorf("serve private Agent gRPC: %w", privateErr)
+			default:
+				return nil
+			}
 		}
 		return err
 	case "backup":

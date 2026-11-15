@@ -58,7 +58,7 @@ Balanced negative space, clear at small sizes.
 | settings | 控制面板 | 灰色齿轮、浅色内环 |
 | activity | 活动 | 橙色时间线、灰色事件行 |
 | meridian | Glivela（名称取自应用目录） | 天蓝色罗盘、简化方向针；与应用商店统一 #1CA4FC 单一主体色，保留白色方向针，使用浅蓝底板 |
-| senulun | Senulun | 深绿监控面板、绿色波形 |
+| senulun | Senlun | 深绿监控面板、绿色波形 |
 | probe | 探针 | 蓝色半圆仪表与单针 |
 | cpa | CPA | 蓝青连接环 |
 | keeper | CPA Usage Keeper | 蓝、青、橙三根柱形 |

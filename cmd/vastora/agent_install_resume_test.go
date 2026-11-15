@@ -13,7 +13,7 @@ import (
 )
 
 func TestSystemdAgentInstallResumesEveryHostPhaseAfterRestart(t *testing.T) {
-	for _, failurePoint := range []string{"write", "rename", "daemon-reload", "enable", "start", "verify"} {
+	for _, failurePoint := range []string{"write", "rename", "reload", "enable", "start", "verify"} {
 		t.Run(failurePoint, func(t *testing.T) {
 			directory := t.TempDir()
 			store, err := agent.Open(filepath.Join(directory, "data"))
@@ -31,7 +31,7 @@ func TestSystemdAgentInstallResumesEveryHostPhaseAfterRestart(t *testing.T) {
 			}
 			unitPath := filepath.Join(directory, "vastora-agent.service")
 			failed := false
-			environment := agentSystemdInstallEnvironment{
+			environment := agentServiceInstallEnvironment{
 				unitPath: unitPath,
 				readFile: os.ReadFile,
 				writeFile: func(path string, content []byte, mode os.FileMode) error {
@@ -48,7 +48,7 @@ func TestSystemdAgentInstallResumesEveryHostPhaseAfterRestart(t *testing.T) {
 					}
 					return os.Rename(oldPath, newPath)
 				},
-				runSystemctl: func(arguments ...string) ([]byte, error) {
+				runService: func(arguments ...string) ([]byte, error) {
 					action := strings.Join(arguments, " ")
 					if strings.HasPrefix(action, failurePoint) && !failed {
 						failed = true
@@ -64,7 +64,7 @@ func TestSystemdAgentInstallResumesEveryHostPhaseAfterRestart(t *testing.T) {
 					return nil
 				},
 			}
-			if err := resumeSystemdAgentInstall(context.Background(), store, "/usr/local/bin/vastora", filepath.Join(directory, "data"), "worker", "docker", false, environment); err == nil {
+			if err := resumeAgentServiceInstall(context.Background(), store, "/usr/local/bin/vastora", filepath.Join(directory, "data"), "worker", "docker", false, environment); err == nil {
 				t.Fatalf("%s failure was not reported", failurePoint)
 			}
 			if !failed {
@@ -78,7 +78,7 @@ func TestSystemdAgentInstallResumesEveryHostPhaseAfterRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			if err := resumeSystemdAgentInstall(context.Background(), store, "/usr/local/bin/vastora", filepath.Join(directory, "data"), "worker", "docker", false, environment); err != nil {
+			if err := resumeAgentServiceInstall(context.Background(), store, "/usr/local/bin/vastora", filepath.Join(directory, "data"), "worker", "docker", false, environment); err != nil {
 				t.Fatal(err)
 			}
 			if _, exists, err := store.InstallOperation(context.Background()); err != nil || exists {
@@ -109,15 +109,15 @@ func TestReplacementSystemdInstallWaitsForHostSwitchCommit(t *testing.T) {
 	if err := store.CompleteEnrollmentOperation(context.Background(), operation, agent.Enrollment{ID: "new", Name: "new", Credential: "new-credential", Roles: []string{"worker"}, Capabilities: agent.Capabilities{Docker: true}}); err != nil {
 		t.Fatal(err)
 	}
-	environment := agentSystemdInstallEnvironment{
-		unitPath:     filepath.Join(directory, "vastora-agent.service"),
-		readFile:     os.ReadFile,
-		writeFile:    os.WriteFile,
-		rename:       os.Rename,
-		runSystemctl: func(...string) ([]byte, error) { return nil, nil },
-		verify:       func(context.Context, *agent.Store, string, string) error { return nil },
+	environment := agentServiceInstallEnvironment{
+		unitPath:   filepath.Join(directory, "vastora-agent.service"),
+		readFile:   os.ReadFile,
+		writeFile:  os.WriteFile,
+		rename:     os.Rename,
+		runService: func(...string) ([]byte, error) { return nil, nil },
+		verify:     func(context.Context, *agent.Store, string, string) error { return nil },
 	}
-	if err := resumeSystemdAgentInstall(context.Background(), store, "/usr/local/bin/vastora", filepath.Join(directory, "data"), "worker", "docker", true, environment); err != nil {
+	if err := resumeAgentServiceInstall(context.Background(), store, "/usr/local/bin/vastora", filepath.Join(directory, "data"), "worker", "docker", true, environment); err != nil {
 		t.Fatal(err)
 	}
 	pending, exists, err := store.InstallOperation(context.Background())

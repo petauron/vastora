@@ -112,6 +112,8 @@ if ! docker compose pull center deployer; then
   echo "Check registry access, then run: cd '$script_dir' && docker compose pull center" >&2
   exit 1
 fi
+"$script_dir/install-host-cli.sh" --prepare-runtime-only \
+  --image "$image" --version "$release_version" --install-dir "$script_dir"
 echo "Starting Center and its restricted deployment helper without opening a public port..."
 if ! docker compose up -d deployer center; then
   echo "Center did not start. Run: cd '$script_dir' && docker compose logs center" >&2

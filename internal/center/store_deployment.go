@@ -25,9 +25,10 @@ type activeDeploymentState struct {
 func (s *Store) activeDeployment(ctx context.Context, agentID, appKey string) (activeDeploymentState, error) {
 	var operation string
 	var state activeDeploymentState
-	err := s.db.QueryRowContext(ctx, `SELECT id, operation, app_version, manifest_json, COALESCE(registry_credential_id, ''), package_revision FROM deployments
-		WHERE agent_id = ? AND app_key = ? AND state = 'succeeded'
-		ORDER BY created_at DESC, rowid DESC LIMIT 1`, agentID, appKey).Scan(&state.ID, &operation, &state.Version, &state.Manifest, &state.RegistryCredentialID, &state.PackageRevision)
+	err := s.db.QueryRowContext(ctx, `SELECT d.id, d.operation, d.app_version, d.manifest_json, COALESCE(d.registry_credential_id, ''), d.package_revision FROM deployments d
+		JOIN applications a ON a.id = d.application_id AND a.node_id = d.agent_id
+		WHERE d.agent_id = ? AND a.app_key = ? AND d.state = 'succeeded'
+		ORDER BY d.created_at DESC, d.rowid DESC LIMIT 1`, agentID, appKey).Scan(&state.ID, &operation, &state.Version, &state.Manifest, &state.RegistryCredentialID, &state.PackageRevision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return activeDeploymentState{}, nil
 	}

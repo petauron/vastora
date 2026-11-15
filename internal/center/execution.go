@@ -250,6 +250,13 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 	if err := tx.QueryRowContext(ctx, `SELECT session_id FROM agent_execution_sessions WHERE agent_id=?`, agentID).Scan(&current); err != nil || current != sessionID {
 		return errExecutionAuthorization
 	}
+	var tailscalePending bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tailscale_update_tasks WHERE agent_id=? AND state='awaiting_decision')`, agentID).Scan(&tailscalePending); err != nil {
+		return err
+	}
+	if tailscalePending {
+		return tx.Commit()
+	}
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return err
 	} else if blocked {
@@ -267,6 +274,10 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 			}
 		} else if strings.HasPrefix(id, "reinstall-runtime-") {
 			if _, err = s.reinstallRuntimeTask(ctx, tx, agentID, id, false); err != nil {
+				return err
+			}
+		} else if strings.HasPrefix(id, "reinstall-current-") {
+			if _, err = s.reinstallCurrentTask(ctx, tx, agentID, id); err != nil {
 				return err
 			}
 		} else if _, err = s.validateReinstallPreparation(ctx, tx, agentID, id); err != nil {
@@ -291,7 +302,6 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, agentID).Scan(&blocked); err != nil {
 		return err
 	}
-	var explicitRecovery bool
 	var independentAgentUpdate bool
 	var ordinaryWorkBlocked bool
 	if blocked {
@@ -304,10 +314,7 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 		if err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM xray_configuration_recoveries WHERE agent_id=? AND state='pending')`, agentID).Scan(&explicitRecovery); err != nil {
-			return err
-		}
-		if ordinaryWorkBlocked && !explicitRecovery {
+		if ordinaryWorkBlocked {
 			executionBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, currentVersion)
 			if err != nil {
 				return err
@@ -318,7 +325,7 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if ordinaryWorkBlocked && !explicitRecovery && !independentAgentUpdate {
+	if ordinaryWorkBlocked && !independentAgentUpdate {
 		return errExecutionBlocked
 	}
 	return nil
@@ -433,7 +440,18 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	if err != nil {
 		return controlplane.ExecutionAuthorization{}, err
 	}
-	if restoredMonitor != nil || task.SenulunRestore != nil {
+	currentRestore, err := s.reinstallCurrentTask(ctx, tx, agentID, task.ID)
+	if err != nil {
+		return controlplane.ExecutionAuthorization{}, err
+	}
+	if currentRestore != nil {
+		expected, _ := json.Marshal(currentRestore)
+		actual, _ := json.Marshal(task)
+		if string(expected) != string(actual) {
+			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
+		}
+	}
+	if restoredMonitor != nil || task.SenulunRestore != nil && currentRestore == nil {
 		if restoredMonitor == nil || task.SenulunRestore == nil {
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
@@ -481,7 +499,7 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	now := s.now().UTC()
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return controlplane.ExecutionAuthorization{}, err
-	} else if blocked && !preparation && runtime == nil && listener == nil && restoredMonitor == nil {
+	} else if blocked && !preparation && runtime == nil && listener == nil && restoredMonitor == nil && currentRestore == nil {
 		return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
@@ -566,8 +584,9 @@ func (s *Store) CheckExecutionStep(ctx context.Context, agentID, sessionID, id, 
 	now := s.now().UTC()
 	result, err := s.db.ExecContext(ctx, `UPDATE task_executions SET phase=?,updated_at=?,expires_at=?
 		WHERE id=? AND agent_id=? AND session_id=? AND state='running' AND phase<>'result_received' AND disposition='' AND expires_at>?
-		AND EXISTS(SELECT 1 FROM agent_execution_sessions WHERE agent_id=? AND session_id=?)`, phase,
-		now.Format(time.RFC3339Nano), now.Add(taskLeaseDuration).Format(time.RFC3339Nano), id, agentID, sessionID, now.Format(time.RFC3339Nano), agentID, sessionID)
+		AND EXISTS(SELECT 1 FROM agent_execution_sessions WHERE agent_id=? AND session_id=?)
+		AND (kind<>'node.os-reinstall' OR (phase='started' AND ?='apply'))`, phase,
+		now.Format(time.RFC3339Nano), now.Add(taskLeaseDuration).Format(time.RFC3339Nano), id, agentID, sessionID, now.Format(time.RFC3339Nano), agentID, sessionID, phase)
 	if err != nil {
 		return err
 	}

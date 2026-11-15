@@ -27,7 +27,7 @@ func TestThreeXUIResetBoundaryUsesMonthlySiteLocalMidnight(t *testing.T) {
 	}
 }
 
-func TestDueThreeXUIInboundPlanResetAdvancesWithRevisionCAS(t *testing.T) {
+func TestRetiredThreeXUIQuotaScheduleCannotResetOrQueueWork(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -35,70 +35,50 @@ func TestDueThreeXUIInboundPlanResetAdvancesWithRevisionCAS(t *testing.T) {
 	store.now = func() time.Time { return clock }
 	node := enrollOrchestrationNode(t, store, "controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.80", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.80", LANAddress: "10.0.0.80", EnabledKinds: []string{networking.KindLAN}})
 	deployment := seedLegacyDeployment(t, store, node, "10.0.0.80", "controller-token", threeXUIRoleMaster)
-	now := clock.Format(time.RFC3339Nano)
-	serviceID := "reality-plan-service"
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at)
-		VALUES(?, ?, ?, 'inbound-9', 'tcp', 30009, 30009, '10.0.0.80:30009', 'observed', 'vless/tcp/reality', 0, '10.0.0.80', 'ready', ?, ?)`, serviceID, deployment.ApplicationID, testSiteID(t, store), now, now); err != nil {
+	stamp := clock.Format(time.RFC3339Nano)
+	const serviceID = "reality-plan-service"
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at) VALUES(?,?,?,'inbound-9','tcp',30009,30009,'10.0.0.80:30009','observed','vless/tcp/reality',0,'10.0.0.80','ready',?,?)`, serviceID, deployment.ApplicationID, testSiteID(t, store), stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	boundary := clock.Add(-time.Hour).Format(time.RFC3339Nano)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(service_id, inbound_tag, total_bytes, reset_day, next_reset_at, revision, status, updated_at)
-		VALUES(?, 'vastora-node-9', 10737418240, 30, ?, 4, 'active', ?)`, serviceID, boundary, now); err != nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(service_id,inbound_tag,total_bytes,reset_day,next_reset_at,revision,status,updated_at) VALUES(?,'vastora-node-9',10737418240,30,?,4,'active',?)`, serviceID, boundary, stamp); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.queueDueThreeXUIInboundPlanResets(ctx); err != nil {
-		t.Fatal(err)
+	read := func() []byte {
+		t.Helper()
+		tx, err := store.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, err := readThreeXUIInboundPlan(ctx, tx, serviceID)
+		_ = tx.Rollback()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
 	}
-	task := claimTask(t, store, node)
-	if task.ClientCommand == nil || task.ClientCommand.Action != "reset_inbound_plan" || task.ClientCommand.ServiceID != serviceID || task.ClientCommand.PlanRevision != 4 || task.ClientCommand.OperationKey != threeXUIInboundResetOperationKey(serviceID, boundary) {
-		t.Fatalf("scheduled reset task = %#v", task)
+	before := read()
+	for range 3 {
+		clock = clock.AddDate(0, 1, 0)
+		tx, err := store.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task, err := store.claimApplicationCommand(ctx, tx, node.ID)
+		_ = tx.Rollback()
+		if err != nil || task != nil {
+			t.Fatalf("old quota scheduler issued work: %v %v", task, err)
+		}
+		if string(read()) != string(before) {
+			t.Fatal("old quota schedule, revision or reset history changed")
+		}
 	}
-	result, _ := json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{
-		Inbounds: task.ClientCommand.Inbounds,
-	}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-	planTx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, err := readThreeXUIInboundPlan(ctx, planTx, serviceID)
-	_ = planTx.Rollback()
-	if err != nil || plan.Status != "active" || plan.Revision != 4 || plan.LastResetAt == "" {
-		t.Fatalf("completed plan = %#v, err=%v", plan, err)
-	}
-	next, err := time.Parse(time.RFC3339Nano, plan.NextResetAt)
-	if err != nil || !next.After(clock) {
-		t.Fatalf("next reset boundary = %q, err=%v", plan.NextResetAt, err)
-	}
-
-	secondBoundary := clock.Add(-30 * time.Minute).Format(time.RFC3339Nano)
-	if _, err := store.db.ExecContext(ctx, `UPDATE three_x_ui_inbound_plans SET next_reset_at = ?, status = 'active', retry_at = '', last_error = '' WHERE service_id = ?`, secondBoundary, serviceID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.db.ExecContext(ctx, `DELETE FROM deployments WHERE application_id = ?`, deployment.ApplicationID); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.queueDueThreeXUIInboundPlanResets(ctx); err != nil {
-		t.Fatal(err)
-	}
-	claimed, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
-	if err != nil || claimed != nil {
-		t.Fatalf("unsafe reset claim = %#v, err=%v", claimed, err)
-	}
-	secondCommandID := "application-command-" + threeXUIInboundResetOperationKey(serviceID, secondBoundary)
-	var commandState, commandError string
-	if err := store.db.QueryRowContext(ctx, `SELECT state, error FROM application_commands WHERE id = ?`, secondCommandID).Scan(&commandState, &commandError); err != nil {
-		t.Fatal(err)
-	}
-	planTx, err = store.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, err = readThreeXUIInboundPlan(ctx, planTx, serviceID)
-	_ = planTx.Rollback()
-	if err != nil || commandState != "failed" || commandError == "" || plan.Status != "failed" || plan.RetryAt == "" {
-		t.Fatalf("failed-closed claim command=%q/%q plan=%#v err=%v", commandState, commandError, plan, err)
+	var count int
+	if err := store.db.QueryRow(`SELECT count(*) FROM application_commands WHERE application_id=?`, deployment.ApplicationID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("old quota command created: %d %v", count, err)
 	}
 }

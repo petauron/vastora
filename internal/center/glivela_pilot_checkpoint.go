@@ -302,7 +302,7 @@ func (s *Store) refreshGlivelaPilotSubscriptionInTx(ctx context.Context, tx *sql
 func (s *Store) recordGlivelaPilotHealthInTx(ctx context.Context, tx *sql.Tx, endpointID string,
 	checkpoint meridianruntime.PilotCounters, receipt meridianruntime.PilotReceipt) error {
 	now := s.now().UTC()
-	deadlines, err := meridianruntime.PilotPeerDeadlines(checkpoint, receipt, now)
+	readiness, err := meridianruntime.PilotPeerReadiness(checkpoint, receipt, now)
 	if err != nil {
 		return err
 	}
@@ -334,20 +334,20 @@ func (s *Store) recordGlivelaPilotHealthInTx(ctx context.Context, tx *sql.Tx, en
 		if r.desired != r.applied {
 			return errors.New("center: legacy route configuration changed during Glivela pilot")
 		}
-		deadline := deadlines[r.primary]
+		accepted := readiness[r.primary]
 		if r.secondary != "" {
-			deadline = min(deadline, deadlines[r.secondary])
+			accepted = accepted && readiness[r.secondary]
 		}
 		healthy, status, message := 0, "blocked", meridianRouteEvidenceUnavailable
-		if deadline > now.UnixMilli() {
+		if accepted {
 			healthy, status, message = 1, "ready", ""
 		}
 		if receipt.PublicationSuspended {
-			healthy, deadline, status, message = 0, 0, "blocked", "Glivela publication temporarily suspended"
+			healthy, status, message = 0, "blocked", "Glivela publication temporarily suspended"
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET runtime_healthy=?,health_expires_unix_ms=?,
 			status=?,last_error=?,updated_at=? WHERE id=? AND endpoint_id=?`,
-			healthy, deadline, status, message, stamp, r.id, endpointID); err != nil {
+			healthy, 0, status, message, stamp, r.id, endpointID); err != nil {
 			return err
 		}
 	}

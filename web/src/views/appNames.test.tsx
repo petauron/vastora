@@ -2,7 +2,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { localized } from "./appAccess";
-import { SenulunWorkspace } from "./SenulunWorkspace";
+import { SenlunWorkspace } from "./SenlunWorkspace";
 import { dashboard } from "./views.test-support";
 import type { AppWorkspaceProps } from "@/app-workspaces/types";
 import type { AppView } from "@/types";
@@ -15,8 +15,8 @@ function manifest(id: string, en: string, zh: string): AppView {
 describe("catalog-owned application names", () => {
   it.each([
     ["meridian", "Glivela", "Glivela"],
-    ["pulse", "Senulun", "Senulun 监控主机"],
-    ["pulse-agent", "Senulun Agent", "Senulun 探针"],
+    ["pulse", "Senlun", "Senlun 监控主机"],
+    ["pulse-agent", "Senlun Agent", "Senlun 探针"],
     ["meridian", "Future catalog name", "目录中的新名称"],
   ])("uses localized catalog names for %s without a brand override", (id, en, zh) => {
     const app = manifest(id, en, zh);
@@ -32,7 +32,7 @@ describe("catalog-owned application names", () => {
       data, language: "zh-CN", showSite: false, mutate: vi.fn(), onManage: vi.fn(), onUpgrade: vi.fn(), onClients: vi.fn(), onReality: vi.fn(),
       group: { id: app.key, appKey: app.key, app, legacyControllers: [], instances: [{ application, app, siteName: "Test", services: [], publications: [], realityServices: [], realityPublications: [], locked: false }] },
     };
-    const html = renderToStaticMarkup(<SenulunWorkspace {...props} />);
+    const html = renderToStaticMarkup(<SenlunWorkspace {...props} />);
     expect(html).toContain('aria-label="目录监控名称"');
     expect(html).not.toContain("Old installed name");
   });

@@ -1,6 +1,7 @@
 import type { AgentView, AppView, AppData, Deployment, PublicationKind, Service } from "../types";
 import type { Language } from "../translations";
 import { copy } from "./shared";
+import { isDaylightCatalogApp } from "./daylight";
 
 export function publicationOptions(data: AppData, service: Service | null, language: Language) {
   if (!service) return [];
@@ -84,7 +85,7 @@ function preferredKind(data: AppData, service: Service, kinds: PublicationKind[]
 
 export function gatewaysForKind(data: AppData, service: Service, kind: PublicationKind): AgentView[] {
   const app = data.applications.find((value) => value.id === service.applicationId);
-  if (app?.appKey === "vastora-official/pulse" && kind === "public_direct") return [];
+  if (app?.appKey === "vastora-official/senlun" && kind === "public_direct") return [];
   const site = data.sites.find((value) => value.id === service.siteId);
   return data.agents.filter((agent) => {
     if (!agent.connected || agent.siteId !== service.siteId || !agent.networkProfile) return false;
@@ -100,8 +101,10 @@ export function gatewaysForKind(data: AppData, service: Service, kind: Publicati
 export function packageNodeBlocker(agent: AgentView, app: AppView | undefined, language: Language) {
   const runtime = app?.app.runtime;
   if (!runtime) return copy(language, "需要 schema 4 安装配方。", "A schema 4 recipe is required.");
-  if (agent.capabilities.landingOnly && (runtime.kind !== "systemd" || runtime.version !== 2 || !runtime.requiredCapabilities?.includes("native-services") || runtime.requiredCapabilities.some((value) => value !== "native-services" && value !== "root"))) return copy(language, "此节点仅允许审核授权的原生 systemd 应用，不启用 Docker、网关或隧道。", "This node permits reviewed native systemd apps only, without Docker, gateways or tunnels.");
-  if (agent.capabilities.executorVersions?.[runtime.kind] !== runtime.version) return copy(language, `节点不支持执行器 ${runtime.kind} v${runtime.version}，请升级 Agent。`, `The node does not support executor ${runtime.kind} v${runtime.version}. Upgrade its Agent.`);
+  if (agent.capabilities.landingOnly && ((runtime.kind !== "systemd" && runtime.kind !== "native") || runtime.version !== 2 || !runtime.requiredCapabilities?.includes("native-services") || runtime.requiredCapabilities.some((value) => !["native-services", "root", "shared-caddy", "host-tcp-budget"].includes(value)))) return copy(language, "此节点仅允许审核授权的原生应用，不启用 Docker、网关或隧道。", "This node permits reviewed native apps only, without Docker, gateways or tunnels.");
+  const executorVersion = agent.capabilities.executorVersions?.[runtime.kind];
+  const supported = executorVersion === runtime.version || (runtime.kind === "systemd" && runtime.version === 1 && executorVersion === 2);
+  if (!supported) return copy(language, `节点不支持执行器 ${runtime.kind} v${runtime.version}，请升级 Agent。`, `The node does not support executor ${runtime.kind} v${runtime.version}. Upgrade its Agent.`);
   const missing = runtime.requiredCapabilities?.filter((value) => !agent.capabilities.runtimeCapabilities?.includes(value)) ?? [];
   return missing.length ? copy(language, `节点缺少能力：${missing.join(", ")}`, `Missing node capabilities: ${missing.join(", ")}`) : "";
 }
@@ -111,9 +114,9 @@ export function canInstall(agent: AgentView, app?: AppView) {
 }
 
 // Browser links refer only to this app's published entry points. Collectors
-// are configured independently with the URL chosen in Senulun.
+// are configured independently with the URL chosen in Senlun.
 export function senulunDashboardURL(data: AppData) {
-  const installations = data.applications.filter((app) => app.appKey === "vastora-official/pulse" && isInstalledApplication(app));
+  const installations = data.applications.filter((app) => app.appKey === "vastora-official/senlun" && isInstalledApplication(app));
   if (installations.length !== 1 || installations[0].status !== "running") return undefined;
   const application = installations[0];
   const dashboard = data.services.find((value) => value.applicationId === application?.id && value.name === "dashboard" && ["ready", "publishing"].includes(value.status));
@@ -138,7 +141,7 @@ export function isActiveApplication(status: string) {
 }
 
 export function isInstalledApplication(application: AppData["applications"][number]) {
-  return Boolean(application.installedVersion);
+	return Boolean(application.installedVersion) && !application.executionRetired;
 }
 
 export function latestOperations(deployments: Deployment[]) {
@@ -183,6 +186,12 @@ export function installBlocker(data: AppData, appKey: string, language: Language
 }
 
 export function localized(app: AppView, language: Language, field: "name" | "description") {
+  if (field === "name" && isDaylightCatalogApp(app)) return "Daylight";
+  if (field === "name" && app.sourceId === "vastora-official"
+    && app.key === `vastora-official/${app.app.id}`
+    && ["glivela-entry", "glivela-node", "glivela-dual"].includes(app.app.id)) {
+    return copy(language, "Glivela 节点端", "Glivela Node");
+  }
   return app.app[field][language] || app.app[field].en;
 }
 

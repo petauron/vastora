@@ -53,7 +53,7 @@ func TestMeridianRouteRevocationSurvivesAccountInvalidations(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			store, projection, commandID, grantID := openMeridianHealthCompletionFixture(t)
 			ctx := context.Background()
-			completeMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
+			seedHistoricalMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), true))
 			if err := store.RevokeMeridianRouteGrant(ctx, grantID); err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +141,7 @@ func TestMeridianRouteRevocationSurvivesAccountInvalidations(t *testing.T) {
 			if err := tx.Commit(); err != nil {
 				t.Fatal(err)
 			}
-			completeMeridianHealthFixture(t, store, next, nextCommandID, meridianHealthResult(next, store.now(), false))
+			seedHistoricalMeridianHealthFixture(t, store, next, nextCommandID, meridianHealthResult(next, store.now(), false))
 			checkRevocation("revoked", true)
 			if other, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB); err != nil || len(other.Entries) != 1 {
 				t.Fatalf("revocation interrupted another account: entries=%d err=%v", len(other.Entries), err)

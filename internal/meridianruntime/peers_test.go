@@ -50,7 +50,7 @@ func peerResultFixture(task Task, now time.Time) Result {
 			EgressID: peer.EgressID, Identity: peer.Identity,
 			Status: landing.MonitorStatus{
 				Revision: task.Desired.Revision, State: "healthy", LinkState: "direct", TCP: true, UDP: false,
-				CheckedAt: now.Add(-time.Second), AllowedUntil: now.Add(5 * time.Second), ExitIP: "1.1.1.1",
+				StartedAt: now.Add(-2 * time.Second), CheckedAt: now.Add(-time.Second), Stage: "startup", Reason: "startup_ready", ExitIP: "1.1.1.1",
 			},
 		})
 	}
@@ -217,16 +217,13 @@ func TestRuntimeReadyDoesNotMeanPeersAreHealthy(t *testing.T) {
 func TestRuntimePeerHealthIsFreshTCPOnlyAndPeerScoped(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	cases := map[string]func(*landing.MonitorStatus){
-		"blocked":      func(status *landing.MonitorStatus) { status.State = "blocked" },
-		"unknown":      func(status *landing.MonitorStatus) { status.State = "unknown" },
-		"relay":        func(status *landing.MonitorStatus) { status.LinkState = "relay" },
-		"no TCP":       func(status *landing.MonitorStatus) { status.TCP = false },
-		"no timestamp": func(status *landing.MonitorStatus) { status.CheckedAt = time.Time{} },
-		"future proof": func(status *landing.MonitorStatus) { status.CheckedAt = now.Add(time.Nanosecond) },
-		"stale proof": func(status *landing.MonitorStatus) {
-			status.CheckedAt = now.Add(-landing.AllowLifetime - time.Nanosecond)
-		},
-		"no lease": func(status *landing.MonitorStatus) { status.AllowedUntil = time.Time{} },
+		"blocked":                    func(status *landing.MonitorStatus) { status.State = "blocked" },
+		"unknown":                    func(status *landing.MonitorStatus) { status.State = "unknown" },
+		"relay":                      func(status *landing.MonitorStatus) { status.LinkState = "relay" },
+		"no TCP":                     func(status *landing.MonitorStatus) { status.TCP = false },
+		"no timestamp":               func(status *landing.MonitorStatus) { status.CheckedAt = time.Time{} },
+		"future proof":               func(status *landing.MonitorStatus) { status.CheckedAt = now.Add(time.Nanosecond) },
+		"missing startup acceptance": func(status *landing.MonitorStatus) { status.Stage = "complete" },
 		"expired lease": func(status *landing.MonitorStatus) {
 			status.AllowedUntil = now.Add(-time.Nanosecond)
 		},
@@ -256,5 +253,15 @@ func TestRuntimePeerHealthIsFreshTCPOnlyAndPeerScoped(t *testing.T) {
 	health, err := result.PeerHealth(task, now)
 	if err != nil || !health["agent-east"] || !health["agent-west"] {
 		t.Fatalf("fresh TCP-only peers with reordered observations must be healthy: health=%v err=%v", health, err)
+	}
+}
+
+func TestPeerStartupAcceptanceDoesNotExpire(t *testing.T) {
+	now := time.Now()
+	task := peerTaskFixture()
+	result := peerResultFixture(task, now)
+	ready, err := result.PeerHealth(task, now.Add(24*time.Hour))
+	if err != nil || !ready[task.Peers[0].EgressID] || !ready[task.Peers[1].EgressID] {
+		t.Fatal("accepted startup proof expired", ready, err)
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"net/url"
 
 	"github.com/petauron/vastora/internal/controlplane"
 )
@@ -74,7 +73,7 @@ func (c Client) registerExecutionSession(ctx context.Context, store *Store) erro
 	var response struct {
 		Registered bool `json:"registered"`
 	}
-	err = c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/execution-session", controlplane.ExecutionSessionRequest{SessionID: c.executionSession, Protocol: controlplane.ExecutionProtocol}, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response)
+	err = c.callAgentRPC(ctx, connection, rpcExecutionSession, "", controlplane.ExecutionSessionRequest{SessionID: c.executionSession, Protocol: controlplane.ExecutionProtocol}, &response, controlplane.MaxJSONPayload, false)
 	if err != nil {
 		return err
 	}
@@ -95,7 +94,7 @@ func (c Client) executionTransition(ctx context.Context, store *Store, action, p
 	var response struct {
 		Recorded bool `json:"recorded"`
 	}
-	err = c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/executions/"+url.PathEscape(c.execution.ID), controlplane.ExecutionTransitionRequest{SessionID: c.executionSession, Action: action, Digest: c.execution.Digest, Phase: phase, Unknown: unknown, Error: message}, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response)
+	err = c.callAgentRPC(ctx, connection, rpcExecutionTransition, c.execution.ID, controlplane.ExecutionTransitionRequest{SessionID: c.executionSession, Action: action, Digest: c.execution.Digest, Phase: phase, Unknown: unknown, Error: message}, &response, controlplane.MaxJSONPayload, false)
 	if err != nil {
 		return err
 	}
@@ -103,4 +102,12 @@ func (c Client) executionTransition(ctx context.Context, store *Store, action, p
 		return errors.New("agent: execution transition was not confirmed")
 	}
 	return nil
+}
+
+// A transport failure stops the active local execution so an isolated Agent
+// cannot continue under a stale Center authorization.
+func (c Client) abortExecutionOnError(err *error) {
+	if *err != nil && c.executionAbort != nil {
+		c.executionAbort(*err)
+	}
 }

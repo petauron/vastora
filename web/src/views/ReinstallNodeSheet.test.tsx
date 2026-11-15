@@ -269,7 +269,7 @@ describe("original monitoring identity inspection", () => {
     const plan = monitorPlan(); plan.monitoring[0].serviceAgentId = "agent";
     vi.spyOn(api, "agentReinstallPlan").mockResolvedValue(plan);
     await show();
-    expect(document.body.textContent).toContain("先恢复本机的 Senulun 服务和数据");
+    expect(document.body.textContent).toContain("先恢复本机的 Senlun 服务和数据");
     expect(button("核验原监控身份")).toBeUndefined();
   });
 });

@@ -21,12 +21,12 @@ unobserved process resets cannot reconstruct lost traffic. Retained revoked
 credentials still contribute; removal of the owning business records also removes
 their observational totals through the existing deletion lifecycle.
 
-Host traffic remains Senulun-owned. The Glivela view links to the existing ready,
-authenticated HTTPS Senulun dashboard using the same access checks as the Senulun
-workspace. In Senulun, configure budget, counting direction (sum or outbound for
+Host traffic remains Senlun-owned. The Glivela view links to the existing ready,
+authenticated HTTPS Senlun dashboard using the same access checks as the Senlun
+workspace. In Senlun, configure budget, counting direction (sum or outbound for
 the MVP), monthly UTC reset day (1–28), and threshold alerts. Host totals include
 other applications and transport overhead; provider billing remains authoritative.
-A missing Senulun entry is unavailable, never substituted with route counters.
+A missing Senlun entry is unavailable, never substituted with route counters.
 These host budget alerts do not stop Glivela routes. Existing explicitly
 configured account and entry quota enforcement is unchanged.
 

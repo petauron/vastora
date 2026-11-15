@@ -103,6 +103,11 @@ func (s *Store) disposeTaskExecution(ctx context.Context, executionID, adminID s
 			return errors.New("center: task changed; verify its current state")
 		}
 	}
+	if kind == "node.site.certificate" && input.Action == "abandon" {
+		if _, err := tx.ExecContext(ctx, `UPDATE node_sites SET state='action_required',error='Abandoned; inspect recovered website state',updated_at=? WHERE application_id=(SELECT application_id FROM node_site_tasks WHERE id=?)`, now, taskID); err != nil {
+			return err
+		}
+	}
 	if kind == "application.apply" {
 		applicationStatus := "pending"
 		if input.Action == "abandon" {
@@ -126,6 +131,19 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 	identity := []any{now, task.ID, agentID, task.Attempt}
 	revision := []any{now, agentID, task.Revision, task.Attempt}
 	switch task.Kind {
+	case "node.os-reinstall":
+		// Retire only a reported failure, or an uncertain attempt without saved
+		// backup/network, and never an attempt that obtained a boot grant.
+		// It never replays the task; a fresh inspection and new request are required.
+		return `UPDATE os_reinstall_tasks SET state='cancelled',lease_expires_at='',updated_at=?
+            WHERE id=? AND agent_id=? AND attempt=? AND (state='failed' OR (state='unknown' AND COALESCE(length(encrypted_backup),0)=0 AND COALESCE(length(sealed_network),0)=0))
+            AND NOT EXISTS (SELECT 1 FROM task_executions e JOIN execution_events ev ON ev.execution_id=e.id
+                WHERE e.task_id=os_reinstall_tasks.id AND e.agent_id=os_reinstall_tasks.agent_id AND e.attempt=os_reinstall_tasks.attempt
+                AND (ev.phase='reinstall_armed' OR ev.state='helper_running'))`, identity, nil
+	case "tailscale.update":
+		return `UPDATE tailscale_update_tasks SET state='abandoned',lease_expires_at='',error='abandoned after operator review',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
+	case "node.site.certificate":
+		return `UPDATE node_site_tasks SET state='failed',lease_expires_at='',error='Abandoned; inspect recovered website state',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.security":
 		return `UPDATE node_security_tasks SET state='failed',lease_expires_at='',error='abandoned; inspect host rollback state',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.ip-quality":
@@ -162,6 +180,13 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 // These statements only reset the exact task revision observed by the operator.
 // They never increment attempt; claiming after the decision does that once.
 func executionRequeueStatement(task AgentTask, agentID, now string) (string, []any, error) {
+	if task.Kind == "node.site.certificate" {
+		return "", nil, errors.New("center: inspect the restored website after abandoning the uncertain execution; request a fresh revision")
+	}
+
+	if task.Kind == "tailscale.update" {
+		return "", nil, errors.New("center: inspect the Tailscale update before issuing a fresh operation")
+	}
 	if task.Kind == "node.security" {
 		return "", nil, errors.New("center: inspect the host security checkpoint before issuing a fresh operation")
 	}
@@ -176,21 +201,24 @@ func executionRequeueStatement(task AgentTask, agentID, now string) (string, []a
 	case "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server":
 		return `UPDATE node_diagnostic_checks SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "xray.configuration.inspect", "xray.configuration.apply":
-		return `UPDATE xray_configuration_recoveries SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
+		return "", nil, errors.New("center: retired proxy execution cannot be replayed")
 	case "application.apply":
 		return `UPDATE deployments SET state='pending',reconciliation_required=0,reconciliation_requested=0,lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.adopt":
 		return `UPDATE application_adoptions SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.command":
+		if task.SenulunEnrollment == nil && task.SenulunInspection == nil && task.SenulunRotation == nil && task.SenulunReporting == nil {
+			return "", nil, errors.New("center: retired proxy execution cannot be replayed")
+		}
 		return `UPDATE application_commands SET state='pending',reconciliation_required=0,reconciliation_requested=0,lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "agent.update":
 		return `UPDATE agent_updates SET state='pending',lease_expires_at='',last_error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending','installing')`, identity, nil
 	case "agent.decommission":
 		return `UPDATE agent_decommissions SET state='pending',callback_token_hash=X'',lease_expires_at='',last_error='',updated_at=? WHERE agent_id=? AND attempt=? AND state IN ('running','failed','pending','cleaning')`, []any{now, agentID, task.Attempt}, nil
 	case "landing.proxy.apply":
-		return `UPDATE landing_proxy_states SET status='pending',lease_expires_at='',updated_at=? WHERE node_id=? AND desired_revision=? AND attempt=? AND status IN ('applying','failed','pending')`, revision, nil
+		return "", nil, errors.New("center: retired proxy execution cannot be replayed")
 	case "landing.server.apply":
-		return `UPDATE landing_server_states SET status='pending',lease_expires_at='',updated_at=? WHERE node_id=? AND desired_revision=? AND attempt=? AND status IN ('applying','failed','pending')`, revision, nil
+		return "", nil, errors.New("center: retired proxy execution cannot be replayed")
 	case "gateway.routes.apply":
 		return `UPDATE gateway_states SET status='pending',lease_expires_at='',updated_at=? WHERE gateway_node_id=? AND desired_revision=? AND attempt=? AND status IN ('applying','failed','pending')`, revision, nil
 	case "gateway.component.apply":

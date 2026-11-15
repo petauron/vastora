@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/hostservice"
 	"github.com/petauron/vastora/internal/platform"
 	"io"
 	"net/http"
@@ -22,7 +23,10 @@ const (
 	komariUnitMarker = "# Managed by Vastora\n"
 )
 
+// The historical type name is retained for existing systemd integrations;
+// InitSystem selects the concrete native service backend.
 type SystemdHostApplicationManager struct {
+	InitSystem      hostservice.Kind
 	RootDir         string
 	HTTPClient      *http.Client
 	RunCommand      func(context.Context, string, ...string) error

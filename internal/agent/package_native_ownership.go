@@ -36,7 +36,7 @@ func readNativeAccount(ctx context.Context, manager SystemdHostApplicationManage
 		return nativeAccount{}, false, errors.New("agent: cannot inspect native service account")
 	}
 	parts := strings.Split(strings.TrimSuffix(string(raw), "\n"), ":")
-	if len(parts) != 7 || parts[0] != name || parts[4] != "Vastora "+applicationID || parts[5] != "/nonexistent" || parts[6] != "/usr/sbin/nologin" {
+	if len(parts) != 7 || parts[0] != name || parts[4] != "Vastora "+applicationID || parts[5] != "/nonexistent" || parts[6] != manager.accountShell() {
 		return nativeAccount{}, false, errors.New("agent: native service account is not owned by this application")
 	}
 	uid, e1 := strconv.ParseUint(parts[2], 10, 32)
@@ -90,6 +90,10 @@ func expectedNativeResource(applicationID string, p nativePackagePlan, r Runtime
 					continue
 				}
 				logical := strings.TrimPrefix(r.LogicalName, prefix)
+				if logical == "process" && p.InitSystem == "openrc" {
+					expected.Path = filepath.Join(unit.ConfigDirectory, "process.json")
+					expected.Component = unit.LogicalName
+				}
 				if logical == "environment" {
 					expected.Path = filepath.Join(unit.ConfigDirectory, "environment")
 				}
@@ -104,7 +108,7 @@ func expectedNativeResource(applicationID string, p nativePackagePlan, r Runtime
 					}
 				}
 				if expected.Path != "" {
-					expected.Component, expected.ApplicationOwned = unit.LogicalName, true
+					expected.Component, expected.ApplicationOwned = unit.LogicalName, logical != "process"
 				}
 			}
 		}
@@ -118,7 +122,7 @@ func expectedNativeResource(applicationID string, p nativePackagePlan, r Runtime
 }
 
 func inspectNativeOwnership(ctx context.Context, manager SystemdHostApplicationManager, applicationID string, p nativePackagePlan, receipt *InstanceResources) error {
-	if receipt == nil || receipt.ApplicationID != applicationID || receipt.Runtime != "systemd" {
+	if receipt == nil || receipt.ApplicationID != applicationID || receipt.Runtime != p.Runtime {
 		return errors.New("agent: invalid native ownership receipt")
 	}
 	seen, paths := map[string]bool{}, map[string]bool{}

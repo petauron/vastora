@@ -25,8 +25,10 @@ import (
 )
 
 type Store struct {
+	businessRetired                bool
 	glivelaPilotStatePath          string
-	agentUpdateScope               map[string]bool
+	agentUpdatePauses              map[string]bool
+	headscaleControlIPv6           string
 	db                             *sql.DB
 	dataDir                        string
 	key                            []byte
@@ -37,6 +39,8 @@ type Store struct {
 	landingLatencies               map[landingLatencyKey]landingLatencySample
 	backgroundClosed               bool
 	backgroundWG                   sync.WaitGroup
+	nodeSiteMu                     sync.Mutex
+	nodeSiteEngines                map[string]*nodeSiteEngine
 	headscaleAllowedEndpoints      []string
 	headscaleHTTPClient            *http.Client
 	cloudflareOAuth                cloudflareOAuthConfig
@@ -127,9 +131,13 @@ func (s *Store) UseHostNetworkAddresses(encoded string) error {
 }
 
 func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
-	updateScope, scopeErr := readAgentUpdateScope(dataDir)
-	if scopeErr != nil {
-		return nil, scopeErr
+	controlIPv6, err := readHeadscaleControlIPv6(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	updatePauses, pausesErr := readAgentUpdatePauses(dataDir)
+	if pausesErr != nil {
+		return nil, pausesErr
 	}
 	headscaleAllowedEndpoints := make([]string, 0, len(headscaleAllowedURLs))
 	seenHeadscaleEndpoints := make(map[string]struct{}, len(headscaleAllowedURLs))
@@ -166,7 +174,6 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		return nil, errors.New("center: root key exists without its database")
 	}
 	var key []byte
-	var err error
 	if existingDatabase {
 		key, err = secret.LoadKey(keyPath)
 	} else {
@@ -208,11 +215,12 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		return nil, err
 	}
 	store := &Store{
-		agentUpdateScope: updateScope,
-		db:               db, dataDir: dataDir, key: key,
+		agentUpdatePauses: updatePauses,
+		db:                db, dataDir: dataDir, key: key,
 		backgroundCtx:               backgroundCtx,
 		backgroundCancel:            backgroundCancel,
 		headscaleAllowedEndpoints:   headscaleAllowedEndpoints,
+		headscaleControlIPv6:        controlIPv6,
 		headscaleHTTPClient:         &http.Client{Timeout: 20 * time.Second},
 		builtinHeadscaleDialAddress: net.JoinHostPort(dockerruntime.CaddyAlias, "443"),
 		cloudflareOAuth: cloudflareOAuthConfig{
@@ -235,6 +243,12 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 	store.verifyPublication = store.verifyPublicationRevision
 	store.issuePrivateCertificate = store.obtainPrivateCertificate
 	store.issueDomainCertificate = store.obtainPrivateCertificateWithCloudflare
+	handover, err := store.inspectBusinessHandover(context.Background())
+	if err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
 	if existingDatabase {
 		bound, err := inspectCenterDatabaseKeyBinding(context.Background(), db, key)
 		if err != nil {
@@ -255,12 +269,27 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.applyBusinessHandover(context.Background(), handover); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.db.QueryRow("SELECT EXISTS(SELECT 1 FROM retired_proxy_business WHERE id=1)").Scan(&store.businessRetired); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
 	if err := store.activateAgentDecommissionCallbackRoute(context.Background()); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, err
 	}
 	if err := store.activateDockerInstallRoute(context.Background()); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.activateAgentGRPCRoute(context.Background()); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, err
@@ -290,7 +319,12 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("center: recover expired retained execution results: %w", err)
 	}
-	if err := store.recoverSupersededLandingExecutionFailures(context.Background()); err != nil {
+	if err := func() error {
+		if store.businessRetired {
+			return nil
+		}
+		return store.recoverSupersededLandingExecutionFailures(context.Background())
+	}(); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, fmt.Errorf("center: recover superseded landing execution failures: %w", err)
@@ -305,17 +339,32 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := store.enforceThreeXUIWorkerIsolation(context.Background()); err != nil {
+	if err := func() error {
+		if store.businessRetired {
+			return nil
+		}
+		return store.enforceThreeXUIWorkerIsolation(context.Background())
+	}(); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, err
 	}
-	if err := store.resumeThreeXUIControllerConvergence(context.Background()); err != nil {
+	if err := func() error {
+		if store.businessRetired {
+			return nil
+		}
+		return store.resumeThreeXUIControllerConvergence(context.Background())
+	}(); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, fmt.Errorf("center: resume global 3x-ui controller convergence: %w", err)
 	}
-	if err := store.resumeGlobalLandingPool(context.Background()); err != nil {
+	if err := func() error {
+		if store.businessRetired {
+			return nil
+		}
+		return store.resumeGlobalLandingPool(context.Background())
+	}(); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, fmt.Errorf("center: resume global landing pool: %w", err)
@@ -334,6 +383,7 @@ func (s *Store) Close() error {
 	}
 	s.backgroundMu.Unlock()
 	s.backgroundWG.Wait()
+	s.stopNodeSiteEngines()
 	return s.db.Close()
 }
 

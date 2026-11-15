@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
 const (
@@ -31,6 +29,12 @@ func (s *Store) releaseClaimedTask(ctx context.Context, agentID string, task Age
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	var result sql.Result
 	switch task.Kind {
+	case "tailscale.update":
+		result, err = tx.ExecContext(ctx, `UPDATE tailscale_update_tasks SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
+	case "node.site.certificate":
+		result, err = tx.ExecContext(ctx, `UPDATE node_site_tasks SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
+	case "node.os-reinstall":
+		result, err = tx.ExecContext(ctx, "UPDATE os_reinstall_tasks SET state='pending',attempt=0,lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=1", now, task.ID, agentID)
 	case "node.security":
 		result, err = tx.ExecContext(ctx, `UPDATE node_security_tasks SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
 	case "node.ip-quality":
@@ -103,6 +107,10 @@ func (s *Store) RenewTaskLease(ctx context.Context, agentID, credential, taskID 
 	var result sql.Result
 	var err error
 	switch {
+	case strings.HasPrefix(taskID, "node-site-"):
+		result, err = s.db.ExecContext(ctx, `UPDATE node_site_tasks SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=? AND lease_expires_at>?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	case strings.HasPrefix(taskID, "os-reinstall-"):
+		result, err = s.db.ExecContext(ctx, "UPDATE os_reinstall_tasks SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state IN ('running','backup_ready') AND attempt=? AND lease_expires_at>?", append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case strings.HasPrefix(taskID, "node-security-"):
 		result, err = s.db.ExecContext(ctx, `UPDATE node_security_tasks SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=? AND lease_expires_at>?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case strings.HasPrefix(taskID, "application-maintenance-"):
@@ -131,6 +139,8 @@ func (s *Store) RenewTaskLease(ctx context.Context, agentID, credential, taskID 
 		result, err = s.db.ExecContext(ctx, `UPDATE application_commands SET lease_expires_at = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ? AND lease_expires_at > ?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case taskID == agentDecommissionTaskID(agentID):
 		result, err = s.db.ExecContext(ctx, `UPDATE agent_decommissions SET lease_expires_at = ?, updated_at = ? WHERE agent_id = ? AND state = 'running' AND attempt = ? AND lease_expires_at > ?`, append(values, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	case strings.HasPrefix(taskID, "tailscale-update-"):
+		result, err = s.db.ExecContext(ctx, `UPDATE tailscale_update_tasks SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=? AND lease_expires_at>?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case isAgentUpdateTaskID(taskID):
 		result, err = s.db.ExecContext(ctx, `UPDATE agent_updates SET lease_expires_at = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ? AND lease_expires_at > ?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case func() bool { _, ok := gatewayTaskRevision(taskID); return ok }():
@@ -232,6 +242,9 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		query string
 		kind  string
 	}{
+		{`SELECT id, 1 FROM tailscale_update_tasks WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "tailscale.update"},
+		{`SELECT id, revision FROM node_site_tasks WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.site.certificate"},
+		{`SELECT id, 1 FROM os_reinstall_tasks WHERE agent_id=? AND state IN ('running','backup_ready') AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.os-reinstall"},
 		{`SELECT id, 1 FROM node_security_tasks WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.security"},
 		{`SELECT id, 1 FROM ip_quality_checks WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.ip-quality"},
 		{`SELECT id, target_revision FROM node_diagnostic_checks WHERE agent_id=? AND kind='node.network-quality' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.network-quality"},
@@ -294,6 +307,15 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE node_diagnostic_checks SET state='failed',lease_expires_at='',error='interrupted',updated_at=? WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE node_site_tasks SET state='failed',lease_expires_at='',error='Interrupted; inspect recovered website state',updated_at=? WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE node_sites SET state='action_required',error='Execution interrupted; inspect recovered website state',updated_at=? WHERE application_id IN (SELECT application_id FROM node_site_tasks WHERE agent_id=? AND revision=node_sites.revision AND state='failed' AND error='Interrupted; inspect recovered website state')`, now.Format(time.RFC3339Nano), agentID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE os_reinstall_tasks SET state='unknown',lease_expires_at='',last_error='Reinstall execution interrupted; review required',updated_at=? WHERE agent_id=? AND state IN ('running','backup_ready') AND lease_expires_at<>'' AND lease_expires_at<=?", now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE node_security_tasks SET state='failed',lease_expires_at='',error='interrupted; inspect host security checkpoint',updated_at=? WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
@@ -306,32 +328,7 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', reconciliation_required = 1, lease_expires_at = '', error = 'Execution interrupted; manual verification required', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	// Generic command recovery is not enough for Meridian: its endpoint is the
-	// user-visible desired/applied projection. Mirror the expired command into
-	// that projection so the UI exposes the explicit Center-authority recovery
-	// action instead of leaving the entry permanently "applying". A retirement
-	// command is the exception because the live Meridian revision was already
-	// verified before legacy cleanup started.
-	interrupted := "Execution interrupted; manual verification required"
-	stamp := now.Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET status='failed',last_error=?,updated_at=?
-		WHERE command_id IN (SELECT id FROM application_commands WHERE agent_id=? AND kind=? AND state='failed' AND reconciliation_required=1 AND error=?)`, interrupted, stamp, agentID, meridianruntime.ApplyKind, interrupted); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET
-		status=CASE WHEN runtime_healthy=1 AND desired_revision=applied_revision AND EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state='retire' AND subscription_authority='meridian') THEN status ELSE 'failed' END,
-		runtime_healthy=CASE WHEN runtime_healthy=1 AND desired_revision=applied_revision AND EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state='retire' AND subscription_authority='meridian') THEN runtime_healthy ELSE 0 END,
-		last_error=?,updated_at=?
-		WHERE id IN (SELECT json_extract(input_json,'$.endpointId') FROM application_commands WHERE agent_id=? AND kind=? AND state='failed' AND reconciliation_required=1 AND error=?)`, interrupted, stamp, agentID, meridianruntime.ApplyKind, interrupted); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET runtime_healthy=0,status=CASE WHEN status='revoked' THEN status ELSE 'failed' END,last_error=?,updated_at=?
-		WHERE endpoint_id IN (SELECT json_extract(input_json,'$.endpointId') FROM application_commands WHERE agent_id=? AND kind=? AND state='failed' AND reconciliation_required=1 AND error=?)
-		AND NOT EXISTS(SELECT 1 FROM meridian_endpoints endpoint,meridian_cutover cutover WHERE endpoint.id=meridian_route_grants.endpoint_id AND endpoint.runtime_healthy=1 AND endpoint.desired_revision=endpoint.applied_revision AND cutover.id=1 AND cutover.state='retire' AND cutover.subscription_authority='meridian')`, interrupted, stamp, agentID, meridianruntime.ApplyKind, interrupted); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE meridian_cutover SET last_error=?,updated_at=? WHERE id=1 AND state IN ('project','verify','retire')
-		AND EXISTS(SELECT 1 FROM application_commands WHERE agent_id=? AND kind=? AND state='failed' AND reconciliation_required=1 AND error=?)`, interrupted, stamp, agentID, meridianruntime.ApplyKind, interrupted); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE tailscale_update_tasks SET state='failed',lease_expires_at='',error='Update dispatch interrupted; inspect the host before retrying',updated_at=? WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'failed', updated_at = ? WHERE id IN (

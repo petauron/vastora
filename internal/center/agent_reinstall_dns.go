@@ -120,36 +120,6 @@ func (s *Store) savedReinstallDNS(ctx context.Context, tx *sql.Tx, preparationID
 	return &value, targets, nil
 }
 
-func (s *Store) readReinstallDNS(ctx context.Context, tx *sql.Tx, agentID, preparationID string) (*AgentReinstallDNS, error) {
-	saved, expected, err := s.savedReinstallDNS(ctx, tx, preparationID)
-	if err != nil {
-		return nil, err
-	}
-	targets, err := s.reinstallDNSTargets(ctx, tx, agentID, preparationID)
-	if saved != nil {
-		// Bind durable DNS evidence to its owned records and approved addresses.
-		// Unrelated task history must not invalidate an unchanged external result.
-		saved.Current = err == nil && reflect.DeepEqual(expected, targets)
-		age := s.now().UTC().Sub(saved.CheckedAt)
-		saved.CanContinue = saved.CanContinue && saved.Current && age >= 0 && age <= 30*time.Minute
-		return saved, nil
-	}
-	if errors.Is(err, errExecutionAuthorization) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(targets) == 0 {
-		return nil, nil
-	}
-	value := AgentReinstallDNS{State: "pending", Current: true, Entries: []AgentReinstallDNSEntry{}}
-	for _, target := range targets {
-		value.Entries = append(value.Entries, target.Entry)
-	}
-	return &value, nil
-}
-
 func (s *Store) authorizeReinstallDNS(ctx context.Context, tx *sql.Tx, agentID, adminID string, input AgentReinstallDNSInput) (string, []reinstallDNSTarget, error) {
 	var preparationID string
 	err := tx.QueryRowContext(ctx, `SELECT p.deployment_id FROM agent_reinstall_app_preparations p JOIN agent_reinstall_operations op ON op.id=p.operation_id WHERE op.id=? AND op.agent_id=? AND op.authorized_by=? AND op.state='review_required' AND p.application_id=?`, input.OperationID, agentID, adminID, input.ApplicationID).Scan(&preparationID)

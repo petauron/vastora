@@ -68,7 +68,7 @@ func (b *NativeServicesPackageBackend) Remove(ctx context.Context, task Deployme
 	if err := b.Inspect(ctx, task, receipt); err != nil {
 		return err
 	}
-	plan, err := planNativePackage(task.ApplicationID, task.Manifest)
+	plan, err := b.Manager.planNativePackage(task.ApplicationID, task.Manifest)
 	if err != nil {
 		return err
 	}
@@ -92,11 +92,16 @@ func (b *NativeServicesPackageBackend) Remove(ctx context.Context, task Deployme
 	if err := b.Backup(ctx, task, receipt); err != nil {
 		return err
 	}
+	if b.Store != nil && daylightKey(task.AppKey) {
+		if err := b.Store.removeSharedDaylight(ctx, task.ApplicationID, task.DeleteData); err != nil {
+			return err
+		}
+	}
 	for _, unit := range plan.Units {
 		if resourceNamed(receipt, "unit", unit.LogicalName) == nil {
 			continue
 		}
-		if err := b.Manager.run(ctx, "systemctl", "disable", unit.Name); err != nil {
+		if err := b.Manager.service(ctx, "disable", unit.Name); err != nil {
 			return errors.New("agent: native unit could not be disabled")
 		}
 	}
@@ -137,7 +142,7 @@ func (b *NativeServicesPackageBackend) Remove(ctx context.Context, task Deployme
 			}
 		}
 	}
-	if err := b.Manager.run(ctx, "systemctl", "daemon-reload"); err != nil {
+	if err := b.Manager.service(ctx, "reload", ""); err != nil {
 		return errors.New("agent: native removal reload failed")
 	}
 	if task.DeleteData {
@@ -147,7 +152,7 @@ func (b *NativeServicesPackageBackend) Remove(ctx context.Context, task Deployme
 				if err != nil || !exists || account.identity() != resource.ID {
 					return errors.New("agent: native account changed before deletion")
 				}
-				if err := b.Manager.run(ctx, "userdel", resource.Name); err != nil {
+				if err := b.Manager.removeNativeAccount(ctx, "user", resource.Name); err != nil {
 					return errors.New("agent: native account removal failed")
 				}
 				// Some systems remove the private group with userdel; never assume it.
@@ -159,7 +164,7 @@ func (b *NativeServicesPackageBackend) Remove(ctx context.Context, task Deployme
 					if gid != account.GID {
 						return errors.New("agent: native group changed before deletion")
 					}
-					if err := b.Manager.run(ctx, "groupdel", resource.Name); err != nil {
+					if err := b.Manager.removeNativeAccount(ctx, "group", resource.Name); err != nil {
 						return errors.New("agent: native group removal failed")
 					}
 				}

@@ -73,6 +73,16 @@ func EnsureBridgeNetwork(ctx context.Context, docker NetworkEngine, name, compon
 	return nil
 }
 
+// ValidateExistingBridgeNetwork checks ownership without creating a bridge.
+// Startup recovery must retain the already provisioned network boundary.
+func ValidateExistingBridgeNetwork(ctx context.Context, docker NetworkEngine, name, component string) error {
+	inspected, err := docker.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("docker runtime: inspect existing attachment network: %w", err)
+	}
+	return validateNetwork(ctx, docker, inspected, name, component)
+}
+
 func validateNetwork(ctx context.Context, docker NetworkEngine, inspected client.NetworkInspectResult, name, component string) error {
 	if inspected.Network.Driver != "bridge" {
 		return fmt.Errorf("docker runtime: network %s uses driver %q, want bridge", name, inspected.Network.Driver)

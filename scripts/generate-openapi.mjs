@@ -423,10 +423,6 @@ for (const route of routes) {
       content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
     };
   }
-  if (route.handler === "handleNodeEgress") {
-    if (route.method === "get") delete operation.requestBody;
-    operation.responses[status].content["application/json"].schema = schemaForGoType("NodeEgressView");
-  }
   const noStoreHeaders = {
     "Cache-Control": {
       description: "Prevents storage of the security-sensitive response.",
@@ -474,7 +470,7 @@ for (const route of routes) {
   if (route.handler === "handleContinueAgentReinstallIsolation") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallContinueInput");
-    operation.description = "Explicit continuation by the authorizing administrator, bound to the inspected recovery attempt. Rechecks the exact saved private identity and controller; never rediscovers another owner by address. Stale or duplicate continuations cannot repeat an attempt. This action cannot repeat bootstrap preparation with an uncertain result.";
+    operation.description = "Explicit continuation by the authorizing administrator, bound to the inspected recovery attempt. Rechecks the exact saved private identity and controller; never rediscovers another owner by address. Stale or duplicate continuations cannot repeat an attempt. This action cannot repeat bootstrap preparation with an uncertain result. When authenticated previous evidence is missing, the authorizing administrator may explicitly review the exact old controller peer ID/public key and saved address. The controller tuple, ownership, operation attempt and concurrent state are rechecked and audited before the normal withdrawal; there is no automatic address/name matching.";
   }
   if (route.handler === "handleApproveAgentReinstallNetwork") {
     operation.responses[status].headers = noStoreHeaders;
@@ -681,6 +677,8 @@ for (const route of routes) {
     const [field, type] = { handleListDeployments: ["deployments", "DeploymentView"], handleListApplications: ["applications", "ApplicationView"], handleListAgents: ["agents", "AgentView"] }[route.handler];
     const item = schemaForGoType(type);
     if (type === "ApplicationView") {
+      item.properties.nodeSiteStatus.enum = ["unconfigured", "issuing", "pending", "ready", "action_required", "rolled_back"];
+      item.properties.nodeSiteStatus.description = "Read-only managed website summary. ready requires a running application, matching site ownership, confirmed desired/applied revision and an unexpired certificate. Does not create a publication or probe a node.";
       item.properties.installedPackageRevision.minimum = 0;
       item.properties.availablePackageRevision.minimum = 0;
       item.properties.adoptionState.enum = ["pending", "ready", "blocked"];
@@ -755,6 +753,9 @@ for (const route of routes) {
     operation.description = "Read directional traffic grouped by entry node and egress. Totals start at the first authenticated tracking sample, never infer historical direction, never reset or enforce quotas, and are not provider billing. Stale means no current active credential sample within 15 minutes.";
     operation.responses["200"].headers = noStoreHeaders;
     operation.responses["200"].content["application/json"].schema = schemaForGoType("MeridianTrafficView");
+  } else if (route.handler === "handleRegisterGlivelaNativeEntry") {
+    operation.requestBody.content["application/json"].schema.required = ["applicationId", "regionCode", "name"];
+    operation.responses["201"].headers = noStoreHeaders;
   } else if (route.handler === "handleCreateMeridianEndpoint") {
     operation.requestBody.content["application/json"].schema.required = [
       "applicationId", "verificationId", "targetIp", "targetHost", "serverName", "regionCode", "name",
@@ -818,6 +819,41 @@ for (const route of routes) {
     operation.responses["200"].description = "Current durable rotation state.";
     operation.responses["200"].headers = noStoreHeaders;
     operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/ApplicationCredentialRotation" };
+  }
+  if (route.handler === "handleCheckTailscaleUpdates") {
+    operation.description = "Request a version-only check from online Tailscale nodes on their next heartbeat. Never installs packages.";
+    operation.responses[status].content["application/json"].schema = { type: "object", required: ["requested"], properties: { requested: { type: "boolean" } } };
+  } else if (route.handler === "handleQueueTailscaleUpdate") {
+    operation.description = "Queue one administrator-approved node update. Accepted means queued; verify the helper result and running version after reconnect.";
+    operation.responses[status].content["application/json"].schema = schemaForGoType("TailscaleUpdateView");
+  } else if (route.handler === "handleStartTailscaleUpdate") {
+    operation.description = "Transfer one authenticated Agent execution to the Tailscale update helper. A successful handoff is not an update result.";
+    const schema = operation.requestBody.content["application/json"].schema;
+    schema.required = ["executionId", "sessionId", "attempt"];
+    schema.properties.attempt.minimum = 1;
+  } else if (route.handler === "handleAcknowledgeTailscaleUpdate") {
+    operation.description = "After verifying the host update stopped, record an administrator's explicit review. Does not undo package changes.";
+    const schema = operation.requestBody.content["application/json"].schema;
+    schema.required = ["confirmStopped", "note"];
+    schema.properties.confirmStopped.const = true;
+    schema.properties.note.minLength = 1;
+    schema.properties.note.maxLength = 500;
+  }
+  if (["handleManagedDomain", "handleEnsureManagedDomain"].includes(route.handler)) {
+    operation.responses["200"].content["application/json"].schema = schemaForGoType("ManagedDomainView");
+    operation.description = "Administrator-provisioned DNS-only resource. A ready resource confirms provider application, not public DNS propagation or application readiness. Stable names are reused per application/key; address changes require the current revision and retain the address family.";
+  }
+  if (route.handler === "handleListManagedDomains") {
+    operation.responses["200"].content["application/json"].schema = { type: "object", properties: { domains: { type: "array", items: schemaForGoType("ManagedDomainView") } }, required: ["domains"] };
+    operation.parameters = [...(operation.parameters ?? []).filter(p => !(p.name === "applicationId" && p.in === "query")), { name: "applicationId", in: "query", required: true, schema: { type: "string" } }];
+  }
+  if (["handleNodeSite", "handleConfigureNodeSite", "handleNodeSiteAction"].includes(route.handler)) {
+    const status = route.handler === "handleNodeSite" ? "200" : "202";
+    operation.responses[status] = { description: "Managed node website certificate state", headers: noStoreHeaders, content: { "application/json": { schema: schemaForGoType("NodeSiteView") } } };
+    operation.description = "Exact application-owned website certificate lifecycle. An explicit previousHostname prepares a second binding without replacing the installed site. Configure only the prepared hostname, verify public website/REALITY/subscription, then accept; cancellation requires the original installed binding. No provider credentials are sent to nodes.";
+    if (route.handler === "handleNodeSiteAction") {
+      operation.requestBody = { required: true, content: { "application/json": { schema: { type: "object", required: ["action"], properties: { action: { type: "string", enum: ["inspect", "rollback", "cancel", "accept-migration", "cancel-migration"] } }, additionalProperties: false } } } };
+    }
   }
   if (route.handler === "handleNodeSecurity" || route.handler === "handleQueueNodeSecurity") {
     const status = route.handler === "handleNodeSecurity" ? "200" : "202";

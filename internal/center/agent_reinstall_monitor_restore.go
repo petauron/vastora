@@ -138,7 +138,7 @@ func (s *Store) QueueAgentReinstallMonitorRestore(ctx context.Context, agentID, 
 		return result, err
 	}
 	var senulunConfig senulun.AgentConfig
-	if json.Unmarshal(manifest, &source.Manifest) != nil || source.Manifest.ID != "pulse-agent" || source.Manifest.Version != version || catalog.ValidateApp(source.Manifest) != nil || registry.Valid || json.Unmarshal(config, &senulunConfig) != nil || senulunConfig.Validate() != nil || senulunConfig.ServiceApplicationID != rotation.Task.Inspection.ApplicationID {
+	if json.Unmarshal(manifest, &source.Manifest) != nil || source.Manifest.ID != "senlun-agent" || source.Manifest.Version != version || catalog.ValidateApp(source.Manifest) != nil || registry.Valid || json.Unmarshal(config, &senulunConfig) != nil || senulunConfig.Validate() != nil || senulunConfig.ServiceApplicationID != rotation.Task.Inspection.ApplicationID {
 		return result, errors.New("center: saved Senulun package or service configuration requires review")
 	}
 	credentials, err := s.reinstallRotatedCredentials(ctx, tx, serviceAgentID, rotationID, rotation.Task)
@@ -235,7 +235,7 @@ func (s *Store) reinstallMonitorRestoreTask(ctx context.Context, tx *sql.Tx, age
 	if string(current) != string(approval) {
 		return nil, errExecutionAuthorization
 	}
-	if json.Unmarshal(manifest, &task.Manifest) != nil || task.Manifest.ID != "pulse-agent" || task.Manifest.Version != version || catalog.ValidateApp(task.Manifest) != nil {
+	if json.Unmarshal(manifest, &task.Manifest) != nil || task.Manifest.ID != "senlun-agent" || task.Manifest.Version != version || catalog.ValidateApp(task.Manifest) != nil {
 		return nil, errExecutionAuthorization
 	}
 	if err := readReinstallPackageAuthorization(ctx, tx, taskID, &task); err != nil {

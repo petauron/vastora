@@ -114,36 +114,6 @@ func TestAgentReconnectEnrollmentReusesOfflineIdentity(t *testing.T) {
 	}
 }
 
-func TestMigration59AddsAgentReconnectTargetBinding(t *testing.T) {
-	directory := t.TempDir()
-	store := legacyMigrationStore(t, directory, 58)
-	if _, err := store.db.Exec(`INSERT INTO agent_enrollment_tokens(token_hash, site_id, name, center_url, roles_json, capabilities_json, expires_at)
-		VALUES(X'1234', 'site-v3', 'existing enrollment', 'https://center.example.com', '["worker"]', '{}', '2099-01-01T00:00:00Z')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	migrated, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer migrated.Close()
-	var columns, indexes, enrollments int
-	if err := migrated.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('agent_enrollment_tokens') WHERE name = 'target_agent_id'`).Scan(&columns); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrated.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'agent_enrollment_one_reconnect_idx'`).Scan(&indexes); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrated.db.QueryRow(`SELECT COUNT(*) FROM agent_enrollment_tokens WHERE target_agent_id IS NULL`).Scan(&enrollments); err != nil {
-		t.Fatal(err)
-	}
-	if columns != 1 || indexes != 1 || enrollments != 1 {
-		t.Fatalf("migration result: columns=%d indexes=%d enrollments=%d", columns, indexes, enrollments)
-	}
-}
-
 func TestDisabledAgentReconnectRestoresOnlyWithFreshCredential(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(t.TempDir())

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
@@ -11,48 +12,52 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
 )
+
+// Exercise the same certificate verifier used by gRPC with a real TLS handshake.
+func pinnedTLSClientForTest(fingerprint, certificate, serverName string, timeout time.Duration) (*http.Client, error) {
+	config, err := pinnedTLSConfig(fingerprint, certificate, serverName)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: config}, Timeout: timeout}, nil
+}
 
 func TestPinnedCenterRejectsDifferentCARoot(t *testing.T) {
 	leafA, rootA := testPrivateCenterChain(t, "root-a")
 	leafB, rootB := testPrivateCenterChain(t, "root-b")
 	fingerprint := certificatePublicKeyFingerprint(rootA)
-	if err := verifyPinnedCA(tls.ConnectionState{PeerCertificates: []*x509.Certificate{leafA, rootA}, ServerName: "center.example.test"}, fingerprint); err != nil {
-		t.Fatalf("expected CA was rejected: %v", err)
+	if verifiedPresentedCA([]*x509.Certificate{leafA, rootA}, fingerprint, "center.example.test") == nil {
+		t.Fatal("expected CA was rejected")
 	}
-	if err := verifyPinnedCA(tls.ConnectionState{PeerCertificates: []*x509.Certificate{leafB, rootB}, ServerName: "center.example.test"}, fingerprint); err == nil || !strings.Contains(err.Error(), "mismatch") {
-		t.Fatalf("different CA was accepted: %v", err)
+	if verifiedPresentedCA([]*x509.Certificate{leafB, rootB}, fingerprint, "center.example.test") != nil {
+		t.Fatal("different CA was accepted")
 	}
 }
 
-func TestPinnedHTTPClientTrustsPresentedPrivateIssuingCA(t *testing.T) {
+func TestPinnedGRPCClientTrustsPresentedPrivateIssuingCA(t *testing.T) {
 	certificate, issuer := testPrivateCenterTLSCertificate(t)
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.WriteHeader(http.StatusNoContent)
-	}))
+	server := httptest.NewUnstartedServer(grpc.NewServer())
+	server.EnableHTTP2 = true
 	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}
 	server.StartTLS()
 	defer server.Close()
 
-	client, err := pinnedHTTPClient(certificatePublicKeyFingerprint(issuer), "", time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := client.Get(server.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := newAgentGRPCConn(ctx, server.URL, certificatePublicKeyFingerprint(issuer), "", false, nil)
 	if err != nil {
 		t.Fatalf("private issuing CA pin failed a real TLS handshake: %v", err)
 	}
-	response.Body.Close()
+	client.Close()
 
 	_, wrongIssuer := testPrivateCenterTLSCertificate(t)
-	wrongClient, err := pinnedHTTPClient(certificatePublicKeyFingerprint(wrongIssuer), "", time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wrongClient.Get(server.URL); err == nil || !strings.Contains(err.Error(), "fingerprint mismatch") {
+	if wrongClient, err := newAgentGRPCConn(ctx, server.URL, certificatePublicKeyFingerprint(wrongIssuer), "", false, nil); err == nil {
+		wrongClient.Close()
 		t.Fatalf("wrong private CA pin passed a real TLS handshake: %v", err)
 	}
 }
@@ -68,7 +73,7 @@ func TestPinnedHTTPClientTrustsIndependentlySuppliedPrivateCAWhenServerOmitsIt(t
 	defer server.Close()
 
 	issuerPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Raw}))
-	client, err := pinnedHTTPClient(certificatePublicKeyFingerprint(issuer), issuerPEM, time.Second)
+	client, err := pinnedTLSClientForTest(certificatePublicKeyFingerprint(issuer), issuerPEM, "127.0.0.1", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

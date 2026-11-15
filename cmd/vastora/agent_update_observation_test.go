@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/agentpb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestHostUpdateObservationIsBoundedAndReadOnly(t *testing.T) {
@@ -20,33 +21,34 @@ func TestHostUpdateObservationIsBoundedAndReadOnly(t *testing.T) {
 			root := t.TempDir()
 			observations, reports, waits := 0, 0, 0
 			targetReady := mode == "ready" || strings.HasPrefix(mode, "result-")
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if strings.HasSuffix(r.URL.Path, "/result") {
+			server := hostControlFixtureServer(&hostControlGRPCFixture{
+				complete: func(_ context.Context, _ *agentpb.TaskDocument) (*agentpb.Document, error) {
 					reports++
 					if !targetReady || observations != 3 {
 						t.Error("result reported before target was observed")
 					}
-					if status := map[string]int{"result-unavailable": http.StatusServiceUnavailable, "result-unauthorized": http.StatusUnauthorized, "result-conflict": http.StatusConflict}[mode]; status != 0 {
-						w.WriteHeader(status)
-						return
+					if code := map[string]codes.Code{"result-unavailable": codes.Unavailable, "result-unauthorized": codes.Unauthenticated, "result-conflict": codes.FailedPrecondition}[mode]; code != codes.OK {
+						return nil, status.Error(code, "result rejected")
 					}
-					w.Write([]byte(`{}`))
-					return
-				}
-				var request struct{ Action, SessionID string }
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Action != "helper-observe" || request.SessionID != "test-session" {
-					t.Errorf("unexpected mutation or malformed observation: %+v %v", request, err)
-				}
-				observations++
-				switch mode {
-				case "unavailable":
-					w.WriteHeader(http.StatusServiceUnavailable)
-				case "unauthorized":
-					w.WriteHeader(http.StatusUnauthorized)
-				default:
-					json.NewEncoder(w).Encode(map[string]bool{"ready": targetReady && observations == 3})
-				}
-			}))
+					return &agentpb.Document{Json: []byte(`{}`)}, nil
+				},
+				transition: func(_ context.Context, input *agentpb.ExecutionDocument) (*agentpb.Document, error) {
+					var request struct{ Action, SessionID string }
+					if err := json.Unmarshal(input.Json, &request); err != nil || request.Action != "helper-observe" || request.SessionID != "test-session" {
+						t.Errorf("unexpected mutation or malformed observation: %+v %v", request, err)
+					}
+					observations++
+					switch mode {
+					case "unavailable":
+						return nil, status.Error(codes.Unavailable, "unavailable")
+					case "unauthorized":
+						return nil, status.Error(codes.Unauthenticated, "unauthorized")
+					default:
+						body, err := json.Marshal(map[string]bool{"ready": targetReady && observations == 3})
+						return &agentpb.Document{Json: body}, err
+					}
+				},
+			})
 			defer server.Close()
 			operation := hostUpdateOperation{Version: 1, TaskID: "agent-update-test", Attempt: 1, AgentID: "node", ExecutionID: "test-execution", SessionID: "test-session", DataDir: root, Executable: filepath.Join(root, "vastora"), SourceVersion: "source", TargetVersion: "target", CenterURL: server.URL, Credential: "synthetic-credential"}
 			raw, err := json.Marshal(operation)
@@ -73,7 +75,7 @@ func TestHostUpdateObservationIsBoundedAndReadOnly(t *testing.T) {
 					return nil
 				},
 			}
-			err = runPersistentHostUpdateWithEnvironment(context.Background(), operationPath, environment, agent.Client{HTTPClient: server.Client()})
+			err = runPersistentHostUpdateWithEnvironment(context.Background(), operationPath, environment, agent.Client{})
 			wantObservations, wantReports, wantWaits := 1, 0, 0
 			switch mode {
 			case "ready", "result-unavailable", "result-unauthorized", "result-conflict":

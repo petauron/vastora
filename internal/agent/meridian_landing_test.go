@@ -401,13 +401,13 @@ func TestMeridianRetirementWaitRequiresFreshPeerEvidenceAndPreservesJournalOnTim
 		t.Fatal("retirement wait consumed old recovery evidence")
 	}
 	now := time.Now().UTC()
-	result.Peers[0].Status = landing.MonitorStatus{Revision: task.Desired.Revision, State: "healthy", LinkState: "direct", TCP: true, CheckedAt: now, AllowedUntil: now.Add(landing.AllowLifetime), ExitIP: "1.1.1.1"}
+	result.Peers[0].Status = landing.MonitorStatus{Revision: task.Desired.Revision, State: "healthy", LinkState: "direct", TCP: true, StartedAt: now.Add(-time.Millisecond), CheckedAt: now, Stage: "startup", Reason: "startup_ready", ExitIP: "1.1.1.1"}
 	if err := waitForMeridianRetirementPeers(context.Background(), task, func(context.Context) (meridianruntime.Result, error) { return result, nil }); err != nil {
 		t.Fatalf("fresh TCP-only evidence rejected: %v", err)
 	}
 }
 
-func TestMeridianHeartbeatCadencePreservesNativeAndCapsPeerPlans(t *testing.T) {
+func TestHeartbeatCadenceUsesGenericInterval(t *testing.T) {
 	peers := meridianLandingFixture()
 	native := meridianRuntimeState{Applied: peers.Applied}
 	for _, test := range []struct {
@@ -417,12 +417,12 @@ func TestMeridianHeartbeatCadencePreservesNativeAndCapsPeerPlans(t *testing.T) {
 	}{
 		{0, native, 15 * time.Second},
 		{12 * time.Second, native, 12 * time.Second},
-		{15 * time.Second, peers, landing.CheckInterval},
+		{15 * time.Second, peers, 15 * time.Second},
 		{2 * time.Second, peers, 2 * time.Second},
-		{0, peers, landing.CheckInterval},
+		{0, peers, 15 * time.Second},
 		{15 * time.Second, meridianRuntimeState{Pending: peers.Applied, PendingPeers: peers.AppliedPeers}, 15 * time.Second},
 	} {
-		if got := meridianHeartbeatInterval(test.configured, test.state); got != test.want {
+		if got := heartbeatInterval(test.configured); got != test.want {
 			t.Fatalf("cadence=%s want=%s", got, test.want)
 		}
 	}

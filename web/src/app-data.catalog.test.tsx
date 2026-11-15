@@ -3,8 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { APIError } from "./api";
-import { emptyAppData, loadScreenData, screenFromPath } from "./app-data";
+import { ApplicationPageDataError, emptyAppData, loadScreenData, screenFromPath } from "./app-data";
 import { ThemeProvider } from "./components/theme";
 import type { AgentView, AppData, Application, AppView, CatalogSource, CenterStatus } from "./types";
 import { AppStore } from "./views/AppStore";
@@ -184,7 +183,9 @@ describe("apps loader to AppStore integration", () => {
     const { state } = mockCenter();
     await loadStore();
     state.appStatus = 503;
-    await expect(loadStore()).rejects.toBeInstanceOf(APIError);
+    const loading = loadStore();
+    await expect(loading).rejects.toBeInstanceOf(ApplicationPageDataError);
+    await expect(loading).rejects.toMatchObject({ shared: { desktopDataUnavailable: true } });
     expect(container.textContent).toContain("官方目录等待首次验证");
   });
 

@@ -21,6 +21,10 @@ func TestClassifyUsesOnlyLocallyAssignedAddressProperties(t *testing.T) {
 		{name: "WireGuard overlay ignored", interfaceName: "wg0", address: "10.77.0.6", want: ""},
 		{name: "ordinary LAN bridge retained", interfaceName: "br0", address: "10.0.0.1", want: KindLAN},
 		{name: "public IPv4", interfaceName: "eth0", address: "203.0.113.20", want: KindPublic},
+		{name: "public IPv6", interfaceName: "eth0", address: "2001:db8::20", want: KindPublic},
+		{name: "IPv6 link local ignored", interfaceName: "eth0", address: "fe80::20", want: ""},
+		{name: "IPv6 ULA ignored", interfaceName: "eth0", address: "fd00::20", want: ""},
+		{name: "IPv6 virtual ignored", interfaceName: "docker0", address: "2001:db8::20", want: ""},
 		{name: "IPv6 ignored", interfaceName: "tailscale0", address: "fd7a:115c:a1e0::1", want: ""},
 		{name: "loopback ignored", interfaceName: "lo0", address: "127.0.0.1", want: ""},
 	}

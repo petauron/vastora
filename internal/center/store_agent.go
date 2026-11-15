@@ -93,6 +93,7 @@ type AgentView struct {
 	CredentialRevoked           bool                               `json:"credentialRevoked"`
 	RemoteUpdateSupported       bool                               `json:"remoteUpdateSupported"`
 	Update                      *AgentUpdateView                   `json:"update,omitempty"`
+	TailscaleUpdateTask         *TailscaleUpdateView               `json:"tailscaleUpdateTask,omitempty"`
 	Removal                     *AgentRemovalView                  `json:"removal,omitempty"`
 }
 
@@ -660,7 +661,15 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if err := json.Unmarshal(authorizedJSON, &authorized); err != nil {
 		return err
 	}
-	if authorized.LandingOnly != heartbeat.Capabilities.LandingOnly || (authorized.LandingOnly && (heartbeat.Capabilities.Docker || heartbeat.Capabilities.Gateway || heartbeat.Capabilities.Tunnel || containsString(heartbeat.Roles, "gateway"))) {
+	promotingGateway := false
+	if authorized.LandingOnly && !heartbeat.Capabilities.LandingOnly {
+		allowed, promotionErr := s.acceptsGatewayPromotionHeartbeat(ctx, id, heartbeat)
+		if promotionErr != nil {
+			return promotionErr
+		}
+		promotingGateway = allowed
+	}
+	if !promotingGateway && (authorized.LandingOnly != heartbeat.Capabilities.LandingOnly || (authorized.LandingOnly && (heartbeat.Capabilities.Docker || heartbeat.Capabilities.Gateway || heartbeat.Capabilities.Tunnel || containsString(heartbeat.Roles, "gateway")))) {
 		return errors.New("center: heartbeat cannot change the authorized landing-only purpose")
 	}
 	heartbeat.Roles = uniqueStrings(heartbeat.Roles)
@@ -693,7 +702,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	reportedHeadscaleAddress := false
 	for _, candidate := range heartbeat.NetworkCandidates {
 		ip := net.ParseIP(candidate.Address)
-		if ip == nil || ip.To4() == nil || candidate.Interface == "" || (candidate.Kind != networking.KindLAN && candidate.Kind != networking.KindHeadscale && candidate.Kind != networking.KindPublic) {
+		if ip == nil || candidate.Interface == "" || (candidate.Kind != networking.KindLAN && candidate.Kind != networking.KindHeadscale && candidate.Kind != networking.KindPublic) {
 			return errors.New("center: Agent reported an invalid network candidate")
 		}
 		kind := networking.Classify(candidate.Interface, ip)
@@ -759,6 +768,16 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET landing_egress_addresses_json=? WHERE id=?`, egressAddressesJSON, id); err != nil {
 		return err
 	}
+	if promotingGateway {
+		if err := s.confirmGatewayPromotion(ctx, tx, id, credential); err != nil {
+			return err
+		}
+	}
+	if heartbeat.Startup {
+		if err := s.retireInstalledUnclaimedAgentUpdate(ctx, tx, id, heartbeat.Version, now); err != nil {
+			return err
+		}
+	}
 	if err := saveRuntimeRecoveryApplications(ctx, tx, id, heartbeat.RuntimeRecoveryApplications); err != nil {
 		return err
 	}
@@ -796,12 +815,12 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
-	if reinstalling && heartbeat.MeridianRuntime != nil {
+	if !s.businessRetired && reinstalling && heartbeat.MeridianRuntime != nil {
 		if err := s.recordReinstallRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
 			return err
 		}
 	}
-	if !executionBlocked && heartbeat.MeridianRuntime != nil {
+	if !s.businessRetired && !executionBlocked && heartbeat.MeridianRuntime != nil {
 		if err := s.recordMeridianRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
 			return err
 		}
@@ -840,19 +859,34 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 		if !executionBlocked {
-			if heartbeat.LandingClientRuntime != nil {
+			if !s.businessRetired && heartbeat.LandingClientRuntime != nil {
 				if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
 					return err
 				}
 			}
-			if err := s.reconcileClientLandingSourcesForNode(ctx, tx, id); err != nil {
+			if err := func() error {
+				if s.businessRetired {
+					return nil
+				}
+				return s.reconcileClientLandingSourcesForNode(ctx, tx, id)
+			}(); err != nil {
 				return err
 			}
-			if err := s.reconcileLandingSubscriptionOrigin(ctx, tx, id, now); err != nil {
+			if err := func() error {
+				if s.businessRetired {
+					return nil
+				}
+				return s.reconcileLandingSubscriptionOrigin(ctx, tx, id, now)
+			}(); err != nil {
 				return err
 			}
 		}
-		if err := recordLandingHealth(ctx, tx, id, heartbeat.LandingHealth, now); err != nil {
+		if err := func() error {
+			if s.businessRetired {
+				return nil
+			}
+			return recordLandingHealth(ctx, tx, id, heartbeat.LandingHealth, now)
+		}(); err != nil {
 			return err
 		}
 		if !executionBlocked {
@@ -866,7 +900,12 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
-	if err := recordLandingServerHealth(ctx, tx, id, heartbeat.LandingServerHealth, now); err != nil {
+	if err := func() error {
+		if s.businessRetired {
+			return nil
+		}
+		return recordLandingServerHealth(ctx, tx, id, heartbeat.LandingServerHealth, now)
+	}(); err != nil {
 		return err
 	}
 	if heartbeat.Startup && !reinstalling {
@@ -874,11 +913,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
-	recoveredPublications, err := publicationsAfterNetworkRecovery(ctx, tx, now)
-	if err != nil {
+	if err := s.reconcileTailscaleUpdate(ctx, tx, id, heartbeat.TailscaleUpdateObservation, now); err != nil {
 		return err
 	}
-	if err := s.observeGlivelaPilotInTx(ctx, tx, id); err != nil {
+	recoveredPublications, err := publicationsAfterNetworkRecovery(ctx, tx, now)
+	if err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -904,6 +943,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 // excluded because their durable system helpers survive an Agent restart.
 func expireAgentProcessTaskLeases(ctx context.Context, tx *sql.Tx, agentID string, now time.Time) error {
 	nowText := now.UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `UPDATE tailscale_update_tasks SET state='failed',lease_expires_at='',error='Agent restarted during dispatch; inspect the host before retrying',updated_at=? WHERE agent_id=? AND state='running'`, nowText, agentID); err != nil {
+		return err
+	}
 	statements := []struct {
 		query string
 		kind  string
@@ -1059,7 +1101,7 @@ func invalidateUnusableNetworkProfile(ctx context.Context, tx *sql.Tx, agentID s
 		if networking.ValidateProfile(candidates, *retained) != nil {
 			return nil
 		}
-		if retained.DirectPublic {
+		if retained.DirectPublic && !strings.Contains(retained.PublicAddress, ":") {
 			egress, err := agentPublicEgress(ctx, tx, agentID)
 			if err != nil {
 				return err
@@ -1138,7 +1180,7 @@ func normalizeAgentPublicEgress(value *networking.PublicEgress, candidates []net
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, runtime_recovery, tailscale_ownership, credential_revoked_at <> '', public_egress_address, public_egress_bind_address, public_egress_mode, public_egress_observed_at, remote_update_supported, COALESCE((SELECT value FROM settings WHERE key='agent_runtime_recovery:'||agents.id),'[]') FROM agents ORDER BY status, name, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, runtime_recovery, tailscale_ownership, credential_revoked_at <> '', public_egress_address, public_egress_bind_address, public_egress_mode, public_egress_observed_at, remote_update_supported, COALESCE((SELECT value FROM settings WHERE key='agent_runtime_recovery:'||agents.id),'[]') FROM agents WHERE NOT EXISTS(SELECT 1 FROM agent_removals r WHERE r.agent_id=agents.id AND r.state='complete') ORDER BY status, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list agents: %w", err)
 	}
@@ -1191,6 +1233,28 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		byID[agents[index].ID] = index
 		agents[index].NetworkCandidates = []networking.Candidate{}
 	}
+	tailscaleUpdateRows, err := s.db.QueryContext(ctx, `SELECT t.agent_id,t.id,t.target_version,t.state,t.error,t.updated_at FROM tailscale_update_tasks t WHERE t.id=(SELECT newest.id FROM tailscale_update_tasks newest WHERE newest.agent_id=t.agent_id ORDER BY newest.created_at DESC,newest.rowid DESC LIMIT 1)`)
+	if err != nil {
+		return nil, err
+	}
+	for tailscaleUpdateRows.Next() {
+		var node string
+		var v TailscaleUpdateView
+		if err := tailscaleUpdateRows.Scan(&node, &v.ID, &v.TargetVersion, &v.State, &v.Error, &v.UpdatedAt); err != nil {
+			tailscaleUpdateRows.Close()
+			return nil, err
+		}
+		if index, ok := byID[node]; ok {
+			agents[index].TailscaleUpdateTask = &v
+		}
+	}
+	if err := tailscaleUpdateRows.Err(); err != nil {
+		tailscaleUpdateRows.Close()
+		return nil, err
+	}
+	if err := tailscaleUpdateRows.Close(); err != nil {
+		return nil, err
+	}
 	recoveryRows, err := s.db.QueryContext(ctx, `SELECT agent_id,id,plan_revision,state,private_isolation,attempt,authorized_by,previous_fingerprint,replacement_fingerprint,last_error,created_at,updated_at FROM agent_reinstall_operations WHERE state NOT IN ('superseded','completed')`)
 	if err != nil {
 		return nil, err
@@ -1241,7 +1305,8 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 	if removalErr != nil {
 		return nil, removalErr
 	}
-	updateRows, err := s.db.QueryContext(ctx, `SELECT u.id, u.agent_id, u.target_version, u.state, u.last_error, u.updated_at
+	updateRows, err := s.db.QueryContext(ctx, `SELECT u.id, u.agent_id, u.target_version, u.state, u.last_error, u.updated_at, u.attempt,
+		EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=u.id)
 		FROM agent_updates u WHERE u.rowid = (SELECT latest.rowid FROM agent_updates latest WHERE latest.agent_id = u.agent_id ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1)
 		AND NOT (u.state='failed' AND EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=u.id AND e.agent_id=u.agent_id AND e.kind='agent.update' AND e.attempt=u.attempt AND e.disposition='abandon'))`)
 	if err != nil {
@@ -1250,7 +1315,9 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 	for updateRows.Next() {
 		var update AgentUpdateView
 		var agentID, updatedAt string
-		if err := updateRows.Scan(&update.ID, &agentID, &update.TargetVersion, &update.State, &update.LastError, &updatedAt); err != nil {
+		var attempt int64
+		var hasExecution bool
+		if err := updateRows.Scan(&update.ID, &agentID, &update.TargetVersion, &update.State, &update.LastError, &updatedAt, &attempt, &hasExecution); err != nil {
 			updateRows.Close()
 			return nil, fmt.Errorf("center: scan Agent update: %w", err)
 		}
@@ -1260,6 +1327,9 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 			return nil, errors.New("center: invalid stored Agent update timestamp")
 		}
 		if index, ok := byID[agentID]; ok {
+			if unclaimedAgentUpdateSuperseded(agents[index].Version, update.TargetVersion, update.State, update.LastError, attempt, hasExecution) {
+				continue
+			}
 			agents[index].Update = &update
 		}
 	}

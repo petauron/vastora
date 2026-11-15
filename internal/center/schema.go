@@ -2,11 +2,18 @@ package center
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"time"
 )
 
-const centerSchemaVersion = 119
+const centerSchemaVersion = 133
+
+//go:embed schema_retirement.sql
+var currentRetirementSchema string
+
+//go:embed schema_managed_domains.sql
+var currentManagedDomainSchema string
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -31,7 +38,11 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	statements := []string{
+		currentManagedDomainSchema,
+		currentReinstallSchema,
+		agentGatewayPromotionSchema,
 		glivelaPilotCheckpointSchema,
+		applicationExecutionRetirementSchema,
 		`CREATE TABLE official_catalog_trust (
 			channel TEXT PRIMARY KEY,
 			revision INTEGER NOT NULL CHECK(revision >= 0),
@@ -592,6 +603,7 @@ CREATE TABLE agent_reinstall_access_activations (
 			entry_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
 			hostname TEXT NOT NULL,
 			sni_hostname TEXT NOT NULL DEFAULT '',
+			managed_domain_id TEXT NOT NULL DEFAULT '',
 			dns_provider TEXT NOT NULL CHECK(dns_provider IN ('manual', 'cloudflare', 'headscale')),
 			dns_record_id TEXT NOT NULL DEFAULT '',
 			access_application_id TEXT NOT NULL DEFAULT '',
@@ -1068,8 +1080,20 @@ CREATE TABLE agent_reinstall_access_activations (
 	if _, err := tx.ExecContext(ctx, ipQualitySchemaSQL); err != nil {
 		return fmt.Errorf("center: initialize IP quality schema: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, tailscaleUpdateSchema); err != nil {
+		return fmt.Errorf("center: initialize Tailscale updates: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX tailscale_update_tasks_agent_idx ON tailscale_update_tasks(agent_id, created_at DESC)`); err != nil {
+		return fmt.Errorf("center: initialize Tailscale update index: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, nodeSiteSchema); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, nodeSecuritySchema); err != nil {
 		return fmt.Errorf("center: initialize node security schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, osReinstallSchema); err != nil {
+		return fmt.Errorf("center: initialize OS reinstall schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, nodeDiagnosticsSchemaSQL); err != nil {
 		return fmt.Errorf("center: initialize node diagnostics schema: %w", err)
@@ -1082,6 +1106,9 @@ CREATE TABLE agent_reinstall_access_activations (
 	}
 	if _, err := tx.ExecContext(ctx, meridianHealthDiagnosticsSchema); err != nil {
 		return fmt.Errorf("center: initialize route health diagnostics: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, currentRetirementSchema); err != nil {
+		return fmt.Errorf("center: initialize proxy business retirement: %w", err)
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO organizations(id, name, created_at, updated_at) VALUES(?, 'Vastora', ?, ?)`, defaultOrganizationID, now, now); err != nil {

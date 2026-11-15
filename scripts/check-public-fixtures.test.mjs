@@ -13,6 +13,12 @@ test("classifies mapped documentation addresses without truncating IPv6", () => 
   }
 });
 
+test("canonicalizes reserved IPv6 before classification", () => {
+  for (const value of ["0::/owned", "0:0:0:0:0:0:0:0", "0:0:0:0:0:0:0:1"]) {
+    assert.deepEqual(scanContent("fixture.test.ts", Buffer.from(value)), []);
+  }
+});
+
 test("still rejects routable IPv4-mapped addresses without printing them", () => {
   // Same synthetic routable range as the existing rejection fixture below.
   const raw = `::ffff:${[198, 52, 100, 42].join(".")}`;

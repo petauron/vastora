@@ -81,11 +81,11 @@ function publicIPv4(value) {
 
 function publicIPv6(value) {
   if (isIP(value) !== 6) return false;
-  const normalized = value.toLowerCase();
   // Apply the same reserved-address policy to the underlying IPv4 address in
   // both dotted and hexadecimal mapped forms. Routable mappings still fail;
   // this is classification, not an allowlist or scanner bypass.
   const canonical = new URL(`http://[${value}]/`).hostname.slice(1, -1);
+  const normalized = canonical.toLowerCase();
   const mapped = /^::ffff:([0-9a-f]+):([0-9a-f]+)$/i.exec(canonical);
   if (mapped) {
     const high = Number.parseInt(mapped[1], 16);

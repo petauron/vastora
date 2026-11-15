@@ -78,7 +78,7 @@ type maintenanceBackup struct {
 
 func decodeMaintenanceReceipt(raw []byte) (maintenanceReceipt, error) {
 	var receipt maintenanceReceipt
-	if len(raw) > 1<<20 || json.Unmarshal(raw, &receipt) != nil || receipt.Version != 1 || receipt.ApplicationID == "" || receipt.AppKey == "" || len(receipt.Resources) == 0 || (receipt.Runtime != "docker" && receipt.Runtime != "systemd") || len(receipt.ManifestSHA256) != 64 {
+	if len(raw) > 1<<20 || json.Unmarshal(raw, &receipt) != nil || receipt.Version != 1 || receipt.ApplicationID == "" || receipt.AppKey == "" || len(receipt.Resources) == 0 || (receipt.Runtime != "docker" && receipt.Runtime != "systemd" && receipt.Runtime != "native") || len(receipt.ManifestSHA256) != 64 {
 		return receipt, errors.New("center: invalid installed resource evidence")
 	}
 	return receipt, nil

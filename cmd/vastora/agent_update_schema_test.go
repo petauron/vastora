@@ -5,15 +5,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/secret"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestHostUpdateRetainsCandidateAfterActivationCanMigrateSchema(t *testing.T) {
@@ -41,10 +42,10 @@ func TestHostUpdateRetainsCandidateAfterActivationCanMigrateSchema(t *testing.T)
 		t.Fatal(err)
 	}
 	// Reconstruct the schema-15 fixture by removing the tables and indexes
-	// introduced by schemas 16 through 21. Starting the candidate runs the actual Agent migration,
+	// introduced by schemas 16 through 24. Starting the candidate runs the actual Agent migration,
 	// rather than only rewriting the user_version number.
 	const sourceSchema = 15
-	if agent.CurrentSchemaVersion() != 22 {
+	if agent.CurrentSchemaVersion() != 24 {
 		t.Fatal("update this fixture to preserve the complete historical schema-15 shape")
 	}
 	database, err := sql.Open("sqlite", filepath.Join(dataDir, "agent.db"))
@@ -54,6 +55,8 @@ func TestHostUpdateRetainsCandidateAfterActivationCanMigrateSchema(t *testing.T)
 	if _, err := database.Exec(`DROP INDEX task_receipts_pending_completion;
 		DROP INDEX task_receipts_unresolved_application;
 		DROP INDEX task_receipts_expiry;
+		DROP TABLE shared_caddy_sites;
+		DROP TABLE node_site_journal;
 		DROP TABLE meridian_runtime_state;
 		DROP TABLE xray_worker_state;
 		DROP TABLE landing_controller_state;
@@ -487,21 +490,28 @@ func TestHostUpdateRecoveryCannotMutateBeforeCenterAuthorization(t *testing.T) {
 			}
 			starts := 0
 			centerCalls := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			respond := func(ctx context.Context, method string) (*agentpb.Document, error) {
 				centerCalls++
-				if r.Header.Get("Authorization") != "Bearer synthetic-credential" {
-					t.Error("missing update callback authentication")
-				}
+				requireHostFixtureCredential(t, ctx, "synthetic-credential")
 				if starts != 0 {
 					t.Error("helper mutated service before Center authorization")
 				}
-				if name == "succeeded" && strings.HasSuffix(r.URL.Path, "/start") {
-					w.Header().Set("Content-Type", "application/json")
-					w.Write([]byte(`{}`))
-					return
+				if name == "succeeded" && method == "start" {
+					return &agentpb.Document{Json: []byte(`{}`)}, nil
 				}
-				http.Error(w, "unavailable", http.StatusServiceUnavailable)
-			}))
+				return nil, status.Error(codes.Unavailable, "unavailable")
+			}
+			server := hostControlFixtureServer(&hostControlGRPCFixture{
+				beginUpdate: func(ctx context.Context, _ *agentpb.TaskDocument) (*agentpb.Document, error) {
+					return respond(ctx, "start")
+				},
+				transition: func(ctx context.Context, _ *agentpb.ExecutionDocument) (*agentpb.Document, error) {
+					return respond(ctx, "transition")
+				},
+				complete: func(ctx context.Context, _ *agentpb.TaskDocument) (*agentpb.Document, error) {
+					return respond(ctx, "result")
+				},
+			})
 			defer server.Close()
 			operation := hostUpdateOperation{
 				Version: 1, TaskID: "agent-update-offline", Attempt: 1, AgentID: "node",
@@ -542,7 +552,7 @@ func TestHostUpdateRecoveryCannotMutateBeforeCenterAuthorization(t *testing.T) {
 				serviceActive: func(context.Context) bool { return true },
 				wait:          func(context.Context) error { return nil },
 			}
-			client := agent.Client{HTTPClient: server.Client()}
+			client := agent.Client{}
 			if err := runPersistentHostUpdateWithEnvironment(context.Background(), operationPath, environment, client); err == nil {
 				t.Fatal("unreachable Center was reported as a completed update")
 			}

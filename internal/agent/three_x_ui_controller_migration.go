@@ -89,28 +89,7 @@ func (c Client) uploadThreeXUIBackup(ctx context.Context, store *Store, applicat
 	if err != nil {
 		return err
 	}
-	endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/three-x-ui-backups/" + url.PathEscape(applicationID) + "/" + strconv.FormatInt(revision, 10)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(content))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Authorization", "Bearer "+connection.Credential)
-	request.Header.Set("Content-Type", "application/octet-stream")
-	client, release, err := c.clientFor(connection.CAFingerprint, connection.CACertificatePEM, 2*time.Minute)
-	if err != nil {
-		return err
-	}
-	defer release()
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("agent: upload 3x-ui restore point: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		content, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		return fmt.Errorf("agent: Center rejected 3x-ui restore point: %s", centerFailureMessage(response.Status, content))
-	}
-	return nil
+	return c.grpcUploadThreeXUIBackup(ctx, connection, applicationID, revision, content)
 }
 
 func (c Client) downloadThreeXUIMigrationBackup(ctx context.Context, store *Store, migrationID string) ([]byte, error) {
@@ -122,43 +101,7 @@ func (c Client) downloadThreeXUIMigrationBackup(ctx context.Context, store *Stor
 	if err != nil {
 		return nil, err
 	}
-	endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/three-x-ui-migrations/" + url.PathEscape(migrationID) + "/backup"
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Authorization", "Bearer "+connection.Credential)
-	client, release, err := c.clientFor(connection.CAFingerprint, connection.CACertificatePEM, 2*time.Minute)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("agent: download 3x-ui migration restore point: %w", err)
-	}
-	defer response.Body.Close()
-	content, err := io.ReadAll(io.LimitReader(response.Body, threeXUIControllerBackupMaxSize+1))
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("agent: Center rejected 3x-ui migration restore: %s", centerFailureMessage(response.Status, content))
-	}
-	if len(content) < 16 || len(content) > threeXUIControllerBackupMaxSize || string(content[:16]) != "SQLite format 3\x00" {
-		return nil, errors.New("agent: Center returned an invalid 3x-ui migration restore point")
-	}
-	return content, nil
-}
-
-func centerFailureMessage(status string, content []byte) string {
-	var failure struct {
-		Error string `json:"error"`
-	}
-	if json.Unmarshal(content, &failure) == nil && strings.TrimSpace(failure.Error) != "" {
-		return failure.Error
-	}
-	return status
+	return c.grpcDownloadThreeXUIBackup(ctx, connection, migrationID)
 }
 
 func (c Client) promoteThreeXUIController(ctx context.Context, store *Store, taskID string, command ThreeXUIControllerCommandTask) (ThreeXUIControllerCommandResult, error) {

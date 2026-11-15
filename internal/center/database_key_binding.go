@@ -124,6 +124,32 @@ func verifyCenterEncryptedState(ctx context.Context, db *sql.DB, key []byte) err
 		}
 	}
 
+	// Panel identities use a deterministic node-owned ID instead of a foreign
+	// key. Derive only IDs the actual panel reader can request; a missing panel
+	// identity is valid for nodes that have never provisioned panel access.
+	panelIdentities := make(map[string]bool)
+	if exists, err := tableHasColumns(ctx, db, "agents", "id"); err != nil {
+		return err
+	} else if exists {
+		rows, err := db.QueryContext(ctx, `SELECT id FROM agents`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var nodeID string
+			if err := rows.Scan(&nodeID); err != nil {
+				rows.Close()
+				return err
+			}
+			panelIdentities[panelIdentityID(nodeID)] = true
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+
 	secretsTable, err := tableHasColumns(ctx, db, "secrets", "id", "sealed")
 	if err != nil {
 		return err
@@ -143,6 +169,13 @@ func verifyCenterEncryptedState(ctx context.Context, db *sql.DB, key []byte) err
 			return fmt.Errorf("center: inspect encrypted record: %w", err)
 		}
 		additionalData, ok := references[id]
+		if panelIdentities[id] {
+			if ok && additionalData != id {
+				rows.Close()
+				return fmt.Errorf("center: encrypted record %s has conflicting panel ownership", id)
+			}
+			additionalData, ok = id, true
+		}
 		if !ok {
 			_ = rows.Close()
 			return fmt.Errorf("center: encrypted record %s has no verifiable owner", id)
@@ -170,6 +203,47 @@ func verifyCenterEncryptedState(ctx context.Context, db *sql.DB, key []byte) err
 }
 
 func verifyCenterDirectCiphertexts(ctx context.Context, db *sql.DB, key []byte) error {
+	for _, spec := range []struct {
+		table         string
+		columns       []string
+		query, prefix string
+	}{
+		{"node_sites", []string{"application_id", "sealed_key"}, `SELECT application_id,sealed_key FROM node_sites WHERE length(sealed_key)>0`, "node-site-certificate:"},
+		{"node_site_certmagic_storage", []string{"key", "sealed"}, `SELECT key,sealed FROM node_site_certmagic_storage`, "node-site-certmagic:"},
+	} {
+		exists, err := tableHasColumns(ctx, db, spec.table, spec.columns...)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			continue
+		}
+		rows, err := db.QueryContext(ctx, spec.query)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id string
+			var sealed []byte
+			if err = rows.Scan(&id, &sealed); err != nil {
+				rows.Close()
+				return err
+			}
+			if _, err = secret.Open(key, sealed, []byte(spec.prefix+id)); err != nil {
+				rows.Close()
+				return fmt.Errorf("center: encrypted certificate state in %s does not match the root key", spec.table)
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := verifyOSReinstallKeyBinding(ctx, db, key); err != nil {
+		return err
+	}
 	if exists, err := tableHasColumns(ctx, db, "three_x_ui_backups", "application_id", "revision", "sealed"); err != nil {
 		return err
 	} else if exists {

@@ -25,6 +25,7 @@ import { ApplicationCredentialsSheet, InstalledAppDetails } from "./apps/Applica
 import { DeploymentSheet, PublicationSheet, type DeploymentEditor } from "./apps/DeploymentSheets";
 import { RealityRenameSheet, SubscriptionSheet, UninstallSheet } from "./apps/SubscriptionSheets";
 import { OfficialAppManagerHost } from "@/app-workspaces/OfficialAppWorkspaceHost";
+import { daylightInstalledGroup, isDaylightAppKey } from "./daylight";
 import { TaskRecoverySheet } from "./TaskRecoverySheet";
 
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
@@ -53,7 +54,7 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
     services: data.services, publications: data.publications, deployments: data.deployments,
     threeXUIControllerMigrations: data.threeXUIControllerMigrations,
   }), [data.applications, data.apps, data.agents, data.sites, data.services, data.publications, data.deployments, data.threeXUIControllerMigrations]);
-  const selectedGroup = installedGroups.find((group) => group.appKey === workspaceKey);
+  const selectedGroup = workspaceKey && isDaylightAppKey(workspaceKey) ? daylightInstalledGroup(installedGroups) : installedGroups.find((group) => group.appKey === workspaceKey);
   const managedInstance = installedGroups.flatMap((group) => group.instances).find((instance) => instance.application.id === managedApplicationID);
   const recentOperations = latestOperations(data.deployments).filter((deployment) => deployment.state === "pending" || deployment.state === "running" || deployment.reconciliationRequired);
   const trafficApplication = trafficService ? data.applications.find((application) => application.id === trafficService.applicationId) : undefined;
@@ -69,7 +70,7 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
   ) => {
     let result: Deployment | undefined;
     const scope = deploymentSecretScope(agent.id, app.key, operation);
-    const operationKey = app.key === "vastora-official/3x-ui" && operation === "install" && role !== "worker" || app.key === "vastora-official/pulse" && (operation === "install" || operation === "upgrade") ? secretOperation(scope) : undefined;
+    const operationKey = app.key === "vastora-official/3x-ui" && operation === "install" && role !== "worker" || app.key === "vastora-official/senlun" && (operation === "install" || operation === "upgrade") ? secretOperation(scope) : undefined;
     const messages = { install: copy(language, "安装任务已创建。可在活动中查看进度。", "Install task created. Follow progress in Activity."), upgrade: copy(language, "升级任务已创建。", "Upgrade task created."), configure: copy(language, "配置任务已创建。", "Configuration task created.") };
     await mutate(async () => { result = await api.createDeployment(agent.id, app.key, config, operation, false, role, registryCredentialId, operationKey, authorizedCapabilities, operation === "configure" ? undefined : { packageRevision: app.app.packageRevision ?? 0, manifestSha256: app.manifestSha256 ?? "", ...(backupsConfirmed ? { backupsConfirmed: true } : {}) }); }, messages[operation], { reportError: false });
     if (result?.oneTimeCredentials && operationKey) setCredentials({ ...result.oneTimeCredentials, deploymentId: result.id, operationKey, scope });

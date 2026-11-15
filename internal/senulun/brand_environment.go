@@ -22,15 +22,15 @@ func MigrateEnvironment(entries []string) ([]string, error) {
 		if !ok || key == "" {
 			return nil, errors.New("senulun: invalid environment assignment")
 		}
-		if strings.HasPrefix(key, "PULSE_") {
-			key = "SENULUN_" + strings.TrimPrefix(key, "PULSE_")
+		if strings.HasPrefix(key, "SENULUN_") {
+			key = "SENLUN_" + strings.TrimPrefix(key, "SENULUN_")
 		}
 		if seen[key] {
 			return nil, errors.New("senulun: conflicting old and new environment assignments")
 		}
 		seen[key] = true
-		if strings.HasPrefix(key, "SENULUN_") && strings.HasPrefix(value, "/var/lib/pulse/") {
-			value = "/var/lib/senulun/" + strings.TrimPrefix(value, "/var/lib/pulse/")
+		if strings.HasPrefix(key, "SENLUN_") && strings.HasPrefix(value, "/var/lib/senulun/") {
+			value = "/var/lib/senlun/" + strings.TrimPrefix(value, "/var/lib/senulun/")
 		}
 		result = append(result, key+"="+value)
 	}

@@ -512,6 +512,12 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 	// Retain both ownership records until every owned binary is removed.
 	// A failed deletion must not make the next attempt skip the remaining files.
 	if !keepBinary && (unitOwned || stateRecorded) {
+		if err := authorize(ctx, "files"); err != nil {
+			return err
+		}
+		if err := removeRuntimeDirectoriesUnit(ctx); err != nil {
+			return fmt.Errorf("retain shared runtime prerequisites: %w", err)
+		}
 		for _, path := range environment.binaryPaths {
 			if err := authorize(ctx, "files"); err != nil {
 				return err

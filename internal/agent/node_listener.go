@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/petauron/glivela"
@@ -30,8 +31,8 @@ func validateAgentNodeListenerState(state gateway.NodeListenerState) error {
 	}
 	for _, route := range state.Listener.Routes {
 		if !route.ManagedReality {
-			if route.ProxyProtocol == gateway.ProxyProtocolV2 {
-				return errors.New("agent: Proxy Protocol v2 is reserved for managed REALITY routes")
+			if route.ProxyProtocol == gateway.ProxyProtocolV2 && (len(route.Upstreams) != 1 || !networking.IsPrivateServiceAddress(route.Upstreams[0].Address) || net.ParseIP(route.Upstreams[0].Address).IsLoopback()) {
+				return errors.New("agent: service forwarding requires one private backend")
 			}
 			continue
 		}

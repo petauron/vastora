@@ -2,13 +2,30 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/petauron/vastora/internal/agentpb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+type enrollmentGRPCFixture struct {
+	agentpb.UnimplementedAgentControlServer
+	enroll func(context.Context, *agentpb.EnrollRequest) (*agentpb.EnrollResponse, error)
+}
+
+func (f enrollmentGRPCFixture) Enroll(ctx context.Context, input *agentpb.EnrollRequest) (*agentpb.EnrollResponse, error) {
+	return f.enroll(ctx, input)
+}
+func enrollmentFixtureServer(enroll func(context.Context, *agentpb.EnrollRequest) (*agentpb.EnrollResponse, error)) *httptest.Server {
+	server := grpc.NewServer()
+	agentpb.RegisterAgentControlServer(server, enrollmentGRPCFixture{enroll: enroll})
+	return grpcTestHTTPServer(server)
+}
 
 func TestInspectInstallOperationFindsPendingFreshInstallWithoutMigration(t *testing.T) {
 	directory := t.TempDir()
@@ -37,42 +54,29 @@ func TestEnrollmentOperationReusesIdentityAfterLostResponseAndRestart(t *testing
 	requests := 0
 	operationID := ""
 	publicKey := []byte(nil)
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var input struct {
-			OperationID string `json:"operationId"`
-			PublicKey   []byte `json:"publicKey"`
-		}
-		if json.NewDecoder(request.Body).Decode(&input) != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			return
-		}
+	server := enrollmentFixtureServer(func(_ context.Context, input *agentpb.EnrollRequest) (*agentpb.EnrollResponse, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		requests++
 		if operationID == "" {
-			operationID = input.OperationID
+			operationID = input.OperationId
 			publicKey = append([]byte(nil), input.PublicKey...)
-		} else if operationID != input.OperationID || string(publicKey) != string(input.PublicKey) {
-			writer.WriteHeader(http.StatusConflict)
-			return
+		} else if operationID != input.OperationId || string(publicKey) != string(input.PublicKey) {
+			return nil, status.Error(codes.FailedPrecondition, "enrollment identity changed")
 		}
 		if requests == 1 {
-			connection, _, err := writer.(http.Hijacker).Hijack()
-			if err == nil {
-				_ = connection.Close()
-			}
-			return
+			// The operation is recorded, while the caller receives no success.
+			return nil, status.Error(codes.Unavailable, "response lost")
 		}
-		writer.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(writer).Encode(Enrollment{ID: "agent-1", Credential: "credential", Name: "node", Roles: []string{"worker"}, Capabilities: Capabilities{Docker: true}})
-	}))
+		return &agentpb.EnrollResponse{AgentId: "agent-1", Credential: "credential", Name: "node", Roles: []string{"worker"}, CapabilitiesJson: []byte(`{"docker":true}`)}, nil
+	})
 	defer server.Close()
 	directory := t.TempDir()
 	store, err := Open(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := Client{HTTPClient: server.Client()}
+	client := Client{}
 	if _, err := client.Enroll(context.Background(), store, server.URL, "one-time-token", "", ""); err == nil {
 		t.Fatal("lost response was reported as successful")
 	}
@@ -95,15 +99,10 @@ func TestEnrollmentOperationReusesIdentityAfterLostResponseAndRestart(t *testing
 
 func TestEnrollmentOperationRetriesLocalConnectionCommit(t *testing.T) {
 	operationIDs := []string{}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var input struct {
-			OperationID string `json:"operationId"`
-		}
-		_ = json.NewDecoder(request.Body).Decode(&input)
-		operationIDs = append(operationIDs, input.OperationID)
-		writer.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(writer).Encode(Enrollment{ID: "agent-1", Credential: "credential", Name: "node", Roles: []string{"worker"}, Capabilities: Capabilities{Docker: true}})
-	}))
+	server := enrollmentFixtureServer(func(_ context.Context, input *agentpb.EnrollRequest) (*agentpb.EnrollResponse, error) {
+		operationIDs = append(operationIDs, input.OperationId)
+		return &agentpb.EnrollResponse{AgentId: "agent-1", Credential: "credential", Name: "node", Roles: []string{"worker"}, CapabilitiesJson: []byte(`{"docker":true}`)}, nil
+	})
 	defer server.Close()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -113,7 +112,7 @@ func TestEnrollmentOperationRetriesLocalConnectionCommit(t *testing.T) {
 	if _, err := store.db.Exec(`CREATE TRIGGER fail_connection_insert BEFORE INSERT ON control_plane_connection BEGIN SELECT RAISE(ABORT, 'injected connection failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	client := Client{HTTPClient: server.Client()}
+	client := Client{}
 	if _, err := client.Enroll(context.Background(), store, server.URL, "one-time-token", "", ""); err == nil {
 		t.Fatal("local connection failure was not reported")
 	}

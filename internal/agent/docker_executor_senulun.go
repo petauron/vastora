@@ -69,7 +69,7 @@ func senulunServiceCLI(ctx context.Context, docker *client.Client, containerID s
 }
 
 func senulunServiceExecutable(entrypoint []string) (string, error) {
-	if len(entrypoint) > 0 && (entrypoint[0] == "/usr/local/bin/senulun-service" || entrypoint[0] == "/usr/local/bin/pulse-service") {
+	if len(entrypoint) > 0 && (entrypoint[0] == "/usr/local/bin/pulse-service" || entrypoint[0] == "/usr/local/bin/senulun-service" || entrypoint[0] == "/usr/local/bin/senlun-service") {
 		return entrypoint[0], nil
 	}
 	return "", errors.New("agent: installed Senulun executable is not a recognized signed runtime")
@@ -147,7 +147,7 @@ func (e ApplicationExecutor) EnrollSenulun(ctx context.Context, task senulun.Enr
 	if err != nil || receipt.AppKey != senulun.ServiceKey || receipt.State != "ready" {
 		return senulun.EnrollmentResult{}, errors.New("agent: Senulun package ownership receipt unavailable")
 	}
-	resource := resourceNamed(receipt, "container", "pulse")
+	resource := resourceNamed(receipt, "container", "senlun")
 	if resource == nil {
 		return senulun.EnrollmentResult{}, errors.New("agent: Senulun container receipt unavailable")
 	}
@@ -257,7 +257,7 @@ func (e ApplicationExecutor) senulunServiceContainerID(ctx context.Context, dock
 	if err != nil || receipt.AppKey != senulun.ServiceKey || receipt.State != "ready" {
 		return "", errors.New("agent: Senulun package ownership receipt unavailable")
 	}
-	resource := resourceNamed(receipt, "container", "pulse")
+	resource := resourceNamed(receipt, "container", "senlun")
 	if resource == nil {
 		return "", errors.New("agent: Senulun container receipt unavailable")
 	}

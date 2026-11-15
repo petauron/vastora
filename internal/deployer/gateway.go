@@ -51,6 +51,10 @@ type gatewayReplacement struct {
 }
 
 func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, docker *client.Client, caddyfile []byte, centerBindAddresses, publicBindAddresses []string) (gatewayReplacement, error) {
+	// Validate the shared host resource before stopping any healthy container.
+	if err := gatewayruntime.PrepareAdminDirectory(installer.CaddyAdminSocket); err != nil {
+		return gatewayReplacement{}, err
+	}
 	if err := installer.recoverGatewayBackup(ctx, docker); err != nil {
 		return gatewayReplacement{}, err
 	}
@@ -60,6 +64,14 @@ func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, do
 	}
 	replacement := gatewayReplacement{generation: generation, journalPath: filepath.Join(installer.ConfigDir, gatewayReplacementJournalFile), socket: installer.CaddyAdminSocket}
 	existing, err := inspectManagedContainer(ctx, docker, DefaultGatewayContainer, gatewayruntime.CaddyComponentLabel)
+	if err != nil {
+		return gatewayReplacement{}, err
+	}
+	hostTCP, err := gatewayruntime.DockerHostTCPProfile(ctx, docker, installer.CaddyImage)
+	if err != nil {
+		return gatewayReplacement{}, err
+	}
+	tcpProfile, _, err := gatewayruntime.ContainerTCPProfile(ctx, docker, hostTCP, existing)
 	if err != nil {
 		return gatewayReplacement{}, err
 	}
@@ -98,10 +110,6 @@ func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, do
 			return gatewayReplacement{}, errors.Join(cause, replacement.rollback(context.WithoutCancel(ctx), docker))
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(installer.CaddyAdminSocket), 0o700); err != nil {
-		_ = replacement.rollback(ctx, docker)
-		return gatewayReplacement{}, fmt.Errorf("deployer: create Caddy Admin socket directory: %w", err)
-	}
 	if err := os.Remove(installer.CaddyAdminSocket); err != nil && !os.IsNotExist(err) {
 		_ = replacement.rollback(ctx, docker)
 		return gatewayReplacement{}, fmt.Errorf("deployer: remove stale Caddy Admin socket: %w", err)
@@ -133,6 +141,7 @@ func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, do
 			NetworkMode:   container.NetworkMode(dockerruntime.NetworkName),
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
 			PortBindings:  portBindings,
+			Sysctls:       tcpProfile,
 			Mounts: []mount.Mount{
 				{Type: mount.TypeVolume, Source: installer.CaddyDataVolume, Target: "/data"},
 				{Type: mount.TypeVolume, Source: installer.CaddyConfigVolume, Target: "/config"},
@@ -203,6 +212,9 @@ func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, do
 			return gatewayReplacement{}, errors.Join(fmt.Errorf("deployer: start unified gateway: %w", err), rollbackErr)
 		}
 		return gatewayReplacement{}, fmt.Errorf("deployer: start unified gateway: %w", err)
+	}
+	if err := gatewayruntime.VerifyContainerTCPProfile(ctx, docker, created.ID, tcpProfile); err != nil {
+		return gatewayReplacement{}, errors.Join(err, replacement.rollback(context.WithoutCancel(ctx), docker))
 	}
 	return replacement, nil
 }

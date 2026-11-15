@@ -52,7 +52,7 @@ while IFS= read -r path; do
     go.mod|go.sum|web/package.json|web/package-lock.json) dependencies=true ;;
   esac
   case "$path" in
-    internal/agent/*|internal/landing/*|internal/recovery/*|internal/dantebundle/*|internal/deployer/*|internal/meridianruntime/*|internal/center/*composite*|internal/center/*landing*|cmd/*|deploy/center/*.sh|deploy/center/compose.yaml|deploy/landing/Dockerfile|scripts/run-composite-runtime-lab.sh|scripts/build-landing-dante.sh|scripts/install-landing-build-deps.sh|scripts/meridian-recovery-lab/*|catalog/*|internal/center/testdata/reviewed-catalog-v4.json|go.mod|go.sum|Dockerfile*) integration=true ;;
+    internal/agent/*|internal/landing/*|internal/recovery/*|internal/dantebundle/*|internal/deployer/*|internal/meridianruntime/*|internal/center/*composite*|internal/center/*landing*|internal/center/agent_*|internal/center/store_agent*|internal/center/business_handover*|internal/center/server*|internal/center/setup*|internal/center/initial_setup*|internal/center/topology*|internal/center/orchestration*|internal/center/schema*|internal/center/migrations/*|cmd/*|deploy/center/*.sh|deploy/center/compose.yaml|deploy/landing/Dockerfile|scripts/run-composite-runtime-lab.sh|scripts/build-landing-dante.sh|scripts/install-landing-build-deps.sh|scripts/meridian-recovery-lab/*|catalog/*|internal/center/testdata/reviewed-catalog-v4.json|go.mod|go.sum|Dockerfile*) integration=true ;;
   esac
   case "$path" in
     .release-please-manifest.json|version.txt) release_metadata=true; full=true ;;

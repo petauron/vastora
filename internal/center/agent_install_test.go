@@ -12,6 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/petauron/vastora/internal/agent"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestAgentBinaryDownloadRequiresLiveEnrollmentAndDoesNotConsumeIt(t *testing.T) {
@@ -103,32 +107,30 @@ func TestEnrolledAgentCanDownloadAuthenticatedUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewServer(store, "", false).WithAgentBinaries(binaries).Handler()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+credential.ID+"/binary/linux/amd64", nil)
-	request.Header.Set("Authorization", "Bearer "+credential.Credential)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	result := response.Result()
-	body, readErr := io.ReadAll(result.Body)
-	result.Body.Close()
+	server := grpcTestHTTPServer(NewServer(store, "", false).WithAgentBinaries(binaries).Handler())
+	defer server.Close()
+	connection := agent.Connection{CenterURL: server.URL, AgentID: credential.ID, Credential: credential.Credential}
+	reader, version, digest, size, err := agent.OpenAgentBinary(context.Background(), connection, "linux", "amd64")
+	if err != nil {
+		t.Fatalf("Agent update download failed: %v", err)
+	}
+	body, readErr := io.ReadAll(reader)
+	reader.Close()
 	wantDigest := sha256.Sum256(payload)
-	if readErr != nil || response.Code != http.StatusOK || string(body) != string(payload) {
-		t.Fatalf("Agent update download failed: status=%d body=%q err=%v", response.Code, body, readErr)
+	if readErr != nil || string(body) != string(payload) || size != int64(len(payload)) {
+		t.Fatalf("Agent update download failed: body=%q size=%d err=%v", body, size, readErr)
 	}
-	if got := response.Header().Get("X-Vastora-SHA256"); got != hex.EncodeToString(wantDigest[:]) {
-		t.Fatalf("Agent update digest = %q", got)
+	if digest != hex.EncodeToString(wantDigest[:]) || version != Version {
+		t.Fatalf("Agent update metadata: digest=%q version=%q", digest, version)
 	}
-	if response.Header().Get("X-Vastora-Version") != Version {
-		t.Fatalf("Agent update version header = %q", response.Header().Get("X-Vastora-Version"))
+	connection.Credential = "wrong-credential"
+	if reader, _, _, _, err := agent.OpenAgentBinary(context.Background(), connection, "linux", "amd64"); status.Code(err) != codes.Unauthenticated {
+		if reader != nil {
+			reader.Close()
+		}
+		t.Fatalf("invalid Agent credential: %v", err)
 	}
 
-	request = httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+credential.ID+"/binary/linux/amd64", nil)
-	request.Header.Set("Authorization", "Bearer wrong-credential")
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("invalid Agent credential status = %d", response.Code)
-	}
 }
 
 func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {

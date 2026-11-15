@@ -271,7 +271,7 @@ func (s *Store) meridianSubscriptionCredentials(ctx context.Context, tx *sql.Tx,
 		FROM meridian_credentials credential
 		JOIN meridian_endpoints endpoint ON endpoint.id=credential.endpoint_id
 		JOIN services service ON service.id=endpoint.service_id
-		LEFT JOIN publications publication ON publication.service_id=endpoint.service_id AND publication.kind='public_shared_443'
+		LEFT JOIN publications publication ON publication.service_id=endpoint.service_id AND (publication.kind='public_shared_443' OR (publication.kind='public_direct' AND EXISTS(SELECT 1 FROM glivela_pilot_checkpoint native_owner JOIN applications native_app ON native_app.id=endpoint.application_id WHERE native_owner.endpoint_id=endpoint.id AND native_app.app_key='vastora-official/glivela-entry' AND native_app.runtime='host')))
 			AND ((?=1 AND publication.status<>'stopped') OR (publication.status='ready' AND publication.desired_revision=publication.applied_revision))
 			AND publication.hostname=endpoint.advertise_host
 			AND EXISTS(SELECT 1 FROM json_each(endpoint.server_names_json) WHERE value=publication.sni_hostname)
@@ -424,19 +424,18 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
  WHEN egress_agent.id IS NULL OR egress_agent.status<>'active' OR egress_agent.credential_revoked_at<>'' OR egress_agent.tailscale_ownership<>'managed' OR egress_agent.last_seen_at<=? THEN 'landing_offline'
  WHEN ((?=1 AND endpoint.applied_revision=0 AND service.status<>'stopped' AND grant_row.status NOT IN ('blocked','revoking','revoked') AND endpoint.status<>'retired')
  OR (grant_row.status='ready' AND grant_row.runtime_healthy=1 AND grant_row.desired_revision=grant_row.applied_revision
- AND grant_row.health_expires_unix_ms>? AND service.status='ready' AND endpoint.status='ready' AND endpoint.runtime_healthy=1 AND endpoint.desired_revision=endpoint.applied_revision)) THEN ''
- WHEN grant_row.health_expires_unix_ms<=? AND grant_row.status='ready' AND grant_row.runtime_healthy=1 AND grant_row.desired_revision=grant_row.applied_revision THEN 'health_expired'
+ AND service.status='ready' AND endpoint.status='ready' AND endpoint.runtime_healthy=1 AND endpoint.desired_revision=endpoint.applied_revision)) THEN ''
  ELSE 'configuration_pending' END AS subscription_exclusion_reason
 		FROM meridian_route_grants grant_row JOIN meridian_endpoints endpoint ON endpoint.id=grant_row.endpoint_id
 		JOIN services service ON service.id=endpoint.service_id
-		LEFT JOIN publications publication ON publication.service_id=endpoint.service_id AND publication.kind='public_shared_443'
+		LEFT JOIN publications publication ON publication.service_id=endpoint.service_id AND (publication.kind='public_shared_443' OR (publication.kind='public_direct' AND EXISTS(SELECT 1 FROM glivela_pilot_checkpoint native_owner JOIN applications native_app ON native_app.id=endpoint.application_id WHERE native_owner.endpoint_id=endpoint.id AND native_app.app_key='vastora-official/glivela-entry' AND native_app.runtime='host')))
 			AND ((?=1 AND publication.status<>'stopped') OR (publication.status='ready' AND publication.desired_revision=publication.applied_revision))
 			AND publication.hostname=endpoint.advertise_host
 			AND EXISTS(SELECT 1 FROM json_each(endpoint.server_names_json) WHERE value=publication.sni_hostname)
   LEFT JOIN landing_server_states landing ON landing.node_id=grant_row.egress_node_id
  LEFT JOIN agents egress_agent ON egress_agent.id=grant_row.egress_node_id
  WHERE grant_row.account_id=? AND (?=1 OR subscription_exclusion_reason='')
- ORDER BY grant_row.endpoint_id,grant_row.egress_node_id,grant_row.id`, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano), snapshot, s.now().UnixMilli(), s.now().UnixMilli(), snapshot, accountID, boolInt(explain))
+ ORDER BY grant_row.endpoint_id,grant_row.egress_node_id,grant_row.id`, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano), snapshot, snapshot, accountID, boolInt(explain))
 	if err != nil {
 		return nil, fmt.Errorf("center: read Glivela route grants: %w", err)
 	}

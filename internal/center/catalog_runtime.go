@@ -22,8 +22,8 @@ func requireCatalogRuntime(manifest catalog.AppManifest) error {
 		return err
 	}
 	result := catalog.CheckRuntimeSupport(manifest, catalog.ExecutorSupport{
-		Versions:     map[string]int{"docker": 1, "systemd": 2},
-		Capabilities: []string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services"},
+		Versions:     map[string]int{"docker": 1, "systemd": 2, "native": 2},
+		Capabilities: []string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy", "host-tcp-budget"},
 	})
 	if !result.Supported {
 		return fmt.Errorf("center: unsupported package: %s", strings.Join(result.Reasons, "; "))
@@ -104,14 +104,22 @@ func legacyRemovalAuthorization(ctx context.Context, db registryCredentialQuerie
 		return nil, errors.New("center: historical permission evidence mismatch")
 	}
 	var capabilities NodeCapabilities
-	if json.Unmarshal(capabilitiesRaw, &capabilities) != nil || receipt.Runtime != "docker" && receipt.Runtime != "systemd" || capabilities.ExecutorVersions[receipt.Runtime] != 1 {
+	if json.Unmarshal(capabilitiesRaw, &capabilities) != nil {
+		return nil, errors.New("center: target node cannot remove the adopted runtime")
+	}
+	// The systemd v2 executor still removes adopted v1 single-service receipts.
+	// Reject unknown versions instead of assuming future compatibility.
+	version := capabilities.ExecutorVersions[receipt.Runtime]
+	supported := receipt.Runtime == "docker" && version == 1 ||
+		receipt.Runtime == "systemd" && (version == 1 || version == 2)
+	if !supported {
 		return nil, errors.New("center: target node cannot remove the adopted runtime")
 	}
 	return grants, nil
 }
 
 func packageRuntimeName(manifest catalog.AppManifest) string {
-	if manifest.Runtime != nil && manifest.Runtime.Kind == "systemd" {
+	if manifest.Runtime != nil && (manifest.Runtime.Kind == "systemd" || manifest.Runtime.Kind == "native") {
 		return "host"
 	}
 	return "docker"
@@ -211,7 +219,7 @@ func storePackageReceipt(ctx context.Context, tx *sql.Tx, taskID, applicationID,
 	if json.Unmarshal(raw, &receipt) != nil || receipt.Version != 1 || receipt.ApplicationID != applicationID || receipt.AppKey != appKey || receipt.TaskID != taskID {
 		return errors.New("center: package resource receipt identity mismatch")
 	}
-	if receipt.Runtime != "docker" && receipt.Runtime != "systemd" || receipt.State == "ready" && len(receipt.Resources) == 0 {
+	if receipt.Runtime != "docker" && receipt.Runtime != "systemd" && receipt.Runtime != "native" || receipt.State == "ready" && len(receipt.Resources) == 0 {
 		return errors.New("center: package resource receipt lacks runtime ownership evidence")
 	}
 	if operation == "uninstall" {
@@ -272,42 +280,3 @@ func storePackageReceipt(ctx context.Context, tx *sql.Tx, taskID, applicationID,
 
 // Product commands can change concrete runtime resources, but cannot change
 // the installed package identity or expand its administrator-approved grants.
-func storeIntegratedPackageReceipt(ctx context.Context, tx *sql.Tx, taskID, applicationID, appKey string, raw json.RawMessage, now time.Time) error {
-	if len(raw) == 0 || len(raw) > 1<<20 {
-		return errors.New("center: missing or oversized integrated resource receipt")
-	}
-	type identity struct {
-		Version                int               `json:"version"`
-		ApplicationID          string            `json:"applicationId"`
-		AppKey                 string            `json:"appKey"`
-		TaskID                 string            `json:"taskId"`
-		PackageVersion         string            `json:"packageVersion"`
-		PackageRevision        int               `json:"packageRevision"`
-		ManifestSHA256         string            `json:"manifestSha256"`
-		Runtime                string            `json:"runtime"`
-		State                  string            `json:"state"`
-		AuthorizedCapabilities []string          `json:"authorizedCapabilities"`
-		Resources              []json.RawMessage `json:"resources"`
-	}
-	var next, previous identity
-	var previousRaw, grantsRaw []byte
-	var digest, adoption string
-	var revision int
-	if err := tx.QueryRowContext(ctx, `SELECT manifest_sha256,package_revision,authorized_capabilities_json,resources_json,adoption_state FROM application_resources WHERE application_id=?`, applicationID).Scan(&digest, &revision, &grantsRaw, &previousRaw, &adoption); err != nil {
-		return err
-	}
-	if adoption != "ready" || json.Unmarshal(previousRaw, &previous) != nil || json.Unmarshal(raw, &next) != nil || next.Version != 1 || next.ApplicationID != applicationID || next.AppKey != appKey || next.TaskID != taskID || next.State != "ready" || len(next.Resources) == 0 || next.PackageVersion != previous.PackageVersion || next.PackageRevision != revision || next.ManifestSHA256 != digest || next.Runtime != previous.Runtime {
-		return errors.New("center: product command changed the installed package identity or returned unverified resources")
-	}
-	var grants []string
-	if json.Unmarshal(grantsRaw, &grants) != nil {
-		return errors.New("center: invalid installed permission record")
-	}
-	slices.Sort(grants)
-	slices.Sort(next.AuthorizedCapabilities)
-	if !slices.Equal(grants, next.AuthorizedCapabilities) {
-		return errors.New("center: product command cannot expand package permissions")
-	}
-	_, err := tx.ExecContext(ctx, `UPDATE application_resources SET resources_json=?,updated_at=? WHERE application_id=?`, raw, now.UTC().Format(time.RFC3339Nano), applicationID)
-	return err
-}

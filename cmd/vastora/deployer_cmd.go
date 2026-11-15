@@ -65,6 +65,12 @@ func runDeployer(arguments []string) error {
 		ConfigDir:    *configDir,
 		CenterOrigin: *centerOrigin,
 	}
+	startup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	err := installer.EnsureHeadscaleBootPolicy(startup)
+	cancel()
+	if err != nil {
+		return err
+	}
 	fmt.Printf("Deployment helper listening on %s\n", *socket)
 	server := deployer.NewServer(installer).
 		WithMeridianProber(&deployer.MeridianProbeService{Socket: *dockerSocket, RuntimeImage: *runtimeImage}).

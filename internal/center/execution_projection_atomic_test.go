@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/secret"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestExecutionProjectionAndOutcomeCommitAtomically(t *testing.T) {
@@ -65,18 +66,14 @@ func TestExecutionProjectionAndOutcomeCommitAtomically(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			handler := NewServer(store, "", false).Handler()
-			send := func() int {
-				request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(payload))
-				request.Header.Set("Authorization", "Bearer "+node.Credential)
-				request.Header.Set("Content-Type", "application/json")
-				response := httptest.NewRecorder()
-				handler.ServeHTTP(response, request)
-				return response.Code
+			service := newAgentGRPCService(NewServer(store, "", false))
+			send := func() codes.Code {
+				_, err := service.CompleteTask(agentGRPCTestContext(ctx, node.Credential), &agentpb.TaskDocument{AgentId: node.ID, TaskId: task.ID, Json: payload})
+				return status.Code(err)
 			}
-			status := send()
-			if (status == 200) != (failure == "none") {
-				t.Fatalf("response %d for %s", status, failure)
+			outcome := send()
+			if (outcome == codes.OK) != (failure == "none") {
+				t.Fatalf("response %s for %s", outcome, failure)
 			}
 			var deploymentState, appState, executionState, phase string
 			var resultSize, services, reported int
@@ -132,7 +129,7 @@ func TestExecutionProjectionAndOutcomeCommitAtomically(t *testing.T) {
 					t.Fatal("uncertain projection released execution fence")
 				}
 			}
-			if send() == 200 {
+			if send() == codes.OK {
 				t.Fatal("duplicate result replayed projection")
 			}
 		})

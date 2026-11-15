@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/osreinstall"
 )
 
 const (
@@ -55,11 +56,12 @@ var BandwidthTargets = []BandwidthTarget{
 }
 
 type Task struct {
-	BindAddress      string             `json:"bindAddress"`
-	Targets          []Target           `json:"targets,omitempty"`
-	BandwidthTargets []BandwidthTarget  `json:"bandwidthTargets,omitempty"`
-	Link             *LinkBandwidthTask `json:"link,omitempty"`
-	LinkAuth         *LinkBandwidthAuth `json:"linkAuth,omitempty"`
+	OSReinstallPreflight bool               `json:"osReinstallPreflight,omitempty"`
+	BindAddress          string             `json:"bindAddress"`
+	Targets              []Target           `json:"targets,omitempty"`
+	BandwidthTargets     []BandwidthTarget  `json:"bandwidthTargets,omitempty"`
+	Link                 *LinkBandwidthTask `json:"link,omitempty"`
+	LinkAuth             *LinkBandwidthAuth `json:"linkAuth,omitempty"`
 }
 
 // LinkBandwidthTask is issued only by Center for an authorized Meridian entry
@@ -139,7 +141,7 @@ type Result struct {
 }
 
 func (t Task) ValidateLinkBandwidth(kind string) error {
-	if kind != LinkBandwidthKind && kind != LinkServerKind || t.Link == nil || t.BindAddress != "" || len(t.Targets) != 0 || len(t.BandwidthTargets) != 0 {
+	if t.OSReinstallPreflight || kind != LinkBandwidthKind && kind != LinkServerKind || t.Link == nil || t.BindAddress != "" || len(t.Targets) != 0 || len(t.BandwidthTargets) != 0 {
 		return errors.New("node diagnostics: invalid Glivela link task")
 	}
 	v := t.Link
@@ -175,6 +177,8 @@ func (t Task) ValidateLinkIdentity(kind string) error {
 // HostProfile is a read-only snapshot of the host, not a recommendation or
 // evidence that a persistent sysctl configuration was applied.
 type HostProfile struct {
+	OSReinstall       *osreinstall.Inspection   `json:"osReinstall,omitempty"`
+	OSReinstallError  string                    `json:"osReinstallError,omitempty"`
 	CPUCount          int                       `json:"cpuCount"`
 	MemoryBytes       int64                     `json:"memoryBytes"`
 	DiskBytes         int64                     `json:"diskBytes"`
@@ -213,6 +217,9 @@ func ValidateBandwidthTargets(targets []BandwidthTarget) error {
 var carrierPattern = regexp.MustCompile(`^(telecom|unicom|mobile)$`)
 
 func (t Task) Validate() error {
+	if t.OSReinstallPreflight {
+		return errors.New("node diagnostics: unexpected reinstall inspection")
+	}
 	bind := net.ParseIP(t.BindAddress)
 	if bind == nil || bind.To4() == nil || len(t.Targets) != 3 {
 		return errors.New("node diagnostics: invalid task")
@@ -230,6 +237,9 @@ func (t Task) Validate() error {
 }
 
 func (t Task) ValidateBandwidth() error {
+	if t.OSReinstallPreflight {
+		return errors.New("node diagnostics: unexpected reinstall inspection")
+	}
 	bind := net.ParseIP(t.BindAddress)
 	if bind == nil || bind.To4() == nil || len(t.Targets) != 0 {
 		return errors.New("node diagnostics: invalid bandwidth task")
@@ -268,6 +278,9 @@ func (r Result) Validate(kind string) error {
 			return errors.New("node diagnostics: invalid host profile")
 		}
 		h := r.Host
+		if h.OSReinstall != nil && (h.OSReinstallError != "" || h.OSReinstall.Validate() != nil) || h.OSReinstallError != "" && !osreinstall.ValidErrorCode(h.OSReinstallError) {
+			return errors.New("node diagnostics: invalid reinstall inspection")
+		}
 		if h.CPUCount < 1 || h.CPUCount > 8192 || h.MemoryBytes < 1 || h.DiskBytes < 1 || len(h.Kernel) > 128 || len(h.Architecture) > 32 || len(h.CongestionControl) > 64 || len(h.DefaultQdisc) > 64 || len(h.TCPRMem) > 128 || len(h.TCPWMem) > 128 || len(h.TCPSlowStart) > 16 || len(h.Recommendations) > 8 {
 			return errors.New("node diagnostics: invalid host profile values")
 		}

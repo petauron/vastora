@@ -29,10 +29,13 @@ case "$shard:$shards" in *[!0-9:]*|:*|*:) exit 1 ;; esac
 if [ "$shard" -lt 1 ] || [ "$shard" -gt "$shards" ]; then exit 1; fi
 
 # Deterministic partitioning covers all top-level tests, examples and fuzz seeds.
-go test "$@" ./internal/center -list '^(Test|Example|Fuzz)' > "$RUNNER_TEMP/center-tests.txt"
+binary="$RUNNER_TEMP/center.test"
+go test "$@" -c -o "$binary" ./internal/center
+"$binary" -test.list '^(Test|Example|Fuzz)' > "$RUNNER_TEMP/center-tests.txt"
 tests=$(grep -E '^(Test|Example|Fuzz)[^[:space:]]*$' "$RUNNER_TEMP/center-tests.txt" | LC_ALL=C sort)
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 selected=$(printf '%s\n' "$tests" | sh "$script_dir/select-center-tests.sh" "$script_dir/center-test-timings.txt")
 test -n "$selected"
 pattern=$(printf '%s\n' "$selected" | paste -sd '|' -)
-go test "$@" -v -count=1 -timeout=20m ./internal/center -run "^($pattern)$"
+# Match go test's package working directory for testdata and relative paths.
+(cd internal/center && "$binary" -test.v -test.count=1 -test.timeout=20m -test.run "^($pattern)$")

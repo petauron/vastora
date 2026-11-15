@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -26,8 +25,8 @@ func TestAgentReinstallMonitorReportingRetainsSampleAge(t *testing.T) {
 			// The Service observed a sample already nine minutes old. Its
 			// receipt must retain only one minute of freshness, not ten.
 			raw := json.RawMessage(`{"pulseReporting":{"node_id":"11111111-1111-4111-8111-111111111111","observed_at_unix_ms":542000,"rotated_at_unix_ms":1000,"last_seen_at_unix_ms":2000}}`)
-			if response := submitMonitorInspection(t, s, service, task, raw, true); response.Code != http.StatusOK {
-				t.Fatal(response.Body.String())
+			if response := submitMonitorInspection(t, s, service, task, raw, true); response != nil {
+				t.Fatal(response)
 			}
 			checked := s.now().Add(-30 * time.Second)
 			want := "verified"
@@ -86,8 +85,8 @@ func monitorReportingFixture(t *testing.T) (*Store, AgentCredential, AgentCreden
 		t.Fatalf("restore claim: %v", err)
 	}
 	response := monitorRestoreResult(t, s, node, task, json.RawMessage(`{"services":[],"pulseRestored":{"nodeId":"11111111-1111-4111-8111-111111111111"}}`))
-	if response.Code != http.StatusOK {
-		t.Fatal(response.Body.String())
+	if response != nil {
+		t.Fatal(response)
 	}
 	if _, err = s.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.pulseReporting',json('true')) WHERE id=?`, service.ID); err != nil {
 		t.Fatal(err)
@@ -133,13 +132,13 @@ func TestAgentReinstallMonitorReportingActualExecutionAndReceipt(t *testing.T) {
 			}
 			response := submitMonitorInspection(t, s, service, task, json.RawMessage(raw), true)
 			if mode == "future" || mode == "wrong-node" {
-				if response.Code == http.StatusOK {
+				if response == nil {
 					t.Fatal("invalid report accepted")
 				}
 				return
 			}
-			if response.Code != http.StatusOK {
-				t.Fatal(response.Body.String())
+			if response != nil {
+				t.Fatal(response)
 			}
 			plan, err := s.AgentReinstallPlan(ctx, node.ID)
 			if err != nil {

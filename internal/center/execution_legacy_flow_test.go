@@ -4,17 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestLegacyReceiptCutoverPreservesLostArchiveAcknowledgement(t *testing.T) {
@@ -26,28 +27,32 @@ func TestLegacyReceiptCutoverPreservesLostArchiveAcknowledgement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewServer(store, "", false).Handler()
 	var uploads, claims atomic.Int64
 	var lose atomic.Bool
 	lose.Store(true)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/legacy-receipts") {
-			uploads.Add(1)
-			if lose.Swap(false) {
-				recorder := httptest.NewRecorder()
-				handler.ServeHTTP(recorder, r)
-				if recorder.Code != 200 {
-					t.Errorf("archive failed: %d", recorder.Code)
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(func(ctx context.Context, request any, info *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
+			result, err := next(ctx, request)
+			if info.FullMethod == agentpb.AgentControl_ImportLegacyReceipts_FullMethodName {
+				uploads.Add(1)
+				if lose.Swap(false) {
+					if err != nil {
+						t.Errorf("archive failed: %v", err)
+					}
+					return nil, status.Error(codes.Unavailable, "acknowledgement lost")
 				}
-				w.WriteHeader(503)
-				return
 			}
-		}
-		if strings.HasSuffix(r.URL.Path, "/tasks/next") {
-			claims.Add(1)
-		}
-		handler.ServeHTTP(w, r)
-	}))
+			return result, err
+		}),
+		grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, next grpc.StreamHandler) error {
+			if info.FullMethod == agentpb.AgentControl_Connect_FullMethodName {
+				claims.Add(1)
+			}
+			return next(srv, stream)
+		}),
+	)
+	agentpb.RegisterAgentControlServer(grpcServer, newAgentGRPCService(NewServer(store, "", false)))
+	server := grpcTestHTTPServer(grpcServer)
 	defer server.Close()
 	directory := t.TempDir()
 	local, err := agent.Open(directory)
@@ -72,7 +77,7 @@ func TestLegacyReceiptCutoverPreservesLostArchiveAcknowledgement(t *testing.T) {
 		t.Fatalf("seed legacy archive: %v %v", seedErr, closeErr)
 	}
 	executor := &executionFlowExecutor{}
-	client := agent.Client{HTTPClient: server.Client(), Executor: executor, Capabilities: agent.Capabilities{Docker: true}}
+	client := agent.Client{Executor: executor, Capabilities: agent.Capabilities{Docker: true}}
 	run := func() {
 		t.Helper()
 		runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

@@ -6,8 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -42,19 +40,14 @@ func monitorInspectionFixture(t *testing.T) (*Store, AgentCredential, AgentCrede
 	return s, service, collector, AgentReinstallMonitorInput{OperationID: plan.Recovery.ID, PlanRevision: plan.Revision, ApplicationID: install.ApplicationID}
 }
 
-func submitMonitorInspection(t *testing.T, s *Store, service AgentCredential, task *AgentTask, result json.RawMessage, succeeded bool) *httptest.ResponseRecorder {
+func submitMonitorInspection(t *testing.T, s *Store, service AgentCredential, task *AgentTask, result json.RawMessage, succeeded bool) error {
 	t.Helper()
 	const session = "monitor-registration-evidence-session"
 	if err := s.StartExecution(context.Background(), service.ID, session, task.Authorization.ID, task.Authorization.Digest); err != nil {
 		t.Fatal(err)
 	}
 	input, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": session, "attempt": task.Attempt, "succeeded": succeeded, "result": result})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+service.ID+"/tasks/"+task.ID+"/result", bytes.NewReader(input))
-	request.Header.Set("Authorization", "Bearer "+service.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	NewServer(s, "", false).Handler().ServeHTTP(response, request)
-	return response
+	return completeAgentTaskGRPCTest(context.Background(), s, service, task.ID, input)
 }
 
 func successfulInspectionJSON() json.RawMessage {
@@ -95,8 +88,8 @@ func TestAgentReinstallMonitorInspectionReadOnlyRoundTrip(t *testing.T) {
 		t.Fatal("inspection became collector installation or enrollment")
 	}
 	response := submitMonitorInspection(t, s, service, task, successfulInspectionJSON(), true)
-	if response.Code != http.StatusOK {
-		t.Fatalf("result: %d %s", response.Code, response.Body.String())
+	if response != nil {
+		t.Fatalf("result: %v", response)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, collector.ID)
 	if err != nil || len(plan.Monitoring) != 1 || plan.Monitoring[0].Inspection == nil {
@@ -255,10 +248,10 @@ func TestAgentReinstallMonitorInspectionResultDoesNotGuessIdentity(t *testing.T)
 			}
 			got := plan.Monitoring[0].Inspection
 			if got == nil || got.State == "verified" || got.NodeID != "" {
-				t.Fatalf("guessed identity: %+v HTTP%d", got, response.Code)
+				t.Fatalf("guessed identity: %+v error=%v", got, response)
 			}
 			if mode == "inactive" || mode == "unconsumed" {
-				if response.Code != http.StatusOK || got.State != "needs_review" {
+				if response != nil || got.State != "needs_review" {
 					t.Fatalf("completed ambiguous read not retained: %+v", got)
 				}
 			}

@@ -20,7 +20,7 @@ type AgentUpdateView struct {
 }
 
 type AgentUpdateRolloutStatus struct {
-	Scoped        bool   `json:"scoped"`
+	Paused        bool   `json:"paused"`
 	Excluded      int    `json:"excluded"`
 	TargetVersion string `json:"targetVersion"`
 	Total         int    `json:"total"`
@@ -56,6 +56,41 @@ func agentVersionBehindTarget(currentVersion, targetVersion string) bool {
 
 func isAgentUpdateTaskID(value string) bool {
 	return strings.HasPrefix(value, "agent-update-")
+}
+
+// An update retired before it was claimed is audit evidence, not a failed
+// installation, when the same Agent has already reported the target version.
+func unclaimedAgentUpdateSuperseded(currentVersion, targetVersion, state, lastError string, attempt int64, hasExecution bool) bool {
+	return state == "failed" && attempt == 0 && !hasExecution &&
+		lastError == "Superseded before claim: Agent already reports target version "+targetVersion &&
+		agentUpdateFailureSuperseded(currentVersion, targetVersion)
+}
+
+// A Center can queue an update from the previous heartbeat just before a
+// manually migrated Agent reports its new version. Never offer that stale,
+// unclaimed update to the process which is already running the target.
+func (s *Store) retireInstalledUnclaimedAgentUpdate(ctx context.Context, tx *sql.Tx, agentID, version string, now time.Time) error {
+	var id, target string
+	err := tx.QueryRowContext(ctx, `SELECT id,target_version FROM agent_updates u
+		WHERE agent_id=? AND state='pending' AND attempt=0
+		AND NOT EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=u.id)`, agentID).Scan(&id, &target)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil || !agentUpdateFailureSuperseded(version, target) {
+		return err
+	}
+	message := "Superseded before claim: Agent already reports target version " + target
+	result, err := tx.ExecContext(ctx, `UPDATE agent_updates SET state='failed',last_error=?,updated_at=?
+		WHERE id=? AND agent_id=? AND state='pending' AND attempt=0
+		AND NOT EXISTS(SELECT 1 FROM task_executions WHERE task_id=?)`, message, now.UTC().Format(time.RFC3339Nano), id, agentID, id)
+	if err != nil {
+		return err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		return errors.New("center: queued Agent update changed before supersession")
+	}
+	return s.recordTaskEvent(ctx, tx, id, agentID, "agent.update", 1, "failed", message)
 }
 
 type agentUpdateExecutionQueryer interface {
@@ -130,7 +165,7 @@ type AgentUpdateRecoveryInput struct {
 func (s *Store) queueAgentUpdate(ctx context.Context, agentID, targetVersion string, recovery *AgentUpdateRecoveryInput) (AgentUpdateView, error) {
 	agentID = strings.TrimSpace(agentID)
 	if !s.agentUpdateAllowed(agentID) {
-		return AgentUpdateView{}, errors.New("center: Agent is outside the configured update scope")
+		return AgentUpdateView{}, errors.New("center: Agent updates are explicitly paused for this node")
 	}
 	targetVersion = strings.TrimPrefix(strings.TrimSpace(targetVersion), "v")
 	if agentID == "" || targetVersion == "" || !semver.IsValid("v"+targetVersion) {
@@ -270,9 +305,12 @@ func (s *Store) queueAgentUpdate(ctx context.Context, agentID, targetVersion str
 	return update, nil
 }
 
-// QueueAgentUpdates starts every eligible online Agent independently so one
-// unhealthy node cannot prevent the rest of the fleet from moving forward.
-func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]string, error) {
+type agentUpdateCandidate struct {
+	id, currentVersion string
+}
+
+// Discover eligible nodes without creating any update tasks.
+func (s *Store) agentUpdateCandidates(ctx context.Context, targetVersion string) ([]agentUpdateCandidate, error) {
 	targetVersion = strings.TrimPrefix(strings.TrimSpace(targetVersion), "v")
 	if targetVersion == "" || !semver.IsValid("v"+targetVersion) {
 		return nil, errors.New("center: Agent rollout target version is invalid")
@@ -280,7 +318,7 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	if paused, err := agentUpdateRolloutPaused(ctx, s.db); err != nil {
 		return nil, err
 	} else if paused {
-		return []string{}, nil
+		return []agentUpdateCandidate{}, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT agent.id, agent.version, COALESCE(previous.state,''), COALESCE(previous.target_version,''),
 		EXISTS(SELECT 1 FROM task_executions execution WHERE execution.task_id=previous.id AND execution.attempt=previous.attempt AND execution.disposition='abandon')
@@ -306,10 +344,7 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("center: select Agent rollout targets: %w", err)
 	}
-	type rolloutCandidate struct {
-		id, currentVersion string
-	}
-	candidates := []rolloutCandidate{}
+	candidates := []agentUpdateCandidate{}
 	for rows.Next() {
 		var agentID, currentVersion, previousState, previousTarget string
 		var previousAbandoned bool
@@ -330,7 +365,7 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 		if semver.IsValid(currentSemver) && semver.Compare("v"+targetVersion, currentSemver) <= 0 {
 			continue
 		}
-		candidates = append(candidates, rolloutCandidate{id: agentID, currentVersion: currentVersion})
+		candidates = append(candidates, agentUpdateCandidate{id: agentID, currentVersion: currentVersion})
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -339,19 +374,45 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	queuedIDs := make([]string, 0, len(candidates))
-	queueErrors := make([]error, 0)
+	eligible := make([]agentUpdateCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		blocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, s.db, candidate.id, candidate.currentVersion)
 		if err != nil {
-			queueErrors = append(queueErrors, fmt.Errorf("center: inspect Agent %s before independent update: %w", candidate.id, err))
-			continue
+			return nil, err
 		}
-		if blocked {
+		if !blocked {
+			eligible = append(eligible, candidate)
+		}
+	}
+	return eligible, nil
+}
+
+// QueueAgentUpdates is called only by an explicit administrator push. A nil
+// selection means all currently eligible online nodes; an empty selection is
+// invalid and must never expand to all nodes. No selection is kept as policy.
+func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string, agentIDs []string) ([]string, error) {
+	selected := make(map[string]bool, len(agentIDs))
+	if agentIDs != nil && len(agentIDs) == 0 {
+		return nil, errors.New("center: select at least one Agent")
+	}
+	for _, id := range agentIDs {
+		if id == "" || strings.TrimSpace(id) != id || selected[id] {
+			return nil, errors.New("center: invalid or duplicate selected Agent")
+		}
+		selected[id] = true
+	}
+	candidates, err := s.agentUpdateCandidates(ctx, targetVersion)
+	if err != nil {
+		return nil, err
+	}
+	queuedIDs := make([]string, 0, len(candidates))
+	queueErrors := make([]error, 0)
+	for _, candidate := range candidates {
+		if agentIDs != nil && !selected[candidate.id] {
 			continue
 		}
 		if _, err := s.QueueAgentUpdate(ctx, candidate.id, targetVersion); err != nil {
-			queueErrors = append(queueErrors, fmt.Errorf("center: queue Agent %s independently: %w", candidate.id, err))
+			queueErrors = append(queueErrors, fmt.Errorf("center: queue Agent %s: %w", candidate.id, err))
 			continue
 		}
 		queuedIDs = append(queuedIDs, candidate.id)
@@ -361,7 +422,7 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 
 func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion string) (AgentUpdateRolloutStatus, error) {
 	targetVersion = strings.TrimPrefix(strings.TrimSpace(targetVersion), "v")
-	status := AgentUpdateRolloutStatus{TargetVersion: targetVersion, Scoped: s.agentUpdateScope != nil}
+	status := AgentUpdateRolloutStatus{TargetVersion: targetVersion, Paused: len(s.agentUpdatePauses) > 0}
 	if targetVersion == "" || !semver.IsValid("v"+targetVersion) {
 		return status, errors.New("center: Agent rollout target version is invalid")
 	}
@@ -375,6 +436,8 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 		COALESCE((SELECT update_task.target_version FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
 		COALESCE((SELECT update_task.last_error FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
 		COALESCE((SELECT update_task.updated_at FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
+		COALESCE((SELECT update_task.attempt FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), 0),
+		COALESCE((SELECT EXISTS(SELECT 1 FROM task_executions execution WHERE execution.task_id=update_task.id) FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), 0),
 		agent.runtime_recovery<>''
 		FROM agents agent
 		WHERE agent.status = 'active' AND agent.credential_revoked_at = ''
@@ -384,12 +447,13 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 	}
 	type rolloutAgent struct {
 		id, currentVersion, lastSeenAt, updateState, updateTarget, updateError, updateUpdatedAt string
-		supported, runtimeRecovery                                                              bool
+		updateAttempt                                                                           int64
+		supported, runtimeRecovery, updateHasExecution                                          bool
 	}
 	agents := []rolloutAgent{}
 	for rows.Next() {
 		var agent rolloutAgent
-		if err := rows.Scan(&agent.id, &agent.currentVersion, &agent.lastSeenAt, &agent.supported, &agent.updateState, &agent.updateTarget, &agent.updateError, &agent.updateUpdatedAt, &agent.runtimeRecovery); err != nil {
+		if err := rows.Scan(&agent.id, &agent.currentVersion, &agent.lastSeenAt, &agent.supported, &agent.updateState, &agent.updateTarget, &agent.updateError, &agent.updateUpdatedAt, &agent.updateAttempt, &agent.updateHasExecution, &agent.runtimeRecovery); err != nil {
 			rows.Close()
 			return status, err
 		}
@@ -419,7 +483,8 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 			continue
 		}
 		status.Total++
-		if !activeUpdate && strings.TrimPrefix(strings.TrimSpace(agent.currentVersion), "v") == targetVersion && !(agent.updateTarget == targetVersion && agent.updateState == "failed") {
+		superseded := unclaimedAgentUpdateSuperseded(agent.currentVersion, agent.updateTarget, agent.updateState, agent.updateError, agent.updateAttempt, agent.updateHasExecution)
+		if !activeUpdate && strings.TrimPrefix(strings.TrimSpace(agent.currentVersion), "v") == targetVersion && (!(agent.updateTarget == targetVersion && agent.updateState == "failed") || superseded) {
 			status.Updated++
 			continue
 		}

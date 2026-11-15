@@ -3,13 +3,10 @@ package center
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"path/filepath"
+	"github.com/petauron/vastora/internal/nodeprotocol"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/petauron/vastora/internal/nodeprotocol"
 )
 
 func nodeProtocolFixture(t *testing.T) (*Store, AgentCredential) {
@@ -21,12 +18,12 @@ func nodeProtocolFixture(t *testing.T) (*Store, AgentCredential) {
 	return store, node
 }
 
-func TestNodeProtocolsDefaultAndImmutablePhases(t *testing.T) {
+func TestArchivedNodeProtocolPhaseCannotExecuteOrRewriteReceipt(t *testing.T) {
 	store, node := nodeProtocolFixture(t)
 	ctx := context.Background()
 	view, err := store.NodeProtocols(ctx, "local")
 	if err != nil || !view.VLESS || view.HY2 || view.State != "succeeded" {
-		t.Fatalf("bad default: %+v %v", view, err)
+		t.Fatalf("bad archived default: %+v %v", view, err)
 	}
 	if _, err := store.ConfigureNodeProtocols(ctx, "local", nodeprotocol.Selection{}); err == nil {
 		t.Fatal("empty selection accepted")
@@ -35,38 +32,31 @@ func TestNodeProtocolsDefaultAndImmutablePhases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seen := map[string]bool{}
-	for index, phase := range []string{"prepare", "apply", "verify"} {
-		task := claimLocalRemoval(t, store, node.ID)
-		if task == nil || task.ProtocolCommand == nil || task.ProtocolCommand.Phase != phase || seen[task.ID] {
-			t.Fatalf("phase reused a receipt identity: %+v", task)
-		}
-		seen[task.ID] = true
-		var before []byte
-		if err := store.db.QueryRow(`SELECT input_json FROM application_commands WHERE id=?`, task.ID).Scan(&before); err != nil {
-			t.Fatal(err)
-		}
-		raw, _ := json.Marshal(map[string]any{"protocolCommand": nodeprotocol.Result{Phase: phase}})
-		if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
-			t.Fatal(err)
-		}
-		var after []byte
-		if err := store.db.QueryRow(`SELECT input_json FROM application_commands WHERE id=?`, task.ID).Scan(&after); err != nil {
-			t.Fatal(err)
-		}
-		if string(before) != string(after) {
-			t.Fatal("completion mutated an immutable receipt")
-		}
-		current, err := store.ApplicationCommand(ctx, root.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if index < 2 && (current.State != "pending" || current.ID == task.ID) {
-			t.Fatal("root reported completion before the next phase")
-		}
-		if index == 2 && current.State != "succeeded" {
-			t.Fatal("root did not follow verified completion")
-		}
+	var before []byte
+	if err := store.db.QueryRow(`SELECT input_json FROM application_commands WHERE id=?`, root.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, claimErr := store.claimApplicationCommand(ctx, tx, node.ID)
+	_ = tx.Rollback()
+	if claimErr != nil || task != nil {
+		t.Fatalf("retired protocol command claimed: %v %v", task, claimErr)
+	}
+	raw, _ := json.Marshal(map[string]any{"protocolCommand": nodeprotocol.Result{Phase: "verify"}})
+	if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, root.ID, 1, true, "", raw, false); err == nil {
+		t.Fatal("retired phase completion accepted")
+	}
+	var after []byte
+	var state string
+	var attempt int
+	if err := store.db.QueryRow(`SELECT input_json,state,attempt FROM application_commands WHERE id=?`, root.ID).Scan(&after, &state, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) || state != "pending" || attempt != 0 {
+		t.Fatal("retired receipt was rewritten or advanced")
 	}
 }
 
@@ -110,31 +100,13 @@ func TestProtocolCertificateOnlyHydratesControllerDelivery(t *testing.T) {
 	}
 }
 
-func TestProtocolVerificationRejectsWrongSibling(t *testing.T) {
+func TestRetiredProtocolVerificationNeverDispatchesOrAcceptsSiblingResult(t *testing.T) {
 	store, node := nodeProtocolFixture(t)
-	ctx := context.Background()
-	root, err := store.ConfigureNodeProtocols(ctx, "local", nodeprotocol.Selection{VLESS: true})
-	if err != nil {
-		t.Fatal(err)
+	root, err := store.ConfigureNodeProtocols(context.Background(), "local", nodeprotocol.Selection{VLESS: true})
+	if err != nil || root.ID == "" {
+		t.Fatal("missing retained protocol intent", err)
 	}
-	for _, phase := range []string{"prepare", "apply", "verify"} {
-		task := claimLocalRemoval(t, store, node.ID)
-		if task == nil {
-			t.Fatal("task missing")
-		}
-		result := nodeprotocol.Result{Phase: phase}
-		if phase == "verify" {
-			result.HY2InboundID = 999
-		}
-		raw, _ := json.Marshal(map[string]any{"protocolCommand": result})
-		if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
-			t.Fatal(err)
-		}
-	}
-	current, err := store.ApplicationCommand(ctx, root.ID)
-	if err != nil || current.State != "failed" {
-		t.Fatal("wrong final identity marked successful")
-	}
+	assertRetiredProxyCommandChannel(t, store, node.ID)
 }
 
 func TestProtocolPortPreparationRetainsObservedNodeAndDomain(t *testing.T) {
@@ -162,48 +134,4 @@ func TestProtocolPortPreparationRetainsObservedNodeAndDomain(t *testing.T) {
 	if node.ID == "" {
 		t.Fatal("fixture node missing")
 	}
-}
-
-func TestNodeProtocolMigrationPreservesPendingWork(t *testing.T) {
-	dir := t.TempDir()
-	legacy := legacyMigrationStore(t, dir, 69)
-	if _, err := legacy.db.Exec(`INSERT INTO application_commands(rowid,id,application_id,agent_id,gateway_node_id,kind,input_json,state,attempt,created_at,updated_at) VALUES(71,'application-command-old','application-v3','agent-v3','agent-v3','3xui.reality.rename','{"action":"rename"}','pending',4,'created','updated')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.Close(); err != nil {
-		t.Fatal(err)
-	}
-	store := openBeforeCatalogMaintenanceForTest(t, dir)
-	defer store.Close()
-	var rowid, attempt int
-	var input, state string
-	if err := store.db.QueryRow(`SELECT rowid,attempt,input_json,state FROM application_commands WHERE id='application-command-old'`).Scan(&rowid, &attempt, &input, &state); err != nil {
-		t.Fatal(err)
-	}
-	if rowid != 71 || attempt != 4 || input != `{"action":"rename"}` || state != "pending" {
-		t.Fatal("migration altered existing work")
-	}
-	insert := `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES('application-command-new','application-v3','agent-v3','agent-v3','3xui.protocols.configure','{}','pending','','')`
-	if _, err := store.db.Exec(insert); err == nil {
-		t.Fatal("active-operation exclusion lost")
-	}
-	if _, err := store.db.Exec(`UPDATE application_commands SET state='succeeded' WHERE id='application-command-old'`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.db.Exec(insert); err != nil {
-		t.Fatalf("new protocol command rejected: %v", err)
-	}
-	backups, err := filepath.Glob(filepath.Join(dir, "migration-backups", fmt.Sprintf("center-v69-before-v%d-*.db", centerSchemaVersion)))
-	if err != nil || len(backups) != 1 {
-		t.Fatal("pre-migration backup missing")
-	}
-	var table string
-	if err := store.db.QueryRow(`SELECT name FROM sqlite_master WHERE name='three_x_ui_node_protocols'`).Scan(&table); err != nil {
-		t.Fatal("protocol table missing")
-	}
-	var trigger string
-	if err := store.db.QueryRow(`SELECT name FROM sqlite_master WHERE name='node_protocols_delete_certificate'`).Scan(&trigger); err != nil {
-		t.Fatal("certificate cleanup missing")
-	}
-	finishCatalogMaintenanceFixture(t, store, dir)
 }

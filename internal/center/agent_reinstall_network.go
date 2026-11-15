@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -146,4 +147,87 @@ func (s *Store) finishReinstallPrivateIsolation(ctx context.Context, operationID
 		return errors.New("center: recovery command authorization changed")
 	}
 	return nil
+}
+
+// An administrator may supply missing old-machine evidence, never replace a
+// different saved key. The immutable tuple is rechecked by normal isolation.
+func (s *Store) reviewReinstallPreviousPeer(ctx context.Context, agentID, adminID string, input AgentReinstallContinueInput) error {
+	key := strings.TrimPrefix(strings.TrimSpace(input.PreviousPeerKey), "nodekey:")
+	decoded, err := hex.DecodeString(key)
+	if !input.ConfirmPreviousPeer || len(decoded) != 32 || err != nil || !validHeadscaleNodePath("/api/v1/node/"+input.PreviousPeerID) {
+		return errors.New("center: explicitly review the previous private peer ID and public key")
+	}
+	var encoded []byte
+	err = s.db.QueryRowContext(ctx, `SELECT private_identity_json FROM agent_reinstall_operations
+ WHERE id=? AND agent_id=? AND authorized_by=? AND attempt=? AND state IN ('failed','preparing') AND private_isolation='pending'
+ AND EXISTS(SELECT 1 FROM admins WHERE id=?) AND EXISTS(SELECT 1 FROM agents WHERE id=? AND credential_revoked_at<>'')`, input.OperationID, agentID, adminID, input.ExpectedAttempt, adminID, agentID).Scan(&encoded)
+	if err != nil {
+		return errors.New("center: recovery progress changed; refresh before reviewing the previous private peer")
+	}
+	var identity reinstallPrivateIdentity
+	if err = json.Unmarshal(encoded, &identity); err != nil {
+		return err
+	}
+	if identity.Ownership != "managed" || identity.Endpoint == "" || identity.Address == "" ||
+		(identity.ID != "" && identity.ID != input.PreviousPeerID) ||
+		(identity.NodeKey != "" && strings.TrimPrefix(identity.NodeKey, "nodekey:") != key) {
+		return errors.New("center: reviewed private peer cannot replace saved recovery evidence")
+	}
+	client, err := s.headscale(ctx)
+	if err != nil {
+		return err
+	}
+	if client.baseURL != identity.Endpoint {
+		return errors.New("center: private controller changed after recovery authorization")
+	}
+	var response struct {
+		Nodes []removalHeadscaleNode `json:"nodes"`
+	}
+	if err = client.do(ctx, http.MethodGet, "/api/v1/node", nil, nil, &response); err != nil || response.Nodes == nil {
+		return errors.New("center: private identity inspection failed; recovery remains paused")
+	}
+	found := false
+	for _, node := range response.Nodes {
+		keyMatches := strings.TrimPrefix(node.NodeKey, "nodekey:") == key
+		addressMatches := slices.Contains(node.IPAddresses, identity.Address)
+		if node.ID != input.PreviousPeerID && !keyMatches && !addressMatches {
+			continue
+		}
+		if found || node.ID != input.PreviousPeerID || !keyMatches || !addressMatches || !slices.Contains(node.Tags, "tag:vastora-agent") {
+			return errors.New("center: reviewed previous private identity is ambiguous or changed")
+		}
+		found = true
+	}
+	if !found {
+		return errors.New("center: reviewed previous private peer is not present on the saved controller")
+	}
+	identity.ID, identity.NodeKey = input.PreviousPeerID, "nodekey:"+key
+	reviewed, err := json.Marshal(identity)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var shared bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agent_network_profiles WHERE agent_id<>? AND headscale_address=?)`, agentID, identity.Address).Scan(&shared); err != nil {
+		return err
+	}
+	if shared {
+		return errors.New("center: previous private address is assigned to another node")
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE agent_reinstall_operations SET private_identity_json=?
+ WHERE id=? AND agent_id=? AND authorized_by=? AND attempt=? AND private_identity_json=? AND state IN ('failed','preparing') AND private_isolation='pending'`, reviewed, input.OperationID, agentID, adminID, input.ExpectedAttempt, encoded)
+	if err != nil {
+		return err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		return errors.New("center: recovery evidence changed during private peer review")
+	}
+	if err = s.recordTaskEvent(ctx, tx, input.OperationID, agentID, "agent.reinstall.private-identity", int64(input.ExpectedAttempt), "succeeded", "Authorizing administrator reviewed the exact previous controller peer ID, public key and saved address; withdrawal remains required"); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

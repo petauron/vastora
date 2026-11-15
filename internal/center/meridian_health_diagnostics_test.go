@@ -3,14 +3,13 @@ package center
 import (
 	"context"
 	"encoding/json"
+	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/meridianruntime"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
 func TestMeridianHealthDiagnosticsChangesOnlyAndRecovery(t *testing.T) {
@@ -26,8 +25,8 @@ func TestMeridianHealthDiagnosticsChangesOnlyAndRecovery(t *testing.T) {
 			p.StartedAt = now.Add(-time.Millisecond)
 			p.DurationMS = 1
 			if healthy {
-				p.Stage = "complete"
-				p.Reason = "direct_and_business_ready"
+				p.Stage = "startup"
+				p.Reason = "startup_ready"
 				p.HTTPStatus = 200
 			} else {
 				p.Stage = "tls_handshake"
@@ -91,15 +90,8 @@ func TestMeridianRouteHealthReadRequiresSessionAndDoesNotLaunchTasks(t *testing.
 		}
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
-		want := http.StatusUnauthorized
-		if authenticated {
-			want = http.StatusOK
-		}
-		if response.Code != want {
-			t.Fatalf("auth=%v status=%d", authenticated, response.Code)
-		}
-		if authenticated && response.Header().Get("Cache-Control") != "no-store" {
-			t.Fatal("diagnosis is cacheable")
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("retired business API served: %d", response.Code)
 		}
 	}
 	var after int
@@ -130,7 +122,7 @@ func TestMeridianHealthDiagnosticsSanitizeAndFingerprintDoNotMutate(t *testing.T
 	}
 }
 
-func TestMeridianHealthDiagnosticsExpiryKeepsReceiptClockAndAuthority(t *testing.T) {
+func TestMeridianStartupDiagnosticsDoNotExpireOrInventReceipts(t *testing.T) {
 	s, projection, _, id := openMeridianHealthCompletionFixture(t)
 	ctx := context.Background()
 	now := s.now()
@@ -149,14 +141,14 @@ func TestMeridianHealthDiagnosticsExpiryKeepsReceiptClockAndAuthority(t *testing
 	received := now
 	now = now.Add(20 * time.Second)
 	read, err := s.MeridianRouteHealth(ctx, id)
-	if err != nil || read.Current.Reason != "evidence_expired" || !read.Current.ReceivedAt.Equal(received) || !read.Current.ObservedAt.Equal(now) || len(read.History) != 1 {
+	if err != nil || read.Current.Status != "ready" || !read.Current.ReceivedAt.Equal(received) || !read.Current.ObservedAt.Equal(received) || len(read.History) != 1 {
 		t.Fatalf("read-time expiry invented a receipt or wrote history: %#v %v", read, err)
 	}
 	if err := s.maintainRouteHealthDiagnostics(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	view, err := s.MeridianRouteHealth(ctx, id)
-	if err != nil || view.Current.Reason != "evidence_expired" || !view.Current.ReceivedAt.Equal(received) || !view.Current.ObservedAt.Equal(now) || len(view.History) != 2 {
+	if err != nil || view.Current.Status != "ready" || !view.Current.ReceivedAt.Equal(received) || !view.Current.ObservedAt.Equal(received) || len(view.History) != 1 {
 		t.Fatalf("expiry overwrote receipt clock or omitted event: %#v %v", view, err)
 	}
 	var state string
@@ -168,7 +160,7 @@ func TestMeridianHealthDiagnosticsExpiryKeepsReceiptClockAndAuthority(t *testing
 		t.Fatal(err)
 	}
 	view, _ = s.MeridianRouteHealth(ctx, id)
-	if len(view.History) != 2 {
+	if len(view.History) != 1 {
 		t.Fatal("expiry was recorded repeatedly")
 	}
 }
@@ -215,28 +207,5 @@ func TestMeridianHealthDiagnosticsRetentionAndCascade(t *testing.T) {
 	}
 	if err := s.db.QueryRow(`SELECT count(*) FROM meridian_route_health_events WHERE route_id=?`, id).Scan(&count); err != nil || count != 0 {
 		t.Fatal("history older than seven days was retained")
-	}
-}
-
-func TestVersion112MigrationAddsDiagnosticsWithoutInheritingHealth(t *testing.T) {
-	directory := t.TempDir()
-	old := legacyMigrationStore(t, directory, 111)
-	if err := old.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	var version int
-	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != centerSchemaVersion {
-		t.Fatalf("wrong schema: %d %v", version, err)
-	}
-	if _, err := s.db.Exec(`SELECT health_diagnostics_json FROM meridian_route_grants LIMIT 1`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec(`SELECT diagnostics_json FROM meridian_route_health_events LIMIT 1`); err != nil {
-		t.Fatal(err)
 	}
 }

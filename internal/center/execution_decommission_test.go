@@ -6,13 +6,20 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"encoding/json"
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/secret"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func TestExecutionDecommissionPublicStepAndResult(t *testing.T) {
@@ -29,29 +36,38 @@ func TestExecutionDecommissionPublicStepAndResult(t *testing.T) {
 	if err := store.beginAgentDecommission(ctx, node.ID, node.Credential, task.ID, task.Attempt, id, session); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewServer(store, "", false).Handler()
-	post := func(token string, body map[string]any, status int) {
+	server := grpcTestHTTPServer(NewServer(store, "", false).Handler())
+	defer server.Close()
+	prefix := "/api/v1/agent-decommission-results/" + task.ID
+	conn, err := grpc.NewClient(strings.TrimPrefix(server.URL, "http://"),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoke grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+			return invoke(ctx, prefix+method, req, reply, cc, opts...)
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	client := agentpb.NewAgentControlClient(conn)
+	post := func(token string, body map[string]any, want codes.Code) {
 		t.Helper()
 		raw, err := json.Marshal(body)
 		if err != nil {
 			t.Fatal(err)
 		}
-		request := httptest.NewRequest(http.MethodPost, task.DecommissionCallbackURL, bytes.NewReader(raw))
-		request.Header.Set("Authorization", "Bearer "+token)
-		request.Header.Set("Content-Type", "application/json")
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
-		if response.Code != status {
-			t.Fatalf("callback status=%d want=%d body=%s", response.Code, status, response.Body.String())
+		requestCtx := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
+		_, err = client.DecommissionCallback(requestCtx, &agentpb.DecommissionRequest{TaskId: task.ID, Json: raw})
+		if status.Code(err) != want {
+			t.Fatalf("callback status=%s want=%s err=%v", status.Code(err), want, err)
 		}
 	}
 	step := map[string]any{"action": "step", "attempt": task.Attempt, "sequence": 1, "phase": "command"}
-	post(node.Credential, step, http.StatusConflict)
-	post(task.DecommissionCallbackToken, step, http.StatusOK)
-	post(task.DecommissionCallbackToken, step, http.StatusConflict)
-	post(task.DecommissionCallbackToken, map[string]any{"action": "step", "attempt": task.Attempt, "sequence": 2, "phase": "done"}, http.StatusOK)
-	post(task.DecommissionCallbackToken, map[string]any{"attempt": task.Attempt}, http.StatusOK)
-	post(task.DecommissionCallbackToken, step, http.StatusConflict)
+	post(node.Credential, step, codes.FailedPrecondition)
+	post(task.DecommissionCallbackToken, step, codes.OK)
+	post(task.DecommissionCallbackToken, step, codes.FailedPrecondition)
+	post(task.DecommissionCallbackToken, map[string]any{"action": "step", "attempt": task.Attempt, "sequence": 2, "phase": "done"}, codes.OK)
+	post(task.DecommissionCallbackToken, map[string]any{"attempt": task.Attempt}, codes.OK)
+	post(task.DecommissionCallbackToken, step, codes.FailedPrecondition)
 }
 
 func TestExecutionDecommissionOperatorDisposition(t *testing.T) {

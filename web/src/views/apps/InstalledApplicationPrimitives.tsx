@@ -5,19 +5,21 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import type { Application, Publication, Service } from "@/types";
 import type { Language } from "@/translations";
+import { isDaylightAppKey } from "../daylight";
 import { operationLabel } from "../appAccess";
 import { catalogInstallBlocked, copy, StateBadge } from "../shared";
 import { publicationNeedsAttention, serviceNeedsAttention, threeXUIAppKey, type InstalledAppInstance } from "../installed-apps-model";
 
 export function ApplicationUpdate({ instance, language, onUpgrade }: { instance: InstalledAppInstance; language: Language; onUpgrade: (application: Application) => void }) {
   const { application, app, agent, activeChange } = instance;
-  if (!application.updateAvailable || activeChange) return null;
+  const reapply = isDaylightAppKey(application.appKey) && application.status === "failed" && application.adoptionState === "ready" && !application.updateAvailable;
+  if ((!application.updateAvailable && !reapply) || activeChange) return null;
   const legacy = application.appKey === threeXUIAppKey && application.role === "master" && Boolean(application.controllerApplicationId) && application.id !== application.controllerApplicationId;
   const disabled = !agent?.connected || legacy || catalogInstallBlocked(app) || ["pending", "deploying"].includes(application.status);
   const adoptionRequired = application.adoptionState === "pending" || application.adoptionState === "blocked";
   const name = agent?.name ?? application.nodeId;
-  return <Button aria-label={copy(language, `更新 ${name} 的应用`, `Update application on ${name}`)} className="max-md:min-h-11" disabled={disabled} onClick={() => onUpgrade(application)} size="sm" variant="outline" title={copy(language, `更新到 v${application.availableVersion}`, `Update to v${application.availableVersion}`)}>
-    {adoptionRequired ? copy(language, "处理更新", "Resolve update") : application.status === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "更新", "Update")}
+  return <Button aria-label={copy(language, `${reapply ? "重新应用" : "更新"} ${name} 的应用`, `${reapply ? "Reapply" : "Update"} application on ${name}`)} className="max-md:min-h-11" disabled={disabled} onClick={() => onUpgrade(application)} size="sm" variant="outline" title={copy(language, `${reapply ? "重新应用" : "更新到"} v${application.availableVersion || application.installedVersion}`, `${reapply ? "Reapply" : "Update to"} v${application.availableVersion || application.installedVersion}`)}>
+    {reapply ? copy(language, "重新应用", "Reapply") : adoptionRequired ? copy(language, "处理更新", "Resolve update") : application.status === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "更新", "Update")}
   </Button>;
 }
 
@@ -48,7 +50,7 @@ export function ApplicationStatus({ instance, language, onUpgrade }: { instance:
   </div>;
 }
 
-export function AccessStatus({ services, publications, language, threeXUI }: { services: Service[]; publications: Publication[]; language: Language; threeXUI: boolean }) {
+export function AccessStatus({ services, publications, language, threeXUI, application, nodeConnected }: { services: Service[]; publications: Publication[]; language: Language; threeXUI: boolean; application?: Application; nodeConnected?: boolean }) {
   const attention = publications.some(publicationNeedsAttention) || services.some(serviceNeedsAttention);
   const changing = publications.find((publication) => publication.status === "pending" || publication.status === "applying");
   const hardening = services.some((service) => service.guardStatus === "pending" || service.guardStatus === "hardening");
@@ -57,6 +59,20 @@ export function AccessStatus({ services, publications, language, threeXUI }: { s
     <span className="inline-flex items-center gap-1.5 text-sm text-destructive"><ShieldAlertIcon aria-hidden="true" className="size-4 shrink-0" />{copy(language, "入口待处理", "Access needs attention")}</span>
     
   </div>;
+  if (application && isDaylightAppKey(application.appKey)) {
+    const state = nodeConnected === false ? "pending" : application.nodeSiteStatus ?? "unconfigured";
+    const labels = {
+      ready: copy(language, "站点已就绪", "Site ready"),
+      unconfigured: copy(language, "站点未配置", "Site not configured"),
+      issuing: copy(language, "证书签发或续期中", "Issuing or renewing certificate"),
+      pending: copy(language, nodeConnected === false ? "节点离线，站点待确认" : "等待站点生效", nodeConnected === false ? "Node offline; site unverified" : "Awaiting site activation"),
+      action_required: copy(language, "站点或证书需检查", "Review site or certificate"),
+      rolled_back: copy(language, "站点已回滚，待核对", "Site rolled back; review required"),
+    };
+    return <span className={cn("inline-flex items-center gap-2 text-xs", state === "action_required" || state === "rolled_back" ? "text-destructive" : "text-muted-foreground")}>
+      {state === "ready" ? <span aria-hidden="true" className="apps-status-dot bg-latency-fast" /> : null}{labels[state]}
+    </span>;
+  }
   if (hardening) return <StateBadge language={language} value="applying" />;
   if (changing) return <StateBadge language={language} value={changing.status} />;
   if (publications.length > 0) return <span className="inline-flex items-center gap-2 text-muted-foreground">{!threeXUI ? <span aria-hidden="true" className="apps-status-dot bg-latency-fast" /> : null}{copy(language, "就绪", "Ready")}</span>;

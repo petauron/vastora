@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -443,29 +442,4 @@ func equalStringMap(a, b map[string]string) bool {
 		}
 	}
 	return true
-}
-
-func (s *Server) handleLanding(writer http.ResponseWriter, request *http.Request) {
-	value, err := s.store.Landing(request.Context())
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, err)
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, value)
-}
-
-func (s *Server) handleSelectLanding(writer http.ResponseWriter, request *http.Request) {
-	var input LandingSelectionInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.store.SelectMeridianLanding(request.Context(), LandingSelection{
-		NodeIDs: input.NodeIDs, LandingRegionCodes: input.LandingRegionCodes, LandingNameSuffixes: input.LandingNameSuffixes, Revision: input.Revision,
-	}); err != nil {
-		writeError(writer, http.StatusConflict, err)
-		return
-	}
-	s.handleLanding(writer, request)
 }

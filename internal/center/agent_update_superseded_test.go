@@ -81,7 +81,7 @@ func TestInstalledVersionSupersedesOldFailureWithoutRewritingEvidence(t *testing
 				if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.135"); err != nil {
 					t.Fatal(err)
 				}
-			} else if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.135"); err != nil || len(queued) != 1 {
+			} else if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.135", nil); err != nil || len(queued) != 1 {
 				t.Fatalf("rollout did not queue manually upgraded Agent: %v %v", queued, err)
 			}
 			var state, message string
@@ -102,7 +102,7 @@ func TestNewerVersionDoesNotBypassRuntimeRecovery(t *testing.T) {
 	if _, err := store.db.Exec(`UPDATE agents SET runtime_recovery='operator verification required' WHERE id=?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.135"); err != nil || len(queued) != 0 {
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.135", nil); err != nil || len(queued) != 0 {
 		t.Fatalf("automatic update bypassed recovery: %v %v", queued, err)
 	}
 	if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.135"); err == nil {

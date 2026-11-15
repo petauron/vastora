@@ -28,3 +28,20 @@ upgrade applications or change signed catalog publication.
 The required Alpha CI gate includes startup deadline/cancellation regressions,
 exact task lookup and retained-evidence tests, and the Apps recovery UI tests.
 These checks also remain part of the full Go and frontend suites.
+
+## Upgrade to a separately published fix
+
+After a reported failed package upgrade, verify that execution stopped and inspect
+actual resources before **Abandon**. Then choose a strictly newer signed version
+through the normal application upgrade action. The abandoned task stays terminal.
+Center binds the new one-use task to the retained, authenticated failed result
+and its complete resource-receipt digest. If a rejected upgrade reported an older
+locked receipt, that original mutating task must also have been reviewed.
+
+Agent requires the exact local receipt and still inspects resource ownership,
+manifest permissions, backups and real service health. Missing review, changed
+receipts, active/unreported executions, retired identities, another application
+or a same/older target cannot use this path. Resources become ready only after
+successful execution. Both Center and Agent must support this recovery path;
+an older Agent must first receive its normal controlled update. This does not
+authorize fleet rollout, alter application data or reopen abandoned authorities.

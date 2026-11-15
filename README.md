@@ -1,5 +1,8 @@
 # Vastora
 
+Current route lifecycle: [startup-only readiness](docs/startup-readiness.md).
+This supersedes the historical periodic-health lease behavior described below.
+
 Vastora is a self-hosted desired-state control plane for applications
 across multiple Sites and Nodes. The Center stores intent and orchestration
 state; one Agent binary is the only node-side executor for Docker workloads,
@@ -43,6 +46,9 @@ when the Center is unavailable.
   Debian 12/13 and Ubuntu 22.04/24.04/26.04 on x86_64 and ARM64, including
   mixed-architecture Sites and architecture-aware Agent updates. The one-line
   Agent installer installs Docker from its official repository when missing.
+
+See [managed TLS delegation and dual-stack DNS](docs/public-ingress-delegation.md)
+for explicit public443 ownership handoff.
 
 ## Development
 
@@ -125,11 +131,13 @@ in-place update in Settings. The first release with this capability may still
 be installed by running the same command again; later updates preserve the
 configuration and use the built-in updater.
 
-Released Center schemas upgrade in place through ordered, forward-only
-migrations. Center writes a private, consistent SQLite snapshot before applying
-pending migrations and refuses to start if migration, foreign-key, or integrity
-verification fails. Restore that snapshot to downgrade; database downgrades are
-never attempted automatically.
+Center uses schema **123** as the compact alpha baseline. New installations
+create the current schema directly. A completed schema-122 database is backed
+up, checked, and converted in place by replacing only its migration journal;
+business tables and encrypted values are not copied or rewritten. Historical
+migrations 4–122 are no longer shipped. See [database baseline conversion](docs/database-baseline.md)
+for older databases and recovery. Later changes remain forward-only; integrity
+and foreign-key failures prevent startup.
 
 ## Security model
 
@@ -153,8 +161,12 @@ Read [the architecture](docs/architecture.md), [catalog format](docs/catalog.md)
 and [threat model](docs/threat-model.md) before contributing.
 For backup-bound native replacements and retained public service identity, see
 [installation handover](docs/native-lifecycle-handover.md).
-For controller-plus-pilot upgrades, configure the persistent
-[Agent update scope](docs/agent-update-scope.md) before upgrading Center.
+For verified retirement of old Glivela proxy execution records while retaining
+their services and history, see [execution retirement](docs/glivela-execution-retirement.md).
+Center upgrades and all-or-selected Agent update pushes are separate actions. Preserve
+[explicit Agent update pauses](docs/agent-update-pauses.md) for maintenance holds.
+For IPv6-only Agent onboarding, see the explicitly configured
+[Headscale control IPv6 address](docs/tailscale-compatibility.md#ipv6-only-control-connectivity-1206).
 
 ## License
 
@@ -172,3 +184,32 @@ Existing sessions retain their original expiry when migrating to schema 119;
 new logins receive the seven-day maximum. The normal pre-migration database
 backup applies. No Agent or managed application upgrade is needed for this
 Center-only change.
+
+Existing Glivela business installations require the [final data handover](docs/GLIVELA-BUSINESS-HANDOVER.md) before serving the replacement Center.
+
+离线节点在 Glivela 完成独立接管后，平台移除保留冻结业务历史及外键引用，
+完成状态从正常节点和安装列表移除；业务订阅须先由 Glivela 停用。参见
+[永久移除离线节点](docs/offline-node-removal.md)。
+
+节点管理的“SSH 保护策略”按需读取 Glivela 当前状态，显示代理出口对宿主 SSH
+地址的保护配置、运行修订与最后上报。该只读快照不代表 SSH 登录验证；宿主登录
+安全基线仍单独管理。读取失败或缺少节点映射时显示未知，可手动刷新。
+
+Independent application ingress and region-random website names: [managed DNS resources](docs/managed-domains.md) (#1265).
+
+Node-local Daylight certificates and shared Caddy ownership: [configuration, handover and recovery](docs/node-site-certificates.md) (#1128).
+
+Website hostname changes retain the original site until explicit acceptance:
+[managed hostname migration](docs/node-site-migrations.md) (#1265).
+Alpine/OpenRC 的原生套件契约和隔离验收边界见 [Alpine/OpenRC MVP](docs/alpine-openrc.md)（#1182；无 TUN 用户态管理接续 #1214，源码验收不代表生产发布）。
+
+Vastora 自动管理的运行目录、开机准备和共享资源卸载边界见 [运行目录生命周期](docs/runtime-directories.md)（#356）。
+Linux Agent 和共址 Center 的开机引导依赖系统 iproute2（`ip`）；安装器会检查，不自动下载或更改已有网络身份。
+新购 KVM VPS 的网页重装条件、网络恢复边界与操作步骤见 [KVM Debian 13 网页重装](docs/os-reinstall.md)。系统盘将被清空，生产重装仍须单独确认。
+
+On enrolled Linux hosts the reviewed Glivela node manager can request the fixed
+TCP memory budget through a local Agent socket when its installation receipt
+includes `host-tcp-budget`. This is a per-host operation: inspect, apply the
+tier for actual RAM, or restore the recorded values. It accepts no sysctl name,
+path, command or custom watermarks. Containers and unsupported init systems
+do not start a writer; the managed application's systemd sandbox is unchanged.

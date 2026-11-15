@@ -334,10 +334,10 @@ func (s *Store) populateLandingServerCounts(ctx context.Context, tx *sql.Tx, sel
 		return err
 	}
 	return tx.QueryRowContext(ctx, `SELECT
-		COALESCE(SUM(status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision AND health_expires_unix_ms>?),0),
+		COALESCE(SUM(status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision),0),
 		COALESCE(SUM(status IN ('failed','blocked')),0),
-		COALESCE(SUM(status NOT IN ('failed','blocked') AND NOT (status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision AND health_expires_unix_ms>?)),0)
+		COALESCE(SUM(status NOT IN ('failed','blocked') AND NOT (status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision)),0)
 		FROM meridian_route_grants WHERE ? IN (egress_node_id,ipv4_egress_node_id) AND enabled=1 AND status<>'revoked'`,
-		s.now().UTC().UnixMilli(), s.now().UTC().UnixMilli(), server.NodeID,
+		server.NodeID,
 	).Scan(&server.ReadyCombinations, &server.FailedCombinations, &server.WithheldCombinations)
 }

@@ -103,7 +103,8 @@ func (s *Store) RecoveryReadiness(ctx context.Context) (RecoveryReadiness, error
 	appMetadata := map[string][2]string{}
 	rows, err = s.db.QueryContext(ctx, `SELECT a.id, a.node_id, a.site_id, a.app_key,
 		COALESCE((SELECT app_version FROM deployments d WHERE d.application_id = a.id AND d.state = 'succeeded' AND d.operation <> 'uninstall' ORDER BY d.created_at DESC, d.id DESC LIMIT 1), '')
-		FROM applications a WHERE a.status <> 'stopped' OR COALESCE((SELECT d.delete_data FROM deployments d WHERE d.application_id = a.id AND d.state = 'succeeded' AND d.operation = 'uninstall' ORDER BY d.created_at DESC, d.id DESC LIMIT 1), 0) = 0 ORDER BY a.site_id, a.node_id, a.id`)
+		FROM applications a WHERE NOT EXISTS(SELECT 1 FROM application_execution_retirements retired WHERE retired.application_id=a.id)
+		AND (a.status <> 'stopped' OR COALESCE((SELECT d.delete_data FROM deployments d WHERE d.application_id = a.id AND d.state = 'succeeded' AND d.operation = 'uninstall' ORDER BY d.created_at DESC, d.id DESC LIMIT 1), 0) = 0) ORDER BY a.site_id, a.node_id, a.id`)
 	if err != nil {
 		return result, err
 	}

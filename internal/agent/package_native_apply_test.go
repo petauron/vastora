@@ -110,3 +110,72 @@ func TestNativeApplyPersistenceFailureDoesNotStartServices(t *testing.T) {
 		t.Fatal("partial installation incorrectly continued", calls, err)
 	}
 }
+
+func TestNativeApplyWebsiteConfigureRequiresVerifiedTaskAndPreservesConfig(t *testing.T) {
+	ctx := context.Background()
+	app := nativePlanFixture()
+	app.Runtime.RequiredCapabilities = []string{"native-services", "root", "shared-caddy"}
+	app.Runtime.NativeServices.Users = []string{}
+	app.Runtime.NativeServices.Services = app.Runtime.NativeServices.Services[:1]
+	service := &app.Runtime.NativeServices.Services[0]
+	service.Name, service.Start, service.Process.Executable = "web", "manual", "daylight"
+	service.Process.Files[0].Path = "daylight"
+	plan, err := planNativePackage("instance", app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := plan.Units[0]
+	configPath := unit.ConfigDirectory + "/environment"
+	prepared := nativePreparedPackage{Plan: plan, Files: map[string]nativePreparedFile{
+		unit.Path:  {Path: unit.Path, Kind: "unit", LogicalName: unit.LogicalName, Component: unit.LogicalName, Mode: 0644, Data: []byte("# Managed by Vastora\n# Application: instance\n[Service]\nExecStart=/example\n")},
+		configPath: {Path: configPath, Kind: "file", LogicalName: unit.LogicalName + ":environment", Component: unit.LogicalName, ApplicationOwned: true, Mode: 0600, Data: []byte("INITIAL=1\n")},
+	}}
+	var calls []string
+	manager := SystemdHostApplicationManager{RootDir: packageTestDirectory(t), RunCommand: func(_ context.Context, name string, args ...string) error {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil
+	}}
+	receipt := &InstanceResources{ApplicationID: "instance", Runtime: "systemd"}
+	task := DeploymentTask{ID: "install", ApplicationID: "instance", AppKey: "vastora-official/daylight", Operation: "install", Manifest: app}
+	if err := applyNativePackage(ctx, manager, task, prepared, receipt, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	custom := []byte("APPLICATION_SETTING=preserved\n")
+	if err := os.WriteFile(manager.path(configPath), custom, 0600); err != nil {
+		t.Fatal(err)
+	}
+	task.ID, task.Operation = "configure-website", "configure"
+	for _, marker := range []string{"", "another-task"} {
+		prepared.WebsiteConfigureTaskID = marker
+		calls = nil
+		if err := applyNativePackage(ctx, manager, task, prepared, receipt, func() error { return nil }); err == nil || len(calls) != 0 {
+			t.Fatal("unverified configure reached host mutation", err, calls)
+		}
+	}
+	prepared.WebsiteConfigureTaskID = task.ID
+	other := task
+	other.AppKey = "vastora-official/glivela-entry"
+	calls = nil
+	if err := applyNativePackage(ctx, manager, other, prepared, receipt, func() error { return nil }); err == nil || len(calls) != 0 {
+		t.Fatal("website authorization escaped its application", err, calls)
+	}
+	if err := applyNativePackage(ctx, manager, task, prepared, receipt, func() error { return nil }); err != nil {
+		t.Fatal("verified website configure rejected by installer", err)
+	}
+	raw, err := os.ReadFile(manager.path(configPath))
+	if err != nil || string(raw) != string(custom) {
+		t.Fatal("existing application configuration changed", err)
+	}
+	for _, call := range calls {
+		if strings.Contains(call, "start "+unit.Name) || strings.Contains(call, "enable "+unit.Name) {
+			t.Fatal("manual website unit activated", call)
+		}
+	}
+	if err := os.Remove(manager.path(configPath)); err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if err := applyNativePackage(ctx, manager, task, prepared, receipt, func() error { return nil }); err == nil || len(calls) != 0 {
+		t.Fatal("configure recreated missing owned configuration", err, calls)
+	}
+}

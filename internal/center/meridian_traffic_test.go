@@ -2,43 +2,15 @@ package center
 
 import (
 	"context"
-	"fmt"
-	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 
 	"github.com/petauron/glivela"
 )
 
-func TestVersion108PreservesTotalsWithoutInventingDirectionalHistory(t *testing.T) {
-	dir := t.TempDir()
-	old := meridianTrafficVersion107Fixture(t, dir)
-	before := meridianVersion88PreservedState(t, old.db)
-	if err := old.db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	store, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if !reflect.DeepEqual(before, meridianVersion88PreservedState(t, store.db)) {
-		t.Fatal("migration changed existing identities or usage")
-	}
-	var count int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM meridian_line_usage`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("invented history: %d %v", count, err)
-	}
-	backups, err := filepath.Glob(filepath.Join(dir, "migration-backups", fmt.Sprintf("center-v107-before-v%d-*.db", centerSchemaVersion)))
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("missing backup: %v %v", backups, err)
-	}
-}
-
 func TestMeridianTrafficAggregatesDirectionsWithoutRecountingOrQuotaMutation(t *testing.T) {
 	dir := t.TempDir()
-	old := meridianTrafficVersion107Fixture(t, dir)
+	old := meridianTrafficCurrentFixture(t, dir)
 	if err := old.db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -152,16 +124,13 @@ func TestMeridianTrafficAggregatesDirectionsWithoutRecountingOrQuotaMutation(t *
 	}
 }
 
-func meridianTrafficVersion107Fixture(t *testing.T, dir string) *Store {
+func meridianTrafficCurrentFixture(t *testing.T, dir string) *Store {
 	t.Helper()
-	old := legacyMigrationStore(t, dir, 94)
-	seedMeridianVersion88HealthFixture(t, old.db)
-	provider, err := newMigrationProvider(old.db)
+	createCurrentBusinessFixture(t, dir)
+	store, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(context.Background(), 107); err != nil {
-		t.Fatal(err)
-	}
-	return old
+	seedMeridianVersion88HealthFixture(t, store.db)
+	return store
 }

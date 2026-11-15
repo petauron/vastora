@@ -26,9 +26,13 @@ type hostFileSnapshot struct {
 }
 
 func defaultTailscaleEndpointEnvironment() tailscaleEndpointEnvironment {
+	path := "/etc/systemd/system/tailscaled.service.d/91-vastora-endpoint.conf"
+	if isOpenRCHost() {
+		path = "/etc/conf.d/tailscale"
+	}
 	return tailscaleEndpointEnvironment{
 		configPath:   "/etc/vastora/tailscaled.json",
-		overridePath: "/etc/systemd/system/tailscaled.service.d/91-vastora-endpoint.conf",
+		overridePath: path,
 		run:          runHostCommand,
 	}
 }
@@ -36,6 +40,9 @@ func defaultTailscaleEndpointEnvironment() tailscaleEndpointEnvironment {
 func reconcileTailscaleEndpoint(ctx context.Context, staticEndpoints []string, environment tailscaleEndpointEnvironment) error {
 	if environment.run == nil {
 		return errors.New("configure Tailscale static endpoint: host command runner is required")
+	}
+	if isOpenRCHost() {
+		return reconcileOpenRCTailscaleEndpoint(ctx, staticEndpoints, environment)
 	}
 	if len(staticEndpoints) > 1 {
 		return errors.New("configure Tailscale static endpoint: exactly one Center endpoint is supported")
@@ -120,7 +127,13 @@ func verifyTailscaleEndpointHealth(ctx context.Context, requireFixedPort bool, c
 		return fmt.Errorf("verify Tailscale static endpoint compatibility: %w", err)
 	}
 	if requireFixedPort {
-		output, err := run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
+		var output []byte
+		var err error
+		if isOpenRCHost() {
+			output, err = tailscalehost.OpenRCRuntimeEnvironment()
+		} else {
+			output, err = run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
+		}
 		if err != nil {
 			return fmt.Errorf("verify Tailscale static endpoint environment: %s: %w", strings.TrimSpace(string(output)), err)
 		}

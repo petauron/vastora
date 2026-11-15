@@ -2,13 +2,9 @@ package agent
 
 import (
 	"context"
-
 	"errors"
-
 	"net"
-
 	"net/url"
-
 	"strings"
 )
 
@@ -62,14 +58,8 @@ func (c Client) VerifyCenterURL(ctx context.Context, desired, expectedCAFingerpr
 	if err := validateCAFingerprint(normalized, fingerprint); err != nil {
 		return VerifiedCenter{}, err
 	}
-	var health struct {
-		Status string `json:"status"`
-	}
-	if err := c.get(ctx, normalized+"/healthz", "", fingerprint, caCertificatePEM, &health); err != nil {
+	if err := c.probeAgentRPC(ctx, Connection{CenterURL: normalized, CAFingerprint: fingerprint, CACertificatePEM: caCertificatePEM}); err != nil {
 		return VerifiedCenter{}, err
-	}
-	if health.Status != "ok" {
-		return VerifiedCenter{}, errors.New("health check is not OK")
 	}
 	return VerifiedCenter{URL: normalized, CAFingerprint: fingerprint, CACertificatePEM: caCertificatePEM}, err
 }
@@ -83,14 +73,8 @@ func (c Client) verifyCenterURL(ctx context.Context, desired string) (string, st
 	if err != nil {
 		return "", "", err
 	}
-	var health struct {
-		Status string `json:"status"`
-	}
-	if err := c.get(ctx, normalized+"/healthz", "", fingerprint, "", &health); err != nil {
+	if err := c.probeAgentRPC(ctx, Connection{CenterURL: normalized, CAFingerprint: fingerprint}); err != nil {
 		return "", "", err
-	}
-	if health.Status != "ok" {
-		return "", "", errors.New("health check is not OK")
 	}
 	return normalized, fingerprint, nil
 }

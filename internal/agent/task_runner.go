@@ -10,23 +10,29 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/nodediagnostics"
-	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
+	"github.com/petauron/vastora/internal/nodesite"
+	"github.com/petauron/vastora/internal/osreinstall"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/senulun"
+	"github.com/petauron/vastora/internal/tailscalehost"
 	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
 func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) {
+	if err := store.recoverNodeSites(ctx); err != nil {
+		if report != nil {
+			report(err)
+		}
+	}
 	reportError := func(err error) {
 		if err != nil && report != nil && ctx.Err() == nil {
 			report(err)
@@ -49,13 +55,24 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 				return
 			}
 		}
+		// Do not claim unrelated work until a restored Agent has reported its
+		// authenticated post-install identity and network to Center.
+		for {
+			if err := c.reinstallReconnect(ctx, store); err == nil {
+				break
+			} else {
+				reportError(err)
+			}
+			if !waitForTaskRetry(ctx) {
+				return
+			}
+		}
 		if !c.transferLegacyReceiptsBeforeTasks(ctx, store, reportError) {
 			return
 		}
-		for {
-			claimContext, cancel := context.WithTimeout(ctx, 15*time.Second)
-			task, err := c.claimNextTask(claimContext, store, 10*time.Second)
-			cancel()
+		terminal := false
+		for !terminal && ctx.Err() == nil {
+			stream, connection, closeStream, err := c.openTaskStream(ctx, store)
 			if err != nil {
 				reportError(err)
 				if !waitForTaskRetry(ctx) {
@@ -63,22 +80,122 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 				}
 				continue
 			}
-			if task == nil {
-				if ctx.Err() != nil {
-					return
+			for ctx.Err() == nil {
+				if err = stream.Send(&agentpb.AgentFrame{Body: &agentpb.AgentFrame_Ready{Ready: &agentpb.Ready{}}}); err != nil {
+					break
 				}
-				continue
+				frame, recvErr := stream.Recv()
+				if recvErr != nil {
+					err = recvErr
+					break
+				}
+				assignment := frame.GetAssignment()
+				if assignment == nil {
+					err = errors.New("agent: Center sent an invalid task frame")
+					break
+				}
+				task, decodeErr := decryptGRPCAssignment(connection, assignment)
+				if decodeErr != nil {
+					err = decodeErr
+					break
+				}
+				if c.processTaskWithLease(ctx, store, *task, report) {
+					terminal = true
+					break
+				}
 			}
-			if c.processTaskWithLease(ctx, store, *task, report) {
-				// The previous authorization is terminal. A new session fences
-				// that execution at Center before any other task can be claimed.
+			closeStream()
+			if terminal || ctx.Err() != nil {
 				break
+			}
+			reportError(agentGRPCError(err))
+			if !waitForTaskRetry(ctx) {
+				return
 			}
 		}
 		if !waitForTaskRetry(ctx) {
 			return
 		}
 	}
+}
+
+// The stream is retained while a task executes. Reconnection keeps the same
+// execution session; a delivered task is never silently replayed on reconnect.
+func (c Client) openTaskStream(ctx context.Context, store *Store) (agentpb.AgentControl_ConnectClient, Connection, func(), error) {
+	connection, err := store.Connection(ctx)
+	if err != nil {
+		return nil, Connection{}, nil, err
+	}
+	connection, err = c.ensureConnectionPinned(ctx, store, connection)
+	if err != nil {
+		return nil, Connection{}, nil, err
+	}
+	conn, release, err := c.grpcConnection(ctx, connection, false)
+	if err != nil {
+		return nil, Connection{}, nil, err
+	}
+	streamContext, cancel := context.WithCancel(grpcAuthenticatedContext(ctx, connection.Credential))
+	closeStream := func() { cancel(); release() }
+	stream, err := agentGRPCClient(conn).Connect(streamContext)
+	if err != nil {
+		closeStream()
+		return nil, Connection{}, nil, agentGRPCError(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		if err := stream.Send(&agentpb.AgentFrame{Body: &agentpb.AgentFrame_Hello{Hello: &agentpb.Hello{AgentId: connection.AgentID, SessionId: c.executionSession, ExecutionProtocol: int32(controlplane.ExecutionProtocol)}}}); err != nil {
+			result <- err
+			return
+		}
+		frame, err := stream.Recv()
+		if err == nil && (frame.GetWelcome() == nil || frame.GetWelcome().ExecutionProtocol != int32(controlplane.ExecutionProtocol)) {
+			err = errors.New("agent: invalid Center stream welcome")
+		}
+		result <- err
+	}()
+	timer := time.NewTimer(15 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		closeStream()
+		return nil, Connection{}, nil, ctx.Err()
+	case <-timer.C:
+		closeStream()
+		return nil, Connection{}, nil, errors.New("agent: Center stream handshake timed out")
+	case err = <-result:
+		if err != nil {
+			closeStream()
+			return nil, Connection{}, nil, agentGRPCError(err)
+		}
+	}
+	return stream, connection, closeStream, nil
+}
+
+func decryptGRPCAssignment(connection Connection, assignment *agentpb.Assignment) (*DeploymentTask, error) {
+	if assignment == nil {
+		return nil, errors.New("agent: missing encrypted task")
+	}
+	envelope := controlplane.Envelope{Version: int(assignment.EnvelopeVersion), EphemeralPublicKey: assignment.EphemeralPublicKey, Nonce: assignment.Nonce, Ciphertext: assignment.Ciphertext}
+	aad := controlplane.TaskAdditionalData(connection.AgentID, assignment.TaskId, assignment.Attempt)
+	plaintext, err := controlplane.Open(connection.PrivateKey, envelope, aad)
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(plaintext)
+	if assignment.ExecutionProtocol != int32(controlplane.ExecutionProtocol) || assignment.ExecutionId == "" || assignment.Digest != hex.EncodeToString(digest[:]) {
+		return nil, errors.New("agent: invalid execution authorization or content digest")
+	}
+	var task DeploymentTask
+	decoder := json.NewDecoder(bytes.NewReader(plaintext))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&task); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return nil, errors.New("agent: Center returned an invalid encrypted task")
+	}
+	if task.ID != assignment.TaskId || task.Attempt != assignment.Attempt || task.ID == "" || task.Attempt <= 0 {
+		return nil, errors.New("agent: encrypted task identity does not match its envelope")
+	}
+	task.Authorization = controlplane.ExecutionAuthorization{ID: assignment.ExecutionId, Protocol: int(assignment.ExecutionProtocol), Digest: assignment.Digest}
+	return &task, nil
 }
 
 func freshTaskControlContext(parent context.Context) (context.Context, context.CancelFunc) {
@@ -188,7 +305,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	decommissionHandedOff := false
 	updateHandedOff := false
-	nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
+	tailscaleUpdateHandedOff := false
+	osReinstallHandedOff := false
+	nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && (controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities) || controlplane.NativeWebsiteConfigureAllowed(task.AppKey, task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities))
 	if len(publicRules) > 0 {
 		err = nodesecurity.NewHost().CheckPorts(publicRules)
 	}
@@ -199,20 +318,6 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		// Preserve the normal authenticated failure/receipt lifecycle below.
 	} else if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) && !nativeLifecycle {
 		err = errors.New("agent: task is not authorized for a landing-only node")
-	} else if task.Kind == "application.command" && task.MeridianRuntime != nil && task.MeridianRuntime.ResumeApplied {
-		monitor, ok := c.Executor.(interface {
-			ResumeAppliedMeridianMonitor(context.Context, meridianruntime.Task) (meridianruntime.Result, error)
-			CompleteCommandResources(string, string) (*InstanceResources, error)
-		})
-		if !ok || !c.Capabilities.Docker {
-			err = errors.New("agent: applied proxy monitor recovery is unavailable")
-		} else {
-			value, resumeErr := monitor.ResumeAppliedMeridianMonitor(ctx, *task.MeridianRuntime)
-			result.MeridianRuntime, err = &value, resumeErr
-			if err == nil {
-				result.Resources, err = monitor.CompleteCommandResources(task.MeridianRuntime.ApplicationID, task.ID)
-			}
-		}
 	} else if task.Kind == "landing.server.apply" || task.Kind == "landing.proxy.apply" || task.XrayRecovery != nil ||
 		task.MeridianRuntime != nil || task.MeridianLegacyRetire != nil || task.MeridianLegacyExport != nil || task.MeridianAcceptance != nil ||
 		task.ApplicationCommand != nil || task.SubscriptionCommand != nil || task.ClientCommand != nil || task.NodeCommand != nil || task.ControllerCommand != nil || task.ProtocolCommand != nil {
@@ -228,6 +333,65 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			c.Executor = ApplicationExecutor{Host: SystemdHostApplicationManager{}, Store: store}
 		}
 		switch task.Kind {
+		case osreinstall.TaskKind:
+			if !c.Capabilities.OSReinstall || c.OSReinstaller == nil || task.OSReinstall == nil || task.OSReinstall.Validate() != nil {
+				err = errors.New("agent: OS reinstall is not available")
+				break
+			}
+			var connection Connection
+			connection, err = store.Connection(ctx)
+			if err != nil {
+				break
+			}
+			request := HostOSReinstallRequest{TaskID: task.ID, ExecutionID: task.Authorization.ID, Connection: connection, Task: *task.OSReinstall}
+			var backup osreinstall.BackupEvidence
+			backup, err = c.OSReinstaller.Backup(ctx, request)
+			if err != nil {
+				break
+			}
+			err = c.RecordOSReinstallBackup(ctx, connection, c.execution.ID, c.executionSession, backup)
+			if err != nil {
+				err = uncertainTaskOutcome(err)
+				break
+			}
+			var stage osreinstall.PreparedStage
+			stage, err = c.OSReinstaller.Stage(ctx, request, backup)
+			if err != nil {
+				break
+			}
+			err = c.ArmOSReinstall(ctx, connection, c.execution.ID, c.executionSession, osreinstall.ArmEvidence{BackupDigest: backup.Digest, PreparedDigest: stage.Digest})
+			if err != nil {
+				err = uncertainTaskOutcome(err)
+				break
+			}
+			// Center now owns a one-use irreversible grant. It must never be
+			// replayed even if helper startup or its acknowledgment fails.
+			osReinstallHandedOff = true
+			activationContext, cancelActivation := freshTaskControlContext(ctx)
+			err = c.OSReinstaller.Activate(activationContext, request, stage)
+			cancelActivation()
+		case tailscalehost.UpdateKind:
+			if !c.TailscaleEnrolled || task.TailscaleUpdate == nil {
+				err = errors.New("agent: Tailscale update is unavailable")
+			} else if err = prepareTailscaleUpdate(ctx, task.ID, *task.TailscaleUpdate); err == nil {
+				err = c.executionTransition(ctx, store, "step", "handoff", false, "")
+				if err == nil {
+					err = c.beginTailscaleUpdate(ctx, store, task)
+				}
+				if err == nil {
+					tailscaleUpdateHandedOff = true
+					dispatchContext, cancelDispatch := freshTaskControlContext(ctx)
+					err = startTailscaleUpdate(dispatchContext, task.ID, *task.TailscaleUpdate)
+					cancelDispatch()
+				}
+			}
+		case nodesite.Kind:
+			if task.NodeSite == nil {
+				err = errors.New("agent: missing node site task")
+			} else {
+				value, siteErr := store.executeNodeSite(ctx, *task.NodeSite)
+				result.NodeSite, err = &value, siteErr
+			}
 		case nodesecurity.Kind:
 			if !c.Capabilities.NodeSecurity || task.NodeSecurity == nil {
 				err = errors.New("agent: node security capability is not configured")
@@ -346,7 +510,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				result, err = manager.Adopt(ctx, task)
 			}
 		case "application.apply":
-			if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
+			if (task.NodeSite != nil || task.NodeListenerState != nil) && (task.Operation != "install" || !strings.HasPrefix(task.ID, "reinstall-current-") || task.NodeSite != nil && (task.AppKey != "vastora-official/daylight" || task.NodeSite.AppKey != task.AppKey || task.NodeSite.ApplicationID != task.ApplicationID || task.NodeSite.Action != "apply" || task.NodeSite.Validate() != nil) || task.NodeListenerState != nil && (task.AppKey != "vastora-official/glivela-entry" || !c.Capabilities.Docker)) {
+				err = errors.New("agent: invalid current recovery access")
+			} else if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
 				err = fmt.Errorf("agent: application task requires runtime generation %d, executor is generation %d", task.RequiredRuntimeGeneration, platform.ApplicationRuntimeGeneration)
 			} else if c.Executor == nil {
 				err = errors.New("agent: application capability is not configured")
@@ -358,17 +524,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				result, err = c.Executor.Deploy(ctx, task)
 			}
 		case "application.command":
-			// Mutating commands may restart the panel or replace its database.
-			// The legacy export only reads and validates identities; keeping it
-			// behind a stalled landing write would also stall the migration.
-			if task.MeridianLegacyExport == nil {
-				store.landingMutationMu.Lock()
-				defer store.landingMutationMu.Unlock()
-			}
 			commands := 0
-			if task.MeridianAcceptance != nil {
-				commands++
-			}
 			if task.SenulunReporting != nil {
 				commands++
 			}
@@ -381,88 +537,8 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			if task.SenulunEnrollment != nil {
 				commands++
 			}
-			if task.ProtocolCommand != nil {
-				commands++
-			}
-			if task.ApplicationCommand != nil {
-				commands++
-			}
-			if task.SubscriptionCommand != nil {
-				commands++
-			}
-			if task.ClientCommand != nil {
-				commands++
-			}
-			if task.NodeCommand != nil {
-				commands++
-			}
-			if task.ControllerCommand != nil {
-				commands++
-			}
-			if task.MeridianRuntime != nil {
-				commands++
-			}
-			if task.MeridianLegacyExport != nil {
-				commands++
-			}
-			if task.MeridianLegacyRetire != nil {
-				commands++
-			}
 			if !c.Capabilities.Docker || commands != 1 {
-				err = errors.New("agent: application command received without Docker capability")
-			} else if task.MeridianAcceptance != nil {
-				executor, ok := c.Executor.(interface {
-					VerifyMeridianAcceptance(context.Context, meridianruntime.AcceptanceTask) (meridianruntime.AcceptanceResult, error)
-				})
-				connection, connectionErr := store.Connection(ctx)
-				if connectionErr != nil || task.MeridianAcceptance.VerifierAgentID != connection.AgentID {
-					err = errors.New("agent: recovery verifier identity mismatch")
-				} else if !ok || !c.Capabilities.MeridianAcceptance {
-					err = errors.New("agent: recovery client capability is not configured")
-				} else {
-					var acceptance meridianruntime.AcceptanceResult
-					acceptance, err = executor.VerifyMeridianAcceptance(ctx, *task.MeridianAcceptance)
-					if err == nil {
-						result.MeridianAcceptance = &acceptance
-					}
-				}
-			} else if task.MeridianLegacyExport != nil {
-				var exportResult meridianruntime.LegacyExportResult
-				exportResult, err = exportLegacyMeridianState(ctx, store, *task.MeridianLegacyExport)
-				if err == nil {
-					result.MeridianLegacyExport = &exportResult
-				}
-			} else if task.MeridianRuntime != nil {
-				executor, ok := c.Executor.(interface {
-					ApplyMeridianRuntime(context.Context, meridianruntime.Task) (meridianruntime.Result, error)
-				})
-				if !ok {
-					err = errors.New("agent: Glivela runtime capability is not configured")
-				} else {
-					var runtimeResult meridianruntime.Result
-					runtimeResult, err = executor.ApplyMeridianRuntime(ctx, *task.MeridianRuntime)
-					if err == nil {
-						result.MeridianRuntime = &runtimeResult
-						if observer, ok := c.Executor.(interface {
-							CompleteCommandResources(string, string) (*InstanceResources, error)
-						}); ok {
-							result.Resources, err = observer.CompleteCommandResources(task.MeridianRuntime.ApplicationID, task.ID)
-						}
-					}
-				}
-			} else if task.MeridianLegacyRetire != nil {
-				executor, ok := c.Executor.(interface {
-					RetireLegacyMeridianInstallation(context.Context, meridianruntime.LegacyRetireTask) (meridianruntime.LegacyRetireResult, error)
-				})
-				if !ok {
-					err = errors.New("agent: Glivela legacy retirement capability is not configured")
-				} else {
-					var retireResult meridianruntime.LegacyRetireResult
-					retireResult, err = executor.RetireLegacyMeridianInstallation(ctx, *task.MeridianLegacyRetire)
-					if err == nil {
-						result.MeridianLegacyRetire = &retireResult
-					}
-				}
+				err = errors.New("agent: monitoring command received without its reviewed capability")
 			} else if task.SenulunReporting != nil {
 				executor, ok := c.Executor.(interface {
 					InspectSenulunReporting(context.Context, senulun.ReportingTask) (senulun.ReportingResult, error)
@@ -515,52 +591,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 						result.SenulunEnrollment = &enrollment
 					}
 				}
-			} else if task.ProtocolCommand != nil {
-				var commandResult nodeprotocol.Result
-				commandResult, err = c.applyNodeProtocols(ctx, store, *task.ProtocolCommand)
-				if err == nil {
-					result.ProtocolCommand = &commandResult
-				}
-			} else if task.ApplicationCommand != nil {
-				var commandResult RealityCommandResult
-				commandResult, err = applyRealityCommand(ctx, store, task.ID, task.Attempt, *task.ApplicationCommand)
-				if err == nil && task.ApplicationCommand.Action == "remove" && task.ApplicationCommand.RemoveHY2 {
-					executor, ok := c.Executor.(interface {
-						ConfigureHY2Port(context.Context, *Store, string, bool) error
-					})
-					if !ok {
-						err = uncertainTaskOutcome(errors.New("agent: protocol port cleanup is unavailable"))
-					} else {
-						err = executor.ConfigureHY2Port(ctx, store, task.ApplicationCommand.TargetApplicationID, false)
-					}
-				}
-				// Preserve partial results in encrypted Center evidence even when a
-				// later step failed. This does not mark the command successful.
-				result.ApplicationCommand = &commandResult
-			} else if task.SubscriptionCommand != nil {
-				var commandResult SubscriptionCommandResult
-				commandResult, err = applySubscriptionCommand(ctx, store, *task.SubscriptionCommand)
-				if err == nil {
-					result.SubscriptionCommand = &commandResult
-				}
-			} else if task.ClientCommand != nil {
-				var commandResult ThreeXUIClientCommandResult
-				commandResult, err = applyThreeXUIClientCommand(ctx, store, *task.ClientCommand)
-				if err == nil {
-					result.ClientCommand = &commandResult
-				}
-			} else if task.NodeCommand != nil {
-				var commandResult ThreeXUINodeCommandResult
-				commandResult, err = applyThreeXUINodeCommand(ctx, store, *task.NodeCommand)
-				if err == nil {
-					result.NodeCommand = &commandResult
-				}
-			} else {
-				var commandResult ThreeXUIControllerCommandResult
-				commandResult, err = c.applyThreeXUIControllerCommand(ctx, store, task.ID, *task.ControllerCommand)
-				if err == nil {
-					result.ControllerCommand = &commandResult
-				}
+
 			}
 		case "gateway.routes.apply":
 			if task.GatewayState == nil || !c.Capabilities.Gateway {
@@ -657,6 +688,20 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			err = errors.New("agent: unsupported task kind")
 		}
 	}
+	if osReinstallHandedOff {
+		if err != nil && report != nil {
+			report(errors.New(safeTaskError(err)))
+		}
+		return nil
+	}
+	if tailscaleUpdateHandedOff {
+		if err != nil && report != nil {
+			report(errors.New(safeTaskError(err)))
+		}
+		// Center keeps the execution open until a heartbeat proves the service
+		// result and actual running version; it must never replay this attempt.
+		return nil
+	}
 	if decommissionHandedOff {
 		// The persistent host helper owns the terminal result. A successful
 		// schedule is not evidence that host cleanup itself has completed.
@@ -682,9 +727,43 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
 		err = c.executionTransition(ctx, store, "step", "persist", false, "")
 		if err == nil {
-			_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+			if senlunIdentityTask(task) {
+				err = store.completeSenlunIdentity(ctx, task)
+			} else {
+				_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+				if err == nil {
+					err = store.completeNativeReplacement(ctx, task)
+				}
+				if err == nil && daylightKey(task.AppKey) {
+					installed, readErr := store.AppliedInstallation(ctx, task.AppKey)
+					if readErr != nil {
+						err = readErr
+					} else {
+						err = store.syncSharedDaylight(ctx, installed)
+					}
+					if err == nil {
+						err = store.completeSharedDaylight(ctx, task)
+					}
+					if err != nil {
+						err = uncertainTaskOutcome(err)
+					}
+				}
+			}
+		}
+		if err == nil && task.NodeSite != nil {
+			var siteResult nodesite.Result
+			siteResult, err = store.executeNodeSiteLocked(ctx, *task.NodeSite)
 			if err == nil {
-				err = store.completeNativeReplacement(ctx, task)
+				result.NodeSite = &siteResult
+			} else {
+				err = uncertainTaskOutcome(err)
+			}
+		}
+		if err == nil && task.NodeListenerState != nil {
+			coordinator, _ := c.GatewayDriver.(NodeListenerCoordinator)
+			err = applyNodeListenerState(ctx, store, c.NodeListener, coordinator, *task.NodeListenerState)
+			if err != nil {
+				err = uncertainTaskOutcome(err)
 			}
 		}
 		if err != nil && task.SourceReceiptSHA256 != "" {
@@ -710,6 +789,22 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	completionContext, completionCancel := freshTaskControlContext(ctx)
 	completeErr := c.sendTaskCompletion(completionContext, store, completion)
 	completionCancel()
+	if completeErr == nil && err == nil && senlunIdentityTask(task) {
+		if senlunServiceIdentityTask(task) {
+			finisher, ok := c.Executor.(interface {
+				FinishSenlunServiceIdentity(context.Context, DeploymentTask) error
+			})
+			if !ok {
+				completeErr = errors.New("agent: Senlun service identity cleanup requires review")
+			} else {
+				cleanupContext, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+				completeErr = finisher.FinishSenlunServiceIdentity(cleanupContext, task)
+				cancelCleanup()
+			}
+		} else {
+			completeErr = store.finishSenlunIdentity(task)
+		}
+	}
 	if completeErr != nil {
 		if report != nil {
 			report(completeErr)
@@ -772,52 +867,6 @@ func waitForGateway(ctx context.Context, driver GatewayDriver) error {
 	}
 }
 
-func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Duration) (*DeploymentTask, error) {
-	connection, err := store.Connection(ctx)
-	if err != nil {
-		return nil, err
-	}
-	connection, err = c.ensureConnectionPinned(ctx, store, connection)
-	if err != nil {
-		return nil, err
-	}
-	var response struct {
-		Task *struct {
-			Authorization controlplane.ExecutionAuthorization `json:"authorization"`
-			ID            string                              `json:"id"`
-			Attempt       int64                               `json:"attempt"`
-			Envelope      controlplane.Envelope               `json:"envelope"`
-		} `json:"task"`
-	}
-	endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/tasks/next?wait=" + url.QueryEscape(wait.String())
-	if err := c.get(ctx, endpoint, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response); err != nil {
-		return nil, err
-	}
-	if response.Task == nil {
-		return nil, nil
-	}
-	aad := controlplane.TaskAdditionalData(connection.AgentID, response.Task.ID, response.Task.Attempt)
-	plaintext, err := controlplane.Open(connection.PrivateKey, response.Task.Envelope, aad)
-	if err != nil {
-		return nil, err
-	}
-	digest := sha256.Sum256(plaintext)
-	if response.Task.Authorization.Protocol != controlplane.ExecutionProtocol || response.Task.Authorization.ID == "" || response.Task.Authorization.Digest != hex.EncodeToString(digest[:]) {
-		return nil, errors.New("agent: invalid execution authorization or content digest")
-	}
-	var task DeploymentTask
-	decoder := json.NewDecoder(bytes.NewReader(plaintext))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&task); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
-		return nil, errors.New("agent: Center returned an invalid encrypted task")
-	}
-	if task.ID != response.Task.ID || task.Attempt != response.Task.Attempt || task.ID == "" || task.Attempt <= 0 {
-		return nil, errors.New("agent: encrypted task identity does not match its envelope")
-	}
-	task.Authorization = response.Task.Authorization
-	return &task, nil
-}
-
 func (c Client) completeTask(ctx context.Context, store *Store, taskID string, attempt int64, result ApplicationTaskResult, deploymentErr error, reconciliationRequired bool, applicationRuntimeGeneration int) error {
 	connection, err := store.Connection(ctx)
 	if err != nil {
@@ -833,7 +882,7 @@ func (c Client) completeTask(ctx context.Context, store *Store, taskID string, a
 	if deploymentErr != nil {
 		payload["error"] = deploymentErr.Error()
 	}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+	return c.callAgentRPC(ctx, connection, rpcTaskCompletion, taskID, payload, nil, controlplane.MaxJSONPayload, false)
 }
 
 func (c Client) renewTaskLease(ctx context.Context, store *Store, taskID string, attempt int64) error {
@@ -846,5 +895,5 @@ func (c Client) renewTaskLease(ctx context.Context, store *Store, taskID string,
 		return err
 	}
 	payload := map[string]any{"attempt": attempt}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/lease", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+	return c.callAgentRPC(ctx, connection, rpcTaskLease, taskID, payload, nil, controlplane.MaxJSONPayload, false)
 }

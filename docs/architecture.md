@@ -60,13 +60,12 @@ Agent enrollment consumes a ten-minute token transactionally and registers a
 long-lived X25519 public key. The Agent records the matching private key under
 its local encryption key and pins the verified TLS trust-anchor public key for
 the Center URL. Center encrypts each complete leased task with a fresh ephemeral
-X25519 key and binds the envelope to Agent ID, task ID, and lease attempt. Agent
-writes a durable receipt before applying the task and a locally encrypted result
-outbox before acknowledgement; replay after a disconnect or restart reuses the
-recorded result instead of repeating a completed effect. Credential revocation
-is an immediate control-plane action independent of application removal or node
-disable, and wakes active long polls so revoked Agents cannot claim or
-acknowledge tasks.
+X25519 key and binds the envelope to Agent ID, task ID, and lease attempt. Center records each execution authorization before delivery and persists received
+results before final acknowledgement. Agent keeps the active execution in memory;
+a process change or uncertain outcome is fenced for reconciliation rather than
+silently replayed. Credential revocation is independent of application removal
+or node disable: a waiting stream wakes, and subsequent claims and acknowledgements
+must reauthenticate.
 
 There are three node network capabilities, and they are additive rather than
 mutually exclusive: `lan`, `headscale`, and `public`. Cloudflare Tunnel is a

@@ -15,6 +15,7 @@ import (
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/nodesite"
 	"github.com/petauron/vastora/internal/senulun"
 	"golang.org/x/mod/semver"
 )
@@ -28,7 +29,9 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	NodeSite             *nodesite.Result                    `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256  string                              `json:"sourceReceiptSha256,omitempty"`
+	SourceResources      json.RawMessage                     `json:"sourceResources,omitempty"`
 	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
 	Resources            json.RawMessage                     `json:"resources,omitempty"`
 	SenulunRestored      *senulun.RestoreResult              `json:"pulseRestored,omitempty"`
@@ -49,6 +52,9 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 		if err := requireLegacyMeridianApplicationOwner(ctx, tx, request.ReplaceApplicationID); err != nil {
 			return "", err
 		}
+		if senlunIdentityRequest(request) {
+			return s.prepareSenlunIdentity(ctx, tx, request, manifest, now)
+		}
 		return s.prepareNativeReplacement(ctx, tx, request, manifest, now)
 	}
 	var siteID string
@@ -64,7 +70,22 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 	var applicationID string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE node_id = ? AND app_key = ?`, request.AgentID, request.AppKey).Scan(&applicationID)
 	if err == nil {
-		if ownerErr := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); ownerErr != nil {
+		var siteBusy bool
+		if e := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_site_tasks WHERE application_id=? AND state IN ('pending','running')) OR EXISTS(SELECT 1 FROM node_sites WHERE application_id=? AND state IN ('pending','issuing'))`, applicationID, applicationID).Scan(&siteBusy); e != nil {
+			return "", e
+		}
+		if siteBusy {
+			return "", errors.New("center: finish the managed website certificate operation before changing this application")
+		}
+		var changes map[string]json.RawMessage
+		programOnly := len(request.Config) == 0 || json.Unmarshal(request.Config, &changes) == nil && len(changes) == 0
+		var ownerErr error
+		if programOnly {
+			ownerErr = requireApplicationDeploymentOwner(ctx, tx, applicationID, request.Operation, manifest)
+		} else {
+			ownerErr = requireLegacyMeridianApplicationOwner(ctx, tx, applicationID)
+		}
+		if ownerErr != nil {
 			return "", ownerErr
 		}
 	}
@@ -119,9 +140,14 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 
 // Retire control-plane access after either a confirmed uninstall or explicit
 // offline-node removal. This makes no claim that remote resources were removed.
-func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time, cleanups *[]publicationCleanup) error {
-	if err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); err != nil {
-		return err
+func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time, cleanups *[]publicationCleanup, preserveProxyHistory bool) error {
+	if preserveProxyHistory && !s.businessRetired {
+		return errGlivelaPilotOwnsRuntime
+	}
+	if !preserveProxyHistory {
+		if err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); err != nil {
+			return err
+		}
 	}
 	var uninstallAppKey string
 	if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&uninstallAppKey); err != nil {
@@ -131,7 +157,7 @@ func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, app
 	if err != nil {
 		return err
 	}
-	if uninstallAppKey == meridianAppKey {
+	if uninstallAppKey == meridianAppKey && !preserveProxyHistory {
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET enabled=0,runtime_healthy=0,status='revoked',last_error='',updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?) AND status<>'revoked'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 			return err
 		}
@@ -165,7 +191,15 @@ func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, app
 }
 
 func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, executedRuntimeGeneration int, result ApplicationTaskResult, now time.Time, cleanups *[]publicationCleanup) error {
-	if err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); err != nil {
+	var manifestJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id = ? AND application_id = ? AND operation = ?`, deploymentID, applicationID, operation).Scan(&manifestJSON); err != nil {
+		return err
+	}
+	var manifest catalog.AppManifest
+	if json.Unmarshal(manifestJSON, &manifest) != nil {
+		return errors.New("center: stored deployment manifest is invalid")
+	}
+	if err := requireApplicationDeploymentOwner(ctx, tx, applicationID, operation, manifest); err != nil {
 		return err
 	}
 	if err := completeNativeReplacement(ctx, tx, deploymentID, applicationID, result, now); err != nil {
@@ -179,19 +213,11 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		return err
 	}
 	if operation == "uninstall" {
-		return s.retireApplicationManagement(ctx, tx, applicationID, now, cleanups)
+		return s.retireApplicationManagement(ctx, tx, applicationID, now, cleanups, false)
 	}
 	var siteID, appKey, role string
 	if err := tx.QueryRowContext(ctx, `SELECT site_id, app_key, role FROM applications WHERE id = ?`, applicationID).Scan(&siteID, &appKey, &role); err != nil {
 		return fmt.Errorf("center: read application site: %w", err)
-	}
-	var manifestJSON []byte
-	if err := tx.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id = ?`, deploymentID).Scan(&manifestJSON); err != nil {
-		return err
-	}
-	var manifest catalog.AppManifest
-	if json.Unmarshal(manifestJSON, &manifest) != nil {
-		return errors.New("center: stored deployment manifest is invalid")
 	}
 	installedImage := ""
 	if len(manifest.Images) != 0 {
@@ -277,7 +303,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		}
 		*cleanups = append(*cleanups, values...)
 	}
-	if appKey == meridianAppKey {
+	if manifest.Runtime == nil && appKey == meridianAppKey && !s.businessRetired {
 		if _, err := s.ensureMeridianSubscriptionServiceInTx(ctx, tx, applicationID, now); err != nil {
 			return err
 		}
@@ -296,7 +322,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		}
 	}
 	reconcilePublications := true
-	if appKey == meridianAppKey {
+	if manifest.Runtime == nil && appKey == meridianAppKey && !s.businessRetired {
 		var cutoverProjection bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 			SELECT 1 FROM meridian_endpoints endpoint JOIN meridian_cutover cutover ON cutover.id=1
@@ -311,7 +337,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 			return err
 		}
 	}
-	if appKey == meridianAppKey {
+	if manifest.Runtime == nil && appKey == meridianAppKey && !s.businessRetired {
 		return s.reconcileMeridianCutoverInTx(ctx, tx, now.Format(time.RFC3339Nano))
 	}
 	return nil
@@ -584,18 +610,30 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		CASE WHEN a.app_key = 'vastora-official/3x-ui' AND a.role = 'worker' AND COALESCE(n.master_application_id, '') <> COALESCE(control.controller_application_id, '') THEN 'VLESS node is linked to a legacy controller; finish global convergence first' ELSE COALESCE(n.last_error, '') END,
 		COALESCE(b.state, ''), COALESCE(b.updated_at, ''),
 		COALESCE(CASE WHEN latest.operation IN ('install', 'upgrade', 'configure') THEN latest.app_version ELSE '' END, ''),
-		a.created_at, a.updated_at, COALESCE(latest.package_revision,0), COALESCE(resources.adoption_state,''), COALESCE(resources.last_error,'')
+		a.created_at, a.updated_at, COALESCE(latest.package_revision,0), COALESCE(resources.adoption_state,''), COALESCE(resources.last_error,''), COALESCE(resources.resources_json,'{}'), COALESCE(retirement.replacement_application_id,''),
+		CASE WHEN a.app_key IN ('vastora-official/daylight','vastora-official/daylight-https') THEN
+		 CASE WHEN site.application_id IS NULL OR site.hostname='' OR site.state='unconfigured' THEN 'unconfigured'
+		 WHEN a.status<>'running' OR site.error<>'' OR site.state='action_required' THEN 'action_required'
+		 WHEN site.state='issuing' THEN 'issuing'
+		 WHEN site.state='pending' OR (site.state='ready' AND site.revision>0 AND site.applied_revision<>site.revision) THEN 'pending'
+		 WHEN site.state='rolled_back' THEN 'rolled_back'
+		 WHEN site.state='ready' AND site.revision>0 AND site.applied_revision=site.revision
+		  AND site.fingerprint<>'' AND julianday(site.not_after)>julianday(?) THEN 'ready'
+		 ELSE 'action_required' END ELSE '' END
 		FROM applications a
+		LEFT JOIN node_sites site ON site.application_id=a.id AND site.agent_id=a.node_id
 		LEFT JOIN application_resources resources ON resources.application_id=a.id
+		LEFT JOIN application_execution_retirements retirement ON retirement.application_id=a.id
 		LEFT JOIN three_x_ui_nodes n ON n.worker_application_id = a.id
 		LEFT JOIN three_x_ui_control_plane control ON control.id = 1
 		LEFT JOIN three_x_ui_backups b ON b.application_id = a.id
 		LEFT JOIN deployments latest ON latest.rowid = (
 			SELECT candidate.rowid FROM deployments candidate
-			WHERE candidate.agent_id = a.node_id AND candidate.app_key = a.app_key AND candidate.state = 'succeeded'
+			WHERE candidate.agent_id = a.node_id AND candidate.application_id = a.id AND candidate.state = 'succeeded'
 			ORDER BY candidate.created_at DESC, candidate.rowid DESC LIMIT 1
 		)
-		ORDER BY a.name, a.id`)
+		WHERE NOT EXISTS(SELECT 1 FROM agent_removals r WHERE r.agent_id=a.node_id AND r.state='complete')
+		ORDER BY a.name, a.id`, s.now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -605,8 +643,14 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		var value ApplicationView
 		var created, updated string
 		var restorePointAt string
-		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated, &value.InstalledPackageRevision, &value.AdoptionState, &value.AdoptionError); err != nil {
+		var resourcesRaw []byte
+		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated, &value.InstalledPackageRevision, &value.AdoptionState, &value.AdoptionError, &resourcesRaw, &value.ReplacementApplicationID, &value.NodeSiteStatus); err != nil {
 			return nil, err
+		}
+		value.LegacyGlivela = value.AppKey == meridianAppKey && legacyGlivelaReceipt(resourcesRaw)
+		value.ExecutionRetired = value.ReplacementApplicationID != ""
+		if value.ExecutionRetired {
+			value.Status = "stopped"
 		}
 		if restorePointAt != "" {
 			parsed, parseErr := time.Parse(time.RFC3339Nano, restorePointAt)
@@ -618,7 +662,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		value.AvailableVersion = availableVersions[value.AppKey]
 		value.AvailablePackageRevision = availableRevisions[value.AppKey]
 		comparison := semver.Compare(canonicalAppVersion(value.AvailableVersion), canonicalAppVersion(value.InstalledVersion))
-		value.UpdateAvailable = value.InstalledVersion != "" && (comparison > 0 || comparison == 0 && value.AvailablePackageRevision > value.InstalledPackageRevision)
+		value.UpdateAvailable = !value.LegacyGlivela && !value.ExecutionRetired && value.InstalledVersion != "" && (comparison > 0 || comparison == 0 && value.AvailablePackageRevision > value.InstalledPackageRevision)
 		value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 		result = append(result, value)
@@ -703,4 +747,24 @@ func (s *Store) ListRoutes(ctx context.Context) ([]RouteView, error) {
 		result = append(result, value)
 	}
 	return result, rows.Err()
+}
+
+// The pilot owns business configuration and counters, not updates to the same
+// native package. Legacy mutation, replacement and retirement remain fenced.
+func requireApplicationDeploymentOwner(ctx context.Context, tx *sql.Tx, applicationID, operation string, manifest catalog.AppManifest) error {
+	err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID)
+	if err == nil || !errors.Is(err, errGlivelaPilotOwnsRuntime) {
+		return err
+	}
+	if operation != "upgrade" || manifest.Runtime == nil || (manifest.Runtime.Kind != "systemd" && manifest.Runtime.Kind != "native") || manifest.Runtime.Version != 2 {
+		return err
+	}
+	var key, runtime string
+	if queryErr := tx.QueryRowContext(ctx, `SELECT app_key,runtime FROM applications WHERE id=?`, applicationID).Scan(&key, &runtime); queryErr != nil {
+		return queryErr
+	}
+	if key != "vastora-official/glivela-entry" || manifest.ID != "glivela-entry" || runtime != "host" {
+		return err
+	}
+	return nil
 }

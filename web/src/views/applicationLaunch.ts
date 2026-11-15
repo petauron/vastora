@@ -2,24 +2,28 @@ import type { AppData, AppView } from "@/types";
 import type { Language } from "@/translations";
 import { isInstalledApplication, localized, senulunDashboardURL, secureDashboardURL } from "./appAccess";
 
+import { daylightAppKey, isDaylightAppKey } from "./daylight";
+
 export type DesktopApplication = { key: string; name: string; count: number; url?: string };
 
 export function isBackgroundApplication(app: AppView | undefined) {
-  return app?.app.runtime?.kind === "systemd" && !app.app.homepage
+  return (app?.app.runtime?.kind === "systemd" || app?.app.runtime?.kind === "native") && !app.app.homepage
     && !app.app.services?.some((service) => service.management && ["http", "https"].includes(service.protocol));
 }
 
 export function desktopApplications(data: AppData, language: Language): DesktopApplication[] {
   if (data.desktopDataUnavailable) return [];
   const catalog = new Map(data.apps.map((app) => [app.key, app]));
+  const managementApplications = new Set(data.services.filter((service) => service.management && ["http", "https"].includes(service.protocol)).map((service) => service.applicationId));
   const groups = new Map<string, DesktopApplication>();
   for (const application of data.applications.filter(isInstalledApplication)) {
     const app = catalog.get(application.appKey);
-    if (isBackgroundApplication(app)) continue;
-    const group = groups.get(application.appKey);
+    if (isBackgroundApplication(app) || (!app && application.runtime === "host" && !managementApplications.has(application.id))) continue;
+    const key = isDaylightAppKey(application.appKey) ? daylightAppKey : application.appKey;
+    const group = groups.get(key);
     if (group) group.count++;
     else {
-      groups.set(application.appKey, { key: application.appKey, name: app ? localized(app, language, "name") : application.name, count: 1, url: applicationLaunchURL(data, application.appKey) });
+      groups.set(key, { key, name: isDaylightAppKey(key) ? "Daylight" : app ? localized(app, language, "name") : application.name, count: 1, url: applicationLaunchURL(data, key) });
     }
   }
   return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, language));
@@ -30,8 +34,8 @@ export function desktopApplications(data: AppData, language: Language): DesktopA
 export function applicationLaunchURL(data: AppData, appKey: string): string | undefined {
   if (data.desktopDataUnavailable) return undefined;
   if (appKey === "vastora-official/meridian" || appKey === "vastora-official/3x-ui") return undefined;
-  if (appKey === "vastora-official/pulse") return senulunDashboardURL(data);
-  const applications = data.applications.filter((app) => app.appKey === appKey && isInstalledApplication(app));
+  if (appKey === "vastora-official/senlun") return senulunDashboardURL(data);
+  const applications = data.applications.filter((app) => (isDaylightAppKey(appKey) ? isDaylightAppKey(app.appKey) : app.appKey === appKey) && isInstalledApplication(app));
   if (applications.length !== 1 || applications[0].status !== "running") return undefined;
   const services = new Set(data.services.filter((service) => service.applicationId === applications[0].id && service.management && ["http", "https"].includes(service.protocol) && ["ready", "publishing"].includes(service.status)).map((service) => service.id));
   const entries = data.publications.filter((publication) => services.has(publication.serviceId) && publication.status === "ready" && !publication.actionRequired && !publication.lastError);

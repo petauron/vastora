@@ -99,7 +99,7 @@ func TestAgentUpdateUncertainFailureDoesNotResumeWhenTargetReconnects(t *testing
 	if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.90"); err == nil {
 		t.Fatal("a competing version replaced an active recovery")
 	}
-	if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(nodes) != 0 {
+	if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90", nil); err != nil || len(nodes) != 0 {
 		t.Fatalf("automatic rollout replaced an active recovery: %v %v", nodes, err)
 	}
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err == nil {
@@ -154,11 +154,11 @@ func TestAgentUpdateRolloutQueuesOnlineAgentsConcurrently(t *testing.T) {
 	heartbeatAgentUpdateVersion(t, store, first, "0.1.0-alpha.88", true)
 	heartbeatAgentUpdateVersion(t, store, second, "0.1.0-alpha.88", true)
 
-	queuedIDs, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89")
+	queuedIDs, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89", nil)
 	if err != nil || len(queuedIDs) != 2 {
 		t.Fatalf("rollout queue = %#v, %v", queuedIDs, err)
 	}
-	if queuedAgain, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queuedAgain) != 0 {
+	if queuedAgain, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89", nil); err != nil || len(queuedAgain) != 0 {
 		t.Fatalf("duplicate rollout queue = %#v, %v", queuedAgain, err)
 	}
 	firstTask, err := store.ClaimNextTask(ctx, first.ID, first.Credential)
@@ -194,7 +194,7 @@ func TestAgentUpdateRolloutSupersedesOnlyUnclaimedOlderTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90")
+	queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90", nil)
 	if err != nil || len(queued) != 1 || queued[0] != node.ID {
 		t.Fatalf("new rollout queue = %v, %v", queued, err)
 	}
@@ -225,7 +225,7 @@ func TestAgentUpdateRolloutKeepsClaimedOlderTarget(t *testing.T) {
 	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential); err != nil || task == nil || task.ID != old.ID {
 		t.Fatalf("claim older update = %#v, %v", task, err)
 	}
-	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 0 {
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90", nil); err != nil || len(queued) != 0 {
 		t.Fatalf("claimed update was replaced by rollout: %v, %v", queued, err)
 	}
 	if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.90"); err == nil {
@@ -251,7 +251,7 @@ func TestAgentUpdateRolloutRetriesOnlyExplicitlyAbandonedFailure(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE agent_updates SET state='failed',attempt=1 WHERE id=?`, old.ID); err != nil {
 		t.Fatal(err)
 	}
-	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 0 {
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90", nil); err != nil || len(queued) != 0 {
 		t.Fatalf("unverified failure was retried: %v, %v", queued, err)
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
@@ -259,7 +259,7 @@ func TestAgentUpdateRolloutRetriesOnlyExplicitlyAbandonedFailure(t *testing.T) {
 		VALUES('abandoned-test-execution',?,?,'agent.update',1,'retired-test-session','test-digest',X'00','failed','reported',?,?,?,'abandon')`, node.ID, old.ID, now, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 1 || queued[0] != node.ID {
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90", nil); err != nil || len(queued) != 1 || queued[0] != node.ID {
 		t.Fatalf("verified failure did not rejoin rollout: %v, %v", queued, err)
 	}
 }
@@ -273,7 +273,7 @@ func TestAgentUpdateRolloutEscapesMigrationPause(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?)`, executionClaimControlKey, `{"paused":true,"actor":"migration:75","updatedAt":"2026-09-21T00:00:00Z"}`); err != nil {
 		t.Fatal(err)
 	}
-	queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89")
+	queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89", nil)
 	if err != nil || len(queued) != 1 || queued[0] != node.ID {
 		t.Fatalf("migration pause stranded rollout: %#v %v", queued, err)
 	}
@@ -308,7 +308,7 @@ func TestAgentUpdateCanProceedPastTerminalBusinessExecution(t *testing.T) {
 	if err := store.StopExecution(ctx, node.ID, session, authorization.ID, true, "previous business operation requires review"); err != nil {
 		t.Fatal(err)
 	}
-	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queued) != 1 || queued[0] != node.ID {
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89", nil); err != nil || len(queued) != 1 || queued[0] != node.ID {
 		t.Fatalf("terminal business evidence blocked rollout: %#v %v", queued, err)
 	}
 	task, err := store.claimExecutionTask(ctx, node.ID, node.Credential, session, 0)
@@ -345,7 +345,7 @@ func TestOutdatedAgentWaitsForUpdateBeforeClaimingMigratedWork(t *testing.T) {
 	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential); err != nil || task != nil {
 		t.Fatalf("outdated Agent claimed migrated work before rollout: %#v, %v", task, err)
 	}
-	if queued, err := store.QueueAgentUpdates(ctx, Version); err != nil || len(queued) != 1 {
+	if queued, err := store.QueueAgentUpdates(ctx, Version, nil); err != nil || len(queued) != 1 {
 		t.Fatalf("queue rollout: %#v, %v", queued, err)
 	}
 	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
@@ -361,7 +361,7 @@ func TestAgentUpdateRolloutLeavesFailedTargetsForManualRetry(t *testing.T) {
 	node := enrollOrchestrationNode(t, store, "rollout-failure", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.98", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.98", LANAddress: "10.0.0.98", EnabledKinds: []string{networking.KindLAN}})
 	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
 
-	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queued) != 1 {
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89", nil); err != nil || len(queued) != 1 {
 		t.Fatalf("queue rollout: %#v, %v", queued, err)
 	}
 	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
@@ -371,10 +371,10 @@ func TestAgentUpdateRolloutLeavesFailedTargetsForManualRetry(t *testing.T) {
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "host update failed", nil, 0); err != nil {
 		t.Fatal(err)
 	}
-	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queued) != 0 {
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89", nil); err != nil || len(queued) != 0 {
 		t.Fatalf("failed rollout was automatically retried: %#v, %v", queued, err)
 	}
-	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 0 {
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90", nil); err != nil || len(queued) != 0 {
 		t.Fatalf("new release bypassed the failed update: %#v, %v", queued, err)
 	}
 	if status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.90"); err != nil || status.Blocked != 1 || status.Manual != 0 || status.Pending != 0 || status.Updating != 0 {
@@ -399,7 +399,7 @@ func TestAgentUpdateRolloutSkipsOfflineAgentsUntilReconnect(t *testing.T) {
 	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
 	clock = clock.Add(agentConnectedMaxAge)
 
-	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queued) != 0 {
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89", nil); err != nil || len(queued) != 0 {
 		t.Fatalf("offline Agent was queued automatically: %v, %v", queued, err)
 	}
 	if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89"); err == nil || !strings.Contains(err.Error(), "must be online") {
@@ -411,7 +411,7 @@ func TestAgentUpdateRolloutSkipsOfflineAgentsUntilReconnect(t *testing.T) {
 	}
 
 	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
-	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queued) != 1 || queued[0] != node.ID {
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89", nil); err != nil || len(queued) != 1 || queued[0] != node.ID {
 		t.Fatalf("reconnected Agent was not queued: %v, %v", queued, err)
 	}
 }
@@ -454,7 +454,7 @@ func TestAgentUpdateRolloutOfflineTasksRemainRecoverable(t *testing.T) {
 			if err != nil || status.Total != 1 || status.Offline != 1 || status.Updating != 0 || status.Updated != 0 || status.Failed != 0 || status.Pending != 0 {
 				t.Fatalf("offline update kept rollout busy: %#v, %v", status, err)
 			}
-			if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(nodes) != 0 {
+			if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89", nil); err != nil || len(nodes) != 0 {
 				t.Fatalf("offline update was queued again: %v, %v", nodes, err)
 			}
 			var persistedState string
@@ -468,7 +468,7 @@ func TestAgentUpdateRolloutOfflineTasksRemainRecoverable(t *testing.T) {
 			if err != nil || status.Updating != 0 || status.Failed != 1 || status.Offline != 0 {
 				t.Fatalf("reconnected update status = %#v, %v", status, err)
 			}
-			if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(nodes) != 0 {
+			if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89", nil); err != nil || len(nodes) != 0 {
 				t.Fatalf("reconnect duplicated the durable update: %v, %v", nodes, err)
 			}
 			if state == "running" {
@@ -491,7 +491,7 @@ func TestAgentUpdateRolloutOfflineTasksRemainRecoverable(t *testing.T) {
 				if persistedState != "failed" || attempt != task.Attempt || lease != "" || !strings.Contains(message, "manual verification") {
 					t.Fatalf("interrupted attempt was not preserved: %s attempt=%d lease=%q error=%q", persistedState, attempt, lease, message)
 				}
-				if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 0 {
+				if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90", nil); err != nil || len(queued) != 0 {
 					t.Fatalf("new rollout bypassed the interrupted attempt: %#v, %v", queued, err)
 				}
 				return
@@ -629,7 +629,7 @@ func TestAgentUpdateRolloutBlockedTasksDoNotStayBusy(t *testing.T) {
 			if err := store.db.QueryRow(`SELECT state FROM agent_updates WHERE id=?`, queued.ID).Scan(&state); err != nil || state != test.state {
 				t.Fatalf("presentation cancelled durable recovery: %s %v", state, err)
 			}
-			if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.124"); err != nil || len(queued) != 0 {
+			if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.124", nil); err != nil || len(queued) != 0 {
 				t.Fatalf("blocked task was duplicated: %v %v", queued, err)
 			}
 			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.124", true)

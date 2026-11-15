@@ -51,21 +51,16 @@ func (s *Store) authorizeMeridianEntrySource(ctx context.Context, tx *sql.Tx, en
 }
 
 // A container receipt establishes the endpoint, not its remote egresses. Each
-// route follows only its own authenticated peer's short-lived kernel lease.
-// Readers also check the persisted deadline, so a lost heartbeat cannot leave
-// the last healthy observation valid forever.
+// route requires its authenticated peer startup acceptance for this revision.
+// Accepted evidence has no time-based traffic lease.
 func recordMeridianRouteHealth(ctx context.Context, tx *sql.Tx, endpointID string, projection meridianRuntimeProjection, result meridianruntime.Result, now time.Time) error {
 	health, err := result.PeerHealth(projection.task, now)
 	if err != nil {
 		return err
 	}
-	expires := make(map[string]int64, len(result.Peers))
 	exits := make(map[string]netip.Addr, len(result.Peers))
 	for _, peer := range result.Peers {
 		exits[peer.EgressID], _ = netip.ParseAddr(peer.Status.ExitIP)
-		if health[peer.EgressID] {
-			expires[peer.EgressID] = peer.Status.AllowedUntil.UnixMilli()
-		}
 	}
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	for _, grantID := range projection.readyRouteGrantIDs {
@@ -75,10 +70,6 @@ func recordMeridianRouteHealth(ctx context.Context, tx *sql.Tx, endpointID strin
 		}
 		status, healthy, message := "blocked", 0, meridianRouteEvidenceUnavailable
 		secondaryID := projection.routeSecondaryPeerIDs[grantID]
-		deadline := expires[egressID]
-		if secondaryID != "" {
-			deadline = min(deadline, expires[secondaryID])
-		}
 		familiesVerified := secondaryID == "" || exits[egressID].Is6() && glivela.CompositePublicIP(exits[egressID]) && exits[secondaryID].Is4() && glivela.CompositePublicIP(exits[secondaryID])
 		if health[egressID] && (secondaryID == "" || health[secondaryID]) && familiesVerified {
 			status, healthy, message = "ready", 1, ""
@@ -86,7 +77,7 @@ func recordMeridianRouteHealth(ctx context.Context, tx *sql.Tx, endpointID strin
 		updated, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants
 			SET applied_revision=desired_revision,runtime_healthy=?,health_expires_unix_ms=?,status=?,last_error=?,updated_at=?
 			WHERE id=? AND endpoint_id=? AND egress_node_id=? AND COALESCE(ipv4_egress_node_id,'')=? AND enabled=1 AND status NOT IN ('revoked','revoking')`,
-			healthy, deadline, status, message, stamp, grantID, endpointID, egressID, secondaryID)
+			healthy, 0, status, message, stamp, grantID, endpointID, egressID, secondaryID)
 		if err != nil {
 			return err
 		}

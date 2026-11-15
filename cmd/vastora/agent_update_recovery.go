@@ -364,6 +364,7 @@ func removeHostUpdateRecovery(directory string) error {
 		hostUpdateRecoveryManifestName: true,
 		hostUpdateRecoveryDatabaseName: true,
 		hostUpdateRecoveryKeyName:      true,
+		"source-vastora":               true,
 	}
 	for _, entry := range entries {
 		if !allowed[entry.Name()] || entry.IsDir() {

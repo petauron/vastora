@@ -45,5 +45,14 @@ func DockerPorts(state gateway.DesiredState) (dockernetwork.PortSet, dockernetwo
 			bindings[port] = append(bindings[port], dockernetwork.PortBinding{HostIP: address.Unmap(), HostPort: strconv.Itoa(mapping.hostPort)})
 		}
 	}
+	for _, route := range state.Routes {
+		if route.LocalTLSOrigin() {
+			portText := strconv.Itoa(LocalTLSOriginPort)
+			port := dockernetwork.MustParsePort(portText + "/tcp")
+			exposed[port] = struct{}{}
+			bindings[port] = []dockernetwork.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: portText}}
+			break
+		}
+	}
 	return exposed, bindings, nil
 }

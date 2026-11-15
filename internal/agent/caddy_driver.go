@@ -27,6 +27,12 @@ type CaddyGatewayDriver struct {
 	AdminSocketPath string
 	HTTPClient      *http.Client
 	SystemGateway   SystemGatewayInspector
+	// Sites is the Agent-owned, durable set of website contributions. Every
+	// gateway reload includes it; a website never owns a separate /load writer.
+	Sites         func(context.Context) ([]CaddySite, error)
+	SiteRuntime   func(context.Context, gateway.DesiredState, []CaddySite) error
+	SiteIdle      func(context.Context) error
+	SiteContainer bool
 
 	mutationMu   sync.Mutex
 	mu           sync.RWMutex
@@ -70,25 +76,54 @@ func (driver *CaddyGatewayDriver) ApplyConfiguration(ctx context.Context, desire
 }
 
 func (driver *CaddyGatewayDriver) applyConfiguration(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
-	if err := desired.Validate(); err != nil {
+	configuration, err := driver.configuration(ctx, desired, certificates)
+	if err != nil {
 		return err
 	}
-	if err := gateway.ValidateCertificatesForState(desired, certificates); err != nil {
+	if err := driver.load(ctx, configuration); err != nil {
 		return err
+	}
+	driver.mu.Lock()
+	driver.state = desired.Sorted()
+	driver.certificates = append([]gateway.Certificate(nil), certificates...)
+	driver.mu.Unlock()
+	return nil
+}
+
+func (driver *CaddyGatewayDriver) configuration(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) ([]byte, error) {
+	if err := desired.Validate(); err != nil {
+		return nil, err
+	}
+	if err := gateway.ValidateCertificatesForState(desired, certificates); err != nil {
+		return nil, err
 	}
 	if driver.SystemGateway != nil {
 		services, err := driver.SystemGateway.ProtectedSystemServices(ctx)
 		if err != nil {
-			return fmt.Errorf("agent: inspect protected system gateway: %w", err)
+			return nil, fmt.Errorf("agent: inspect protected system gateway: %w", err)
 		}
 		if err := validateProtectedSystemRoutes(desired, services); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	configuration, err := caddyConfiguration(desired.Sorted(), certificates, driver.AdminListen)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	if driver.Sites != nil {
+		sites, err := driver.Sites(ctx)
+		if err != nil {
+			return nil, err
+		}
+		configuration, err = composeCaddySites(configuration, desired, sites, driver.SiteContainer)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return configuration, nil
+}
+
+func (driver *CaddyGatewayDriver) load(ctx context.Context, configuration []byte) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, driver.AdminURL+"/load", bytes.NewReader(configuration))
 	if err != nil {
 		return err
@@ -107,10 +142,6 @@ func (driver *CaddyGatewayDriver) applyConfiguration(ctx context.Context, desire
 		}
 		return fmt.Errorf("caddy rejected configuration: %s", message)
 	}
-	driver.mu.Lock()
-	driver.state = desired.Sorted()
-	driver.certificates = append([]gateway.Certificate(nil), certificates...)
-	driver.mu.Unlock()
 	return nil
 }
 
@@ -229,18 +260,20 @@ func (driver *CaddyGatewayDriver) GetRouteStatus(ctx context.Context, routeID st
 }
 
 func (driver *CaddyGatewayDriver) Health(ctx context.Context) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, driver.AdminURL+"/config/", nil)
+	if runtime, ok := driver.SystemGateway.(interface{ Health(context.Context) error }); ok {
+		if err := runtime.Health(ctx); err != nil {
+			return err
+		}
+	}
+	loaded, err := driver.runtimeConfigurationLoaded(ctx)
 	if err != nil {
 		return err
 	}
-	response, err := driver.client().Do(request)
-	if err != nil {
-		return fmt.Errorf("agent: Caddy health: %w", err)
-	}
-	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("agent: Caddy health: %s", response.Status)
+	driver.mu.RLock()
+	expected := len(driver.state.Routes) != 0
+	driver.mu.RUnlock()
+	if expected && !loaded {
+		return errors.New("agent: Caddy has only its Admin bootstrap; gateway configuration is missing")
 	}
 	return nil
 }
@@ -257,11 +290,13 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 		return nil, err
 	}
 	type caddyRoute struct {
-		Match    []map[string][]string `json:"match"`
-		Handle   []map[string]any      `json:"handle"`
-		Terminal bool                  `json:"terminal"`
+		Match    []map[string]any `json:"match"`
+		Handle   []map[string]any `json:"handle"`
+		Terminal bool             `json:"terminal"`
 	}
 	servers := map[string]any{}
+	localRoutes := make([]caddyRoute, 0)
+	localHosts := make([]string, 0)
 	for _, listener := range desired.Listeners {
 		internalHTTPPort, internalHTTPSPort, ok := gatewayruntime.CaddyListenerPorts(listener.Kind)
 		if !ok {
@@ -282,17 +317,37 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 			if route.Protocol == "https" {
 				proxy["transport"] = map[string]any{"protocol": "http", "tls": map[string]any{}}
 			}
-			matcher := map[string][]string{"host": {route.Hostname}}
+			matcher := map[string]any{"host": []string{route.Hostname}}
 			if route.Path != "" {
 				matcher["path"] = []string{route.Path}
 			}
 			handlers := []map[string]any{proxy}
-			candidate := caddyRoute{Match: []map[string][]string{matcher}, Handle: handlers, Terminal: true}
+			candidate := caddyRoute{Match: []map[string]any{matcher}, Handle: handlers, Terminal: true}
+			if route.LocalTLSOrigin() {
+				localRoutes = append(localRoutes, candidate)
+				localHosts = append(localHosts, route.Hostname)
+			}
 			if route.TLSEnabled {
+				// Only Center control and its task-bound public cleanup callback
+				// need an HTTP/2 upstream; ordinary web routes remain unchanged.
+				if route.System && (strings.HasPrefix(route.ID, "system-center") || strings.HasPrefix(route.ID, "system-agent-decommission-callback")) {
+					grpcMatcher := make(map[string]any, len(matcher)+1)
+					for key, value := range matcher {
+						grpcMatcher[key] = value
+					}
+					grpcMatcher["header"] = map[string][]string{"Content-Type": {"application/grpc*"}}
+					grpcUpstreams := make([]map[string]string, 0, len(route.Upstreams))
+					for _, upstream := range route.Upstreams {
+						grpcUpstreams = append(grpcUpstreams, map[string]string{"dial": net.JoinHostPort(upstream.Address, strconv.Itoa(gatewayruntime.CenterGRPCPort))})
+					}
+					grpcProxy := map[string]any{"handler": "reverse_proxy", "upstreams": grpcUpstreams,
+						"transport": map[string]any{"protocol": "http", "versions": []string{"h2c"}}}
+					httpsRoutes = append(httpsRoutes, caddyRoute{Match: []map[string]any{grpcMatcher}, Handle: []map[string]any{grpcProxy}, Terminal: true})
+				}
 				httpsRoutes = append(httpsRoutes, candidate)
 				if !redirectHosts[route.Hostname] {
 					redirect := map[string]any{"handler": "static_response", "status_code": 308, "headers": map[string][]string{"Location": {"https://{http.request.host}{http.request.uri}"}}}
-					httpRoutes = append(httpRoutes, caddyRoute{Match: []map[string][]string{{"host": {route.Hostname}}}, Handle: []map[string]any{redirect}, Terminal: true})
+					httpRoutes = append(httpRoutes, caddyRoute{Match: []map[string]any{{"host": []string{route.Hostname}}}, Handle: []map[string]any{redirect}, Terminal: true})
 					redirectHosts[route.Hostname] = true
 				}
 			} else {
@@ -309,6 +364,13 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 		if len(httpsRoutes) != 0 {
 			servers["vastora-"+listener.Kind+"-https"] = map[string]any{"listen": []string{net.JoinHostPort("0.0.0.0", strconv.Itoa(internalHTTPSPort))}, "routes": httpsRoutes, "tls_connection_policies": []map[string]any{{}}}
 		}
+	}
+	if len(localRoutes) != 0 {
+		policies := []map[string]any{
+			{"match": map[string]any{"sni": localHosts}, "protocol_min": "tls1.3"},
+			{"drop": true},
+		}
+		servers["vastora-local-tls-origin"] = map[string]any{"listen": []string{net.JoinHostPort("0.0.0.0", strconv.Itoa(gatewayruntime.LocalTLSOriginPort))}, "routes": localRoutes, "protocols": []string{"h1", "h2"}, "strict_sni_host": true, "automatic_https": map[string]any{"disable_redirects": true}, "tls_connection_policies": policies}
 	}
 	apps := map[string]any{"http": map[string]any{"servers": servers}}
 	if len(certificates) != 0 {

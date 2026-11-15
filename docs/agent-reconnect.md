@@ -38,7 +38,7 @@ It keeps the exact saved version and validates its artifact description without
 fetching or selecting the latest catalog version. Artifact and credential
 verification is still required before any execution. Missing or inconsistent
 saved artifacts require review. Glivela requires validation of its Center-owned
-configuration and credentials; a Senulun collector requires verified original
+configuration and credentials; a Senlun collector requires verified original
 monitoring identity and replacement credentials. Stateful and unknown applications
 require data restoration on the replacement, even if a previous backup drill was recorded.
 
@@ -51,14 +51,14 @@ task payloads. Missing, inconsistent or excessive evidence is explicit; partial
 evidence must not select a remaining candidate automatically.
 
 `inspection_required` means these registration IDs still need inspection through
-Senulun's supported `enrollment inspect ID` command. Registration creation does not
+Senlun's supported `enrollment inspect ID` command. Registration creation does not
 prove that the collector consumed that token; an install may have retained an
-older local credential. The inventory itself does not contact Senulun.
+older local credential. The inventory itself does not contact Senlun.
 
 After replacement enrollment and old identity isolation, an administrator can
 explicitly post `operationId`, `planRevision` and `applicationId` to
 `POST /api/v1/agents/{id}/reinstall-monitor/inspect`. This queues a bounded read on
-the original managed Senulun service, pinned to its reviewed deployment. Selection,
+the original managed Senlun service, pinned to its reviewed deployment. Selection,
 execution authorization and result projection recheck the operation, administrator,
 replacement key and original registration evidence. The replacement's general
 execution fence remains in place. Self-hosted monitoring first requires restoration
@@ -66,11 +66,11 @@ of the service and its data.
 
 The Agent only runs fixed `pulse-service --help` and `enrollment inspect ID`
 commands inside the owned service container. It requires the supported CLI and
-never silently upgrades an older Senulun installation. Each requested record must
+never silently upgrades an older Senlun installation. Each requested record must
 be returned exactly, without tokens or partial results. Consumed records must
 identify the same active monitor node; missing, inactive or ambiguous associations
 require review. Expired enrollment tokens may still identify historical nodes.
-The supported CLI prerequisite is merged in [Senulun PR26](https://github.com/petauron/senulun/pull/26);
+The supported CLI prerequisite is merged in [Senlun PR26](https://github.com/petauron/senlun/pull/26);
 that merge alone does not make the installed service support the command.
 
 The saved receipt survives Center restart. Identical requests return that receipt

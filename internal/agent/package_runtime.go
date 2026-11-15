@@ -100,12 +100,25 @@ func (e PackageExecutor) receiptPath(id string) string {
 }
 
 func (e PackageExecutor) ReadResources(id string) (*InstanceResources, error) {
+	return e.readResources(id, false)
+}
+
+func (e PackageExecutor) readResources(id string, allowIdentityMigration bool) (*InstanceResources, error) {
 	if e.StateDirectory == "" || id == "" {
 		return nil, errors.New("agent: package state directory and identity are required")
 	}
 	path := e.receiptPath(id)
 	if err := checkPackageParents(path); err != nil {
 		return nil, err
+	}
+	// An interrupted identity change must be inspected before another package
+	// operation can use a partially updated local registration.
+	if !allowIdentityMigration {
+		if _, err := os.Lstat(filepath.Join(filepath.Dir(path), "senlun-identity.pending")); err == nil {
+			return nil, errors.New("agent: unfinished Senlun identity migration requires review")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -194,15 +207,21 @@ func validatePackageTask(task DeploymentTask) error {
 		return errors.New("agent: package manifest digest mismatch")
 	}
 	runtime := task.Manifest.Runtime
-	if runtime == nil || !((runtime.Kind == "docker" && runtime.Version == 1) || (runtime.Kind == "systemd" && (runtime.Version == 1 || runtime.Version == 2))) {
+	if runtime == nil || !((runtime.Kind == "docker" && runtime.Version == 1) || (runtime.Kind == "systemd" && (runtime.Version == 1 || runtime.Version == 2)) || (runtime.Kind == "native" && runtime.Version == 2)) {
 		return errors.New("agent: unsupported package executor protocol")
 	}
 	for _, capability := range runtime.RequiredCapabilities {
-		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services"}, capability) {
+		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy", "host-tcp-budget"}, capability) {
 			return errors.New("agent: unsupported runtime capability")
 		}
 		if capability == "meridian-runtime" && task.AppKey != meridianKey {
 			return errors.New("agent: Glivela integration capability is reserved for its reviewed package")
+		}
+		if capability == "host-tcp-budget" && !budgetManifest(task.AppKey, task.Manifest) {
+			return errors.New("agent: host TCP budget is reserved for the reviewed native manager")
+		}
+		if capability == "shared-caddy" && !daylightKey(task.AppKey) {
+			return errors.New("agent: shared Caddy is reserved for its reviewed website packages")
 		}
 		if !slices.Contains(task.AuthorizedCapabilities, capability) {
 			return errors.New("agent: runtime capability requires explicit administrator authorization: " + capability)
@@ -246,14 +265,19 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if receipt != nil && (receipt.ApplicationID != task.ApplicationID || receipt.AppKey != task.AppKey) {
 		return result, errors.New("agent: package ownership conflict")
 	}
+	if task.CurrentRecoveryResume {
+		return e.resumeCurrentSite(ctx, task, receipt)
+	}
 	if receipt != nil && receipt.IntegrationState == "execution-retired" {
 		return result, errors.New("agent: legacy execution registration is retired; retained data is not an executable installation")
 	}
+	recoveringInstall := false
 	if receipt != nil && receipt.State != "ready" && receipt.State != "retained" {
 		result.Resources = receipt
 		if !reviewedPackageRecovery(task, receipt) {
 			return result, uncertainTaskOutcome(errors.New("agent: unfinished package execution requires an operator-reviewed retry"))
 		}
+		recoveringInstall = task.Operation == "install"
 		// Preserve the receipt if inspection or preparation rejects the retry.
 		// Do not clear the lock before all existing resources are verified.
 		defer func() {
@@ -298,13 +322,23 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	if dormant && (task.AppKey != meridianKey || task.Operation != "upgrade" || receipt.State != "ready" || receipt.Runtime != "docker" || task.Manifest.Runtime.Kind != "docker" || len(receipt.Resources) != 0) {
 		return result, errors.New("agent: dormant Glivela permits only a verified package upgrade without runtime activation")
 	}
-	if task.Operation == "install" && receipt != nil && receipt.State != "retained" {
+	if task.Operation == "install" && receipt != nil && receipt.State != "retained" && !recoveringInstall {
 		return result, errors.New("agent: application is already installed")
 	}
 	if receipt == nil {
 		receipt = &InstanceResources{Version: 1, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Runtime: task.Manifest.Runtime.Kind, RuntimeVersion: task.Manifest.Runtime.Version}
 	} else if task.Manifest.Runtime != nil && receipt.Runtime != task.Manifest.Runtime.Kind {
-		return result, errors.New("agent: changing executor requires explicit instance migration")
+		// Package-specific backends retain the same verified native migration.
+		backend, ok := e.Backend.(interface {
+			migrateSystemdReceipt(context.Context, DeploymentTask, *InstanceResources) (*InstanceResources, error)
+		})
+		if !ok {
+			return result, errors.New("agent: changing executor requires explicit instance migration")
+		}
+		receipt, err = backend.migrateSystemdReceipt(ctx, task, receipt)
+		if err != nil {
+			return result, err
+		}
 	}
 	if task.Manifest.Runtime != nil {
 		installedVersion := receipt.RuntimeVersion
@@ -312,7 +346,10 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 			installedVersion = 1
 		}
 		if installedVersion != task.Manifest.Runtime.Version {
-			return result, errors.New("agent: runtime contract change requires explicit instance migration")
+			migration, ok := e.Backend.(*senlunNativePackageBackend)
+			if !ok || !migration.permitsMigration(task, receipt) {
+				return result, errors.New("agent: runtime contract change requires explicit instance migration")
+			}
 		}
 	}
 	if task.Operation == "uninstall" && (receipt.ManifestSHA256 != task.ManifestSHA256 || receipt.PackageRevision != task.PackageRevision || receipt.PackageVersion != task.Manifest.Version) {
@@ -325,6 +362,35 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	}
 	if err := e.Backend.Prepare(ctx, task, receipt); err != nil {
 		return result, err
+	}
+	if task.Operation == "configure" && !sharedWebsiteConfigure(task) && (task.Manifest.Runtime.Kind == "systemd" || task.Manifest.Runtime.Kind == "native") && task.Manifest.Runtime.Version == 2 {
+		backend, ok := e.Backend.(*NativeServicesPackageBackend)
+		if !ok || receipt.State != "ready" {
+			return result, errors.New("agent: native service port update requires a ready owned bundle")
+		}
+		if err := backend.Healthy(ctx, task, receipt); err != nil {
+			return result, err
+		}
+		if err := backend.probeServicePorts(ctx, task); err != nil {
+			return result, err
+		}
+		for _, service := range task.Manifest.Services {
+			port, portErr := serviceHostPort(task.Config, service)
+			if portErr != nil {
+				return result, portErr
+			}
+			address := task.ServiceAddress
+			if address == "" {
+				address = "127.0.0.1"
+			}
+			result.Services = append(result.Services, ApplicationServiceResult{Name: service.Name, Protocol: service.Protocol, ContainerPort: service.ContainerPort, HostPort: port, Address: address})
+		}
+		receipt.TaskID = task.ID
+		if err := e.save(receipt); err != nil {
+			return ApplicationTaskResult{}, err
+		}
+		result.Resources = receipt
+		return result, nil
 	}
 	receipt.State, receipt.TaskID = "prepared", task.ID
 	if err := e.save(receipt); err != nil {
@@ -400,9 +466,45 @@ func validateHistoricalPackageTask(task DeploymentTask) error {
 
 func reviewedPackageRecovery(task DeploymentTask, receipt *InstanceResources) bool {
 	recovery := task.PackageRecovery
-	return receipt.State == "review-required" && len(receipt.Resources) > 0 &&
-		task.Kind == "application.apply" && (task.Operation == "upgrade" || task.Operation == "configure") &&
-		task.Authorization.ID != "" && task.Authorization.Protocol == controlplane.ExecutionProtocol && len(task.Authorization.Digest) == 64 &&
-		recovery != nil && recovery.ExecutionID != "" && recovery.ExecutionID != task.Authorization.ID &&
-		recovery.TaskID == task.ID && receipt.TaskID == task.ID && recovery.Attempt > 0 && recovery.Attempt == task.Attempt-1
+	if receipt.State != "review-required" || len(receipt.Resources) == 0 ||
+		task.Kind != "application.apply" || (task.Operation != "upgrade" && task.Operation != "configure" && task.Operation != "install") ||
+		task.Authorization.ID == "" || task.Authorization.Protocol != controlplane.ExecutionProtocol || len(task.Authorization.Digest) != 64 ||
+		recovery == nil || recovery.ExecutionID == "" || recovery.ExecutionID == task.Authorization.ID || recovery.Attempt <= 0 {
+		return false
+	}
+	if recovery.ReceiptSHA256 == "" {
+		return task.Operation != "install" && recovery.TaskID == task.ID && receipt.TaskID == task.ID && recovery.Attempt == task.Attempt-1
+	}
+	// A new task is not a replay of the abandoned task. Its authority binds the
+	// complete old receipt; normal ownership, manifest and health checks follow.
+	if task.Operation != "upgrade" && task.Operation != "install" || task.Attempt != 1 || recovery.TaskID == task.ID ||
+		receipt.TaskID != recovery.TaskID || receipt.ApplicationID != task.ApplicationID || receipt.AppKey != task.AppKey {
+		return false
+	}
+	if task.Operation == "install" && (task.SourceReceiptSHA256 != "" || task.Manifest.Runtime == nil || (task.Manifest.Runtime.Kind != "systemd" && task.Manifest.Runtime.Kind != "native") || task.Manifest.Runtime.Version != 2 ||
+		receipt.Runtime != task.Manifest.Runtime.Kind || receipt.RuntimeVersion != 2 || receipt.PackageVersion != "" || receipt.PackageRevision != 0 || receipt.ManifestSHA256 != "") {
+		return false
+	}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		return false
+	}
+	digest, err := controlplane.PackageReceiptDigest(raw)
+	return err == nil && digest == recovery.ReceiptSHA256
+}
+
+// A portable recipe may carry this reviewed permission on OpenRC or in a
+// container. The host-side writer is available only on a verified systemd VM.
+func budgetManifest(key string, app catalog.AppManifest) bool {
+	r := app.Runtime
+	if r == nil || r.Version != 2 || r.NativeServices == nil || r.NativeServices.Namespace != "glivela" || key != "vastora-official/"+app.ID {
+		return false
+	}
+	switch app.ID {
+	case "glivela-entry":
+		return r.Kind == "native"
+	case "glivela-dual", "glivela-node":
+		return r.Kind == "systemd"
+	}
+	return false
 }

@@ -22,19 +22,26 @@ import (
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
+	"github.com/petauron/vastora/internal/nodesite"
+	"github.com/petauron/vastora/internal/osreinstall"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 	"github.com/petauron/vastora/internal/senulun"
+	"github.com/petauron/vastora/internal/tailscalehost"
 	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
 type AgentTask struct {
+	CurrentRecoveryResume     bool                                 `json:"currentRecoveryResume,omitempty"`
+	NodeSite                  *nodesite.Task                       `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
+	TailscaleUpdate           *tailscalehost.UpdateTask            `json:"tailscaleUpdate,omitempty"`
 	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
 	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
+	OSReinstall               *osreinstall.Task                    `json:"osReinstall,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
 	SenulunRestore            *senulun.RestoreCredentials          `json:"pulseRestore,omitempty"`
 	SenulunReporting          *senulun.ReportingTask               `json:"pulseReporting,omitempty"`
@@ -109,6 +116,16 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return nil, err
 	}
+	if blocked, err := gatewayPromotionPrepared(ctx, s.db, agentID); err != nil || blocked {
+		return nil, err
+	}
+	var tailscaleWaiting bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tailscale_update_tasks WHERE agent_id=? AND state='awaiting_decision')`, agentID).Scan(&tailscaleWaiting); err != nil {
+		return nil, err
+	}
+	if tailscaleWaiting {
+		return nil, nil
+	}
 	commitAuthorized := commitTask
 	commitTask = func(tx *sql.Tx, task *AgentTask) error {
 		// A discarded unauthorized command commits its rejection with no task.
@@ -120,8 +137,8 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json, '$.landingOnly'), 0) FROM agents WHERE id = ?`, agentID).Scan(&landingOnly); err != nil {
 			return err
 		}
-		nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
-		if landingOnly && !nativeLifecycle && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind {
+		nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && (controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities) || controlplane.NativeWebsiteConfigureAllowed(task.AppKey, task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities))
+		if landingOnly && !nativeLifecycle && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind && task.Kind != nodesite.Kind && task.Kind != tailscalehost.UpdateKind {
 			return errors.New("center: task is not authorized for a landing-only node")
 		}
 		return commitAuthorized(tx, task)
@@ -156,6 +173,9 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, fmt.Errorf("center: begin task claim: %w", err)
 	}
 	defer tx.Rollback()
+	if blocked, err := gatewayPromotionPrepared(ctx, tx, agentID); err != nil || blocked {
+		return nil, err
+	}
 	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
 		return nil, err
 	} else if blocked {
@@ -173,21 +193,18 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if authorized != 1 {
 		return nil, errors.New("center: invalid Agent credential")
 	}
+	var tailscalePending bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tailscale_update_tasks WHERE agent_id=? AND state='awaiting_decision')`, agentID).Scan(&tailscalePending); err != nil {
+		return nil, err
+	}
+	if tailscalePending {
+		return nil, nil
+	}
 	executionBlocked, err := unresolvedExecutionBlocksAgentWork(ctx, tx, agentID, agentVersion)
 	if err != nil {
 		return nil, err
 	}
 	if executionBlocked {
-		recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
-		if recoveryErr != nil {
-			return nil, recoveryErr
-		}
-		if recovery != nil {
-			if err := commitTask(tx, recovery); err != nil {
-				return nil, err
-			}
-			return recovery, nil
-		}
 		if requiredTaskID == "" {
 			updateBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, agentVersion)
 			if err != nil {
@@ -206,6 +223,33 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 				}
 			}
 		}
+		return nil, errExecutionBlocked
+	}
+	// A destructive OS task exclusively owns this fresh node until it has
+	// finished or an operator explicitly resolves an uncertain outcome.
+	if requiredTaskID == "" {
+		reinstall, rejected, reinstallErr := s.claimOSReinstall(ctx, tx, agentID)
+		if reinstallErr != nil {
+			return nil, reinstallErr
+		}
+		if rejected {
+			if err := commitTask(tx, nil); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+		if reinstall != nil {
+			if err := commitTask(tx, reinstall); err != nil {
+				return nil, err
+			}
+			return reinstall, nil
+		}
+	}
+	var osReinstallBlocked bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM os_reinstall_tasks WHERE agent_id=? AND state NOT IN ('succeeded','cancelled'))", agentID).Scan(&osReinstallBlocked); err != nil {
+		return nil, err
+	}
+	if osReinstallBlocked {
 		return nil, errExecutionBlocked
 	}
 	// Self-update is the first ordinary task so older Agents cannot consume
@@ -249,7 +293,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		if err := s.attachPackageRecovery(ctx, tx, agentID, &reviewed); err != nil {
 			return nil, err
 		}
-		if reviewed.PackageRecovery == nil {
+		if reviewed.PackageRecovery == nil || reviewed.PackageRecovery.ReceiptSHA256 != "" {
 			return nil, nil
 		}
 		return s.claimApplicationDeployment(ctx, tx, agentID, agentRuntimeGeneration, pending, commitTask)
@@ -369,15 +413,25 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 					return nil, decommissionErr
 				}
 				if decommissionTask == nil {
-					recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
-					if recoveryErr != nil {
-						return nil, recoveryErr
+					updateTask, updateErr := s.claimTailscaleUpdate(ctx, tx, agentID)
+					if updateErr != nil {
+						return nil, updateErr
 					}
-					if recovery != nil {
-						if err := commitTask(tx, recovery); err != nil {
+					if updateTask != nil {
+						if err := commitTask(tx, updateTask); err != nil {
 							return nil, err
 						}
-						return recovery, nil
+						return updateTask, nil
+					}
+					siteTask, siteErr := s.claimNodeSite(ctx, tx, agentID)
+					if siteErr != nil {
+						return nil, siteErr
+					}
+					if siteTask != nil {
+						if err := commitTask(tx, siteTask); err != nil {
+							return nil, err
+						}
+						return siteTask, nil
 					}
 					securityTask, securityErr := s.claimNodeSecurity(ctx, tx, agentID)
 					if securityErr != nil {
@@ -467,12 +521,13 @@ func readPendingApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, 
 	var p pendingApplicationDeployment
 	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, CASE WHEN d.source_receipt_sha256<>'' THEN '' ELSE a.role END, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation, d.package_revision, d.manifest_sha256, d.authorized_capabilities_json,d.source_receipt_sha256
 		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending'
-		AND NOT EXISTS (
+		AND (NOT EXISTS (
 		 SELECT 1 FROM glivela_pilot_checkpoint pilot
 		 JOIN meridian_endpoints endpoint ON endpoint.id=pilot.endpoint_id
 		 WHERE endpoint.application_id=d.application_id
-		)
-		AND NOT (d.app_key = 'vastora-official/pulse-agent' AND d.operation = 'install' AND d.secret_id IS NULL)`
+		) OR (d.app_key='vastora-official/glivela-entry' AND d.operation='upgrade' AND a.runtime='host'))
+		AND NOT (d.app_key = 'vastora-official/senlun-agent' AND d.operation = 'install' AND d.secret_id IS NULL AND d.source_receipt_sha256 = ''
+	 AND NOT EXISTS (SELECT 1 FROM agent_reinstall_current_applications current_restore WHERE current_restore.deployment_id=d.id))`
 	queryArgs := []any{agentID}
 	if requiredTaskID != "" {
 		query += ` AND d.id = ?`
@@ -492,14 +547,26 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectRetiredApplicationPreparation(ctx, tx, agentID, task.ID); err != nil {
+		return nil, err
+	}
 	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, task.ID, false)
 	if err != nil {
 		return nil, err
 	}
-	preparation = preparation || restoredMonitor != nil
+	currentRestore, err := s.reinstallCurrentTask(ctx, tx, agentID, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	preparation = preparation || restoredMonitor != nil || currentRestore != nil
 	task.Config = json.RawMessage(config)
 	if err := json.Unmarshal(manifest, &task.Manifest); err != nil {
 		return nil, fmt.Errorf("center: decode pending task: %w", err)
+	}
+	// Queue selection allows the native package identity only; enforce the
+	// complete reviewed runtime contract again before issuing any authority.
+	if err := requireApplicationDeploymentOwner(ctx, tx, task.ApplicationID, task.Operation, task.Manifest); err != nil {
+		return nil, err
 	}
 	if json.Unmarshal(pending.authorizedCapabilitiesJSON, &task.AuthorizedCapabilities) != nil {
 		return nil, errors.New("center: invalid deployment permission record")
@@ -536,7 +603,13 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	// Recheck only work that has never reached an Agent. Recovery of an
 	// already-issued operation must remain possible without a live catalog.
 	if !preparation && attempt == 0 && reconciliationRequested == 0 && strings.HasPrefix(task.AppKey, OfficialCatalogSourceID+"/") && (task.Operation == "install" || task.Operation == "upgrade") {
-		if err := authorizeOfficialManifest(ctx, tx, "stable", task.Manifest, s.now().UTC()); err != nil {
+		var authorizationErr error
+		if task.Operation == "install" && task.AppKey == senlunNativeIdentityKey && task.SourceReceiptSHA256 != "" {
+			authorizationErr = authorizeSenlunNativeIdentity(ctx, tx, task.ApplicationID, task.SourceReceiptSHA256, task.Manifest, s.now().UTC(), true)
+		} else {
+			authorizationErr = authorizeOfficialManifest(ctx, tx, "stable", task.Manifest, s.now().UTC())
+		}
+		if authorizationErr != nil {
 			now := s.now().UTC().Format(time.RFC3339Nano)
 			const message = "Refresh the app catalog and retry this operation."
 			if _, updateErr := tx.ExecContext(ctx, `UPDATE deployments SET state = 'failed', error = ?, updated_at = ? WHERE id = ?`, message, now, task.ID); updateErr != nil {
@@ -577,6 +650,12 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 		task.Secrets = secretValue
 	} else {
 		task.Secrets = json.RawMessage(`{}`)
+	}
+	if currentRestore != nil {
+		task.SenulunRestore = currentRestore.SenulunRestore
+		task.CurrentRecoveryResume = currentRestore.CurrentRecoveryResume
+		task.NodeSite = currentRestore.NodeSite
+		task.NodeListenerState = currentRestore.NodeListenerState
 	}
 	if restoredMonitor != nil {
 		task.SenulunRestore = restoredMonitor.SenulunRestore
@@ -696,6 +775,18 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 		}
 		return s.completeIPQuality(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
 	}
+	if strings.HasPrefix(taskID, tailscalehost.UpdateTaskPrefix) {
+		return s.completeTailscaleUpdate(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, reconciliationRequired)
+	}
+	if strings.HasPrefix(taskID, nodesite.TaskPrefix) {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeNodeSite(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
+	}
+	if strings.HasPrefix(taskID, "os-reinstall-") {
+		return s.completeOSReinstallFailure(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, reconciliationRequired)
+	}
 	if strings.HasPrefix(taskID, "node-security-") {
 		if reconciliationRequired {
 			return errInvalidReconciliationDisposition
@@ -709,7 +800,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 		return s.completeNodeDiagnostic(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
 	}
 	if strings.HasPrefix(taskID, "xray-recovery-") {
-		return s.completeXrayConfigurationRecovery(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
+		return errors.New("center: retired Xray recovery requires explicit execution disposition")
 	}
 	if taskID == agentDecommissionTaskID(agentID) {
 		if succeeded || reconciliationRequired {
@@ -777,8 +868,15 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 	if err != nil {
 		return err
 	}
+	verificationTargets, err := nativeEntryVerificationTargetsForDeployment(ctx, tx, taskID)
+	if err != nil {
+		return err
+	}
 	if err := commit(tx); err != nil {
 		return err
+	}
+	for _, target := range verificationTargets {
+		s.schedulePublicationVerification(target.id, target.revision)
 	}
 	s.resumeCredentialRotationForDeployment(ctx, taskID)
 	if succeeded && !reconciliationRequired && appKey == threeXUIAppKey {
@@ -831,11 +929,18 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 	if err != nil {
 		return "", nil, err
 	}
+	if err := rejectRetiredApplicationPreparation(ctx, tx, agentID, taskID); err != nil {
+		return "", nil, err
+	}
 	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, taskID, false)
 	if err != nil {
 		return "", nil, err
 	}
-	preparation = preparation || restoredMonitor != nil
+	currentRestore, err := s.reinstallCurrentTask(ctx, tx, agentID, taskID)
+	if err != nil {
+		return "", nil, err
+	}
+	preparation = preparation || restoredMonitor != nil || currentRestore != nil
 	if preparation && reconciliationRequired {
 		return "", nil, errors.New("center: package preparation requires explicit outcome review")
 	}
@@ -846,6 +951,9 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 		if len(rawResult) != 0 && string(rawResult) != "null" && json.Unmarshal(rawResult, &taskResult) != nil {
 			return "", nil, errors.New("center: invalid Agent task result")
 		}
+	}
+	if currentRestore != nil && currentRestore.SenulunRestore != nil && succeeded && (taskResult.SenulunRestored == nil || taskResult.SenulunRestored.NodeID != currentRestore.SenulunRestore.NodeID) {
+		return "", nil, errors.New("center: original Senulun identity was not restored")
 	}
 	if restoredMonitor != nil && succeeded && (taskResult.SenulunRestored == nil || taskResult.SenulunRestored.NodeID != restoredMonitor.SenulunRestore.NodeID || len(taskResult.Services) != 0) {
 		return "", nil, errors.New("center: restored Senulun collector did not confirm the original monitoring identity")

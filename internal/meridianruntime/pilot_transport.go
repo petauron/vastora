@@ -5,16 +5,18 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/petauron/glivela"
+	"github.com/petauron/vastora/internal/landing"
 )
 
 // The authenticated controller retains its original accounting policy. Only
-// private peer transport material and revision may differ, never identity,
+// peer transport material, its public endpoint and revision may differ, never identity,
 // address, DNS, exit, credentials, authorization or network policy.
 func transportOriginDigest(node quotaNode) (string, error) {
 	invalid := errors.New("meridianruntime: transport accounting origin differs")
@@ -51,7 +53,7 @@ func transportOriginDigest(node quotaNode) (string, error) {
 	for i := range oldPeers {
 		old, ok := oldPeers[i].(map[string]any)
 		next, nextOK := newPeers[i].(map[string]any)
-		if !ok || !nextOK || !validPrivateTransport(old["transport"]) || !validPrivateTransport(next["transport"]) {
+		if !ok || !nextOK || !validPeerTransport(old["transport"]) || !validPeerTransport(next["transport"]) {
 			return "", invalid
 		}
 		delete(old, "transport")
@@ -65,7 +67,7 @@ func transportOriginDigest(node quotaNode) (string, error) {
 	return quotaBaseDigest(q.TransportOrigin)
 }
 
-func validPrivateTransport(value any) bool {
+func validPeerTransport(value any) bool {
 	if value == nil {
 		return true
 	}
@@ -76,8 +78,15 @@ func validPrivateTransport(value any) bool {
 	if len(t) == 0 {
 		return true
 	}
-	if len(t) != 2 || t["protocol"] != "ss2022" {
+	if (len(t) != 2 && len(t) != 3) || t["protocol"] != "ss2022" {
 		return false
+	}
+	if len(t) == 3 {
+		value, ok := t["publicAddress"].(string)
+		address, err := netip.ParseAddr(value)
+		if !ok || err != nil || address.String() != value || !landing.PublicIPv4(address) {
+			return false
+		}
 	}
 	key, ok := t["key"].(string)
 	decoded, err := base64.StdEncoding.Strict().DecodeString(key)

@@ -2,14 +2,11 @@ package center
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"path/filepath"
-	"testing"
-	"time"
-
 	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/networking"
+	"testing"
+	"time"
 )
 
 func TestIPQualityLatestResultAndStaleAttempt(t *testing.T) {
@@ -103,39 +100,6 @@ func TestIPQualityRequiresVLESSOrLandingTarget(t *testing.T) {
 	}
 	if err := s.StartIPQuality(ctx, node.ID, "203.0.113.9"); err == nil || err.Error() != "ip_quality_target_required" {
 		t.Fatalf("compute-only node accepted IP quality check: %v", err)
-	}
-}
-
-func TestIPQualityMigration78AddsEmptyLatestResults(t *testing.T) {
-	directory := t.TempDir()
-	createLegacyVersion3Database(t, directory)
-	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	ctx := context.Background()
-	legacy := &Store{db: db}
-	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
-		t.Fatal(err)
-	}
-	provider, err := newMigrationProvider(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.UpTo(ctx, 76); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.UpTo(ctx, 78); err != nil {
-		t.Fatal(err)
-	}
-	var version, count int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 78 {
-		t.Fatalf("version: %d %v", version, err)
-	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM ip_quality_checks`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("migration generated diagnostic tasks: %d %v", count, err)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 const (
 	agentDecommissionCallbackRouteMigrationSetting = "migration_55_agent_decommission_callback_route"
 	dockerInstallRouteMigrationSetting             = "migration_58_docker_install_route"
+	agentGRPCRouteMigrationSetting                 = "migration_126_agent_grpc_route"
 )
 
 func (s *Store) activateAgentDecommissionCallbackRoute(ctx context.Context) error {
@@ -24,6 +25,10 @@ func (s *Store) activateAgentDecommissionCallbackRoute(ctx context.Context) erro
 
 func (s *Store) activateDockerInstallRoute(ctx context.Context) error {
 	return s.activateSystemGatewayRouteMigration(ctx, dockerInstallRouteMigrationSetting, "Docker installer")
+}
+
+func (s *Store) activateAgentGRPCRoute(ctx context.Context) error {
+	return s.activateSystemGatewayRouteMigration(ctx, agentGRPCRouteMigrationSetting, "Agent gRPC")
 }
 
 func (s *Store) activateSystemGatewayRouteMigration(ctx context.Context, setting, label string) error {

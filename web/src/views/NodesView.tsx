@@ -1,8 +1,8 @@
-import { NodeEgressControls } from "./NodeEgressControls";
+import { NodeSSHProtection } from "./NodeSSHProtection";
+import { OSReinstallInspection } from "./OSReinstallInspection";
 import { NodeSecurityControls } from "./NodeSecurityControls";
-import { canInspectXrayConfiguration } from "./xrayRecoveryEligibility";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CheckCircle2Icon, CircleArrowUpIcon, GitCompareArrowsIcon, MapPinIcon, NetworkIcon, PlusIcon, RotateCcwIcon, SearchIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon, UnplugIcon } from "lucide-react";
+import { CheckCircle2Icon, CircleArrowUpIcon, MapPinIcon, NetworkIcon, PlusIcon, RotateCcwIcon, SearchIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon, UnplugIcon } from "lucide-react";
 import { api } from "../api";
 import { validCenterURL } from "../lib/network";
 import type { AppData, Mutate, Screen } from "../App";
@@ -23,7 +23,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { displayRegionFlag } from "@/lib/regions";
-import { RuntimeRecoveryAlert, XrayConfigurationRecoverySheet } from "./RuntimeRecoveryAlert";
+import { RuntimeRecoveryAlert } from "./RuntimeRecoveryAlert";
 import { RegionFlag } from "./RegionFlag";
 import { StopNodeAccessSheet } from "./StopNodeAccessSheet";
 import { RemoveNodeDialog } from "./RemoveNodeDialog";
@@ -168,13 +168,10 @@ function NodeSiteRows({ agents, data, language, onApplications, onConfigure, onN
 }
 
 function NodeTableRow({ agent, data, language, onApplications, onConfigure, onNetwork, onReconnect, onRemove }: { agent: AgentView; data: AppData; language: Language; onApplications: () => void; onConfigure: () => void; onNetwork: () => void; onReconnect: () => void; onRemove: () => void }) {
-  const [configurationRecoveryOpen, setConfigurationRecoveryOpen] = useState(false);
   const site = data.sites.find((value) => value.id === agent.siteId);
   const selectedGateway = Boolean(site?.gatewayNodes.includes(agent.id));
   const architecture = agent.architecture === "arm64" ? "ARM64" : "x64";
   const needsNetworkConfirmation = agent.status === "active" && !agent.removal && !agent.reinstall && !agent.networkProfile;
-  const canRecoverXray = !data.desktopDataUnavailable && !data.nodeAuxiliaryDataUnavailable && canInspectXrayConfiguration(data, agent.id);
-  const needsLegacyConfigurationInspection = canRecoverXray && agent.connected && !agent.runtimeRecovery && data.meridian.endpoints.some((endpoint) => endpoint.nodeId === agent.id && !endpoint.legacyRetired && (endpoint.status === "applying" || endpoint.status === "failed"));
   return <>
     <TableRow className="h-14 hover:bg-muted/20">
       <TableCell className="min-w-0 py-2 pl-4"><div className="flex min-w-0 items-center gap-2.5"><ServerIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /><div className="min-w-0"><p className="truncate text-sm font-medium" title={agent.name}>{agent.name}</p><div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground md:hidden"><NodeStatus agent={agent} language={language} compact /><span aria-hidden="true">·</span><span className="truncate">{agent.version || "—"}</span></div></div></div></TableCell>
@@ -182,15 +179,14 @@ function NodeTableRow({ agent, data, language, onApplications, onConfigure, onNe
       <TableCell className="hidden py-2 md:table-cell"><div className="flex flex-wrap items-center gap-1.5">{agent.capabilities.landingOnly ? <Badge variant="secondary">{copy(language, "仅落地", "Landing only")}</Badge> : null}{selectedGateway ? <Badge className="rounded-md" variant="secondary">{copy(language, "网关", "Gateway")}</Badge> : null}{agent.appliedInstallations > 0 ? <Badge className="rounded-md" variant="secondary">{copy(language, `${agent.appliedInstallations} 个应用`, `${agent.appliedInstallations} app${agent.appliedInstallations === 1 ? "" : "s"}`)}</Badge> : null}{!agent.capabilities.landingOnly && !selectedGateway && agent.appliedInstallations === 0 ? <span className="text-muted-foreground">—</span> : null}</div></TableCell>
       <TableCell className="hidden py-2 md:table-cell"><span className="block truncate text-xs tabular-nums" title={agent.version}>{agent.version || "—"}</span><span className="text-xs text-muted-foreground">{architecture}</span></TableCell>
       <TableCell className="py-2 pr-4"><div className="flex flex-wrap items-center justify-end gap-1">
-        {needsLegacyConfigurationInspection ? <Button aria-label={copy(language, `检查 ${agent.name} 的旧 Xray 配置差异`, `Inspect ${agent.name} legacy Xray configuration`)} onClick={() => setConfigurationRecoveryOpen(true)} size="icon-sm" title={copy(language, "检查旧 Xray 配置差异", "Inspect legacy Xray configuration")} variant="ghost"><GitCompareArrowsIcon aria-hidden="true" /></Button> : null}
         {needsNetworkConfirmation ? <Button aria-label={copy(language, `确认 ${agent.name} 的网络`, `Confirm network for ${agent.name}`)} onClick={onNetwork} size="icon-sm" title={copy(language, "确认网络", "Confirm network")} variant="ghost"><NetworkIcon aria-hidden="true" /></Button> : null}
         {!agent.removal && (!agent.connected || agent.reinstall) ? <Button aria-label={agent.reinstall ? copy(language, `查看 ${agent.name} 的恢复进度`, `View recovery for ${agent.name}`) : copy(language, `重新接入 ${agent.name}`, `Reconnect ${agent.name}`)} onClick={onReconnect} size="icon-sm" title={agent.reinstall ? copy(language, "恢复进度", "Recovery progress") : copy(language, "重新接入", "Reconnect")} variant="ghost"><RotateCcwIcon aria-hidden="true" /></Button> : null}
         {!agent.removal && agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除", "Delete")}</Button> : null}
         {!agent.removal && agent.status === "active" ? <Button aria-label={copy(language, `管理 ${agent.name}`, `Manage ${agent.name}`)} onClick={onConfigure} size="icon-sm" variant="ghost"><Settings2Icon aria-hidden="true" /></Button> : null}
         {!agent.connected ? <Button aria-label={agent.removal ? copy(language, `查看 ${agent.name} 的移除进度`, `View removal progress for ${agent.name}`) : copy(language, `永久移除 ${agent.name}`, `Permanently remove ${agent.name}`)} onClick={onRemove} size="icon-sm" title={agent.removal ? copy(language, "查看移除进度", "View removal progress") : copy(language, "永久移除", "Permanently remove")} variant="ghost"><Trash2Icon aria-hidden="true" /></Button> : null}
-      </div>{needsLegacyConfigurationInspection ? <XrayConfigurationRecoverySheet agent={agent} language={language} onOpenChange={setConfigurationRecoveryOpen} open={configurationRecoveryOpen} /> : null}</TableCell>
+      </div></TableCell>
     </TableRow>
-    {agent.connected && agent.runtimeRecovery ? <TableRow><TableCell className="py-2" colSpan={5}><RuntimeRecoveryAlert agent={agent} canRecoverXray={canRecoverXray} language={language} onApplications={onApplications} /></TableCell></TableRow> : null}
+    {agent.connected && agent.runtimeRecovery ? <TableRow><TableCell className="py-2" colSpan={5}><RuntimeRecoveryAlert agent={agent} language={language} onApplications={onApplications} /></TableCell></TableRow> : null}
   </>;
 }
 
@@ -378,7 +374,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
   const [danger, setDanger] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const deleting = agent?.status === "disabled";
-  const canStopAccess = agent?.status === "active" && !agent.connected;
+  const canStopAccess = agent?.status === "active" && !agent.credentialRevoked;
   const dependenciesUnavailable = Boolean(data.desktopDataUnavailable || data.nodeAuxiliaryDataUnavailable);
   useEffect(() => {
     if (!agent) return;
@@ -470,8 +466,9 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
               <Button className="mt-3" disabled={dependenciesUnavailable || !purposeChanged || agent?.capabilities.landingOnly} onClick={() => setCommandKind("purpose")} size="sm" type="button" variant="outline"><TerminalIcon data-icon="inline-start" />{copy(language, "生成修改命令", "Generate change command")}</Button>
             </div>
             <div className="rounded-xl border p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium">Agent</p><p className="mt-1 text-xs text-muted-foreground">{copy(language, `节点版本 ${agent?.version ?? "—"} · Center 版本 ${data.status.version}`, `Node ${agent?.version ?? "—"} · Center ${data.status.version}`)}</p></div><StateBadge value={updateActive ? "applying" : updateFailed ? "failed" : !updateRequired ? "ready" : "pending"} /></div>{agent?.update?.lastError ? <FieldError className="mt-2">{agent.update.lastError}</FieldError> : null}{updateFailed ? <Button className="mt-3" type="button" size="sm" variant="outline" onClick={() => { navigating.current = true; onClose(); onNavigate("activity"); }}>{copy(language, "核对更新任务", "Review update task")}</Button> : null}{(updateRequired || updateActive) && agent?.remoteUpdateSupported ? <><Button className="mt-3" disabled={!agent.connected || updateActive || updateBusy} onClick={() => void startUpdate()} size="sm" type="button" variant="outline">{updateBusy || updateActive ? <Spinner data-icon="inline-start" /> : agent.update?.state === "failed" ? <RotateCcwIcon data-icon="inline-start" /> : <CircleArrowUpIcon data-icon="inline-start" />}{updateActive ? copy(language, "正在更新", "Updating") : agent.update?.state === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "通过 Center 更新", "Update through Center")}</Button>{!agent.connected ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, "节点重新上线后才能开始更新。", "The node must reconnect before updating.")}</p> : null}{updateActive ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, `正在安全更新到 ${agent.update?.targetVersion}；节点会短暂离线并自动重新连接。`, `Safely updating to ${agent.update?.targetVersion}. The node briefly disconnects and reconnects automatically.`)}</p> : null}</> : null}{updateRequired && !agent?.remoteUpdateSupported ? <Alert className="mt-3"><TerminalIcon /><AlertTitle>{copy(language, "需要一次手动更新", "One manual update required")}</AlertTitle><AlertDescription><p>{copy(language, "当前版本还不支持 Center 远程更新。完成这一次后，后续版本可直接在这里更新。", "This version predates Center-managed updates. After this one-time step, future updates can run here.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{manualUpdateCommand}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={manualUpdateCommand} /></div></AlertDescription></Alert> : null}</div>
+            {agent?.capabilities.osReinstallPreflight ? <OSReinstallInspection key={`os-reinstall-${agent.id}`} nodeId={agent.id} connected={agent.connected} canReinstall={!!agent.capabilities.osReinstall} language={language} /> : null}
+            {agent ? <NodeSSHProtection key={`ssh-${agent.id}`} nodeId={agent.id} connected={agent.connected} applications={data.applications} language={language} /> : null}
             {agent?.capabilities.nodeSecurity ? <NodeSecurityControls key={`security-${agent.id}`} nodeId={agent.id} language={language} /> : null}
-            {agent && !agent.capabilities.landingOnly ? <NodeEgressControls key={agent.id} nodeId={agent.id} language={language} /> : null}
             {commandKind && !dependenciesUnavailable ? <Alert><TerminalIcon /><AlertTitle>{copy(language, "在节点运行一次", "Run once on the node")}</AlertTitle><AlertDescription><p>{copy(language, "命令会更新 systemd 配置并重启 Agent，Center 会自动看到新用途。", "The command updates systemd, restarts Agent, and Center detects the new purpose automatically.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{purposeCommand}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={purposeCommand} /></div></AlertDescription></Alert> : null}
             {error ? <FieldError>{error}</FieldError> : null}
           </FieldGroup></div>

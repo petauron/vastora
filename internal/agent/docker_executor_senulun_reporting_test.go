@@ -20,7 +20,7 @@ func TestSenulunReportingPinsServiceAndUsesSecretStdin(t *testing.T) {
 	for _, mode := range []string{"fresh", "retained", "unsupported", "wrong-deployment", "wrong-node", "secret-field", "trailing-json", "failed"} {
 		t.Run(mode, func(t *testing.T) {
 			task := senulun.ReportingTask{ApplicationID: "monitor-service", DeploymentID: "reviewed", Credentials: senulun.RestoreCredentials{NodeID: "11111111-1111-4111-8111-111111111111", Token: "test-rotated-credential-never-publish"}}
-			labels := applicationResourceLabels(senulun.ServiceKey, "pulse", task.ApplicationID, task.DeploymentID)
+			labels := applicationResourceLabels(senulun.ServiceKey, "senlun", task.ApplicationID, task.DeploymentID)
 			if mode == "wrong-deployment" {
 				labels[applicationDeploymentIDLabel] = "other"
 			}

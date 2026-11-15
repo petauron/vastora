@@ -12,10 +12,10 @@ export function ReinstallMonitorReview({ plan, busy, language, onInspect, onRota
       const pending = state === "pending" || state === "running";
       const localService = monitor.serviceAgentId === plan.agentId;
       const canInspect = !monitor.rotation && monitor.state === "inspection_required" && !localService && !pending && state !== "verified";
-      const name = plan.applications.find((app) => app.applicationId === monitor.applicationId)?.name ?? "Senulun";
+      const name = plan.applications.find((app) => app.applicationId === monitor.applicationId)?.name ?? "Senlun";
       return <div key={monitor.applicationId} className="flex flex-col gap-2">
         <p className="text-sm" role="status" aria-atomic="true">{name} · {monitorState(state, language)}</p>
-        {localService ? <p className="text-xs text-muted-foreground">{copy(language, "先恢复本机的 Senulun 服务和数据，再核验原监控身份。", "Restore this host's Senulun service and data before inspecting the original monitoring identity.")}</p> : null}
+        {localService ? <p className="text-xs text-muted-foreground">{copy(language, "先恢复本机的 Senlun 服务和数据，再核验原监控身份。", "Restore this host's Senlun service and data before inspecting the original monitoring identity.")}</p> : null}
         {state === "verified" && !monitor.rotation ? <p className="text-xs text-muted-foreground">{copy(language, "凭据恢复和数据上报仍待完成。", "Credential restoration and metric reporting are still pending.")}</p> : null}
         {monitor.rotation ? <p className="text-xs text-muted-foreground" role="status">{monitor.restoration && monitor.rotation.state === "rotated" ? copy(language, "原节点凭据已轮换", "Original node credential rotated") : rotationState(monitor.rotation.state, language)}</p> : state === "verified" && !localService ? <>
           <p className="text-xs text-muted-foreground">{copy(language, "下一步轮换原节点凭据，旧凭据立即失效，监控历史保留。", "Next, rotate the original node credential. The old credential stops working; monitoring history is retained.")}</p>

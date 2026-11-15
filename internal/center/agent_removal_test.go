@@ -222,7 +222,7 @@ func TestRemoveOfflineAgentKeepsSharedSecret(t *testing.T) {
 	}
 }
 
-func TestRemoveOfflineAgentWaitsForSubscriptionControllerReceipt(t *testing.T) {
+func TestOfflineLegacyRemovalPreservesUnconfirmedSubscriptionHistory(t *testing.T) {
 	s := openOrchestrationStore(t)
 	defer s.Close()
 	ctx := context.Background()
@@ -291,41 +291,12 @@ func TestRemoveOfflineAgentWaitsForSubscriptionControllerReceipt(t *testing.T) {
 	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=?`, workerApplicationID) != 1 {
 		t.Fatal("worker deleted before remote receipt")
 	}
-	remove := claimTask(t, s, master)
-	if remove.NodeCommand == nil || remove.NodeCommand.Action != "remove" || remove.NodeCommand.RemoteNodeID != 7 {
-		t.Fatalf("not an exact worker removal: %#v", remove.NodeCommand)
+	assertRetiredProxyCommandChannel(t, s, master.ID)
+	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=?`, workerApplicationID) != 1 {
+		t.Fatal("unconfirmed legacy inventory was removed")
 	}
-	if err = s.CompleteTask(ctx, master.ID, master.Credential, remove.ID, remove.Attempt, false, "temporary failure", nil, remove.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.resumeAgentRemovals(ctx); err == nil {
-		t.Fatal("failure was not exposed")
-	}
-	if err = s.StartAgentRemoval(ctx, worker.ID, "expired-worker"); err != nil {
-		t.Fatal(err)
-	}
-	retry := claimTask(t, s, master)
-	if retry.ID != remove.ID || retry.Attempt <= remove.Attempt {
-		t.Fatal("retry replaced task identity")
-	}
-	result, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 7, Status: "stopped"}})
-	if err = s.CompleteTask(ctx, master.ID, master.Credential, retry.ID, retry.Attempt, true, "", result, retry.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.resumeAgentRemovals(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=? AND status='running'`, masterApplicationID) != 1 {
-		t.Fatal("controller was removed")
-	}
-	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=?`, workerApplicationID) != 0 {
-		t.Fatal("worker record remained")
-	}
-	if removalCount(t, s, `SELECT COUNT(*) FROM application_commands WHERE id=?`, retry.ID) != 0 {
-		t.Fatal("worker task history remained on controller")
-	}
-	if privateDeletes != 1 || removalCount(t, s, `SELECT COUNT(*) FROM agents WHERE id=?`, worker.ID) != 0 || removalCount(t, s, `SELECT COUNT(*) FROM agent_removals WHERE agent_id=?`, worker.ID) != 0 {
-		t.Fatal("removal retry did not finish exactly once")
+	if removalCount(t, s, `SELECT COUNT(*) FROM three_x_ui_nodes WHERE worker_application_id=?`, workerApplicationID) != 1 {
+		t.Fatal("retained topology was removed")
 	}
 }
 

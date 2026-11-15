@@ -74,11 +74,9 @@ func TestConcurrentPeerMonitorsReleaseConnectionsAcrossGroupReplacement(t *testi
 				t.Fatal("peer monitor did not report")
 			}
 		}
-		if count := open.Load(); count != 8 {
-			cancel()
-			group.Wait()
-			t.Fatalf("group has %d connections, want 8", count)
-		}
+		// Completed startup checks release sockets without waiting for cancellation.
+		group.Wait()
+		awaitNoConnections(t, open)
 		cancel()
 		group.Wait()
 		awaitNoConnections(t, open)
@@ -192,13 +190,13 @@ func TestMonitorBlocksWithoutProxyLifecycleOnExit(t *testing.T) {
 			if status.State != "blocked" || writes == 0 {
 				t.Fatalf("unconfirmed route was not blocked: writes=%d status=%+v", writes, status)
 			}
-			if status.Stage != "private_link_before" || status.Reason != "local_status_unavailable" || status.StartedAt.IsZero() || status.CheckedAt.Before(status.StartedAt) {
+			if status.Stage != "startup" || status.Reason != "startup_failed" {
 				t.Fatalf("private link diagnostic was lost: %+v", status)
 			}
 			cancel()
 		},
 	}
-	if err := monitor.Run(ctx); err != context.Canceled || reports != 1 {
+	if err := monitor.Run(ctx); err == nil || reports != 1 {
 		t.Fatalf("shutdown cleanup changed: reports=%d err=%v", reports, err)
 	}
 }
@@ -239,13 +237,13 @@ func TestRecoveredMonitorKeepsGateClosedOnUnconfirmedInitialRenewal(t *testing.T
 			if status.State != "blocked" {
 				t.Fatalf("startup renewal failure opened the gate: status=%+v", status)
 			}
-			if status.Stage != "gate" || status.Reason != "renewal_failed" {
+			if status.Stage != "startup" || status.Reason != "startup_failed" {
 				t.Fatalf("gate renewal failure lost its stage: %+v", status)
 			}
 			cancel()
 		},
 	}
-	if err := monitor.Run(ctx); err != context.Canceled || reports != 1 {
+	if err := monitor.Run(ctx); err == nil || reports != 1 {
 		t.Fatalf("recovered monitor cleanup changed: reports=%d err=%v", reports, err)
 	}
 }
@@ -313,7 +311,7 @@ func TestTCPOnlyLeaseAcceptsMeasuredFourSecondBusinessProof(t *testing.T) {
 	if _, ok := leaseDeadlineForTransport(gate, before, business, after, now, false); ok {
 		t.Fatal("UDP-capable route accepted TCP-only proof")
 	}
-	business.CheckedAt = business.StartedAt.Add(TCPCheckTimeout + time.Nanosecond)
+	business.CheckedAt = business.StartedAt.Add(businessCheckTimeout(true) + time.Nanosecond)
 	if _, ok := leaseDeadlineForTransport(gate, before, business, after, now, true); ok {
 		t.Fatal("TCP-only proof beyond its time budget opened the gate")
 	}

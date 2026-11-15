@@ -97,9 +97,21 @@ func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desi
 	return nil
 }
 
+func (driver *ManagedGatewayDriver) ReloadWebsites(ctx context.Context) error {
+	driver.mutationMu.Lock()
+	defer driver.mutationMu.Unlock()
+	if driver.Caddy == nil {
+		return errors.New("agent: managed Caddy is unavailable")
+	}
+	return driver.Caddy.ReloadSites(ctx)
+}
+
 func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if driver.Caddy.SiteRuntime != nil && !driver.Caddy.SiteContainer && (len(desired.Listeners) != 0 || len(desired.Routes) != 0 || desired.SharedHTTPS != nil) {
+		return errors.New("agent: native website Caddy requires an explicit gateway runtime migration")
 	}
 	if desired.SharedHTTPS == nil {
 		runtimeDesired := desired
@@ -343,6 +355,10 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 		return err
 	}
 	configurationHash := haproxyConfigurationHash(configuration)
+	hostTCP, err := gatewayruntime.HostTCPProfile()
+	if err != nil {
+		return err
+	}
 	expected := haproxyContainerCreateOptions(settings, desired, configuration, configurationHash)
 	current, inspectErr := docker.ContainerInspect(ctx, settings.Container, client.ContainerInspectOptions{})
 	if inspectErr != nil && !errdefs.IsNotFound(inspectErr) {
@@ -352,7 +368,25 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 		if err := validateHAProxyOwnership(current); err != nil {
 			return err
 		}
-		if haproxyRuntimeMatches(current, expected) {
+	}
+	var previous *client.ContainerInspectResult
+	if inspectErr == nil {
+		previous = &current
+	}
+	tcpProfile, liveTCPMatches, err := gatewayruntime.ContainerTCPProfile(ctx, docker, hostTCP, previous)
+	if err != nil {
+		return err
+	}
+	expected.HostConfig.Sysctls = tcpProfile
+	profileOnly := false
+	if inspectErr == nil {
+		// Compare the remaining definition independently of the TCP options.
+		if current.Container.HostConfig != nil {
+			expected.HostConfig.Sysctls = current.Container.HostConfig.Sysctls
+			profileOnly = haproxyRuntimeMatches(current, expected)
+			expected.HostConfig.Sysctls = tcpProfile
+		}
+		if liveTCPMatches && haproxyRuntimeMatches(current, expected) {
 			if err := waitForPublishedAddresses(ctx, expected.HostConfig.PortBindings); err != nil {
 				return err
 			}
@@ -374,18 +408,25 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 			if !bytes.Equal(live, configuration) {
 				return errors.New("agent: retained HAProxy configuration differs from the desired state")
 			}
-			return nil
+			return gatewayruntime.VerifyContainerTCPProfile(ctx, docker, current.Container.ID, tcpProfile)
 		}
+	}
+	if profileOnly {
+		config, host := *current.Container.Config, *current.Container.HostConfig
+		host.Sysctls = tcpProfile
+		expected.Config, expected.HostConfig = &config, &host
 	}
 	if err := waitForPublishedAddresses(ctx, expected.HostConfig.PortBindings); err != nil {
 		return err
 	}
-	pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
-	if err != nil {
-		return fmt.Errorf("agent: pull HAProxy image: %w", err)
+	if !profileOnly {
+		pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
+		if err != nil {
+			return fmt.Errorf("agent: pull HAProxy image: %w", err)
+		}
+		_, _ = io.Copy(io.Discard, pull)
+		_ = pull.Close()
 	}
-	_, _ = io.Copy(io.Discard, pull)
-	_ = pull.Close()
 	if inspectErr == nil {
 		if _, err := docker.ContainerRemove(ctx, current.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 			return fmt.Errorf("agent: replace HAProxy container: %w", err)
@@ -399,7 +440,10 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 		_, _ = docker.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})
 		return fmt.Errorf("agent: start HAProxy container: %w", err)
 	}
-	return provisioner.waitHealthy(ctx, docker, created.ID)
+	if err := provisioner.waitHealthy(ctx, docker, created.ID); err != nil {
+		return err
+	}
+	return gatewayruntime.VerifyContainerTCPProfile(ctx, docker, created.ID, tcpProfile)
 }
 
 func validateHAProxyOwnership(current client.ContainerInspectResult) error {
@@ -417,6 +461,7 @@ func haproxyRuntimeMatches(current client.ContainerInspectResult, expected clien
 		slices.Contains(c.Env, e.Env[0]) && h.RestartPolicy.Name == eh.RestartPolicy.Name &&
 		reflect.DeepEqual(c.Entrypoint, e.Entrypoint) && reflect.DeepEqual(c.Cmd, e.Cmd) &&
 		h.NetworkMode == eh.NetworkMode && reflect.DeepEqual(h.PortBindings, eh.PortBindings) &&
+		reflect.DeepEqual(h.Sysctls, eh.Sysctls) &&
 		h.ReadonlyRootfs == eh.ReadonlyRootfs && reflect.DeepEqual(h.CapDrop, eh.CapDrop) &&
 		reflect.DeepEqual(h.CapAdd, eh.CapAdd) && reflect.DeepEqual(h.SecurityOpt, eh.SecurityOpt) &&
 		reflect.DeepEqual(h.Tmpfs, eh.Tmpfs) && len(h.Binds) == 0 && len(h.Mounts) == 0
@@ -513,7 +558,7 @@ func (provisioner DockerLayer4Provisioner) Health(ctx context.Context) error {
 	if !dockerruntime.AttachmentHealthy(inspection, dockerruntime.NetworkName, dockerruntime.HAProxyAlias) {
 		return errors.New("agent: HAProxy network attachment is incomplete")
 	}
-	return nil
+	return gatewayruntime.CheckContainerTCPProfile(ctx, docker, inspection)
 }
 
 func (provisioner DockerLayer4Provisioner) ConfigurationHash(ctx context.Context) (string, error) {
@@ -684,6 +729,15 @@ func (provisioner ManagedGatewayProvisioner) Remove(ctx context.Context) error {
 		return errors.New("agent: managed gateway provisioner is not configured")
 	}
 	if provisioner.Driver != nil {
+		if provisioner.Driver.Caddy != nil && provisioner.Driver.Caddy.Sites != nil {
+			sites, err := provisioner.Driver.Caddy.Sites(ctx)
+			if err != nil {
+				return err
+			}
+			if len(sites) != 0 {
+				return errors.New("agent: the shared gateway still serves websites; migrate or uninstall those websites before disabling it")
+			}
+		}
 		retained, err := provisioner.Driver.RetainSystemRoutes(ctx)
 		if err != nil || retained {
 			return err

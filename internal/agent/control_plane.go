@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"time"
 
 	"github.com/petauron/catalog/catalog"
@@ -16,8 +15,11 @@ import (
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
+	"github.com/petauron/vastora/internal/nodesite"
+	"github.com/petauron/vastora/internal/osreinstall"
 	"github.com/petauron/vastora/internal/realitytarget"
 	"github.com/petauron/vastora/internal/senulun"
+	"github.com/petauron/vastora/internal/tailscalehost"
 	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
@@ -29,11 +31,10 @@ const (
 )
 
 type Client struct {
-	centerControl      *centerControlSession
+	centerRPC          *grpcControlSession
 	executionAbort     func(error)
 	executionSession   string
 	execution          controlplane.ExecutionAuthorization
-	HTTPClient         *http.Client
 	Executor           Executor
 	Roles              []string
 	Capabilities       Capabilities
@@ -43,6 +44,7 @@ type Client struct {
 	TunnelProvisioner  TunnelProvisioner
 	Decommissioner     HostDecommissioner
 	Updater            HostUpdater
+	OSReinstaller      HostOSReinstaller
 	TailscaleIsolation func(context.Context, TailscaleIsolationDesiredState) error
 	TailscaleEnrolled  bool
 	TailscaleOwnership string
@@ -73,6 +75,20 @@ type HostDecommissionRequest struct {
 	Connection    Connection
 }
 
+// HostOSReinstaller supplies the strictly bounded, host-specific preparation.
+// Center acknowledges the encrypted backup before any install is armed.
+type HostOSReinstaller interface {
+	Backup(context.Context, HostOSReinstallRequest) (osreinstall.BackupEvidence, error)
+	Stage(context.Context, HostOSReinstallRequest, osreinstall.BackupEvidence) (osreinstall.PreparedStage, error)
+	Activate(context.Context, HostOSReinstallRequest, osreinstall.PreparedStage) error
+}
+type HostOSReinstallRequest struct {
+	TaskID      string
+	ExecutionID string
+	Connection  Connection
+	Task        osreinstall.Task
+}
+
 type HostUpdater interface {
 	ScheduleUpdate(context.Context, HostUpdateRequest) error
 }
@@ -93,9 +109,11 @@ type uncertainTaskOutcomeError struct{ cause error }
 type centerResponseError struct {
 	status  int
 	message string
+	cause   error
 }
 
 func (e *centerResponseError) Error() string { return "agent: Center request failed: " + e.message }
+func (e *centerResponseError) Unwrap() error { return e.cause }
 
 func (e *uncertainTaskOutcomeError) Error() string { return e.cause.Error() }
 func (e *uncertainTaskOutcomeError) Unwrap() error { return e.cause }
@@ -113,29 +131,32 @@ func taskOutcomeIsUncertain(err error) bool {
 }
 
 type Capabilities struct {
-	LandingOnly           bool           `json:"landingOnly,omitempty"`
-	ExecutorVersions      map[string]int `json:"executorVersions,omitempty"`
-	RuntimeCapabilities   []string       `json:"runtimeCapabilities,omitempty"`
-	NativeEgress          bool           `json:"nativeEgress"`
-	SenulunRestore        bool           `json:"pulseRestore"`
-	MeridianAcceptance    bool           `json:"meridianAcceptance"`
-	SenulunReporting      bool           `json:"pulseReporting"`
-	SenulunRotation       bool           `json:"pulseRotation"`
-	SenulunInspection     bool           `json:"pulseInspection"`
-	IPQuality             bool           `json:"ipQuality"`
-	NetworkDiagnostics    bool           `json:"networkDiagnostics"`
-	ReturnRoute           bool           `json:"returnRoute"`
-	BandwidthDiagnostics  bool           `json:"bandwidthDiagnostics"`
-	LandingEgressIP       bool           `json:"landingEgressIP"`
-	MeridianLinkBandwidth bool           `json:"meridianLinkBandwidth"`
-	MeridianLinkRevision  int            `json:"meridianLinkRevision"`
-	HostProfile           bool           `json:"hostProfile"`
-	NodeSecurity          bool           `json:"nodeSecurity"`
-	Docker                bool           `json:"docker"`
-	Gateway               bool           `json:"gateway"`
-	Tunnel                bool           `json:"tunnel"`
-	Metrics               bool           `json:"metrics"`
-	Logs                  bool           `json:"logs"`
+	TailscaleUpdate       *tailscalehost.UpdateStatus `json:"tailscaleUpdate,omitempty"`
+	LandingOnly           bool                        `json:"landingOnly,omitempty"`
+	ExecutorVersions      map[string]int              `json:"executorVersions,omitempty"`
+	RuntimeCapabilities   []string                    `json:"runtimeCapabilities,omitempty"`
+	NativeEgress          bool                        `json:"nativeEgress"`
+	SenulunRestore        bool                        `json:"pulseRestore"`
+	MeridianAcceptance    bool                        `json:"meridianAcceptance"`
+	SenulunReporting      bool                        `json:"pulseReporting"`
+	SenulunRotation       bool                        `json:"pulseRotation"`
+	SenulunInspection     bool                        `json:"pulseInspection"`
+	IPQuality             bool                        `json:"ipQuality"`
+	NetworkDiagnostics    bool                        `json:"networkDiagnostics"`
+	ReturnRoute           bool                        `json:"returnRoute"`
+	BandwidthDiagnostics  bool                        `json:"bandwidthDiagnostics"`
+	LandingEgressIP       bool                        `json:"landingEgressIP"`
+	MeridianLinkBandwidth bool                        `json:"meridianLinkBandwidth"`
+	MeridianLinkRevision  int                         `json:"meridianLinkRevision"`
+	HostProfile           bool                        `json:"hostProfile"`
+	OSReinstallPreflight  bool                        `json:"osReinstallPreflight"`
+	OSReinstall           bool                        `json:"osReinstall"`
+	NodeSecurity          bool                        `json:"nodeSecurity"`
+	Docker                bool                        `json:"docker"`
+	Gateway               bool                        `json:"gateway"`
+	Tunnel                bool                        `json:"tunnel"`
+	Metrics               bool                        `json:"metrics"`
+	Logs                  bool                        `json:"logs"`
 }
 
 type Enrollment struct {
@@ -147,8 +168,11 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	CurrentRecoveryResume     bool                                 `json:"currentRecoveryResume,omitempty"`
+	NodeSite                  *nodesite.Task                       `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
+	TailscaleUpdate           *tailscalehost.UpdateTask            `json:"tailscaleUpdate,omitempty"`
 	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
 	PackageMaintenance        *PackageMaintenanceTask              `json:"packageMaintenance,omitempty"`
 	HistoricalManifest        json.RawMessage                      `json:"historicalManifest,omitempty"`
@@ -160,6 +184,7 @@ type DeploymentTask struct {
 	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
 	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
 	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
+	OSReinstall               *osreinstall.Task                    `json:"osReinstall,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
 	SenulunRestore            *senulun.RestoreCredentials          `json:"pulseRestore,omitempty"`
 	SenulunReporting          *senulun.ReportingTask               `json:"pulseReporting,omitempty"`
@@ -222,7 +247,9 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	NodeSite             *nodesite.Result                    `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256  string                              `json:"sourceReceiptSha256,omitempty"`
+	SourceResources      json.RawMessage                     `json:"sourceResources,omitempty"`
 	NodeSecurity         *nodesecurity.View                  `json:"nodeSecurity,omitempty"`
 	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
 	Resources            *InstanceResources                  `json:"resources,omitempty"`

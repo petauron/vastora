@@ -156,7 +156,11 @@ func CheckCompatibility(ctx context.Context, run func(context.Context, string, .
 	if !requireRunning {
 		return nil
 	}
-	if _, err := run(ctx, "systemctl", "is-active", "--quiet", "tailscaled.service"); err != nil {
+	if OpenRCHost() {
+		if active, err := OpenRCActive(ctx, run); err != nil || !active {
+			return errors.New("verify Tailscale compatibility: OpenRC daemon is not active")
+		}
+	} else if _, err := run(ctx, "systemctl", "is-active", "--quiet", "tailscaled.service"); err != nil {
 		return errors.New("verify Tailscale compatibility: tailscaled.service is not active")
 	}
 	output, err = run(ctx, "tailscale", "status", "--json")
@@ -171,7 +175,11 @@ func CheckCompatibility(ctx context.Context, run func(context.Context, string, .
 	if err != nil || version != versions.Daemon {
 		return errors.New("verify Tailscale compatibility: running daemon changed during verification or returned invalid version metadata")
 	}
-	output, err = run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
+	if OpenRCHost() {
+		output, err = OpenRCRuntimeEnvironment()
+	} else {
+		output, err = run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
+	}
 	if err != nil {
 		return errors.New("verify Tailscale compatibility: daemon privacy environment is unavailable")
 	}

@@ -117,7 +117,11 @@ func (s *Store) QueueNodeSecurity(ctx context.Context, agentID, adminID string, 
 		}
 		appliedAt := prior.AppliedAt
 		var bad bool
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM landing_server_states WHERE node_id=? AND status<>'stopped' AND (status<>'ready' OR desired_revision<>applied_revision OR health_received_at<?)) OR EXISTS(SELECT 1 FROM meridian_route_grants r JOIN meridian_endpoints e ON e.id=r.endpoint_id JOIN applications a ON a.id=e.application_id WHERE (a.node_id=? OR r.egress_node_id=? OR r.ipv4_egress_node_id=?) AND r.enabled=1 AND (r.runtime_healthy=0 OR r.health_expires_unix_ms<=?))`, agentID, s.now().Add(-30*time.Second).UTC().Format(time.RFC3339Nano), agentID, agentID, agentID, s.now().UnixMilli()).Scan(&bad); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM landing_server_states WHERE node_id=? AND status<>'stopped' AND (status<>'ready' OR desired_revision<>applied_revision OR health_received_at<?)) OR EXISTS(SELECT 1 FROM meridian_route_grants r JOIN meridian_endpoints e ON e.id=r.endpoint_id JOIN applications a ON a.id=e.application_id WHERE (a.node_id=? OR r.egress_node_id=? OR r.ipv4_egress_node_id=?) AND r.enabled=1 AND (r.runtime_healthy=0 OR r.desired_revision<>r.applied_revision
+ OR COALESCE(json_array_length(r.health_diagnostics_json,'$.legs'),0)=0
+ OR EXISTS(SELECT 1 FROM json_each(r.health_diagnostics_json,'$.legs') WHERE
+ COALESCE(json_extract(value,'$.stage'),'')<>'startup'
+ OR COALESCE(json_extract(value,'$.checkedAt'),'')<?)))`, agentID, s.now().Add(-30*time.Second).UTC().Format(time.RFC3339Nano), agentID, agentID, agentID, s.now().Add(-30*time.Second).UTC().Format(time.RFC3339Nano)).Scan(&bad); err != nil {
 			return NodeSecurityView{}, err
 		}
 		if bad {

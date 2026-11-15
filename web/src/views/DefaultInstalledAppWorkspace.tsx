@@ -16,6 +16,7 @@ import { localized } from "./appAccess";
 import { copy } from "./shared";
 import { AppIdentityBadge } from "./AppIdentity";
 import { AppIcon } from "@/components/desktop/AppIcon";
+import { isDaylightAppKey } from "./daylight";
 import { RegionFlag } from "./RegionFlag";
 import { IPQualityButton } from "./IPQuality";
 import { canCreateRealityNode, publicationNeedsAttention, showInstalledNode, threeXUIAppKey, type InstalledAppGroup, type InstalledAppInstance } from "./installed-apps-model";
@@ -30,7 +31,7 @@ export function DefaultInstalledAppWorkspace({ group, language, mutate, onManage
   const nodeCount = group.instances.filter(showInstalledNode).length;
   const attentionCount = group.instances.reduce((count, instance) => count + instance.publications.filter(publicationNeedsAttention).length, 0);
   const attentionInstance = group.instances.find((instance) => instance.publications.some(publicationNeedsAttention));
-  const name = group.app ? localized(group.app, language, "name") : group.instances[0].application.name;
+  const name = isDaylightAppKey(group.appKey) ? "Daylight" : group.app ? localized(group.app, language, "name") : group.instances[0].application.name;
   const search = query.trim().toLocaleLowerCase();
   const instances = group.instances.filter(showInstalledNode).filter((instance) => !search || [instance.agent?.name, instance.application.nodeId, instance.siteName, ...instance.realityServices.map((service) => service.displayName)].some((value) => value?.toLocaleLowerCase().includes(search)));
   const showSearch = threeXUI || nodeCount > 1 || Boolean(query);
@@ -171,7 +172,7 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
     </TableCell>
     <TableCell className="min-w-0 whitespace-normal">
       <p className="apps-instance-label">{threeXUI ? copy(language, "公网入口", "Public access") : copy(language, "访问入口", "Access")}</p>
-      {hy2Only ? <Badge variant="outline">{copy(language, "HY2 已配置", "HY2 configured")}</Badge> : <AccessStatus language={language} publications={publications} services={services} threeXUI={threeXUI} />}
+      {hy2Only ? <Badge variant="outline">{copy(language, "HY2 已配置", "HY2 configured")}</Badge> : <AccessStatus application={application} nodeConnected={agent?.connected ?? false} language={language} publications={publications} services={services} threeXUI={threeXUI} />}
     </TableCell>
     <TableCell className="apps-instance-full min-w-0 whitespace-normal">
       <div className="flex flex-wrap items-center justify-end gap-2">

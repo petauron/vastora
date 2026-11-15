@@ -23,6 +23,7 @@ import (
 
 	"github.com/moby/moby/client"
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/hostservice"
 )
 
 func hostFixtureValue(value string) catalog.Value {
@@ -99,7 +100,7 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 						{Name: "controller", Start: "automatic", Process: controller},
 						{Name: "worker", Start: "manual", ManagedUser: "worker", StateCredentials: map[string]catalog.StateCredential{"runtime": {Storage: "private", Path: "runtime.json"}}, Process: worker},
 					}}
-					backend = &NativeServicesPackageBackend{Manager: SystemdHostApplicationManager{HTTPClient: server.Client()}, StateDirectory: directory}
+					backend = &NativeServicesPackageBackend{Manager: SystemdHostApplicationManager{HTTPClient: server.Client(), InitSystem: hostservice.Systemd}, StateDirectory: directory}
 				}
 			}
 			packageTaskDigest(t, &task)
@@ -158,6 +159,9 @@ func TestPackageRealHostLifecycle(t *testing.T) {
 			writeData("before-upgrade")
 			task.ID, task.Operation, task.Manifest.Version = "upgrade", "upgrade", "1.1.0"
 			if kind == "native" {
+				// Exercise the one-way receipt migration on the existing real-host
+				// lifecycle, retaining the same systemd units, identity and state.
+				task.Manifest.Runtime.Kind = "native"
 				task.Manifest.Runtime.NativeServices.Services[1].Process.Arguments = []catalog.Value{hostFixtureValue("301")}
 			}
 			packageTaskDigest(t, &task)

@@ -117,7 +117,7 @@ export function OfficialAppWorkspaceHost(props: AppWorkspaceProps) {
     }
   }, [props]);
   const unavailable = runtimeFailed || state === "failed";
-  return <section aria-label={props.group.app ? localized(props.group.app, props.language, "name") : props.group.appKey} data-app-workspace="vastora-official/meridian">
+  return <section className="official-app-workspace" aria-label={props.group.app ? localized(props.group.app, props.language, "name") : props.group.appKey} data-app-workspace="vastora-official/meridian">
     <LoadingOrError state={runtimeFailed ? "failed" : state} retry={retry} language={props.language} runtimeFailed={runtimeFailed} />
     {unavailable ? <div aria-label={copy(props.language, "已安装的 Glivela 节点", "Installed Glivela nodes")} className="mt-4 max-h-72 divide-y overflow-y-auto rounded-lg border">
       {props.group.instances.map((instance) => <div className="flex flex-wrap items-center gap-3 px-3 py-2" key={instance.application.id}>
@@ -126,7 +126,7 @@ export function OfficialAppWorkspaceHost(props: AppWorkspaceProps) {
         <Button onClick={() => props.onManage(instance.application)} size="sm" variant="outline">{copy(props.language, "管理安装", "Manage installation")}</Button>
       </div>)}
     </div> : null}
-    <div ref={target} />
+    <div className="official-app-mount" ref={target} />
   </section>;
 }
 

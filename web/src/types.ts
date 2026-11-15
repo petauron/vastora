@@ -100,24 +100,33 @@ export type CenterUpdateStatus = {
   automatic: boolean;
   state: "idle" | "queued" | "applying" | "succeeded" | "failed";
   targetVersion?: string;
-  phase?: "queued" | "downloading" | "verifying" | "installing" | "validating" | "pulling" | "agent" | "restarting" | "health" | "reconciling" | "finalizing" | "agents" | "completed";
+  phase?: "queued" | "downloading" | "verifying" | "installing" | "validating" | "pulling" | "agent" | "restarting" | "health" | "reconciling" | "finalizing" | "completed";
   progress?: number;
   message?: string;
   checkedAt?: string;
   updatedAt?: string;
   error?: string;
-  agentRollout?: {
-    targetVersion: string;
-    total: number;
-    updated: number;
-    updating: number;
-    pending: number;
-    failed: number;
-    offline: number;
-    manual: number;
-    blocked: number;
-    claimsPaused: boolean;
-  };
+
+};
+
+export type AgentUpdateRollout = {
+  targetVersion: string; total: number; updated: number; updating: number;
+  pending: number; failed: number; offline: number; manual: number;
+  blocked: number; claimsPaused: boolean; paused: boolean; excluded: number;
+};
+export type AgentUpdateTarget = {
+  id: string; name: string; version: string; eligible: boolean;
+  state: "available" | "current" | "newer" | "paused" | "disabled" | "offline" | "pending" | "updating" | "failed" | "manual" | "blocked";
+};
+export type AgentUpdatesStatus = {
+  targetVersion: string; available: boolean; pushPaused: boolean;
+  rollout: AgentUpdateRollout; targets: AgentUpdateTarget[];
+};
+export type AgentUpdatePushInput = { targetVersion: string } & (
+  { mode: "all"; agentIds?: never } | { mode: "selected"; agentIds: string[] }
+);
+export type AgentUpdatePushResult = {
+  queuedAgentIds: string[]; skippedAgentIds: string[]; error?: string; status: AgentUpdatesStatus;
 };
 
 export type AssistantProvider = {
@@ -306,7 +315,7 @@ export type AgentView = {
   credentialRevoked: boolean;
   siteId: string;
   roles: string[];
-  capabilities: { landingOnly?: boolean; meridianAcceptance?: boolean; executorVersions?: Record<string, number>; runtimeCapabilities?: string[]; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean; nodeSecurity?: boolean };
+  capabilities: { tailscaleUpdate?: TailscaleUpdateStatus; landingOnly?: boolean; meridianAcceptance?: boolean; executorVersions?: Record<string, number>; runtimeCapabilities?: string[]; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean; osReinstallPreflight?: boolean; osReinstall?: boolean; nodeSecurity?: boolean };
   networkCandidates: NetworkCandidate[];
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;
@@ -320,8 +329,12 @@ export type AgentView = {
   tailscaleOwnership?: "managed" | "external" | "";
   remoteUpdateSupported: boolean;
   update?: AgentUpdate;
+  tailscaleUpdateTask?: TailscaleUpdateTask;
   removal?: { state: "pending" | "failed"; reason?: "shared_service" | "controller_unavailable" | "cleanup_failed" };
 };
+
+export type TailscaleUpdateStatus = { installedVersion?: string; runningVersion?: string; latestVersion?: string; checkedAt?: string; error?: string; updateAvailable: boolean; upgradeReady: boolean };
+export type TailscaleUpdateTask = { id: string; targetVersion: string; state: "pending" | "running" | "awaiting_decision" | "succeeded" | "failed" | "abandoned"; error?: string; updatedAt: string };
 
 export type AgentUpdate = {
   id: string;
@@ -331,28 +344,6 @@ export type AgentUpdate = {
   updatedAt: string;
 };
 
-export type XrayConfigurationRecovery = {
-  agentId: string;
-  applicationId: string;
-  id: string;
-  action: "inspect" | "runtime" | "agent_state";
-  state: "pending" | "running" | "awaiting_decision" | "succeeded" | "failed";
-  error?: string;
-  updatedAt: string;
-  result?: {
-    action: "inspect" | "runtime" | "agent_state";
-    applicationId: string;
-    runtimeSha256: string;
-    agentSha256: string;
-    agentRevision: number;
-    runtimeImportable: boolean;
-    matches: boolean;
-    runtimeInbounds: Array<{ tag: string; protocol: string; port: number; clients: number }>;
-    agentInbounds: Array<{ tag: string; protocol: string; port: number; clients: number }>;
-    differences: Array<{ kind: string; inbound?: string; field?: string; runtime?: string; agent?: string }>;
-    appliedSource?: "runtime" | "agent_state";
-  };
-};
 
 export type AgentReinstallOperation = {
   id: string; planRevision: string; state: "preparing" | "awaiting_enrollment" | "review_required" | "failed";
@@ -395,7 +386,7 @@ export type AgentReinstallPlan = {
   recovery?: AgentReinstallOperation;
   networkReview?: AgentReinstallNetworkReview;
   privateNetwork: { ownership: string; serviceAddress: string; privateAddress: string; profileRetained: boolean; addressRecovery: string; landingRoutes: number; publications: number };
-  applications: Array<{ applicationId: string; name: string; appKey: string; deploymentId: string; version: string; operation: string; state: string; recovery: string; sharedEntry: boolean; requirements: string[]; preparation?: AgentReinstallPreparation }>;
+  applications: Array<{ applicationId: string; name: string; appKey: string; deploymentId: string; version: string; operation: string; state: string; recovery: string; sharedEntry: boolean; requirements: string[]; currentRestoration?: { deploymentId: string; state: string; verification: string }; preparation?: AgentReinstallPreparation }>;
   pendingWork: Array<{ agentId: string; kind: string; count: number }>;
   executions: Array<{ id: string; agentId: string; taskId: string; attempt: number; kind: string; state: string; phase: string; identityRetired: boolean; resolution: "local_after_isolation" | "manual_review" }>;
   unclaimedLocalWork: AgentReinstallUnclaimedWork[];
@@ -474,7 +465,7 @@ export type Site = { id: string; organizationId: string; name: string; code: str
 export type ThreeXUIRole = "master" | "worker";
 export type ThreeXUIBackup = { applicationId: string; revision: number; state: "pending" | "ready" | "failed"; sha256?: string; size: number; lastError?: string; updatedAt: string };
 export type ThreeXUIControllerMigration = { id: string; kind: "replace" | "consolidate"; siteId: string; sourceApplicationId: string; targetApplicationId: string; backupRevision: number; state: "backing_up" | "restoring" | "switching" | "ready" | "failed"; step: "backup" | "restore" | "cleanup" | "convert_worker" | "switch" | "complete"; lastError?: string; failedWorkerApplicationId?: string; backup?: ThreeXUIBackup; createdAt: string; updatedAt: string };
-export type Application = { id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; role?: ThreeXUIRole; controllerApplicationId?: string; nodeSyncStatus?: "pending" | "applying" | "ready" | "failed" | "stopped"; nodeSyncError?: string; restorePointState?: "pending" | "ready" | "failed"; restorePointAt?: string; installedVersion?: string; installedPackageRevision?: number; availablePackageRevision?: number; adoptionState?: "pending" | "ready" | "blocked"; adoptionError?: string; availableVersion?: string; updateAvailable: boolean; createdAt: string; updatedAt: string };
+export type Application = { nodeSiteStatus?: "unconfigured" | "issuing" | "pending" | "ready" | "action_required" | "rolled_back"; id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; role?: ThreeXUIRole; legacyGlivela?: boolean; executionRetired?: boolean; replacementApplicationId?: string; controllerApplicationId?: string; nodeSyncStatus?: "pending" | "applying" | "ready" | "failed" | "stopped"; nodeSyncError?: string; restorePointState?: "pending" | "ready" | "failed"; restorePointAt?: string; installedVersion?: string; installedPackageRevision?: number; availablePackageRevision?: number; adoptionState?: "pending" | "ready" | "blocked"; adoptionError?: string; availableVersion?: string; updateAvailable: boolean; createdAt: string; updatedAt: string };
 export type ApplicationCredentials = { kind: "three_x_ui"; username: string; password: string } | { kind: "cpa"; managementKey: string; clientApiKey: string };
 export type ApplicationCredentialRotation = { id: string; applicationId: string; target: "management" | "client"; state: "preparing" | "pending" | "succeeded" | "failed" | "action_required"; cpaDeploymentId?: string; keeperDeploymentId?: string; lastError?: string; createdAt: string; updatedAt: string };
 export type Service = { protocols?: ("vless" | "hy2")[]; id: string; applicationId: string; siteId: string; name: string; displayName?: string; regionCode?: string; protocol: "http" | "https" | "tcp" | "udp"; containerPort: number; hostPort: number; endpoint: string; source: "catalog" | "observed"; appProtocol?: string; management: boolean; observedListen?: string; status: string; lastError?: string; guardStatus?: "pending" | "hardening" | "ready" | "action_required"; guardSummary?: string; actionRequiredReason?: string; createdAt: string; updatedAt: string };
@@ -527,3 +518,6 @@ export type Deployment = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type ReinstallCurrentMaterial = { applicationId: string; config: Record<string, unknown>; senulunRestore?: { nodeId: string; token: string } };
+export type ReinstallCurrentVerification = { applicationId: string; originalIdentity: string; evidenceSha256: string; rotationReference: string; businessReference: string; verifiedAt: string };

@@ -83,6 +83,9 @@ func landingServerTaskRevision(taskID string) (int64, bool) {
 }
 
 func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID string) (*AgentTask, error) {
+	if s.businessRetired {
+		return nil, nil
+	}
 	if frozen, err := meridianCutoverBlocksLandingChanges(ctx, tx); err != nil {
 		return nil, err
 	} else if frozen {

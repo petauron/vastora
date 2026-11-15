@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/petauron/vastora/internal/hostservice"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/platform"
+	"github.com/petauron/vastora/internal/senulun"
 )
 
 type nativePreparedFile struct {
@@ -31,8 +33,11 @@ type nativePreparedFile struct {
 }
 
 type nativePreparedPackage struct {
-	Plan  nativePackagePlan
-	Files map[string]nativePreparedFile
+	WebsiteConfigureTaskID string
+	BeforeReplace          func(context.Context) error
+	Plan                   nativePackagePlan
+	Files                  map[string]nativePreparedFile
+	RecoverInstallation    bool
 }
 
 type nativeInstallationService struct {
@@ -44,8 +49,9 @@ type nativeInstallationService struct {
 }
 
 type nativeInstallation struct {
-	Version  int                                  `json:"version"`
-	Services map[string]nativeInstallationService `json:"services"`
+	InitSystem string                               `json:"initSystem,omitempty"`
+	Version    int                                  `json:"version"`
+	Services   map[string]nativeInstallationService `json:"services"`
 }
 
 func nativeInstallationPath(applicationID string) string {
@@ -57,7 +63,7 @@ func nativeInstallationPath(applicationID string) string {
 // service or write any host configuration. No downloaded binary is executed.
 func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationManager, stateDirectory string, task DeploymentTask) (nativePreparedPackage, error) {
 	var prepared nativePreparedPackage
-	plan, err := planNativePackage(task.ApplicationID, task.Manifest)
+	plan, err := manager.planNativePackage(task.ApplicationID, task.Manifest)
 	if err != nil {
 		return prepared, err
 	}
@@ -107,7 +113,7 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		if err != nil {
 			return nativePreparedPackage{}, err
 		}
-		raw, err := catalog.DownloadArtifact(ctx, client, artifact)
+		raw, err := readNativePackageArchive(ctx, client, stateDirectory, task.ApplicationID, artifact)
 		if err != nil {
 			return nativePreparedPackage{}, errors.New("agent: native bundle download verification failed")
 		}
@@ -120,6 +126,11 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 			if file.Executable {
 				if err := catalog.VerifyELF(filepath.Join(extracted, file.Path), target.Architecture); err != nil {
 					return nativePreparedPackage{}, err
+				}
+				if plan.InitSystem == hostservice.OpenRC {
+					if err := verifyOpenRCExecutable(filepath.Join(extracted, file.Path)); err != nil {
+						return nativePreparedPackage{}, err
+					}
 				}
 				mode = 0755
 			}
@@ -238,15 +249,33 @@ func prepareNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 			return nativePreparedPackage{}, err
 		}
 		executable := filepath.Join("/opt/vastora/packages", base, "artifacts", unit.Process.Artifact, unit.Process.Executable)
-		raw, err := compileNativeProcessUnit(task.ApplicationID, task.Manifest.ID, &unit.Process, unit.RuntimeDirectory, statePaths, writable, executable, environmentPath, credentials, config, secrets, values)
+		icmp := task.AppKey == senulun.AgentKey && task.Manifest.ID == "senlun-agent" && unit.Process.Artifact == "senlun-agent" && unit.Process.Executable == "senlun-agent"
+		raw, err := compileNativeProcessUnit(task.ApplicationID, task.Manifest.ID, &unit.Process, unit.RuntimeDirectory, statePaths, writable, executable, environmentPath, credentials, config, secrets, values, icmp)
 		if err != nil {
 			return nativePreparedPackage{}, err
 		}
-		if err := add(nativePreparedFile{Path: unit.Path, Data: raw, Mode: 0644, Kind: "unit", LogicalName: unit.LogicalName, Component: unit.LogicalName}); err != nil {
+		mode := os.FileMode(0644)
+		if plan.InitSystem == hostservice.OpenRC {
+			executableDigest := sha256.Sum256(prepared.Files[executable].Data)
+			var process []byte
+			raw, process, err = compileOpenRCProcess(task.ApplicationID, unit, executable, hex.EncodeToString(executableDigest[:]), environmentPath, credentials, config, secrets, values, icmp)
+			if err != nil {
+				return nativePreparedPackage{}, err
+			}
+			if err := add(nativePreparedFile{Path: filepath.Join(unit.ConfigDirectory, "process.json"), Data: process, Mode: 0600, Kind: "file", LogicalName: unit.LogicalName + ":process", Component: unit.LogicalName}); err != nil {
+				return nativePreparedPackage{}, err
+			}
+			mode = 0755
+		}
+		if err := add(nativePreparedFile{Path: unit.Path, Data: raw, Mode: mode, Kind: "unit", LogicalName: unit.LogicalName, Component: unit.LogicalName}); err != nil {
 			return nativePreparedPackage{}, err
 		}
 	}
 	installation := nativeInstallation{Version: 1, Services: map[string]nativeInstallationService{}}
+	if plan.InitSystem == hostservice.OpenRC {
+		installation.Version = 2
+		installation.InitSystem = string(plan.InitSystem)
+	}
 	for _, unit := range plan.Units {
 		digest := sha256.Sum256(prepared.Files[unit.Path].Data)
 		installation.Services[unit.LogicalName] = nativeInstallationService{Unit: unit.Name, User: unit.Process.User, SHA256: hex.EncodeToString(digest[:]), ConfigFiles: configurationPaths[unit.LogicalName], Credentials: credentialPaths[unit.LogicalName]}

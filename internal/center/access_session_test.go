@@ -2,12 +2,9 @@ package center
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -267,49 +264,6 @@ func TestAccessSessionFailureRetainsDesiredSettingAndProtection(t *testing.T) {
 				t.Fatalf("failure result: %+v %v", view, err)
 			}
 		})
-	}
-}
-
-func TestAccessSessionMigrationFrom65PreservesEntriesAndBacksUp(t *testing.T) {
-	ctx := context.Background()
-	directory := t.TempDir()
-	createLegacyVersion3Database(t, directory)
-	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	legacy := &Store{db: db}
-	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
-		t.Fatal(err)
-	}
-	provider, err := newMigrationProvider(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.UpTo(ctx, 65); err != nil {
-		t.Fatal(err)
-	}
-	seedAccessSessionCenter(t, legacy)
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	current, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer current.Close()
-	view, err := current.CenterRemoteAccess(ctx, true)
-	if err != nil || view.AccessSessionDuration != "24h" || !view.Enabled || view.AudienceValue != "admin@example.com" {
-		t.Fatalf("migration: %+v %v", view, err)
-	}
-	record, _, err := current.centerRemoteAccessRecord(ctx)
-	if err != nil || record.ApplicationID != "center-app" || record.IdentityProviderID != "otp" {
-		t.Fatalf("identity lost: %+v %v", record, err)
-	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v65-before-v%d-*.db", centerSchemaVersion)))
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("backup missing: %v %v", backups, err)
 	}
 }
 

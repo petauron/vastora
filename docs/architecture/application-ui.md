@@ -11,9 +11,9 @@ Vastora's official applications own their product interfaces:
   `petauron/glivela/ui`. Center passes authenticated platform data and actions
   through the versioned mount API. Center does not compile Glivela pages into
   its frontend.
-- Senulun serves its authenticated dashboard from the Senulun application. Center
+- Senlun serves its authenticated dashboard from the Senlun application. Center
   shows installation and access status, then opens the configured private HTTPS
-  entry. The Senulun dashboard is not mirrored in Center.
+  entry. The Senlun dashboard is not mirrored in Center.
 
 The exact official identities are `vastora-official/meridian` and
 `vastora-official/pulse`. A third-party app with the same short name follows the
@@ -79,7 +79,7 @@ policy. Do not add third-party script URLs to this path.
    the managed update path. Center migrates to schema 109 on startup; stop the
    rollout if migration or health checks fail.
 5. Refresh the trusted official catalog in the updated Center, then inspect
-   Glivela and Senulun through an authenticated session.
+   Glivela and Senlun through an authenticated session.
 
 Existing report, quality score, bandwidth, and Glivela command APIs are not
 converted by this interface migration.

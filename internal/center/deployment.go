@@ -184,7 +184,9 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if request.Operation != "install" && request.Operation != "upgrade" && request.Operation != "configure" && request.Operation != "uninstall" {
 		return DeploymentView{}, errors.New("center: invalid deployment operation")
 	}
-	if (request.ReplaceApplicationID == "") != (request.SourceReceiptSHA256 == "") || request.ReplaceApplicationID != "" && (request.Operation != "install" || !request.BackupsConfirmed || request.Role != "" || request.AuthorizedCapabilities == nil) {
+	renameSenlun := senlunIdentityRequest(request)
+	renameSenlunAgent := renameSenlun && request.AppKey == senlunNativeIdentityKey
+	if (request.ReplaceApplicationID == "") != (request.SourceReceiptSHA256 == "") || request.ReplaceApplicationID != "" && (request.Operation != "install" || (!renameSenlun && !request.BackupsConfirmed) || request.Role != "" || request.AuthorizedCapabilities == nil) {
 		return DeploymentView{}, errors.New("center: explicit native handover requires the original application, receipt digest, backup confirmation and reviewed target permissions")
 	}
 	if err := s.validateSenulunDeployment(ctx, request); err != nil {
@@ -244,7 +246,9 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, errors.New("center: migration authorization is only valid for a 3x-ui worker conversion")
 	}
 	var activeTasks int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE agent_id = ? AND app_key = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, request.AgentID, request.AppKey).Scan(&activeTasks); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments d WHERE d.agent_id = ?
+		AND (d.app_key = ? OR d.application_id IN (SELECT a.id FROM applications a WHERE a.node_id = ? AND a.app_key = ?))
+		AND (d.state IN ('pending', 'running') OR d.reconciliation_required = 1)`, request.AgentID, request.AppKey, request.AgentID, request.AppKey).Scan(&activeTasks); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: inspect active deployment task: %w", err)
 	}
 	if activeTasks != 0 {
@@ -280,6 +284,23 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
+	var executionRetired bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_execution_retirements r JOIN applications a ON a.id=r.application_id WHERE a.node_id=? AND a.app_key=?)`, request.AgentID, request.AppKey).Scan(&executionRetired); err != nil {
+		return DeploymentView{}, err
+	}
+	if executionRetired {
+		return DeploymentView{}, errors.New("center: superseded execution is archived; manage its current replacement instead")
+	}
+	if request.AppKey == meridianAppKey && request.Operation != "uninstall" {
+		var receiptRaw []byte
+		err := s.db.QueryRowContext(ctx, `SELECT r.resources_json FROM application_resources r JOIN applications a ON a.id=r.application_id WHERE a.node_id=? AND a.app_key=?`, request.AgentID, request.AppKey).Scan(&receiptRaw)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return DeploymentView{}, err
+		}
+		if legacyGlivelaReceipt(receiptRaw) {
+			return DeploymentView{}, errors.New("center: legacy Glivela proxy execution is not a controller; verify its native handover instead of upgrading it")
+		}
+	}
 	var manifest catalog.AppManifest
 	if request.Operation == "install" || request.Operation == "upgrade" {
 		apps, err := s.ListApps(ctx)
@@ -297,8 +318,16 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		if !found {
 			return DeploymentView{}, errors.New("center: app not found in a verified catalog")
 		}
+		if renameSenlunAgent {
+			manifest, err = s.senlunNativeIdentityManifest(ctx, request, manifest)
+			if err != nil {
+				return DeploymentView{}, err
+			}
+		}
 	} else if len(active.Manifest) == 0 || json.Unmarshal(active.Manifest, &manifest) != nil {
 		return DeploymentView{}, errors.New("center: installed application manifest is invalid")
+	} else if !strings.HasSuffix(request.AppKey, "/"+manifest.ID) {
+		return DeploymentView{}, errors.New("center: upgrade the renamed application to its current catalog recipe before configuring or uninstalling it")
 	}
 	legacyRemoval := request.Operation == "uninstall" && active.PackageRevision == 0 && manifest.Runtime == nil && manifest.PackageRevision == 0
 	if !legacyRemoval && catalog.ValidateApp(manifest) != nil {
@@ -312,10 +341,29 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 		comparison := semver.Compare(canonicalAppVersion(manifest.Version), canonicalAppVersion(active.Version))
 		if comparison == 0 && manifest.PackageRevision == active.PackageRevision {
-			return DeploymentView{}, fmt.Errorf("center: app is already at version %s", active.Version)
+			reapply, err := s.failedDaylightReapplyAllowed(ctx, request, manifest, active)
+			if err != nil {
+				return DeploymentView{}, err
+			}
+			if !reapply {
+				return DeploymentView{}, fmt.Errorf("center: app is already at version %s", active.Version)
+			}
 		}
 		if comparison < 0 || comparison == 0 && manifest.PackageRevision < active.PackageRevision {
 			return DeploymentView{}, fmt.Errorf("center: catalog version %s is older than installed version %s; downgrade is not allowed", manifest.Version, active.Version)
+		}
+	}
+	websiteConfigure := false
+	if request.Operation == "configure" && manifest.Runtime != nil && (manifest.Runtime.Kind == "systemd" || manifest.Runtime.Kind == "native") && manifest.Runtime.Version == 2 {
+		website, err := s.validateWebsiteHostnameConfigure(ctx, request, manifest)
+		if err != nil {
+			return DeploymentView{}, err
+		}
+		websiteConfigure = website
+		if !website {
+			if err := validateNativeServicePortConfigure(manifest, request.Config); err != nil {
+				return DeploymentView{}, err
+			}
 		}
 	}
 	var grants []string
@@ -336,8 +384,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if err != nil {
 		return DeploymentView{}, err
 	}
-	if landingOnly && (manifest.Runtime == nil || !controlplane.NativeLifecycleAllowed(manifest.Runtime.Kind, manifest.Runtime.Version, request.Operation, grants)) {
-		return DeploymentView{}, errors.New("center: landing-only host permits only reviewed native systemd installation, upgrade and uninstall")
+	if landingOnly && (manifest.Runtime == nil || !(controlplane.NativeLifecycleAllowed(manifest.Runtime.Kind, manifest.Runtime.Version, request.Operation, grants) || websiteConfigure && controlplane.NativeWebsiteConfigureAllowed(request.AppKey, manifest.Runtime.Kind, manifest.Runtime.Version, request.Operation, grants))) {
+		return DeploymentView{}, errors.New("center: landing-only host permits only reviewed native installation, upgrade and uninstall")
 	}
 	grantsJSON, err := json.Marshal(grants)
 	if err != nil {
@@ -359,8 +407,30 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		config, secrets = []byte(`{}`), []byte(`{}`)
 	} else {
 		deploymentConfig := request.Config
-		if request.Operation == "upgrade" || request.Operation == "configure" {
-			deploymentConfig, err = s.mergePreviousDeploymentConfig(ctx, request.AgentID, request.AppKey, request.Config)
+		if renameSenlun && len(request.Config) != 0 {
+			changes, changeErr := decodeJSONObject(request.Config, "center: identity migration requires an empty configuration")
+			if changeErr != nil || len(changes) != 0 {
+				return DeploymentView{}, errors.New("center: identity migration cannot modify application settings")
+			}
+		}
+		if request.Operation == "upgrade" || request.Operation == "configure" || renameSenlun {
+			previousKey := request.AppKey
+			if renameSenlun {
+				previousKey, _ = senlunIdentitySource(request.AppKey)
+			}
+			var retiredFields []string
+			if request.Operation == "upgrade" {
+				var previous catalog.AppManifest
+				if json.Unmarshal(active.Manifest, &previous) != nil {
+					return DeploymentView{}, errors.New("center: installed application manifest is invalid")
+				}
+				for _, field := range previous.Config {
+					if !slices.ContainsFunc(manifest.Config, func(current catalog.ConfigField) bool { return current.Key == field.Key }) {
+						retiredFields = append(retiredFields, field.Key)
+					}
+				}
+			}
+			deploymentConfig, err = s.mergePreviousDeploymentConfig(ctx, request.AgentID, previousKey, request.Config, retiredFields)
 			if err != nil {
 				return DeploymentView{}, err
 			}
@@ -383,8 +453,14 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				}
 			}
 		}
-		if request.AppKey == senulunAgentAppKey {
-			if request.Operation == "install" {
+		if request.AppKey == meridianAppKey {
+			deploymentConfig, err = removeJSONObjectKeys(deploymentConfig, panelConfigKey)
+			if err != nil {
+				return DeploymentView{}, err
+			}
+		}
+		if request.AppKey == senulunAgentAppKey || renameSenlunAgent {
+			if request.Operation == "install" && !renameSenlunAgent {
 				// Senulun owns enrollment. Its administrator supplies the endpoint
 				// and short-lived token through the ordinary package configuration.
 				config, secrets, err = normalizeDeploymentConfig(userInputManifest(manifest, request.AppKey), deploymentConfig)
@@ -399,7 +475,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				if _, _, err := normalizeDeploymentConfig(input, request.Config); err != nil {
 					return DeploymentView{}, err
 				}
-				config, err = removeJSONObjectKeys(deploymentConfig, "enrollment_token")
+				// Retain the verified on-node identity; initialization secrets are not runtime settings.
+				config, err = removeJSONObjectKeys(deploymentConfig, "enrollment_token", "existing_identity")
 				secrets = []byte(`{}`)
 			}
 			var collectorConfig senulun.AgentConfig
@@ -413,8 +490,12 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				return DeploymentView{}, err
 			}
 		} else {
-			if request.AppKey == senulunAppKey {
-				deploymentConfig, err = s.withSenulunPublicOrigin(ctx, request.AgentID, request.Operation, deploymentConfig)
+			if request.AppKey == senulunAppKey || renameSenlun && request.AppKey == senlunServiceIdentityKey {
+				operation := request.Operation
+				if renameSenlun {
+					operation = "upgrade"
+				}
+				deploymentConfig, err = s.withSenulunPublicOrigin(ctx, request.AgentID, operation, deploymentConfig)
 				if err != nil {
 					return DeploymentView{}, err
 				}
@@ -425,7 +506,13 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if request.AppKey == senulunAppKey && request.Operation != "uninstall" {
+	if request.AppKey == meridianAppKey && request.Operation != "uninstall" {
+		secrets, err = s.withPanelAccess(ctx, request.AgentID, manifest, secrets)
+		if err != nil {
+			return DeploymentView{}, err
+		}
+	}
+	if (request.AppKey == senulunAppKey || renameSenlun && request.AppKey == senlunServiceIdentityKey) && request.Operation != "uninstall" {
 		if _, err := senulun.DecodeServiceConfig(config); err != nil {
 			return DeploymentView{}, err
 		}
@@ -502,17 +589,28 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, errors.New("center: agent not found")
 	}
 	if strings.HasPrefix(request.AppKey, OfficialCatalogSourceID+"/") && (request.Operation == "install" || request.Operation == "upgrade") {
-		if err := authorizeOfficialManifest(ctx, tx, "stable", manifest, s.now().UTC()); err != nil {
-			return DeploymentView{}, err
+		var authorizationErr error
+		if renameSenlunAgent {
+			authorizationErr = authorizeSenlunNativeIdentity(ctx, tx, request.ReplaceApplicationID, request.SourceReceiptSHA256, manifest, s.now().UTC(), false)
+		} else {
+			authorizationErr = authorizeOfficialManifest(ctx, tx, "stable", manifest, s.now().UTC())
+		}
+		if authorizationErr != nil {
+			return DeploymentView{}, authorizationErr
 		}
 	}
 	// Preserve the last confirmed state before prepareApplication locks the
-	// instance as pending. It can be restored only if the upgrade is rejected
+	// instance as pending. It can be restored only if the operation is rejected
 	// before any Agent has had the opportunity to change the instance.
 	preDispatchApplicationStatus := "failed"
-	if request.Operation == "upgrade" && strings.HasPrefix(request.AppKey, OfficialCatalogSourceID+"/") {
-		if err := tx.QueryRowContext(ctx, `SELECT status FROM applications WHERE node_id = ? AND app_key = ?`, request.AgentID, request.AppKey).Scan(&preDispatchApplicationStatus); err != nil {
-			return DeploymentView{}, fmt.Errorf("center: read pre-upgrade application state: %w", err)
+	if renameSenlun || request.Operation == "upgrade" && strings.HasPrefix(request.AppKey, OfficialCatalogSourceID+"/") {
+		if renameSenlun {
+			err = tx.QueryRowContext(ctx, `SELECT status FROM applications WHERE node_id=? AND id=?`, request.AgentID, request.ReplaceApplicationID).Scan(&preDispatchApplicationStatus)
+		} else {
+			err = tx.QueryRowContext(ctx, `SELECT status FROM applications WHERE node_id=? AND app_key=?`, request.AgentID, request.AppKey).Scan(&preDispatchApplicationStatus)
+		}
+		if err != nil {
+			return DeploymentView{}, fmt.Errorf("center: read pre-deployment application state: %w", err)
 		}
 		if preDispatchApplicationStatus != "running" && preDispatchApplicationStatus != "failed" && preDispatchApplicationStatus != "stopped" {
 			return DeploymentView{}, errors.New("center: confirm the existing application state before upgrading")
@@ -549,6 +647,12 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	}
 	if request.Operation != "uninstall" && net.ParseIP(serviceAddress) == nil {
 		return DeploymentView{}, errors.New("center: confirm a valid Agent private service address before installing or changing applications")
+	}
+	if renameSenlun && request.AppKey == senlunServiceIdentityKey {
+		var originalAddress string
+		if err := tx.QueryRowContext(ctx, `SELECT service_address FROM deployments WHERE application_id=? AND app_key=? AND state='succeeded' ORDER BY created_at DESC,rowid DESC LIMIT 1`, applicationID, legacySenlunServiceIdentityKey).Scan(&originalAddress); err != nil || originalAddress != serviceAddress {
+			return DeploymentView{}, errors.New("center: original Senlun service address changed; review before renaming")
+		}
 	}
 	deployment.ApplicationID = applicationID
 	var secretID any

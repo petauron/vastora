@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -139,13 +140,20 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	if !lastSeenAt.After(s.now().UTC().Add(-agentConnectedMaxAge)) {
 		return nil, errors.New("center: reconnect the node before confirming its network")
 	}
+	profileWasInvalidated := previous == nil
 	if previous == nil {
 		previous, err = recoverableNetworkProfile(ctx, tx, agentID)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if previous != nil && (previous.PublicAddress != input.PublicAddress || previous.PublicBindAddress != input.PublicBindAddress || previous.PublicMode != input.PublicMode) {
+	// An invalidated profile has already withdrawn the old network mapping.
+	// Explicit confirmation may replace only its public side; the normal
+	// observation validation below still requires the Agent's current address.
+	recoveringPublicEntry := profileWasInvalidated && previous != nil && previous.DirectPublic && input.DirectPublic &&
+		previous.ServiceAddress == input.ServiceAddress && previous.LANAddress == input.LANAddress && previous.HeadscaleAddress == input.HeadscaleAddress &&
+		(previous.PublicAddress != input.PublicAddress || previous.PublicBindAddress != input.PublicBindAddress || previous.PublicMode != input.PublicMode)
+	if previous != nil && !recoveringPublicEntry && (previous.PublicAddress != input.PublicAddress || previous.PublicBindAddress != input.PublicBindAddress || previous.PublicMode != input.PublicMode) {
 		var publicationCount int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications
 			WHERE entry_node_id = ? AND kind IN ('public_direct', 'public_shared_443') AND status <> 'stopped'`, agentID).Scan(&publicationCount); err != nil {
@@ -160,17 +168,30 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 		input.PublicBindAddress = ""
 		input.PublicMode = ""
 	} else {
-		publicEgress, err := agentPublicEgress(ctx, tx, agentID)
-		if err != nil {
-			return nil, err
+		publicIP := net.ParseIP(input.PublicAddress)
+		if !lastSeenAt.After(s.now().UTC().Add(-agentConnectedMaxAge)) {
+			return nil, errors.New("center: an online Agent is required to confirm public ingress")
 		}
-		if publicEgress == nil || !lastSeenAt.After(s.now().UTC().Add(-agentConnectedMaxAge)) {
-			return nil, errors.New("center: wait for the Agent to detect its current public egress address")
+		if publicIP != nil && publicIP.To4() == nil {
+			// Direct IPv6 is authorized by the authenticated Agent's assigned
+			// interface address, not its unrelated NAT IPv4 egress observation.
+			if input.PublicMode != networking.PublicModeDirect || input.PublicBindAddress != publicIP.String() {
+				return nil, errors.New("center: IPv6 ingress must use an assigned direct address")
+			}
+			input.PublicVerifiedAt = time.Time{}
+		} else {
+			publicEgress, err := agentPublicEgress(ctx, tx, agentID)
+			if err != nil {
+				return nil, err
+			}
+			if publicEgress == nil || !lastSeenAt.After(s.now().UTC().Add(-agentConnectedMaxAge)) {
+				return nil, errors.New("center: wait for the Agent to detect its current public egress address")
+			}
+			if input.PublicAddress != publicEgress.Address || input.PublicBindAddress != publicEgress.BindAddress || input.PublicMode != publicEgress.Mode {
+				return nil, errors.New("center: public ingress must match the Agent's current public egress mapping")
+			}
+			input.PublicVerifiedAt = publicEgress.ObservedAt.UTC()
 		}
-		if input.PublicAddress != publicEgress.Address || input.PublicBindAddress != publicEgress.BindAddress || input.PublicMode != publicEgress.Mode {
-			return nil, errors.New("center: public ingress must match the Agent's current public egress mapping")
-		}
-		input.PublicVerifiedAt = publicEgress.ObservedAt.UTC()
 	}
 	if err := networking.ValidateProfile(candidates, input); err != nil {
 		return nil, err
@@ -262,14 +283,36 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	if err := s.autoAssignFirstSiteGateway(ctx, tx, agentID, s.now().UTC()); err != nil {
 		return nil, err
 	}
+	if recoveringPublicEntry {
+		var gatewayRunning bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM gateway_components WHERE gateway_node_id=? AND desired_status='running')`, agentID).Scan(&gatewayRunning); err != nil {
+			return nil, err
+		}
+		if gatewayRunning {
+			if err := s.queueGatewayState(ctx, tx, agentID, s.now().UTC()); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	if err := s.reconcileBuiltinHeadscaleDNSIfConfigured(ctx); err != nil {
 		return nil, err
 	}
-	if err := s.queueAllGatewayStates(ctx); err != nil {
+	var gatewayAffected bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM gateway_components WHERE gateway_node_id = ? AND desired_status = 'running'
+	) OR EXISTS (
+		SELECT 1 FROM routes r JOIN services s ON s.id = r.service_id
+		JOIN applications a ON a.id = s.application_id WHERE a.node_id = ?
+	)`, agentID, agentID).Scan(&gatewayAffected); err != nil {
 		return nil, err
+	}
+	if gatewayAffected && !recoveringPublicEntry {
+		if err := s.queueAllGatewayStates(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return networkProfile(ctx, s.db, agentID)
 }

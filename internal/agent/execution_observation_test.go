@@ -3,10 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
+	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
 )
 
@@ -21,24 +20,23 @@ func TestExecutionHeartbeatObservesHealthyIngressWithoutStartupReplay(t *testing
 	if err := applyGatewayDesiredState(ctx, store, driver, gatewayState(1, 3000), nil); err != nil {
 		t.Fatal(err)
 	}
-	observed := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	observed := make(chan bool, 1)
+	server := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, input *agentpb.AgentDocument) (*agentpb.Document, error) {
 		var body struct {
 			GatewayHealthy              bool            `json:"gatewayHealthy"`
 			NodeListenerHealthy         bool            `json:"nodeListenerHealthy"`
 			RuntimeRecovery             json.RawMessage `json:"runtimeRecovery"`
 			RuntimeRecoveryApplications json.RawMessage `json:"runtimeRecoveryApplications"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal(input.Json, &body); err != nil {
 			t.Error(err)
 		}
-		observed = body.GatewayHealthy && body.NodeListenerHealthy
+		observed <- body.GatewayHealthy && body.NodeListenerHealthy
 		if body.RuntimeRecovery != nil || body.RuntimeRecoveryApplications != nil {
 			t.Error("heartbeat retained retired recovery protocol fields")
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{}`))
-	}))
+		return fixtureDocument(t, map[string]any{}), nil
+	}})
 	defer server.Close()
 	if err := store.SaveConnection(ctx, testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
 		t.Fatal(err)
@@ -48,8 +46,9 @@ func TestExecutionHeartbeatObservesHealthyIngressWithoutStartupReplay(t *testing
 	if err := (Client{GatewayDriver: driver}).StartupHeartbeat(ctx, store); err != nil {
 		t.Fatal(err)
 	}
-	if !observed || len(driver.appliedStates()) != 1 {
-		t.Fatalf("heartbeat did not preserve read-only live observation: healthy=%v applies=%d", observed, len(driver.appliedStates()))
+	healthy := <-observed
+	if !healthy || len(driver.appliedStates()) != 1 {
+		t.Fatalf("heartbeat did not preserve read-only live observation: healthy=%v applies=%d", healthy, len(driver.appliedStates()))
 	}
 }
 
@@ -60,19 +59,18 @@ func TestHeartbeatReportsBlockedXrayRecovery(t *testing.T) {
 	}
 	defer store.Close()
 	store.setApplicationRecovery(controlplane.RecoveryApplication{AppKey: threeXUIKey, ApplicationID: "application-1", Reason: "state_incomplete"})
-	observed := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	observed := make(chan bool, 1)
+	server := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, input *agentpb.AgentDocument) (*agentpb.Document, error) {
 		var body struct {
 			RuntimeRecovery             string                             `json:"runtimeRecovery"`
 			RuntimeRecoveryApplications []controlplane.RecoveryApplication `json:"runtimeRecoveryApplications"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal(input.Json, &body); err != nil {
 			t.Error(err)
 		}
-		observed = body.RuntimeRecovery == "application" && len(body.RuntimeRecoveryApplications) == 1 && body.RuntimeRecoveryApplications[0].ApplicationID == "application-1"
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{}`))
-	}))
+		observed <- body.RuntimeRecovery == "application" && len(body.RuntimeRecoveryApplications) == 1 && body.RuntimeRecoveryApplications[0].ApplicationID == "application-1"
+		return fixtureDocument(t, map[string]any{}), nil
+	}})
 	defer server.Close()
 	ctx := context.Background()
 	if err := store.SaveConnection(ctx, testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
@@ -81,7 +79,7 @@ func TestHeartbeatReportsBlockedXrayRecovery(t *testing.T) {
 	if err := (Client{}).Heartbeat(ctx, store); err != nil {
 		t.Fatal(err)
 	}
-	if !observed {
+	if !<-observed {
 		t.Fatal("heartbeat omitted blocked Xray recovery")
 	}
 }

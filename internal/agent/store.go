@@ -17,6 +17,7 @@ import (
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/tailscalehost"
 )
 
 var errApplicationNotInstalled = errors.New("agent: application is not installed")
@@ -24,6 +25,13 @@ var errNoAppliedGatewayState = errors.New("agent: no applied gateway state")
 var errNoAppliedNodeListenerState = errors.New("agent: no applied node listener state")
 
 type Store struct {
+	tailscaleUpdateMu          sync.Mutex
+	tailscaleUpdate            *tailscalehost.UpdateStatus
+	tailscaleUpdateNext        time.Time
+	tailscaleUpdateRunning     bool
+	tailscaleUpdateRequested   int64
+	tailscaleUpdateCompleted   int64
+	tailscaleUpdateTaskID      string
 	executionMu                sync.Mutex
 	activeExecution            *activeExecution
 	linkChecker                *landing.LinkChecker
@@ -32,6 +40,8 @@ type Store struct {
 	dataDir                    string
 	now                        func() time.Time
 	gatewayMutationMu          sync.Mutex
+	sharedCaddy                *CaddyGatewayDriver
+	reloadSharedCaddy          func(context.Context) error
 	landingMutationMu          sync.Mutex
 	landingCancel              context.CancelFunc
 	landingDone                chan struct{}
@@ -103,7 +113,7 @@ type Connection struct {
 	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = 22
+const agentSchemaVersion = 24
 
 // CurrentSchemaVersion is the highest Agent database schema this executable
 // can open. The persistent host updater records it before a candidate can

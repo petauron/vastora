@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/petauron/vastora/internal/hostservice"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -53,6 +54,16 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 	if err := validatePackageTask(task); err != nil {
 		return ApplicationTaskResult{}, err
 	}
+	if senlunServiceIdentityTask(task) {
+		return e.renameSenlunServiceIdentity(ctx, task)
+	}
+	if senlunNativeIdentityTask(task) {
+		receipt, err := e.renameSenlunNativeIdentity(ctx, task.ApplicationID, task.ID, task.SourceReceiptSHA256, task.Manifest)
+		if err != nil {
+			return ApplicationTaskResult{}, err
+		}
+		return ApplicationTaskResult{Resources: receipt, SourceReceiptSHA256: task.SourceReceiptSHA256}, nil
+	}
 	if task.SourceReceiptSHA256 != "" {
 		return e.replaceStagedNative(ctx, task)
 	}
@@ -69,10 +80,30 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 		}
 		kind = receipt.Runtime
 	}
-	if kind == "systemd" {
+	if kind == "systemd" || kind == "native" {
 		manager, ok := e.Host.(SystemdHostApplicationManager)
 		if !ok {
 			return ApplicationTaskResult{}, errors.New("agent: generic systemd executor is unavailable")
+		}
+		detected := manager.InitSystem
+		var detectErr error
+		if detected == "" {
+			detected, detectErr = hostservice.DetectAt(manager.RootDir)
+		}
+		if detectErr != nil || kind == "systemd" && detected != hostservice.Systemd {
+			return ApplicationTaskResult{}, errors.New("agent: package init system does not match host")
+		}
+		manager.InitSystem = detected
+		if task.AppKey == senulun.AgentKey && task.Operation != "uninstall" && task.Manifest.Runtime != nil && task.Manifest.Runtime.Version == 2 {
+			backend, err := e.senlunNativeBackend(ctx, task, manager)
+			if err != nil {
+				return ApplicationTaskResult{}, err
+			}
+			result, err := (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: backend}).Deploy(ctx, task)
+			if err == nil && task.SenulunRestore != nil {
+				result.SenulunRestored = &senulun.RestoreResult{NodeID: task.SenulunRestore.NodeID}
+			}
+			return result, err
 		}
 		version := 1
 		if task.Manifest.Runtime != nil {
@@ -90,7 +121,7 @@ func (e ApplicationExecutor) deployPackage(ctx context.Context, task DeploymentT
 			}
 		}
 		if version == 2 {
-			bundle := &NativeServicesPackageBackend{Manager: manager, StateDirectory: e.packageDirectory()}
+			bundle := &NativeServicesPackageBackend{Manager: manager, StateDirectory: e.packageDirectory(), Store: e.Store}
 			return (PackageExecutor{StateDirectory: e.packageDirectory(), Backend: bundle}).Deploy(ctx, task)
 		}
 		if version != 1 {
@@ -133,11 +164,21 @@ func (e ApplicationExecutor) PackageCapabilities(dockerAvailable bool) (map[stri
 		versions["docker"] = 1
 	}
 	if _, ok := e.Host.(SystemdHostApplicationManager); ok && runtime.GOOS == "linux" {
-		versions["systemd"] = 2
+		manager := e.Host.(SystemdHostApplicationManager)
+		if kind, err := hostservice.DetectAt(manager.RootDir); err == nil {
+			versions["native"] = 2
+			if kind == hostservice.Systemd {
+				versions["systemd"] = 2
+			}
+		}
 	}
 	capabilities := []string{"root", "host-network", "host-path", "devices"}
-	if versions["systemd"] == 2 {
-		capabilities = append(capabilities, "native-services")
+	if versions["systemd"] == 2 || versions["native"] == 2 {
+		// Recognize the permission even on read-only hosts; the socket enforces host eligibility.
+		capabilities = append(capabilities, "native-services", "host-tcp-budget")
+		if e.Store != nil && e.Store.sharedCaddy != nil {
+			capabilities = append(capabilities, "shared-caddy")
+		}
 	}
 	return versions, capabilities
 }
@@ -175,7 +216,7 @@ func (e ApplicationExecutor) Adopt(ctx context.Context, task DeploymentTask) (Ap
 	task.Operation = "adopt"
 	var backend PackageBackend
 	var receipt *InstanceResources
-	if task.AppKey == senulun.AgentKey || task.AppKey == komariKey {
+	if task.AppKey == "vastora-official/pulse-agent" || task.AppKey == komariKey {
 		manager, ok := e.Host.(SystemdHostApplicationManager)
 		if !ok {
 			return ApplicationTaskResult{}, errors.New("agent: systemd historical inspection unavailable")

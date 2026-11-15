@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/tailscalehost"
 )
 
 const (
@@ -31,18 +32,24 @@ var (
 )
 
 type tailscaleIsolationEnvironment struct {
-	overridePath string
-	hostsPath    string
-	derpCache    string
-	run          func(context.Context, string, ...string) ([]byte, error)
+	controlIPv6Path string
+	overridePath    string
+	hostsPath       string
+	derpCache       string
+	run             func(context.Context, string, ...string) ([]byte, error)
 }
 
 func defaultTailscaleIsolationEnvironment() tailscaleIsolationEnvironment {
+	path := "/etc/systemd/system/tailscaled.service.d/90-vastora-privacy.conf"
+	if isOpenRCHost() {
+		path = "/etc/conf.d/tailscale"
+	}
 	return tailscaleIsolationEnvironment{
-		overridePath: "/etc/systemd/system/tailscaled.service.d/90-vastora-privacy.conf",
-		hostsPath:    "/etc/hosts",
-		derpCache:    "/var/lib/tailscale/derpmap.cached.json",
-		run:          runHostCommand,
+		controlIPv6Path: "/etc/vastora/agent-headscale-control.json",
+		overridePath:    path,
+		hostsPath:       "/etc/hosts",
+		derpCache:       "/var/lib/tailscale/derpmap.cached.json",
+		run:             runHostCommand,
 	}
 }
 
@@ -58,8 +65,20 @@ func reconcileTailscaleIsolation(ctx context.Context, desired agent.TailscaleIso
 	if err != nil {
 		return err
 	}
+	address, err := readAgentHeadscaleControlIPv6(environment.controlIPv6Path)
+	if err != nil {
+		return err
+	}
+	if address != "" {
+		// Explicit host routing policy, not a fallback or a new control origin.
+		// The existing HTTPS preflight and runtime isolation checks still run.
+		desired.ControlAddresses = []string{address}
+	}
 	if environment.run == nil {
 		return errors.New("configure Tailscale isolation: host command runner is required")
+	}
+	if isOpenRCHost() {
+		return reconcileOpenRCTailscaleIsolation(ctx, desired, configureOnly, environment)
 	}
 	current, err := tailscaleIsolationCurrent(ctx, environment, desired)
 	if err != nil {
@@ -174,7 +193,12 @@ func verifyTailscaleRuntimePrivacy(ctx context.Context, run func(context.Context
 	if !active {
 		return fmt.Errorf("verify Tailscale service is active after isolation: %w", errTailscaleIsolationDrift)
 	}
-	output, err := run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
+	var output []byte
+	if isOpenRCHost() {
+		output, err = tailscalehost.OpenRCRuntimeEnvironment()
+	} else {
+		output, err = run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
+	}
 	if err != nil {
 		return fmt.Errorf("verify Tailscale privacy environment: %s: %w", strings.TrimSpace(string(output)), err)
 	}
@@ -194,6 +218,9 @@ func verifyTailscaleRuntimePrivacy(ctx context.Context, run func(context.Context
 }
 
 func tailscaleServiceActive(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error)) (bool, error) {
+	if isOpenRCHost() {
+		return tailscalehost.OpenRCActive(ctx, run)
+	}
 	_, err := run(ctx, "systemctl", "is-active", "--quiet", "tailscaled.service")
 	if err == nil {
 		return true, nil

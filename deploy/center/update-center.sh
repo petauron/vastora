@@ -99,8 +99,8 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 verify_runtime() {
-  write_status applying "$target_version" "Verifying the running Center and co-located Agent."
-  failure_message="The installed release did not pass running Center and Agent verification."
+  write_status applying "$target_version" "Verifying the running Center."
+  failure_message="The installed release did not pass running Center verification."
   center_container="$(docker compose --project-directory "$install_dir" ps -q center)"
   [ -n "$center_container" ] || return 1
   [ "$(docker inspect -f '{{.State.Running}}' "$center_container")" = true ] || return 1
@@ -112,14 +112,6 @@ verify_runtime() {
   for endpoint in healthz readyz; do
     curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS "http://127.0.0.1:$bootstrap_port/$endpoint" >/dev/null || return 1
   done
-  agent_unit="${VASTORA_AGENT_UNIT:-/etc/systemd/system/vastora-agent.service}"
-  if [ -f "$agent_unit" ] && grep -Fq 'Description=Vastora Agent' "$agent_unit"; then
-    systemctl is-active --quiet vastora-agent.service || return 1
-    agent_pid="$(systemctl show vastora-agent.service --property=MainPID --value)"
-    case "$agent_pid" in *[!0-9]*|''|0) return 1 ;; esac
-    [ "$("/proc/$agent_pid/exe" version)" = "$target_version" ] || return 1
-    curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:8090/healthz >/dev/null || return 1
-  fi
   for gateway in vastora-gateway-caddy vastora-gateway-haproxy; do
     if docker inspect -f '{{.State.Running}}' "$gateway" >/dev/null 2>&1; then
       [ "$(docker inspect -f '{{.State.Running}}' "$gateway")" = true ] || return 1

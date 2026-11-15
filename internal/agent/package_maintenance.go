@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/petauron/vastora/internal/hostservice"
 	"io"
 	"os"
 	"os/exec"
@@ -53,10 +54,14 @@ func (e ApplicationExecutor) ManagePackage(ctx context.Context, task DeploymentT
 	if err != nil {
 		return ApplicationTaskResult{}, err
 	}
-	if receipt.Runtime == "systemd" {
+	if receipt.Runtime == "systemd" || receipt.Runtime == "native" {
 		manager, ok := e.Host.(SystemdHostApplicationManager)
 		if !ok {
 			return ApplicationTaskResult{}, errors.New("agent: native package manager unavailable")
+		}
+		manager.InitSystem, err = hostservice.DetectAt(manager.RootDir)
+		if err != nil {
+			return ApplicationTaskResult{}, err
 		}
 		backend = &SystemdPackageBackend{Manager: manager, StateDirectory: e.packageDirectory()}
 		if receipt.RuntimeVersion == 2 {

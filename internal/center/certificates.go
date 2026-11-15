@@ -349,6 +349,7 @@ func (s *Store) gatewayCertificates(ctx context.Context, tx *sql.Tx, gatewayID s
 }
 
 func (s *Store) RunCertificateRenewal(ctx context.Context, interval time.Duration, report func(error)) {
+	s.startBackground(func() { s.runNodeSiteCertificates(s.backgroundCtx, report) })
 	if interval < time.Hour {
 		interval = 12 * time.Hour
 	}

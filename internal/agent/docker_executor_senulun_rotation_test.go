@@ -22,7 +22,7 @@ func TestSenulunRotationPinsContainerAndRechecksOriginalNode(t *testing.T) {
 	for _, mode := range []string{"success", "old-service", "wrong-owner", "wrong-deployment", "wrong-id", "secret-field", "partial-failure", "trailing-json", "invalid-active", "different-node", "rotation-failed", "bad-token"} {
 		t.Run(mode, func(t *testing.T) {
 			task := senulun.InspectionTask{ApplicationID: "monitor-service", DeploymentID: "reviewed-deployment", EnrollmentIDs: []string{"registration-1", "registration-2"}}
-			labels := applicationResourceLabels(senulun.ServiceKey, "pulse", task.ApplicationID, task.DeploymentID)
+			labels := applicationResourceLabels(senulun.ServiceKey, "senlun", task.ApplicationID, task.DeploymentID)
 			if mode == "wrong-owner" {
 				labels[applicationInstallationLabel] = "other-app"
 			}

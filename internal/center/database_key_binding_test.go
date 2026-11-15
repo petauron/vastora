@@ -3,15 +3,14 @@ package center
 import (
 	"bytes"
 	"context"
+	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/secret"
+	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/petauron/vastora/internal/networking"
-	"github.com/petauron/vastora/internal/secret"
-	_ "modernc.org/sqlite"
 )
 
 func TestCenterDatabaseKeyBindingLifecycle(t *testing.T) {
@@ -102,46 +101,6 @@ func TestCenterDatabaseRejectsInvalidRootKeyWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestCenterLegacyDatabaseBindsOnlyAfterEncryptedStateVerification(t *testing.T) {
-	t.Run("correct-key", func(t *testing.T) {
-		directory := t.TempDir()
-		makeLegacyUnboundCenter(t, directory)
-		store, err := Open(directory)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer store.Close()
-		var count, version int
-		if err := store.db.QueryRow(`SELECT COUNT(*) FROM storage_key_binding WHERE id = 1`).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("binding count = %d, err=%v", count, err)
-		}
-		if err := store.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != centerSchemaVersion {
-			t.Fatalf("schema version = %d, err=%v", version, err)
-		}
-	})
-
-	t.Run("wrong-key", func(t *testing.T) {
-		directory := t.TempDir()
-		makeLegacyUnboundCenter(t, directory)
-		mustWritePrivate(t, filepath.Join(directory, "center.key"), bytes.Repeat([]byte{0xa5}, secret.KeySize))
-		databasePath := filepath.Join(directory, "center.db")
-		before, err := os.ReadFile(databasePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), "verify legacy encrypted state") {
-			t.Fatalf("wrong legacy key error = %v", err)
-		}
-		after, err := os.ReadFile(databasePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(before, after) {
-			t.Fatal("failed legacy open modified the database")
-		}
-	})
-}
-
 func TestCenterBackupRejectsChangedOrMixedRootKeys(t *testing.T) {
 	directory := t.TempDir()
 	store, err := Open(directory)
@@ -223,40 +182,6 @@ func TestCenterBackupRestoresLandingAndAssistantSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := Restore(backupPath, filepath.Join(t.TempDir(), "restored"), password); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func makeLegacyUnboundCenter(t *testing.T, directory string) {
-	t.Helper()
-	// Build the released schema through its actual migration sequence rather
-	// than relabeling today's schema as v35.
-	store := legacyMigrationStore(t, directory, 35)
-	if _, err := store.db.Exec(`DROP TABLE storage_key_binding`); err != nil {
-		t.Fatal(err)
-	}
-	key, err := os.ReadFile(filepath.Join(directory, "center.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.key = key
-	store.now = time.Now
-	tx, err := store.db.BeginTx(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	secretID, err := store.putSecret(context.Background(), tx, []byte("legacy-secret"), "official-catalog-signing-key")
-	if err == nil {
-		_, err = tx.Exec(`INSERT INTO settings(key, value) VALUES('official_catalog_signing_key', ?)`, secretID)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.db.Close(); err != nil {
 		t.Fatal(err)
 	}
 }

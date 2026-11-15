@@ -3,17 +3,43 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/petauron/catalog/catalog"
+	"github.com/petauron/vastora/internal/hostservice"
 )
 
 type NativeServicesPackageBackend struct {
+	Store          *Store
+	website        *daylightHandover
 	Manager        SystemdHostApplicationManager
 	StateDirectory string
 	CheckHealth    func(context.Context, string, int, catalog.Service) error
 	prepared       *nativePreparedPackage
 	resumeUnits    map[string]bool
+}
+
+// migrateSystemdReceipt is a forward-only v2 contract migration during an
+// explicitly authorized upgrade. Both declarations use the same systemd
+// adapter. Verify every owned resource against the target plan before allowing
+// preparation; never rewrite the on-disk receipt merely to bypass ownership.
+func (b *NativeServicesPackageBackend) migrateSystemdReceipt(ctx context.Context, task DeploymentTask, receipt *InstanceResources) (*InstanceResources, error) {
+	if task.Operation != "upgrade" || b.Manager.InitSystem != hostservice.Systemd ||
+		receipt.Runtime != "systemd" || receipt.RuntimeVersion != 2 || len(receipt.Resources) == 0 ||
+		task.Manifest.Runtime == nil || task.Manifest.Runtime.Kind != "native" || task.Manifest.Runtime.Version != 2 ||
+		(receipt.State != "ready" && !reviewedPackageRecovery(task, receipt)) ||
+		!slices.Equal(slices.Sorted(slices.Values(receipt.AuthorizedCapabilities)), slices.Sorted(slices.Values(task.AuthorizedCapabilities))) {
+		return nil, errors.New("agent: changing executor requires explicit instance migration")
+	}
+	candidate := *receipt
+	candidate.Runtime = "native"
+	// Only the successful normal preparation/apply/health lifecycle may persist
+	// this candidate. Inspection failure leaves the original receipt untouched.
+	if err := b.Inspect(ctx, task, &candidate); err != nil {
+		return nil, err
+	}
+	return &candidate, nil
 }
 
 func (b *NativeServicesPackageBackend) Prepare(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
@@ -27,12 +53,40 @@ func (b *NativeServicesPackageBackend) Prepare(ctx context.Context, task Deploym
 	if err := inspectNativeCollisions(ctx, b.Manager, task.ApplicationID, prepared, receipt); err != nil {
 		return err
 	}
+	prepared.RecoverInstallation = task.Operation == "install" && receipt != nil && reviewedPackageRecovery(task, receipt)
+	if prepared.RecoverInstallation {
+		if err := verifyNativeInstallRecovery(ctx, b.Manager, prepared, receipt); err != nil {
+			return err
+		}
+	}
+	if task.Operation == "configure" && !sharedWebsiteConfigure(task) {
+		if err := b.verifyServicePortConfiguration(ctx, task, prepared, receipt); err != nil {
+			return err
+		}
+	}
+	if sharedWebsiteConfigure(task) {
+		if err := b.verifyWebsiteConfiguration(ctx, task, receipt); err != nil {
+			return err
+		}
+	}
 	b.prepared = &prepared
+	if b.Store != nil && daylightKey(task.AppKey) && (task.Operation != "configure" || sharedWebsiteConfigure(task)) {
+		website, err := b.prepareWebsite(ctx, task, receipt)
+		if err != nil {
+			return err
+		}
+		b.website = website
+		if sharedWebsiteConfigure(task) {
+			// This authorization never comes from a task payload. Bind it only
+			// after exact installed configuration and owned handover preparation.
+			b.prepared.WebsiteConfigureTaskID = task.ID
+		}
+	}
 	return nil
 }
 
 func (b *NativeServicesPackageBackend) Inspect(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
-	plan, err := planNativePackage(task.ApplicationID, task.Manifest)
+	plan, err := b.Manager.planNativePackage(task.ApplicationID, task.Manifest)
 	if err != nil {
 		return err
 	}
@@ -43,6 +97,12 @@ func (b *NativeServicesPackageBackend) Apply(ctx context.Context, task Deploymen
 	if b.prepared == nil {
 		return errors.New("agent: native bundle was not prepared")
 	}
+	if task.Operation == "configure" && b.website == nil {
+		return errors.New("agent: native service port updates must use the metadata-only executor")
+	}
+	if b.website != nil {
+		return b.website.apply(ctx, task, receipt, persist)
+	}
 	return applyNativePackage(ctx, b.Manager, task, *b.prepared, receipt, persist)
 }
 
@@ -50,7 +110,7 @@ func (b *NativeServicesPackageBackend) Healthy(ctx context.Context, task Deploym
 	if err := b.Inspect(ctx, task, receipt); err != nil {
 		return err
 	}
-	plan, err := planNativePackage(task.ApplicationID, task.Manifest)
+	plan, err := b.Manager.planNativePackage(task.ApplicationID, task.Manifest)
 	if err != nil {
 		return err
 	}
@@ -64,7 +124,7 @@ func (b *NativeServicesPackageBackend) Healthy(ctx context.Context, task Deploym
 			return err
 		}
 		if unit.Automatic {
-			if err := b.Manager.run(ctx, "systemctl", "is-active", "--quiet", unit.Name); err != nil {
+			if err := b.Manager.service(ctx, "status", unit.Name); err != nil {
 				return errors.New("agent: native service is not active")
 			}
 			if observed.MainPID <= 0 || observed.InvocationID == "" {
@@ -118,7 +178,7 @@ func (b *NativeServicesPackageBackend) Resume(ctx context.Context, task Deployme
 	if err := b.Inspect(ctx, task, receipt); err != nil {
 		return err
 	}
-	plan, err := planNativePackage(task.ApplicationID, task.Manifest)
+	plan, err := b.Manager.planNativePackage(task.ApplicationID, task.Manifest)
 	if err != nil {
 		return err
 	}
@@ -135,7 +195,7 @@ func (b *NativeServicesPackageBackend) Resume(ctx context.Context, task Deployme
 			if unit.Automatic != automatic || !b.resumeUnits[unit.Name] {
 				continue
 			}
-			if err := b.Manager.run(ctx, "systemctl", "start", unit.Name); err != nil {
+			if err := b.Manager.service(ctx, "start", unit.Name); err != nil {
 				return errors.New("agent: native service could not resume after backup")
 			}
 		}

@@ -21,20 +21,29 @@ func applyNativePackage(ctx context.Context, manager SystemdHostApplicationManag
 // The one-time local handover stages the same verified resources without
 // enabling or starting services. Ordinary application tasks always activate.
 func installNativePackage(ctx context.Context, manager SystemdHostApplicationManager, task DeploymentTask, prepared nativePreparedPackage, receipt *InstanceResources, persist func() error, activate bool) error {
-	if task.Operation != "install" && task.Operation != "upgrade" {
+	websiteConfigure := task.ID != "" && prepared.WebsiteConfigureTaskID == task.ID && sharedWebsiteConfigure(task)
+	if task.Operation != "install" && task.Operation != "upgrade" && !websiteConfigure {
 		return errors.New("agent: native bundles support install or upgrade only")
 	}
 	if err := inspectNativeCollisions(ctx, manager, task.ApplicationID, prepared, receipt); err != nil {
 		return err
 	}
+	if prepared.RecoverInstallation {
+		if err := verifyNativeInstallRecovery(ctx, manager, prepared, receipt); err != nil {
+			return err
+		}
+	}
 	// Check all configuration paths before stopping anything. An upgrade must
 	// not initialize missing configuration or overwrite application edits.
-	if task.Operation == "upgrade" {
+	if task.Operation == "upgrade" || websiteConfigure {
 		for _, file := range prepared.Files {
 			if !file.ApplicationOwned {
 				continue
 			}
 			owned := resourceNamed(receipt, "file", file.LogicalName)
+			if owned == nil && newDormantWorkerEnvironment(prepared, receipt, file) {
+				continue
+			}
 			if owned == nil || owned.Path != file.Path {
 				return errors.New("agent: new native configuration requires explicit migration")
 			}
@@ -50,9 +59,14 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 			if unit.Automatic != automatic || resourceNamed(receipt, "unit", unit.LogicalName) == nil {
 				continue
 			}
-			if err := manager.run(ctx, "systemctl", "stop", unit.Name); err != nil {
+			if err := manager.service(ctx, "stop", unit.Name); err != nil {
 				return errors.New("agent: native service could not stop before update")
 			}
+		}
+	}
+	if prepared.BeforeReplace != nil {
+		if err := prepared.BeforeReplace(ctx); err != nil {
+			return err
 		}
 	}
 	record := func(resource RuntimeResource) error {
@@ -85,8 +99,8 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		if err == nil || !errors.As(err, &status) || status.ExitCode() != 2 || len(raw) != 0 {
 			return errors.New("agent: native group is not safely available")
 		}
-		if err := manager.run(ctx, "useradd", "--system", "--user-group", "--no-create-home", "--home-dir", "/nonexistent", "--shell", "/usr/sbin/nologin", "--comment", "Vastora "+task.ApplicationID, name); err != nil {
-			return errors.New("agent: native account creation failed")
+		if err := manager.createNativeAccount(ctx, name, task.ApplicationID); err != nil {
+			return err
 		}
 		account, exists, err := readNativeAccount(ctx, manager, name, task.ApplicationID)
 		if err != nil || !exists {
@@ -140,12 +154,23 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		if err := checkPackageParents(actual); err != nil {
 			return err
 		}
-		if file.ApplicationOwned && resourceNamed(receipt, "file", file.LogicalName) != nil {
+		owned := resourceNamed(receipt, "file", file.LogicalName)
+		if file.ApplicationOwned && owned != nil {
 			snapshot, err := captureApplicationConfiguration(actual)
 			if err != nil || !snapshot.Exists {
 				return errors.New("agent: native configuration changed during update")
 			}
-			file.Data, file.Mode = snapshot.Data, snapshot.Mode
+			if prepared.RecoverInstallation {
+				digest := sha256.Sum256(snapshot.Data)
+				if owned.SHA256 != hex.EncodeToString(digest[:]) {
+					return errors.New("agent: failed installation configuration changed after review")
+				}
+				if err := writeHostFileAtomic(actual, file.Data, file.Mode); err != nil {
+					return err
+				}
+			} else {
+				file.Data, file.Mode = snapshot.Data, snapshot.Mode
+			}
 		} else if err := writeHostFileAtomic(actual, file.Data, file.Mode); err != nil {
 			return err
 		}
@@ -158,7 +183,7 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 	if err := inspectNativeOwnership(ctx, manager, task.ApplicationID, prepared.Plan, receipt); err != nil {
 		return err
 	}
-	if err := manager.run(ctx, "systemctl", "daemon-reload"); err != nil {
+	if err := manager.service(ctx, "reload", ""); err != nil {
 		return errors.New("agent: native unit reload failed")
 	}
 	for _, unit := range prepared.Plan.Units {
@@ -166,16 +191,37 @@ func installNativePackage(ctx context.Context, manager SystemdHostApplicationMan
 		if activate && unit.Automatic {
 			action = "enable"
 		}
-		if err := manager.run(ctx, "systemctl", action, unit.Name); err != nil {
+		if err := manager.service(ctx, action, unit.Name); err != nil {
 			return errors.New("agent: native startup policy could not be applied")
 		}
 	}
 	for _, unit := range prepared.Plan.Units {
 		if activate && unit.Automatic {
-			if err := manager.run(ctx, "systemctl", "start", unit.Name); err != nil {
+			if err := manager.service(ctx, "start", unit.Name); err != nil {
 				return errors.New("agent: native service start failed")
 			}
 		}
 	}
 	return nil
+}
+
+// A newly declared manual worker has no application-edited environment to
+// preserve. Only its empty installer-created file may be initialized; existing
+// workers, root processes, credentials and generated configurations remain fenced.
+func newDormantWorkerEnvironment(prepared nativePreparedPackage, receipt *InstanceResources, file nativePreparedFile) bool {
+	if file.Kind != "file" || file.Mode.Perm() != 0600 || len(file.Data) != 0 {
+		return false
+	}
+	for _, unit := range prepared.Plan.Units {
+		if unit.Automatic || unit.Process.User == "root" || len(unit.Process.Environment) != 0 || len(unit.Process.Credentials) != 0 || len(unit.Process.ConfigFiles) != 0 ||
+			resourceNamed(receipt, "unit", unit.LogicalName) != nil || file.LogicalName != unit.LogicalName+":environment" || file.Path != filepath.Join(unit.ConfigDirectory, "environment") {
+			continue
+		}
+		for _, user := range prepared.Plan.Users {
+			if user != "" && unit.Process.User == user {
+				return true
+			}
+		}
+	}
+	return false
 }

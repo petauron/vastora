@@ -3,7 +3,10 @@ package center
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +40,37 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)`, setupGatewayBindingSetting, `{"publicAddress":"203.0.113.70","bindAddress":"10.0.0.70"}`); err != nil {
 		t.Fatal(err)
 	}
+	tags := []string{"tag:vastora-agent", "tag:vastora-gateway"}
+	roleWrites := 0
+	headscale := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/node":
+			_ = json.NewEncoder(w).Encode(map[string]any{"nodes": []map[string]any{{"id": "7", "nodeKey": "center-node-key", "ipAddresses": []string{"100.64.0.70"}, "tags": tags}, {"id": "8", "nodeKey": "remote-node-key", "ipAddresses": []string{"100.64.0.71"}, "tags": []string{"tag:vastora-agent", "tag:vastora-gateway"}}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/node/7/tags":
+			var input struct {
+				Tags []string `json:"tags"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(input.Tags, []string{"tag:vastora-agent", "tag:vastora-gateway", "tag:vastora-center"}) {
+				t.Fatalf("role repair changed existing tags: %v", input.Tags)
+			}
+			tags = input.Tags
+			roleWrites++
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected role request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer headscale.Close()
+	store.headscaleHTTPClient = headscale.Client()
+	store.builtinHeadscaleDialAddress = headscale.Listener.Addr().String()
+	if _, err := store.db.ExecContext(ctx, `UPDATE network_integrations SET endpoint=? WHERE kind='headscale'`, headscale.URL); err != nil {
+		t.Fatal(err)
+	}
 	store.discoverNetworkCandidates = func(now time.Time) ([]networking.Candidate, error) {
 		return []networking.Candidate{{Address: "203.0.113.70", Interface: "eth0", Kind: networking.KindPublic, ObservedAt: now}, {Address: "100.64.0.70", Interface: "tailscale0", Kind: networking.KindHeadscale, ObservedAt: now}}, nil
 	}
@@ -45,6 +79,12 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 		{Address: "100.64.0.70", Interface: "tailscale0", Kind: networking.KindHeadscale},
 		{Address: "203.0.113.70", Interface: "eth0", Kind: networking.KindPublic},
 	}, networking.Profile{ServiceAddress: "100.64.0.70", LANAddress: "10.0.0.70", HeadscaleAddress: "100.64.0.70", PublicAddress: "203.0.113.70", EnabledKinds: []string{networking.KindLAN, networking.KindHeadscale, networking.KindPublic}, DirectPublic: true})
+	if err := store.reconcileHeadscaleDNS(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if roleWrites != 1 {
+		t.Fatalf("Center role repair must be idempotent: %d writes", roleWrites)
+	}
 	dns, err := os.ReadFile(store.dataDir + "/" + headscaleDNSFile)
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +165,7 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 	}
 }
 
-func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testing.T) {
+func TestRetiredRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -135,45 +175,13 @@ func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := claimTask(t, store, node)
-	if task.Kind != "application.command" || task.ApplicationCommand == nil {
-		t.Fatalf("unexpected command task: %#v", task)
+	if command.ID == "" {
+		t.Fatal("missing retained command identity")
 	}
-	if task.ApplicationCommand.TargetHost != "www.example.com" || task.ApplicationCommand.ServerName != "www.example.com" {
-		t.Fatalf("explicit REALITY target was not preserved: %#v", task.ApplicationCommand)
-	}
-	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BD%EF%BD%9CEdge"
-	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国｜Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 443, TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true, GuardStatus: "ready", ProxyProtocol: true, ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
-	encoded, _ := json.Marshal(result)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded, task.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-	completed, err := store.ApplicationCommand(ctx, command.ID)
-	if err != nil || completed.State != "succeeded" || !completed.ResultAvailable || completed.ServerName != "www.example.com" || completed.GuardStatus != "ready" {
-		t.Fatalf("unexpected completed command: %#v err=%v", completed, err)
-	}
-	publications, err := store.ListPublications(ctx)
-	if err != nil || len(publications) != 1 || publications[0].Hostname != "reality.edge.site.example.test" || publications[0].SNIHostname != "www.example.com" {
-		t.Fatalf("connection hostname and SNI were not kept separate: %#v err=%v", publications, err)
-	}
-	const deliveryOwner = "test-administrator"
-	const deliveryKey = "reality-result-operation-1"
-	link, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey)
-	if err != nil || link != shareURI {
-		t.Fatalf("one-time link = %q, err=%v", link, err)
-	}
-	if replay, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err != nil || replay != shareURI {
-		t.Fatalf("replayed one-time link = %q, err=%v", replay, err)
-	}
-	if err := store.AcknowledgeApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err == nil {
-		t.Fatal("acknowledged one-time link remained available")
-	}
+	assertRetiredProxyCommandChannel(t, store, node.ID)
 }
 
-func TestRealityCommandAllocatesRandomHostnameInsideSingleConnectionTransaction(t *testing.T) {
+func TestRetiredRealityCommandAllocatesRandomHostnameInsideSingleConnectionTransaction(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -191,8 +199,5 @@ func TestRealityCommandAllocatesRandomHostnameInsideSingleConnectionTransaction(
 	if _, err := createVerifiedRealityCommand(t, store, deadline, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Random", ClientName: "MacBook", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"}); err != nil {
 		t.Fatalf("random hostname allocation blocked inside the command transaction: %v", err)
 	}
-	task := claimTask(t, store, node)
-	if task.ApplicationCommand == nil || !strings.HasSuffix(task.ApplicationCommand.ConnectHostname, ".example.test") {
-		t.Fatalf("random connection hostname = %#v", task.ApplicationCommand)
-	}
+	assertRetiredProxyCommandChannel(t, store, node.ID)
 }
