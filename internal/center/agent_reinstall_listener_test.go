@@ -2,8 +2,6 @@ package center
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -14,23 +12,14 @@ func reinstallListenerFixture(t *testing.T, publicExit ...string) (*Store, Agent
 	t.Helper()
 	s, node, input := reinstallRuntimeNetworkFixture(t, true, publicExit...)
 	ctx := context.Background()
-	if _, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatalf("runtime claim: %v", err)
-	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response != nil {
-		t.Fatal(response)
-	}
+	seedSuccessfulHistoricalRuntime(t, s, node, input)
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err = s.db.Exec(`INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,status,created_at,updated_at)
+	if _, err := s.db.Exec(`INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,status,created_at,updated_at)
  VALUES('restored-entry','restore-service','public_shared_443','application_node',?,'entry.example.test','www.example.com','manual','degraded',?,?)`, node.ID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	// The replacement must not inherit an old applied revision or attempt.
-	if _, err = s.db.Exec(`INSERT INTO node_listener_states(node_id,desired_revision,applied_revision,desired_json,status,attempt,updated_at) VALUES(?,4,4,'{}','ready',2,?)`, node.ID, now); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO node_listener_states(node_id,desired_revision,applied_revision,desired_json,status,attempt,updated_at) VALUES(?,4,4,'{}','ready',2,?)`, node.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
@@ -41,17 +30,7 @@ func reinstallListenerFixture(t *testing.T, publicExit ...string) (*Store, Agent
 	return s, node, input
 }
 
-func submitReinstallListener(t *testing.T, s *Store, node AgentCredential, task *AgentTask, succeeded bool) error {
-	t.Helper()
-	ctx := context.Background()
-	if err := s.StartExecution(ctx, node.ID, "package-preparation-session", task.Authorization.ID, task.Authorization.Digest); err != nil {
-		t.Fatal(err)
-	}
-	payload, _ := json.Marshal(map[string]any{"executionId": task.Authorization.ID, "sessionId": "package-preparation-session", "attempt": task.Attempt, "succeeded": succeeded, "result": json.RawMessage(`{}`)})
-	return completeAgentTaskGRPCTest(context.Background(), s, node, task.ID, payload)
-}
-
-func TestAgentReinstallListenerRestoresOnlyReviewedEntry(t *testing.T) {
+func TestArchivedListenerIntentDoesNotRestoreRetiredEntry(t *testing.T) {
 	s, node, input := reinstallListenerFixture(t)
 	ctx := context.Background()
 	receipt, err := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input)
@@ -66,19 +45,16 @@ func TestAgentReinstallListenerRestoresOnlyReviewedEntry(t *testing.T) {
 	if err != nil || len(plan.UnclaimedLocalWork) != 0 {
 		t.Fatalf("new listener was offered as old work: %+v %v", plan.UnclaimedLocalWork, err)
 	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil || task.NodeListenerState == nil {
-		t.Fatalf("claim: %+v %v", task, err)
-	}
+	task := archivedListenerTask(t, s, node, receipt.TaskID)
 	state := task.NodeListenerState
 	if task.Revision != 5 || task.Attempt != 3 || state.Listener.Address != "10.0.0.8" || len(state.Listener.Routes) != 1 || state.Listener.Routes[0].ID != "restored-entry" || state.Listener.Routes[0].Hostname != "www.example.com" || state.Listener.Routes[0].Upstreams[0].Address != "10.0.0.8" || state.Listener.Routes[0].ProxyProtocol != "v2" {
 		t.Fatalf("wrong restored listener: %+v", state)
 	}
-	if response := submitReinstallListener(t, s, node, task, true); response != nil {
-		t.Fatal(response)
+	if err := s.completeNodeListenerState(ctx, commitProjectionOnlyForTest, node.ID, task.Revision, task.Attempt, true, ""); err == nil {
+		t.Fatal("retired listener result projected")
 	}
 	plan, err = s.AgentReinstallPlan(ctx, node.ID)
-	if err != nil || plan.Applications[0].Preparation.Listener.State != "succeeded" || plan.Recovery.State != "review_required" {
+	if err != nil || plan.Applications[0].Preparation != nil || readHistoricalReinstallPreparation(t, s, node, input).Listener.State != "pending" || plan.Recovery.State != "review_required" {
 		t.Fatalf("receipt: %+v %v", plan.Recovery, err)
 	}
 	var address, status string
@@ -105,7 +81,7 @@ func TestAgentReinstallListenerRestoresOnlyReviewedEntry(t *testing.T) {
 	}
 	defer s.Close()
 	same, err = s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input)
-	if err != nil || same.TaskID != receipt.TaskID || same.State != "succeeded" {
+	if err != nil || same.TaskID != receipt.TaskID || same.State != "pending" {
 		t.Fatalf("restart: %+v %v", same, err)
 	}
 }
@@ -116,14 +92,26 @@ func TestAgentReinstallListenerRejectsChangedAuthority(t *testing.T) {
 			t.Run(at+"/"+mode, func(t *testing.T) {
 				s, node, input := reinstallListenerFixture(t)
 				ctx := context.Background()
-				if _, err := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input); err != nil {
-					t.Fatal(err)
+				receipt, queueErr := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input)
+				if queueErr != nil {
+					t.Fatal(queueErr)
 				}
 				var task *AgentTask
 				var err error
 				if at == "result" {
-					task, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
+					tx, beginErr := s.db.BeginTx(ctx, nil)
+					if beginErr != nil {
+						t.Fatal(beginErr)
+					}
+					task, err = s.reinstallListenerTask(ctx, tx, node.ID, receipt.TaskID, false)
+					_ = tx.Rollback()
 					if err != nil || task == nil {
+						t.Fatal(err)
+					}
+					if _, err = s.db.Exec(`UPDATE node_listener_states SET status='applying',attempt=? WHERE node_id=?`, task.Attempt, node.ID); err != nil {
+						t.Fatal(err)
+					}
+					if _, err = s.db.Exec(`UPDATE agent_reinstall_app_preparations SET listener_state='running' WHERE listener_task_id=?`, receipt.TaskID); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -159,7 +147,7 @@ func TestAgentReinstallListenerRejectsChangedAuthority(t *testing.T) {
 						t.Fatalf("changed authority claimed: %+v %v", task, err)
 					}
 				} else {
-					if response := submitReinstallListener(t, s, node, task, true); response == nil {
+					if err := s.completeNodeListenerState(ctx, commitProjectionOnlyForTest, node.ID, task.Revision, task.Attempt, true, ""); err == nil {
 						t.Fatal("changed authority projected")
 					}
 				}
@@ -218,35 +206,43 @@ func TestAgentReinstallListenerRequiresCurrentReviewAndCompleteSharedBackend(t *
 	}
 }
 
-func TestAgentReinstallListenerFailureAndLostResultNeverReplay(t *testing.T) {
+func TestArchivedListenerFailureAndLostResultNeverReplay(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "expired", true: "failed"}[failed], func(t *testing.T) {
 			s, node, input := reinstallListenerFixture(t)
+			defer s.Close()
 			ctx := context.Background()
-			if _, err := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input); err != nil {
+			receipt, err := s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input)
+			if err != nil {
 				t.Fatal(err)
 			}
-			task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-			if err != nil || task == nil {
-				t.Fatal(err)
-			}
-			expected := "needs_review"
+			task := archivedListenerTask(t, s, node, receipt.TaskID)
+			state, expected := "running", "needs_review"
 			if failed {
-				expected = "failed"
-				if response := submitReinstallListener(t, s, node, task, false); response != nil {
-					t.Fatal(response)
-				}
-			} else {
-				if _, err = s.db.Exec(`UPDATE node_listener_states SET lease_expires_at=''`); err != nil {
-					t.Fatal(err)
-				}
+				state, expected = "failed", "failed"
+			}
+			// Anonymous pre-upgrade outcome, never a newly executed task.
+			if _, err = s.db.Exec(`UPDATE agent_reinstall_app_preparations SET listener_state=? WHERE listener_task_id=?`, state, receipt.TaskID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = s.db.Exec(`UPDATE node_listener_states SET status='applying',attempt=?,lease_expires_at='' WHERE node_id=?`, task.Attempt, node.ID); err != nil {
+				t.Fatal(err)
 			}
 			plan, err := s.AgentReinstallPlan(ctx, node.ID)
-			if err != nil || plan.Applications[0].Preparation.Listener.State != expected {
-				t.Fatalf("missing durable outcome: %v", err)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if _, err = s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0); !errors.Is(err, errExecutionBlocked) {
+			if plan.Applications[0].Preparation != nil || readHistoricalReinstallPreparation(t, s, node, input).Listener.State != expected {
+				t.Fatal("historical outcome lost or exposed as current recovery")
+			}
+			if next, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0); next != nil || !errors.Is(err, errExecutionBlocked) {
 				t.Fatalf("replayed: %v", err)
+			}
+			if err := s.completeNodeListenerState(ctx, commitProjectionOnlyForTest, node.ID, task.Revision, task.Attempt, true, ""); err == nil {
+				t.Fatal("late obsolete listener result accepted")
+			}
+			if readHistoricalReinstallPreparation(t, s, node, input).Listener.State != expected {
+				t.Fatal("late result changed history")
 			}
 		})
 	}
@@ -259,11 +255,14 @@ func TestAgentReinstallListenerFinalSealingAndOldWorkSettlementCannotReplaceTask
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.claimNextTask(ctx, node.ID, node.Credential, "", func(tx *sql.Tx, task *AgentTask) error {
-		task.NodeListenerState.Listener.Address = "127.0.0.1"
-		_, err := s.persistExecutionAuthorization(ctx, tx, node.ID, "package-preparation-session", *task)
-		return err
-	})
+	archived := archivedListenerTask(t, s, node, receipt.TaskID)
+	sealingTx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archived.NodeListenerState.Listener.Address = "127.0.0.1"
+	_, err = s.persistExecutionAuthorization(ctx, sealingTx, node.ID, "package-preparation-session", *archived)
+	_ = sealingTx.Rollback()
 	if err == nil {
 		t.Fatal("changed payload sealed")
 	}
@@ -284,16 +283,7 @@ func TestAgentReinstallListenerFinalSealingAndOldWorkSettlementCannotReplaceTask
 func TestAgentReinstallListenerMissingPublicApprovalStopsBeforeQueue(t *testing.T) {
 	s, node, input := reinstallRuntimeFixture(t)
 	ctx := context.Background()
-	if _, err := s.QueueAgentReinstallRuntime(ctx, node.ID, "reinstall-review-admin", input); err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.claimExecutionTask(ctx, node.ID, node.Credential, "package-preparation-session", 0)
-	if err != nil || task == nil {
-		t.Fatal(err)
-	}
-	if response := submitRestoredRuntime(t, s, node, task, true, true); response != nil {
-		t.Fatal(response)
-	}
+	seedSuccessfulHistoricalRuntime(t, s, node, input)
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -302,4 +292,18 @@ func TestAgentReinstallListenerMissingPublicApprovalStopsBeforeQueue(t *testing.
 	if _, err = s.QueueAgentReinstallListener(ctx, node.ID, "reinstall-review-admin", input); err == nil || !strings.Contains(err.Error(), "public ingress") {
 		t.Fatalf("missing ingress approval: %v", err)
 	}
+}
+
+func archivedListenerTask(t *testing.T, s *Store, node AgentCredential, taskID string) *AgentTask {
+	t.Helper()
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	task, err := s.reinstallListenerTask(context.Background(), tx, node.ID, taskID, false)
+	if err != nil || task == nil {
+		t.Fatalf("archived listener: %v", err)
+	}
+	return task
 }

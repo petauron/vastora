@@ -22,13 +22,15 @@ import (
 )
 
 type nodeSiteJournal struct {
-	Runtime     int           `json:"runtime,omitempty"`
-	Task        nodesite.Task `json:"task"`
-	State       string        `json:"state"`
-	Previous    []byte        `json:"previous"`
-	Candidate   []byte        `json:"candidate"`
-	Fingerprint string        `json:"fingerprint"`
-	NotAfter    string        `json:"notAfter"`
+	CompletedMigration *nodesite.Task `json:"completedMigration,omitempty"`
+	MigrationPrevious  []byte         `json:"migrationPrevious,omitempty"`
+	Runtime            int            `json:"runtime,omitempty"`
+	Task               nodesite.Task  `json:"task"`
+	State              string         `json:"state"`
+	Previous           []byte         `json:"previous"`
+	Candidate          []byte         `json:"candidate"`
+	Fingerprint        string         `json:"fingerprint"`
+	NotAfter           string         `json:"notAfter"`
 }
 type nodeSiteHost struct{ site CaddySite }
 
@@ -200,9 +202,17 @@ func (s *Store) recoverNodeSiteJournals(ctx context.Context, resolve func(contex
 func (s *Store) executeNodeSite(ctx context.Context, task nodesite.Task) (nodesite.Result, error) {
 	s.landingMutationMu.Lock()
 	defer s.landingMutationMu.Unlock()
+	return s.executeNodeSiteLocked(ctx, task)
+}
+
+// The application lifecycle already owns landingMutationMu through persistence.
+func (s *Store) executeNodeSiteLocked(ctx context.Context, task nodesite.Task) (nodesite.Result, error) {
 	host, err := s.nodeSiteHost(ctx, task)
 	if err != nil {
 		return nodesite.Result{}, err
+	}
+	if task.PreviousHostname != "" {
+		return s.executeWebsiteMigration(ctx, task, host)
 	}
 	if host.site.Hostname != task.Hostname {
 		return nodesite.Result{}, errors.New("agent: website hostname differs from the installed package")
@@ -210,7 +220,7 @@ func (s *Store) executeNodeSite(ctx context.Context, task nodesite.Task) (nodesi
 	return s.executeNodeSiteOnHost(ctx, task, host)
 }
 func (s *Store) executeNodeSiteOnHost(ctx context.Context, task nodesite.Task, host nodeSiteHost) (nodesite.Result, error) {
-	result := nodesite.Result{Action: task.Action, Revision: task.Revision, Hostname: task.Hostname}
+	result := nodesite.Result{Action: task.Action, Revision: task.Revision, Hostname: task.Hostname, TLSLoopbackOnly: task.TLSLoopbackOnly}
 	journal, journalErr := s.readNodeSiteJournal(ctx, task.ApplicationID)
 	if journalErr != nil && !errors.Is(journalErr, sql.ErrNoRows) {
 		return result, journalErr
@@ -227,7 +237,7 @@ func (s *Store) executeNodeSiteOnHost(ctx context.Context, task nodesite.Task, h
 		return result, err
 	}
 	if task.Action == "inspect" {
-		if journalErr != nil || journal.Task.Revision != task.Revision || journal.Task.Port != task.Port {
+		if journalErr != nil || journal.Task.Revision != task.Revision || journal.Task.Port != task.Port || journal.Task.TLSLoopbackOnly != task.TLSLoopbackOnly {
 			return result, errors.New("agent: website inspection revision is not installed")
 		}
 		result.State, result.Fingerprint, result.NotAfter = journal.State, journal.Fingerprint, journal.NotAfter
@@ -250,7 +260,7 @@ func (s *Store) executeNodeSiteOnHost(ctx context.Context, task nodesite.Task, h
 		return result, err
 	}
 	fingerprint := nodesite.Fingerprint(leaf.Raw)
-	if journalErr == nil && journal.Task.Revision == task.Revision && journal.Fingerprint != fingerprint {
+	if journalErr == nil && journal.Task.Revision == task.Revision && (journal.Fingerprint != fingerprint || journal.Task.TLSLoopbackOnly != task.TLSLoopbackOnly) {
 		return result, errors.New("agent: node site revision content changed")
 	}
 	if journalErr == nil && journal.Runtime == 2 && journal.Task.Revision == task.Revision {
@@ -270,6 +280,10 @@ func (s *Store) executeNodeSiteOnHost(ctx context.Context, task nodesite.Task, h
 	}
 	candidate := host.site
 	candidate.TLSPort, candidate.Certificate = task.Port, certificate
+	candidate.TLSLoopbackOnly = task.TLSLoopbackOnly
+	if candidate.PublicListen == "" {
+		candidate.PublicListen = previous.PublicListen
+	}
 	previousBytes, _ := json.Marshal(previous)
 	candidateBytes, _ := json.Marshal(candidate)
 	journal = nodeSiteJournal{Runtime: 2, Task: task, State: "applying", Previous: previousBytes, Candidate: candidateBytes, Fingerprint: fingerprint, NotAfter: leaf.NotAfter.UTC().Format(time.RFC3339Nano)}

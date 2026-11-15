@@ -108,6 +108,16 @@ func (b *senlunNativePackageBackend) Prepare(ctx context.Context, task Deploymen
 	if json.Unmarshal(task.Secrets, &secrets) != nil {
 		return errors.New("agent: invalid Senlun inputs")
 	}
+	if task.SenulunRestore != nil {
+		if task.Operation != "install" || task.SenulunRestore.Validate() != nil || secrets["existing_identity"] != "" || secrets["enrollment_token"] != "" || receipt != nil && len(receipt.Resources) != 0 {
+			return errors.New("agent: invalid Senlun native restoration")
+		}
+		var err error
+		b.identity, err = json.Marshal(map[string]any{"protocol_version": 2, "service_url": b.serviceURL, "node_id": task.SenulunRestore.NodeID, "agent_token": task.SenulunRestore.Token})
+		if err != nil {
+			return err
+		}
+	}
 	if b.permitsMigration(task, receipt) {
 		if secrets["existing_identity"] != "" {
 			return errors.New("agent: an upgrade cannot replace the installed Senlun identity")

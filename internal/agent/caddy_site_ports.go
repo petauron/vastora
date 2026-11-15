@@ -38,6 +38,27 @@ func (provisioner DockerGatewayProvisioner) ReconcileWebsites(ctx context.Contex
 }
 
 func addWebsiteDockerPorts(exposed dockernetwork.PortSet, bindings dockernetwork.PortMap, desired gateway.DesiredState, sites []CaddySite) error {
+	delegated, err := delegatedWebsiteSockets(desired, sites)
+	if err != nil {
+		return err
+	}
+	for port, values := range bindings {
+		if port.Proto() != "tcp" {
+			continue
+		}
+		retained := values[:0]
+		for _, v := range values {
+			if !delegated[net.JoinHostPort(v.HostIP.String(), v.HostPort)] {
+				retained = append(retained, v)
+			}
+		}
+		if len(retained) == 0 {
+			delete(bindings, port)
+			delete(exposed, port)
+		} else {
+			bindings[port] = retained
+		}
+	}
 	for _, site := range sites {
 		if err := site.validate(); err != nil {
 			return err
@@ -47,7 +68,7 @@ func addWebsiteDockerPorts(exposed dockernetwork.PortSet, bindings dockernetwork
 			port    int
 			public  bool
 		}{{site.Address, site.HTTPPort, false}, {"127.0.0.1", site.TLSPort, false}}
-		if site.TLSPort != 0 && site.PublicListen != "" {
+		if site.TLSPort != 0 && site.PublicListen != "" && !site.TLSLoopbackOnly {
 			address, _, _ := net.SplitHostPort(site.PublicListen)
 			endpoints = append(endpoints, struct {
 				address string
@@ -71,6 +92,9 @@ func addWebsiteDockerPorts(exposed dockernetwork.PortSet, bindings dockernetwork
 			port := dockernetwork.MustParsePort(strconv.Itoa(endpoint.port) + "/tcp")
 			binding := dockernetwork.PortBinding{HostIP: address.Unmap(), HostPort: strconv.Itoa(endpoint.port)}
 			for existingPort, values := range bindings {
+				if existingPort.Proto() != port.Proto() {
+					continue
+				}
 				for _, existing := range values {
 					if existing.HostIP == binding.HostIP && existing.HostPort == binding.HostPort && existingPort != port {
 						return errors.New("agent: website conflicts with a gateway listener")

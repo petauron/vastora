@@ -22,7 +22,6 @@ import (
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/hostservice"
-	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/tailscalehost"
 	"github.com/sethvargo/go-retry"
@@ -599,6 +598,11 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return err
 		}
+		stopBudget, budgetErr := store.StartTCPBudget()
+		if budgetErr != nil {
+			fmt.Fprintln(os.Stderr, "Agent host TCP budget operation unavailable")
+		}
+		defer stopBudget()
 		client := agent.Client{Roles: roles, Capabilities: capabilities, TailscaleEnrolled: hostState.TailscaleEnrolled, TailscaleOwnership: hostState.TailscaleOwnership}
 		closeCenterSession := client.UseCenterGRPCSession()
 		defer closeCenterSession()
@@ -631,7 +635,6 @@ func runAgent(arguments []string) error {
 			if !capabilities.LandingOnly && !hostState.TailscaleEnrolled && hostState.TailscaleOwnership == "none" {
 				client.OSReinstaller = osReinstallerForHost(*dataDir, executable)
 			}
-			client.LandingServer = agent.NativeLandingServer{}
 		}
 		if !capabilities.LandingOnly {
 			client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}, Store: store}
@@ -643,11 +646,8 @@ func runAgent(arguments []string) error {
 		client.Capabilities.BandwidthDiagnostics = !capabilities.LandingOnly && runtime.GOOS == "linux" && iperfErr == nil
 		client.Capabilities.NativeEgress = (capabilities.Docker || capabilities.LandingOnly) && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.LandingEgressIP = runtime.GOOS == "linux" && os.Geteuid() == 0
-		client.Capabilities.MeridianLinkBandwidth = capabilities.Docker && runtime.GOOS == "linux"
-		client.Capabilities.MeridianLinkRevision = nodediagnostics.LinkBandwidthRevision
 		client.Capabilities.SenulunInspection = capabilities.Docker && runtime.GOOS == "linux"
 		client.Capabilities.SenulunRotation = client.Capabilities.SenulunInspection
-		client.Capabilities.MeridianAcceptance = client.Capabilities.Docker
 		client.Capabilities.SenulunReporting = client.Capabilities.SenulunInspection
 		client.Capabilities.SenulunRestore = capabilities.Docker && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.HostProfile = !capabilities.LandingOnly && runtime.GOOS == "linux"
@@ -657,8 +657,22 @@ func runAgent(arguments []string) error {
 		if capabilities.Docker {
 			client.NodeListener = agent.DockerLayer4Provisioner{Image: *haproxyImage}
 		}
+		nativeWebsiteRuntime := false
+		if runtime.GOOS == "linux" && os.Geteuid() == 0 {
+			nativeWebsiteRuntime, err = agent.NativeCaddyRuntimeConfigured(*dataDir)
+			if err != nil {
+				return err
+			}
+		}
 		if capabilities.Gateway {
-			caddyDriver, err := agent.NewCaddyGatewayDriver(*caddyAdmin)
+			admin := *caddyAdmin
+			if nativeWebsiteRuntime {
+				admin, err = agent.NativeCaddyAdminURL()
+				if err != nil {
+					return err
+				}
+			}
+			caddyDriver, err := agent.NewCaddyGatewayDriver(admin)
 			if err != nil {
 				return err
 			}
@@ -667,21 +681,29 @@ func runAgent(arguments []string) error {
 			caddyDriver.SystemGateway = caddyProvisioner
 			caddyDriver.SiteContainer = true
 			caddyDriver.SiteRuntime = caddyProvisioner.ReconcileWebsites
+			var gatewayProvisioner agent.GatewayProvisioner = caddyProvisioner
+			var runtimeProvisioner agent.GatewayRuntimeProvisioner = caddyProvisioner
+			if nativeWebsiteRuntime {
+				provisioner := agent.NativeCaddySiteRuntime{StateDirectory: *dataDir, Sites: store.SharedCaddySites}
+				caddyDriver.SystemGateway, caddyDriver.SiteContainer = nil, false
+				caddyDriver.SiteRuntime, caddyDriver.SiteIdle = provisioner.ReconcileWebsites, provisioner.Idle
+				gatewayProvisioner, runtimeProvisioner = provisioner, provisioner
+			}
 			layer4 := agent.DockerLayer4Provisioner{Image: *haproxyImage}
-			managedDriver := &agent.ManagedGatewayDriver{Caddy: caddyDriver, Layer4: layer4, Runtime: caddyProvisioner}
+			managedDriver := &agent.ManagedGatewayDriver{Caddy: caddyDriver, Layer4: layer4, Runtime: runtimeProvisioner}
 			if err := store.ConfigureManagedCaddy(managedDriver); err != nil {
 				return err
 			}
 			client.GatewayDriver = managedDriver
 			client.GatewayProvisioner = agent.ManagedGatewayProvisioner{
-				Caddy:  caddyProvisioner,
+				Caddy:  gatewayProvisioner,
 				Layer4: layer4,
 				Driver: managedDriver,
 			}
 		}
 		if !capabilities.Gateway && runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			admin := *caddyAdmin
-			if !capabilities.Docker {
+			if !capabilities.Docker || nativeWebsiteRuntime {
 				var err error
 				admin, err = agent.NativeCaddyAdminURL()
 				if err != nil {
@@ -692,7 +714,7 @@ func runAgent(arguments []string) error {
 			if err != nil {
 				return err
 			}
-			if capabilities.Docker {
+			if capabilities.Docker && !nativeWebsiteRuntime {
 				provisioner := agent.DockerGatewayProvisioner{Image: *caddyImage, AdminListen: driver.AdminListen, AdminSocketPath: driver.AdminSocketPath, Sites: store.SharedCaddySites}
 				driver.SystemGateway, driver.SiteRuntime, driver.SiteContainer = provisioner, provisioner.ReconcileWebsites, true
 				driver.SiteIdle = provisioner.Remove
@@ -733,6 +755,7 @@ func runAgent(arguments []string) error {
 				cancel()
 				if err != nil {
 					controlLogger.Error("Gateway startup network recovery failed", "event", "gateway.startup_network", "error", controlplane.SafeError(err.Error()))
+					go retryStartupRuntimeRecovery(context.Background(), store, controlLogger)
 				}
 			}
 			// Glivela resumes its own proxy processes. Agent reconnection must
@@ -745,9 +768,6 @@ func runAgent(arguments []string) error {
 				}
 				time.Sleep(time.Second)
 			}
-			go client.RunLandingLatencyChecks(context.Background(), store, func(err error) {
-				controlLogger.Error("Landing latency report failed", "event", "landing.latency", "error", controlplane.SafeError(err.Error()))
-			})
 			go client.RunHeartbeats(context.Background(), store, *heartbeatInterval, func(err error) {
 				controlLogger.Error("Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
 			})

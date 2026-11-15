@@ -68,6 +68,18 @@ func dnsTaskID(publicationID string, revision int64) string {
 }
 
 func (s *Store) publicationDNSRecord(ctx context.Context, publication PublicationView) (*DNSRecordInstruction, error) {
+	var managedDomainID string
+	if err := s.db.QueryRowContext(ctx, `SELECT managed_domain_id FROM publications WHERE id=?`, publication.ID).Scan(&managedDomainID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if managedDomainID != "" {
+		resource, err := s.ManagedDomain(ctx, managedDomainID)
+		if err != nil {
+			return nil, err
+		}
+		return publicationAddressDNSRecord(resource.Hostname, resource.Address)
+	}
+
 	record := &DNSRecordInstruction{Name: publication.Hostname}
 	var address string
 	var err error

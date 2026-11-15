@@ -1,9 +1,10 @@
+import type { ManagedDomain, ManagedDomainInput } from "./managed-domain-types";
 import type { NodeSiteCertificate, NodeSiteCertificateInput } from "./node-site-types";
 type OSReinstallTask = { id: string; agentId: string; state: "pending" | "running" | "backup_ready" | "armed" | "succeeded" | "failed" | "unknown" | "cancelled"; error?: string; canRecheck: boolean; updatedAt: string };
 import type { SSHProtectionInventory } from "./node-ssh-protection-types";
 import type { ReinstallCurrentMaterial, ReinstallCurrentVerification } from "./types";
 import type { ReinstallClientCheck, ReinstallClientCheckInput } from "./reinstall-acceptance-types";
-import type { Action, AgentReinstallLandingSource, AgentReinstallDNS, AgentReinstallDNSInput, AgentReinstallAccess, AgentReinstallEntryCheck, AgentReinstallListener, AgentReinstallRuntime, AgentReinstallApplicationInput, AgentReinstallPreparation, AgentEnrollment, AgentReinstallPlan, AgentReinstallInput, AgentReinstallNetworkInput, AgentReinstallNetworkApproval, AgentReinstallLocalWorkInput, AgentReinstallLocalDisposition, AgentReinstallMonitorInput, AgentReinstallMonitorInspection, AgentReinstallMonitorRotation, AgentReinstallMonitorReporting, AgentReinstallMonitorRestore, AgentUpdate, AgentView, ApplicationCommand, ApplicationCommandKind, ApplicationCredentialRotation, ApplicationCredentials, AppView, Application, AssistantConversation, AssistantExecution, AssistantProvider, AssistantProposal, AssistantRun, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, CreatePublicationInput, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, RealitySecurityCheck, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration, XrayConfigurationRecovery } from "./types";
+import type { Action, AgentReinstallLandingSource, AgentReinstallDNS, AgentReinstallDNSInput, AgentReinstallAccess, AgentReinstallEntryCheck, AgentReinstallListener, AgentReinstallRuntime, AgentReinstallApplicationInput, AgentReinstallPreparation, AgentEnrollment, AgentReinstallPlan, AgentReinstallInput, AgentReinstallNetworkInput, AgentReinstallNetworkApproval, AgentReinstallLocalWorkInput, AgentReinstallLocalDisposition, AgentReinstallMonitorInput, AgentReinstallMonitorInspection, AgentReinstallMonitorRotation, AgentReinstallMonitorReporting, AgentReinstallMonitorRestore, AgentUpdate, AgentView, ApplicationCommand, ApplicationCommandKind, ApplicationCredentialRotation, ApplicationCredentials, AppView, Application, AssistantConversation, AssistantExecution, AssistantProvider, AssistantProposal, AssistantRun, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, AgentUpdatesStatus, AgentUpdatePushInput, AgentUpdatePushResult, CreatePublicationInput, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, RealitySecurityCheck, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
 import type { LandingView } from "./landing-types";
 import type { IPQualityPreferences, IPQualityResponse } from "./ip-quality-types";
@@ -93,9 +94,11 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
+  managedDomains: (applicationId: string, signal?: AbortSignal) => request<{ domains: ManagedDomain[] }>(`/api/v1/managed-domains?applicationId=${encodeURIComponent(applicationId)}`, { signal }),
+  ensureManagedDomain: (input: ManagedDomainInput) => request<ManagedDomain>("/api/v1/managed-domains", { method: "POST", body: JSON.stringify(input) }),
   nodeSiteCertificate: (id: string, signal?: AbortSignal) => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate`, { signal }),
   configureNodeSiteCertificate: (id: string, input: NodeSiteCertificateInput) => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate`, { method: "PUT", body: JSON.stringify(input) }),
-  nodeSiteCertificateAction: (id: string, action: "inspect" | "rollback" | "cancel") => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate/actions`, { method: "POST", body: JSON.stringify({ action }) }),
+  nodeSiteCertificateAction: (id: string, action: "inspect" | "rollback" | "cancel" | "accept-migration" | "cancel-migration") => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate/actions`, { method: "POST", body: JSON.stringify({ action }) }),
 
   nodeSSHProtection(applicationId: string, signal?: AbortSignal) {
     return request<SSHProtectionInventory>(`/api/v1/applications/${encodeURIComponent(applicationId)}/panel/v1/admin/business`, { method: "POST", body: "{}", signal });
@@ -118,9 +121,6 @@ export const api = {
   startOSReinstall: (id: string, input: { inspectionId: string; confirmDisk: string; username: string; sshPort: number; confirmErase: boolean }) => request<OSReinstallTask>(`/api/v1/agents/${encodeURIComponent(id)}/os-reinstall`, { method: "POST", body: JSON.stringify(input) }),
   checkNodeDiagnostic: (id: string, kind: NodeDiagnosticCheck["kind"], signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/node-diagnostics/${encodeURIComponent(kind)}`, { method: "POST", body: "{}", signal }),
   checkMeridianLinkBandwidth: (sourceNodeId: string, landingNodeId: string, signal?: AbortSignal) => request<{ queued: boolean }>("/api/v1/meridian/link-bandwidth", { method: "POST", body: JSON.stringify({ sourceNodeId, landingNodeId }), signal }),
-  xrayConfigurationRecovery: (id: string, signal?: AbortSignal) => request<{ recovery: XrayConfigurationRecovery | null }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery`, { signal }),
-  inspectXrayConfiguration: (id: string, signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery/inspect`, { method: "POST", body: "{}", signal }),
-  applyXrayConfigurationRecovery: (id: string, source: "runtime" | "agent_state", signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/xray-configuration-recovery/apply`, { method: "POST", body: JSON.stringify({ source }), signal }),
   executions: (before = 0, signal?: AbortSignal, filter: "all" | "attention" | "running" = "all") => request<ExecutionPage>(`/api/v1/executions?filter=${filter}${before ? `&before=${before}` : ""}`, { signal }),
   taskExecution: (taskId: string, signal?: AbortSignal) => request<ExecutionView>(`/api/v1/tasks/${encodeURIComponent(taskId)}/execution`, { signal }),
   executionClaimControl: (signal?: AbortSignal) => request<ExecutionClaimControl>("/api/v1/execution-claim-control", { signal }),
@@ -168,6 +168,8 @@ export const api = {
   status: (signal?: AbortSignal) => request<CenterStatus>("/api/v1/status", { signal }),
   centerUpdate: (refresh = false, signal?: AbortSignal) => request<CenterUpdateStatus>(`/api/v1/system/update${refresh ? "?refresh=true" : ""}`, { signal }),
   startCenterUpdate: () => request<CenterUpdateStatus>("/api/v1/system/update", { method: "POST", body: "{}" }),
+  agentUpdates: (signal?: AbortSignal) => request<AgentUpdatesStatus>("/api/v1/system/agent-updates", { signal }),
+  pushAgentUpdates: (input: AgentUpdatePushInput) => request<AgentUpdatePushResult>("/api/v1/system/agent-updates", { method: "POST", body: JSON.stringify(input) }),
   systemDomain: (signal?: AbortSignal) => request<SystemDomain>("/api/v1/system/domain", { signal }),
   switchSystemDomain: (zoneId: string) => request<SystemDomainSwitchResult>("/api/v1/system/domain", { method: "POST", body: JSON.stringify({ zoneId, confirm: true }) }),
   retireSystemDomainAliases: (transitionId: string) => request<SystemDomain>(`/api/v1/system/domain/aliases/${encodeURIComponent(transitionId)}/retire`, { method: "POST", body: "{}" }),
@@ -205,7 +207,7 @@ export const api = {
   rotateAgentReinstallMonitor: (agentId: string, input: AgentReinstallMonitorInput) => request<AgentReinstallMonitorRotation>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-monitor/rotate`, { method: "POST", body: JSON.stringify(input) }),
   inspectAgentReinstallMonitor: (agentId: string, input: AgentReinstallMonitorInput) => request<AgentReinstallMonitorInspection>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-monitor/inspect`, { method: "POST", body: JSON.stringify(input) }),
   settleAgentReinstallLocalWork: (agentId: string, input: AgentReinstallLocalWorkInput) => request<AgentReinstallLocalDisposition>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-work/settle`, { method: "POST", body: JSON.stringify(input) }),
-  continueAgentReinstallIsolation: (agentId: string, input: { operationId: string; expectedAttempt: number; confirmIsolation: boolean }) => request<AgentEnrollment>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-isolation/continue`, { method: "POST", body: JSON.stringify(input) }),
+  continueAgentReinstallIsolation: (agentId: string, input: { operationId: string; expectedAttempt: number; confirmIsolation: boolean; previousPeerId?: string; previousPeerKey?: string; confirmPreviousPeer?: boolean }) => request<AgentEnrollment>(`/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-isolation/continue`, { method: "POST", body: JSON.stringify(input) }),
   deployments: (signal?: AbortSignal) => inventory<"deployments", Deployment>("/api/v1/deployments", "deployments", signal),
 	sites: (signal?: AbortSignal) => inventory<"sites", Site>("/api/v1/sites", "sites", signal),
 	organizations: (signal?: AbortSignal) => request<{ organizations: Organization[] }>("/api/v1/organizations", { signal }),

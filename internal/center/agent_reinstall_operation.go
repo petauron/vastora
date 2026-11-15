@@ -20,9 +20,12 @@ type AgentReinstallInput struct {
 }
 
 type AgentReinstallContinueInput struct {
-	OperationID      string `json:"operationId"`
-	ExpectedAttempt  int    `json:"expectedAttempt"`
-	ConfirmIsolation bool   `json:"confirmIsolation"`
+	OperationID         string `json:"operationId"`
+	ExpectedAttempt     int    `json:"expectedAttempt"`
+	ConfirmIsolation    bool   `json:"confirmIsolation"`
+	PreviousPeerID      string `json:"previousPeerId,omitempty"`
+	PreviousPeerKey     string `json:"previousPeerKey,omitempty"`
+	ConfirmPreviousPeer bool   `json:"confirmPreviousPeer,omitempty"`
 }
 
 type AgentReinstallOperation struct {
@@ -76,6 +79,11 @@ func (s *Store) ContinueAgentReinstallIsolation(ctx context.Context, agentID, ad
 	defer s.agentReinstallMu.Unlock()
 	if !input.ConfirmIsolation || input.ExpectedAttempt < 1 {
 		return AgentEnrollment{}, errors.New("center: explicitly confirm private identity inspection before continuing")
+	}
+	if input.PreviousPeerID != "" || input.PreviousPeerKey != "" || input.ConfirmPreviousPeer {
+		if err := s.reviewReinstallPreviousPeer(ctx, agentID, adminID, input); err != nil {
+			return AgentEnrollment{}, err
+		}
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE agent_reinstall_operations SET state='preparing',attempt=attempt+1,last_error='',updated_at=?
  WHERE id=? AND agent_id=? AND authorized_by=? AND attempt=? AND state IN ('preparing','failed') AND private_isolation='pending'

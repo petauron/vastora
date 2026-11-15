@@ -140,8 +140,13 @@ func gatewayBindStartFailed(current client.ContainerInspectResult) bool {
 	}
 	for _, bindings := range value.HostConfig.PortBindings {
 		for _, bind := range bindings {
-			if bind.HostIP.IsValid() && !bind.HostIP.IsUnspecified() &&
-				strings.Contains(value.State.Error, "failed to bind host port "+net.JoinHostPort(bind.HostIP.String(), bind.HostPort)+"/") {
+			if !bind.HostIP.IsValid() || bind.HostIP.IsUnspecified() {
+				continue
+			}
+			address := net.JoinHostPort(bind.HostIP.String(), bind.HostPort)
+			if strings.Contains(value.State.Error, "failed to bind host port "+address+"/") ||
+				strings.Contains(value.State.Error, "Error starting userland proxy: listen tcp4 "+address+": bind: cannot assign requested address") ||
+				strings.Contains(value.State.Error, "Error starting userland proxy: listen tcp6 "+address+": bind: cannot assign requested address") {
 				return true
 			}
 		}

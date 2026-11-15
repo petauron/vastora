@@ -168,6 +168,7 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	CurrentRecoveryResume     bool                                 `json:"currentRecoveryResume,omitempty"`
 	NodeSite                  *nodesite.Task                       `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`

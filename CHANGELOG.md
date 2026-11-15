@@ -1,5 +1,331 @@
 # Changelog
 
+## [0.1.0-alpha.468](https://github.com/petauron/vastora/compare/v0.1.0-alpha.467...v0.1.0-alpha.468) (2026-11-15)
+
+
+### Bug Fixes
+
+* **agent:** recover gateway userland proxy bind failures ([#1340](https://github.com/petauron/vastora/issues/1340)) ([3500542](https://github.com/petauron/vastora/commit/3500542c4d29c3826d2bf58fadcc2604093341e5))
+
+## [0.1.0-alpha.467](https://github.com/petauron/vastora/compare/v0.1.0-alpha.466...v0.1.0-alpha.467) (2026-11-15)
+
+
+### Bug Fixes
+
+* **center:** recognize node panel ownership in backup validation ([#1337](https://github.com/petauron/vastora/issues/1337)) ([e4efa89](https://github.com/petauron/vastora/commit/e4efa8960f415a1bb6d378b1ff55c746bb49b517))
+
+## [0.1.0-alpha.466](https://github.com/petauron/vastora/compare/v0.1.0-alpha.465...v0.1.0-alpha.466) (2026-11-15)
+
+
+### Bug Fixes
+
+* **center:** clean retired Meridian projections without losing disposed audits ([#1333](https://github.com/petauron/vastora/issues/1333)) ([685c182](https://github.com/petauron/vastora/commit/685c182240e23a9ceb16f38c372c12f62c6c7bc2))
+
+## [0.1.0-alpha.465](https://github.com/petauron/vastora/compare/v0.1.0-alpha.464...v0.1.0-alpha.465) (2026-11-15)
+
+
+### Bug Fixes
+
+* **web:** recognize the TCP budget grant on restricted native nodes ([#1324](https://github.com/petauron/vastora/issues/1324)) ([2bcab25](https://github.com/petauron/vastora/commit/2bcab25b911d558ffd4686ecb1091ae6d4bc759a))
+
+## [0.1.0-alpha.464](https://github.com/petauron/vastora/compare/v0.1.0-alpha.463...v0.1.0-alpha.464) (2026-11-15)
+
+
+### Bug Fixes
+
+* **retirement:** recognize retained legacy entry owners ([#1328](https://github.com/petauron/vastora/issues/1328)) ([c4a0931](https://github.com/petauron/vastora/commit/c4a0931cf4a3ef5e56596ea5f81e951935999307))
+
+## [0.1.0-alpha.463](https://github.com/petauron/vastora/compare/v0.1.0-alpha.462...v0.1.0-alpha.463) (2026-11-15)
+
+
+### Bug Fixes
+
+* **center:** include retired deployment projection in scoped purge ([3ea5133](https://github.com/petauron/vastora/commit/3ea5133614d6d785f063d2663bf773563c9e8e69)), closes [#1321](https://github.com/petauron/vastora/issues/1321)
+
+## [0.1.0-alpha.462](https://github.com/petauron/vastora/compare/v0.1.0-alpha.461...v0.1.0-alpha.462) (2026-11-15)
+
+
+### Bug Fixes
+
+* **center:** purge superseded Meridian history without changing Glivela ([2da6dca](https://github.com/petauron/vastora/commit/2da6dca274aebe9441cdb2238d2ee6a01039cbf6)), closes [#1321](https://github.com/petauron/vastora/issues/1321)
+
+## [0.1.0-alpha.461](https://github.com/petauron/vastora/compare/v0.1.0-alpha.460...v0.1.0-alpha.461) (2026-11-15)
+
+
+### Bug Fixes
+
+* **apps:** exclude inactive legacy ingress alerts ([#1319](https://github.com/petauron/vastora/issues/1319)) ([d649624](https://github.com/petauron/vastora/commit/d6496240c60318ed00badea23a0bc9d86f7fc12f))
+
+## [0.1.0-alpha.460](https://github.com/petauron/vastora/compare/v0.1.0-alpha.459...v0.1.0-alpha.460) (2026-11-15)
+
+
+### Features
+
+* **agent:** authorize fixed TCP budgets for managed Glivela nodes ([#1313](https://github.com/petauron/vastora/issues/1313)) ([2b53d25](https://github.com/petauron/vastora/commit/2b53d2531673740d865e9b73f926a2c78c59b7d6))
+
+## [0.1.0-alpha.459](https://github.com/petauron/vastora/compare/v0.1.0-alpha.458...v0.1.0-alpha.459) (2026-11-15)
+
+
+### Bug Fixes
+
+* **apps:** show confirmed Daylight site readiness ([#1315](https://github.com/petauron/vastora/issues/1315)) ([8552b5c](https://github.com/petauron/vastora/commit/8552b5cb02183fa46487748dd4fff7bd7fd16c0c))
+
+## [0.1.0-alpha.458](https://github.com/petauron/vastora/compare/v0.1.0-alpha.457...v0.1.0-alpha.458) (2026-11-15)
+
+
+### Bug Fixes
+
+* **center:** reconcile stopped website attention state ([#1311](https://github.com/petauron/vastora/issues/1311)) ([c56ace7](https://github.com/petauron/vastora/commit/c56ace7e757fd3dd1475354885802793c02a55d8))
+
+## [0.1.0-alpha.457](https://github.com/petauron/vastora/compare/v0.1.0-alpha.456...v0.1.0-alpha.457) (2026-11-15)
+
+
+### Bug Fixes
+
+* **apps:** unify Daylight installation management ([#1308](https://github.com/petauron/vastora/issues/1308)) ([c392f7b](https://github.com/petauron/vastora/commit/c392f7b602aba605bf518b453e909cd7f5c7fb71))
+
+## [0.1.0-alpha.456](https://github.com/petauron/vastora/compare/v0.1.0-alpha.455...v0.1.0-alpha.456) (2026-11-15)
+
+
+### Bug Fixes
+
+* **apps:** count installed program versions only ([#1305](https://github.com/petauron/vastora/issues/1305)) ([7bb876d](https://github.com/petauron/vastora/commit/7bb876de01c910e38a2d4ac4f4d31499d7718a65))
+
+## [0.1.0-alpha.455](https://github.com/petauron/vastora/compare/v0.1.0-alpha.454...v0.1.0-alpha.455) (2026-11-15)
+
+
+### Bug Fixes
+
+* **apps:** show Glivela controller and node only ([#1303](https://github.com/petauron/vastora/issues/1303)) ([235626b](https://github.com/petauron/vastora/commit/235626b9b33ce873248fbc95a760a7c456f950d4))
+
+## [0.1.0-alpha.454](https://github.com/petauron/vastora/compare/v0.1.0-alpha.453...v0.1.0-alpha.454) (2026-11-14)
+
+
+### Bug Fixes
+
+* **center:** remove retired reinstall application references before owners ([#1299](https://github.com/petauron/vastora/issues/1299)) ([65eae68](https://github.com/petauron/vastora/commit/65eae68e28a40fa2f1f46a324027118c7476a556))
+
+## [0.1.0-alpha.453](https://github.com/petauron/vastora/compare/v0.1.0-alpha.452...v0.1.0-alpha.453) (2026-11-14)
+
+
+### Bug Fixes
+
+* **center:** correct removed entry history query grouping ([#1297](https://github.com/petauron/vastora/issues/1297)) ([2ff0973](https://github.com/petauron/vastora/commit/2ff09730469f8e5bfbde081910d1fd32181830b4))
+
+## [0.1.0-alpha.452](https://github.com/petauron/vastora/compare/v0.1.0-alpha.451...v0.1.0-alpha.452) (2026-11-14)
+
+
+### Bug Fixes
+
+* **center:** purge returned entry history after revocation ([#1295](https://github.com/petauron/vastora/issues/1295)) ([9dcc2cc](https://github.com/petauron/vastora/commit/9dcc2cccb31d1034a5626e608a3ac06d43c67492))
+
+## [0.1.0-alpha.451](https://github.com/petauron/vastora/compare/v0.1.0-alpha.450...v0.1.0-alpha.451) (2026-11-14)
+
+
+### Features
+
+* delegate owned website TLS and manage dual-stack DNS ([#1293](https://github.com/petauron/vastora/issues/1293)) ([94af989](https://github.com/petauron/vastora/commit/94af98946180fc4bbb5dc45b635071f0a1d12368))
+
+## [0.1.0-alpha.450](https://github.com/petauron/vastora/compare/v0.1.0-alpha.449...v0.1.0-alpha.450) (2026-11-14)
+
+
+### Bug Fixes
+
+* **agent:** preserve migrated website public listener ([3d0e14f](https://github.com/petauron/vastora/commit/3d0e14f019be5866e1454d684465beedc4fdddf8))
+
+## [0.1.0-alpha.449](https://github.com/petauron/vastora/compare/v0.1.0-alpha.448...v0.1.0-alpha.449) (2026-11-14)
+
+
+### Bug Fixes
+
+* **center:** explicitly migrate owned DNS address families ([40316c6](https://github.com/petauron/vastora/commit/40316c6ec96332fcb174c99a4f8e5745ec90724d))
+
+## [0.1.0-alpha.448](https://github.com/petauron/vastora/compare/v0.1.0-alpha.447...v0.1.0-alpha.448) (2026-11-14)
+
+
+### Bug Fixes
+
+* **agent:** allow verified website migrations on restricted hosts ([4158bf7](https://github.com/petauron/vastora/commit/4158bf7230f3413e99ce3825be04eb652712436a))
+* **agent:** preserve owned Caddy runtime during website migrations ([09ee4d2](https://github.com/petauron/vastora/commit/09ee4d2cb0f4df3ceb02f8a7c6d53f4880dad76c))
+
+## [0.1.0-alpha.447](https://github.com/petauron/vastora/compare/v0.1.0-alpha.446...v0.1.0-alpha.447) (2026-11-13)
+
+
+### Bug Fixes
+
+* **agent:** allow verified Senlun native executor handover ([#1284](https://github.com/petauron/vastora/issues/1284)) ([f685da4](https://github.com/petauron/vastora/commit/f685da4ba8b207e954e5517f0f88cbeb580c6ded))
+
+## [0.1.0-alpha.446](https://github.com/petauron/vastora/compare/v0.1.0-alpha.445...v0.1.0-alpha.446) (2026-11-13)
+
+
+### Bug Fixes
+
+* **websites:** resume explicitly reviewed hostname configuration ([#1282](https://github.com/petauron/vastora/issues/1282)) ([a247d98](https://github.com/petauron/vastora/commit/a247d98c76b55dea7646e594c40a41058feee7c7))
+
+## [0.1.0-alpha.445](https://github.com/petauron/vastora/compare/v0.1.0-alpha.444...v0.1.0-alpha.445) (2026-11-13)
+
+
+### Bug Fixes
+
+* **runtime:** retire superseded proxy control paths while preserving recovery history ([#1274](https://github.com/petauron/vastora/issues/1274)) ([668ca4e](https://github.com/petauron/vastora/commit/668ca4e84be439487aa147b3b427265880821105))
+
+## [0.1.0-alpha.444](https://github.com/petauron/vastora/compare/v0.1.0-alpha.443...v0.1.0-alpha.444) (2026-11-13)
+
+
+### Bug Fixes
+
+* **websites:** execute verified native hostname configuration ([#1279](https://github.com/petauron/vastora/issues/1279)) ([5d45f0f](https://github.com/petauron/vastora/commit/5d45f0f724b6b4f0ae04f5184d9ba0cfc7b6cf5b))
+
+## [0.1.0-alpha.443](https://github.com/petauron/vastora/compare/v0.1.0-alpha.442...v0.1.0-alpha.443) (2026-11-13)
+
+
+### Bug Fixes
+
+* **websites:** migrate shared Caddy hostnames through prepared bindings ([#1277](https://github.com/petauron/vastora/issues/1277)) ([832d757](https://github.com/petauron/vastora/commit/832d757f6fbb3ca519dd3cf2f87788b758e388ec))
+
+## [0.1.0-alpha.442](https://github.com/petauron/vastora/compare/v0.1.0-alpha.441...v0.1.0-alpha.442) (2026-11-13)
+
+
+### Bug Fixes
+
+* **apps:** preserve retired proxy ledger during SNI sync ([a989b3b](https://github.com/petauron/vastora/commit/a989b3bb819c85586b2b9d1d0c1c61bc0a845138))
+
+## [0.1.0-alpha.441](https://github.com/petauron/vastora/compare/v0.1.0-alpha.440...v0.1.0-alpha.441) (2026-11-13)
+
+
+### Bug Fixes
+
+* **apps:** reconcile Glivela SNI and verify upgraded native entries ([#1271](https://github.com/petauron/vastora/issues/1271)) ([b4180de](https://github.com/petauron/vastora/commit/b4180de19fd062ffd921011cdd9356380c59f7ba))
+
+## [0.1.0-alpha.440](https://github.com/petauron/vastora/compare/v0.1.0-alpha.439...v0.1.0-alpha.440) (2026-11-13)
+
+
+### Bug Fixes
+
+* **dns:** reuse domains across verified native handover ([#1268](https://github.com/petauron/vastora/issues/1268)) ([d82d6c3](https://github.com/petauron/vastora/commit/d82d6c3dc00a8b0856e1ae563737d5ae8032b257))
+
+## [0.1.0-alpha.439](https://github.com/petauron/vastora/compare/v0.1.0-alpha.438...v0.1.0-alpha.439) (2026-11-13)
+
+
+### Features
+
+* **dns:** manage stable independent application domains ([#1266](https://github.com/petauron/vastora/issues/1266)) ([86863a4](https://github.com/petauron/vastora/commit/86863a46ccf0e07c5b52c3d80a0eff4db5ac0470))
+
+## [0.1.0-alpha.438](https://github.com/petauron/vastora/compare/v0.1.0-alpha.437...v0.1.0-alpha.438) (2026-11-13)
+
+
+### Bug Fixes
+
+* **center:** recover reviewed identical package upgrades ([#1263](https://github.com/petauron/vastora/issues/1263)) ([0e260f8](https://github.com/petauron/vastora/commit/0e260f8bc2bfaa67e9e4623a15abb80f81622a04))
+
+## [0.1.0-alpha.437](https://github.com/petauron/vastora/compare/v0.1.0-alpha.436...v0.1.0-alpha.437) (2026-11-13)
+
+
+### Bug Fixes
+
+* **agent:** initialize empty environment for new dormant native worker ([#1261](https://github.com/petauron/vastora/issues/1261)) ([a2b2853](https://github.com/petauron/vastora/commit/a2b28536f6718313b03482262de3513128b0bf7c))
+
+## [0.1.0-alpha.436](https://github.com/petauron/vastora/compare/v0.1.0-alpha.435...v0.1.0-alpha.436) (2026-11-12)
+
+
+### Bug Fixes
+
+* **center:** purge explicitly retired landing history ([#1259](https://github.com/petauron/vastora/issues/1259)) ([5f4417b](https://github.com/petauron/vastora/commit/5f4417b6181e05e58710a8014ba5f6d9ebdeae43))
+
+## [0.1.0-alpha.435](https://github.com/petauron/vastora/compare/v0.1.0-alpha.434...v0.1.0-alpha.435) (2026-11-12)
+
+
+### Bug Fixes
+
+* **nodes:** allow explicit access revocation for connected nodes ([#1257](https://github.com/petauron/vastora/issues/1257)) ([418d28c](https://github.com/petauron/vastora/commit/418d28c0ca8271b8c317f05ee174ce72f7179e46))
+
+## [0.1.0-alpha.434](https://github.com/petauron/vastora/compare/v0.1.0-alpha.433...v0.1.0-alpha.434) (2026-11-12)
+
+
+### Bug Fixes
+
+* **center:** accept heartbeat while network confirmation is pending ([d5e2262](https://github.com/petauron/vastora/commit/d5e226276c2156a0d07f61043b40115b45a06641))
+* **center:** confirm replacement public mapping after network invalidation ([593fd44](https://github.com/petauron/vastora/commit/593fd44aca2017cbc5dd6827718b8ad7b594bebc))
+
+## [0.1.0-alpha.433](https://github.com/petauron/vastora/compare/v0.1.0-alpha.432...v0.1.0-alpha.433) (2026-11-12)
+
+
+### Bug Fixes
+
+* **recovery:** bind native listener to approved retained address ([#1250](https://github.com/petauron/vastora/issues/1250)) ([2857160](https://github.com/petauron/vastora/commit/2857160871bf9e51fbcbfb9ef7aa7485c51304ed))
+
+## [0.1.0-alpha.432](https://github.com/petauron/vastora/compare/v0.1.0-alpha.431...v0.1.0-alpha.432) (2026-11-12)
+
+
+### Bug Fixes
+
+* **recovery:** retain original site authority during pending recovery ([#1248](https://github.com/petauron/vastora/issues/1248)) ([8fac223](https://github.com/petauron/vastora/commit/8fac22379e2822f9dac0bff3bf58be10c855908a))
+
+## [0.1.0-alpha.431](https://github.com/petauron/vastora/compare/v0.1.0-alpha.430...v0.1.0-alpha.431) (2026-11-12)
+
+
+### Bug Fixes
+
+* **recovery:** finish retained site TLS without lock reentry ([#1246](https://github.com/petauron/vastora/issues/1246)) ([f84e41d](https://github.com/petauron/vastora/commit/f84e41d9a40c78083ab687c364bf2910f98aaf1c))
+
+## [0.1.0-alpha.430](https://github.com/petauron/vastora/compare/v0.1.0-alpha.429...v0.1.0-alpha.430) (2026-11-12)
+
+
+### Bug Fixes
+
+* **recovery:** restore native services and original host access ([#1244](https://github.com/petauron/vastora/issues/1244)) ([c161c8f](https://github.com/petauron/vastora/commit/c161c8f94b31cecf89f5d826d3d37d26790b9973))
+
+## [0.1.0-alpha.429](https://github.com/petauron/vastora/compare/v0.1.0-alpha.428...v0.1.0-alpha.429) (2026-11-12)
+
+
+### Bug Fixes
+
+* **recovery:** review missing previous private-peer evidence ([#1242](https://github.com/petauron/vastora/issues/1242)) ([074c9fe](https://github.com/petauron/vastora/commit/074c9fe02b89fa8ca893898f3977597b92c3b13a))
+
+## [0.1.0-alpha.428](https://github.com/petauron/vastora/compare/v0.1.0-alpha.427...v0.1.0-alpha.428) (2026-11-12)
+
+
+### Features
+
+* **updates:** separate Center upgrades from explicit Agent pushes ([#1239](https://github.com/petauron/vastora/issues/1239)) ([29e9dfb](https://github.com/petauron/vastora/commit/29e9dfba756e491a96118f9eb0ad73795f5d62e2))
+
+## [0.1.0-alpha.427](https://github.com/petauron/vastora/compare/v0.1.0-alpha.426...v0.1.0-alpha.427) (2026-11-11)
+
+
+### Bug Fixes
+
+* **agent:** retry startup recovery after delayed private networking ([#1234](https://github.com/petauron/vastora/issues/1234)) ([aca1405](https://github.com/petauron/vastora/commit/aca14053e947ea579a23ed1c0b751de578b984d8))
+* **center:** synchronize all eligible Agents except explicit pauses ([#1236](https://github.com/petauron/vastora/issues/1236)) ([c96955e](https://github.com/petauron/vastora/commit/c96955e599432220ff75e4a0819b0495dfb9a925))
+
+## [0.1.0-alpha.426](https://github.com/petauron/vastora/compare/v0.1.0-alpha.425...v0.1.0-alpha.426) (2026-11-11)
+
+
+### Bug Fixes
+
+* **gateway:** preserve container bootstrap during TCP profile convergence ([#1232](https://github.com/petauron/vastora/issues/1232)) ([c9fddad](https://github.com/petauron/vastora/commit/c9fddad8e25e60a640c512d3a1ee67c0cc77f22d))
+
+## [0.1.0-alpha.425](https://github.com/petauron/vastora/compare/v0.1.0-alpha.424...v0.1.0-alpha.425) (2026-11-11)
+
+
+### Bug Fixes
+
+* **center:** unblock reviewed website certificate recovery ([9cb1309](https://github.com/petauron/vastora/commit/9cb13099717ae9c0f4fc72d4f28313c960333dc0))
+
+## [0.1.0-alpha.424](https://github.com/petauron/vastora/compare/v0.1.0-alpha.423...v0.1.0-alpha.424) (2026-11-11)
+
+
+### Bug Fixes
+
+* **gateway:** synchronize managed TCP profiles with the host ([#1228](https://github.com/petauron/vastora/issues/1228)) ([e94534f](https://github.com/petauron/vastora/commit/e94534fcca37a4750d04a6c439582d47f1113779))
+
+## [0.1.0-alpha.423](https://github.com/petauron/vastora/compare/v0.1.0-alpha.422...v0.1.0-alpha.423) (2026-11-11)
+
+
+### Bug Fixes
+
+* **agent:** migrate owned systemd v2 receipts on native upgrade ([3fd9118](https://github.com/petauron/vastora/commit/3fd91183a6870c259ea3ab20025591bd8e4f1774))
+* **build:** use Go 1.26.11 security patch ([063f38a](https://github.com/petauron/vastora/commit/063f38ad76abf0aca4f6c3810bb387c5a01cd6ae))
+
 ## [0.1.0-alpha.422](https://github.com/petauron/vastora/compare/v0.1.0-alpha.421...v0.1.0-alpha.422) (2026-11-10)
 
 

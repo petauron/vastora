@@ -59,18 +59,28 @@ func (b *NativeServicesPackageBackend) Prepare(ctx context.Context, task Deploym
 			return err
 		}
 	}
-	if task.Operation == "configure" {
+	if task.Operation == "configure" && !sharedWebsiteConfigure(task) {
 		if err := b.verifyServicePortConfiguration(ctx, task, prepared, receipt); err != nil {
 			return err
 		}
 	}
+	if sharedWebsiteConfigure(task) {
+		if err := b.verifyWebsiteConfiguration(ctx, task, receipt); err != nil {
+			return err
+		}
+	}
 	b.prepared = &prepared
-	if b.Store != nil && daylightKey(task.AppKey) && task.Operation != "configure" {
+	if b.Store != nil && daylightKey(task.AppKey) && (task.Operation != "configure" || sharedWebsiteConfigure(task)) {
 		website, err := b.prepareWebsite(ctx, task, receipt)
 		if err != nil {
 			return err
 		}
 		b.website = website
+		if sharedWebsiteConfigure(task) {
+			// This authorization never comes from a task payload. Bind it only
+			// after exact installed configuration and owned handover preparation.
+			b.prepared.WebsiteConfigureTaskID = task.ID
+		}
 	}
 	return nil
 }
@@ -87,7 +97,7 @@ func (b *NativeServicesPackageBackend) Apply(ctx context.Context, task Deploymen
 	if b.prepared == nil {
 		return errors.New("agent: native bundle was not prepared")
 	}
-	if task.Operation == "configure" {
+	if task.Operation == "configure" && b.website == nil {
 		return errors.New("agent: native service port updates must use the metadata-only executor")
 	}
 	if b.website != nil {

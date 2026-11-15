@@ -32,6 +32,7 @@ import (
 )
 
 type AgentTask struct {
+	CurrentRecoveryResume     bool                                 `json:"currentRecoveryResume,omitempty"`
 	NodeSite                  *nodesite.Task                       `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
@@ -136,7 +137,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json, '$.landingOnly'), 0) FROM agents WHERE id = ?`, agentID).Scan(&landingOnly); err != nil {
 			return err
 		}
-		nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities)
+		nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && (controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities) || controlplane.NativeWebsiteConfigureAllowed(task.AppKey, task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities))
 		if landingOnly && !nativeLifecycle && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind && task.Kind != nodesite.Kind && task.Kind != tailscalehost.UpdateKind {
 			return errors.New("center: task is not authorized for a landing-only node")
 		}
@@ -204,16 +205,6 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, err
 	}
 	if executionBlocked {
-		recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
-		if recoveryErr != nil {
-			return nil, recoveryErr
-		}
-		if recovery != nil {
-			if err := commitTask(tx, recovery); err != nil {
-				return nil, err
-			}
-			return recovery, nil
-		}
 		if requiredTaskID == "" {
 			updateBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, agentVersion)
 			if err != nil {
@@ -422,16 +413,6 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 					return nil, decommissionErr
 				}
 				if decommissionTask == nil {
-					recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
-					if recoveryErr != nil {
-						return nil, recoveryErr
-					}
-					if recovery != nil {
-						if err := commitTask(tx, recovery); err != nil {
-							return nil, err
-						}
-						return recovery, nil
-					}
 					updateTask, updateErr := s.claimTailscaleUpdate(ctx, tx, agentID)
 					if updateErr != nil {
 						return nil, updateErr
@@ -566,6 +547,9 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectRetiredApplicationPreparation(ctx, tx, agentID, task.ID); err != nil {
+		return nil, err
+	}
 	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, task.ID, false)
 	if err != nil {
 		return nil, err
@@ -669,6 +653,9 @@ func (s *Store) claimApplicationDeployment(ctx context.Context, tx *sql.Tx, agen
 	}
 	if currentRestore != nil {
 		task.SenulunRestore = currentRestore.SenulunRestore
+		task.CurrentRecoveryResume = currentRestore.CurrentRecoveryResume
+		task.NodeSite = currentRestore.NodeSite
+		task.NodeListenerState = currentRestore.NodeListenerState
 	}
 	if restoredMonitor != nil {
 		task.SenulunRestore = restoredMonitor.SenulunRestore
@@ -813,7 +800,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 		return s.completeNodeDiagnostic(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
 	}
 	if strings.HasPrefix(taskID, "xray-recovery-") {
-		return s.completeXrayConfigurationRecovery(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
+		return errors.New("center: retired Xray recovery requires explicit execution disposition")
 	}
 	if taskID == agentDecommissionTaskID(agentID) {
 		if succeeded || reconciliationRequired {
@@ -881,8 +868,15 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 	if err != nil {
 		return err
 	}
+	verificationTargets, err := nativeEntryVerificationTargetsForDeployment(ctx, tx, taskID)
+	if err != nil {
+		return err
+	}
 	if err := commit(tx); err != nil {
 		return err
+	}
+	for _, target := range verificationTargets {
+		s.schedulePublicationVerification(target.id, target.revision)
 	}
 	s.resumeCredentialRotationForDeployment(ctx, taskID)
 	if succeeded && !reconciliationRequired && appKey == threeXUIAppKey {
@@ -933,6 +927,9 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 	}
 	preparation, err := s.validateReinstallPreparation(ctx, tx, agentID, taskID)
 	if err != nil {
+		return "", nil, err
+	}
+	if err := rejectRetiredApplicationPreparation(ctx, tx, agentID, taskID); err != nil {
 		return "", nil, err
 	}
 	restoredMonitor, err := s.reinstallMonitorRestoreTask(ctx, tx, agentID, taskID, false)
