@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.467](https://github.com/petauron/vastora/compare/v0.1.0-alpha.466...v0.1.0-alpha.467) (2026-11-15)
+
+
+### Bug Fixes
+
+* **center:** recognize node panel ownership in backup validation ([#1337](https://github.com/petauron/vastora/issues/1337)) ([e4efa89](https://github.com/petauron/vastora/commit/e4efa8960f415a1bb6d378b1ff55c746bb49b517))
+
 ## [0.1.0-alpha.466](https://github.com/petauron/vastora/compare/v0.1.0-alpha.465...v0.1.0-alpha.466) (2026-11-15)
 
 
