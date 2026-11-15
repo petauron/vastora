@@ -1,6 +1,7 @@
 import type { AgentView, AppView, AppData, Deployment, PublicationKind, Service } from "../types";
 import type { Language } from "../translations";
 import { copy } from "./shared";
+import { isDaylightCatalogApp } from "./daylight";
 
 export function publicationOptions(data: AppData, service: Service | null, language: Language) {
   if (!service) return [];
@@ -185,6 +186,7 @@ export function installBlocker(data: AppData, appKey: string, language: Language
 }
 
 export function localized(app: AppView, language: Language, field: "name" | "description") {
+  if (field === "name" && isDaylightCatalogApp(app)) return "Daylight";
   if (field === "name" && app.sourceId === "vastora-official"
     && app.key === `vastora-official/${app.app.id}`
     && ["glivela-entry", "glivela-node", "glivela-dual"].includes(app.app.id)) {
