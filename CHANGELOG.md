@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.465](https://github.com/petauron/vastora/compare/v0.1.0-alpha.464...v0.1.0-alpha.465) (2026-11-15)
+
+
+### Bug Fixes
+
+* **web:** recognize the TCP budget grant on restricted native nodes ([#1324](https://github.com/petauron/vastora/issues/1324)) ([2bcab25](https://github.com/petauron/vastora/commit/2bcab25b911d558ffd4686ecb1091ae6d4bc759a))
+
 ## [0.1.0-alpha.464](https://github.com/petauron/vastora/compare/v0.1.0-alpha.463...v0.1.0-alpha.464) (2026-11-15)
 
 
