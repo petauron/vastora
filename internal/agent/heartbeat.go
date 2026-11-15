@@ -83,7 +83,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 				c.Capabilities.ExecutorVersions["systemd"] = 2
 			}
 		}
-		c.Capabilities.RuntimeCapabilities = []string{"native-services", "root"}
+		c.Capabilities.RuntimeCapabilities = []string{"native-services", "root", "host-tcp-budget"}
 		if store.sharedCaddy != nil {
 			c.Capabilities.RuntimeCapabilities = append(c.Capabilities.RuntimeCapabilities, "shared-caddy")
 		}

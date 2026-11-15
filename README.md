@@ -206,3 +206,10 @@ Alpine/OpenRC 的原生套件契约和隔离验收边界见 [Alpine/OpenRC MVP](
 Vastora 自动管理的运行目录、开机准备和共享资源卸载边界见 [运行目录生命周期](docs/runtime-directories.md)（#356）。
 Linux Agent 和共址 Center 的开机引导依赖系统 iproute2（`ip`）；安装器会检查，不自动下载或更改已有网络身份。
 新购 KVM VPS 的网页重装条件、网络恢复边界与操作步骤见 [KVM Debian 13 网页重装](docs/os-reinstall.md)。系统盘将被清空，生产重装仍须单独确认。
+
+On enrolled Linux hosts the reviewed Glivela node manager can request the fixed
+TCP memory budget through a local Agent socket when its installation receipt
+includes `host-tcp-budget`. This is a per-host operation: inspect, apply the
+tier for actual RAM, or restore the recorded values. It accepts no sysctl name,
+path, command or custom watermarks. Containers and unsupported init systems
+do not start a writer; the managed application's systemd sandbox is unchanged.

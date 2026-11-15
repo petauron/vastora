@@ -598,6 +598,11 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return err
 		}
+		stopBudget, budgetErr := store.StartTCPBudget()
+		if budgetErr != nil {
+			fmt.Fprintln(os.Stderr, "Agent host TCP budget operation unavailable")
+		}
+		defer stopBudget()
 		client := agent.Client{Roles: roles, Capabilities: capabilities, TailscaleEnrolled: hostState.TailscaleEnrolled, TailscaleOwnership: hostState.TailscaleOwnership}
 		closeCenterSession := client.UseCenterGRPCSession()
 		defer closeCenterSession()

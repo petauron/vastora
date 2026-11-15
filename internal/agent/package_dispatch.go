@@ -174,7 +174,8 @@ func (e ApplicationExecutor) PackageCapabilities(dockerAvailable bool) (map[stri
 	}
 	capabilities := []string{"root", "host-network", "host-path", "devices"}
 	if versions["systemd"] == 2 || versions["native"] == 2 {
-		capabilities = append(capabilities, "native-services")
+		// Recognize the permission even on read-only hosts; the socket enforces host eligibility.
+		capabilities = append(capabilities, "native-services", "host-tcp-budget")
 		if e.Store != nil && e.Store.sharedCaddy != nil {
 			capabilities = append(capabilities, "shared-caddy")
 		}
