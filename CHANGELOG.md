@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.0-alpha.469](https://github.com/petauron/vastora/compare/v0.1.0-alpha.468...v0.1.0-alpha.469) (2026-11-16)
+
+
+### Bug Fixes
+
+* **center:** allow reviewed forward recipe recovery ([d6cdc08](https://github.com/petauron/vastora/commit/d6cdc081460ae34a2e3911b8ccfed4de1f72e3bb)), closes [#1342](https://github.com/petauron/vastora/issues/1342)
+* **cpa:** preserve client IP trust through verified Tunnel ingress ([0903928](https://github.com/petauron/vastora/commit/09039282e76cbc0e31867679b75ecd554053811a))
+* **deps:** bump github.com/Microsoft/go-winio from 0.6.3 to 0.6.4 ([c35498e](https://github.com/petauron/vastora/commit/c35498e634a4f9fc49149d277ae28727794fa549))
+* **deps:** bump github.com/pressly/goose/v3 from 3.28.0 to 3.29.0 ([fd98463](https://github.com/petauron/vastora/commit/fd984634ea8d135fff82e364874ef45bdb26022f))
+* **gateway:** align rejection of unknown and absent SNI ([b471c7b](https://github.com/petauron/vastora/commit/b471c7b1e8f38db081f90366551e3a4284c37e36))
+
 ## [0.1.0-alpha.468](https://github.com/petauron/vastora/compare/v0.1.0-alpha.467...v0.1.0-alpha.468) (2026-11-15)
 
 
