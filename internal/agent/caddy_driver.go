@@ -31,6 +31,7 @@ type CaddyGatewayDriver struct {
 	// gateway reload includes it; a website never owns a separate /load writer.
 	Sites         func(context.Context) ([]CaddySite, error)
 	SiteRuntime   func(context.Context, gateway.DesiredState, []CaddySite) error
+	SiteApplied   func(context.Context, []byte) error
 	SiteIdle      func(context.Context) error
 	SiteContainer bool
 
