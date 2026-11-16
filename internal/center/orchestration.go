@@ -598,6 +598,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 	if err != nil {
 		return nil, err
 	}
+	equivalences := s.officialUpdateEquivalences(ctx)
 	availableVersions := make(map[string]string, len(apps))
 	availableRevisions := make(map[string]int, len(apps))
 	for _, app := range apps {
@@ -663,6 +664,11 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		value.AvailablePackageRevision = availableRevisions[value.AppKey]
 		comparison := semver.Compare(canonicalAppVersion(value.AvailableVersion), canonicalAppVersion(value.InstalledVersion))
 		value.UpdateAvailable = !value.LegacyGlivela && !value.ExecutionRetired && value.InstalledVersion != "" && (comparison > 0 || comparison == 0 && value.AvailablePackageRevision > value.InstalledPackageRevision)
+		if value.UpdateAvailable && equivalentUpdate(equivalences, value.AppKey,
+			updateVersionIdentity{Version: value.InstalledVersion, PackageRevision: value.InstalledPackageRevision},
+			updateVersionIdentity{Version: value.AvailableVersion, PackageRevision: value.AvailablePackageRevision}) {
+			value.UpdateAvailable = false
+		}
 		value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 		result = append(result, value)
