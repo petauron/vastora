@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.472](https://github.com/petauron/vastora/compare/v0.1.0-alpha.471...v0.1.0-alpha.472) (2026-11-16)
+
+
+### Bug Fixes
+
+* honor signed application version equivalences ([a8e85e9](https://github.com/petauron/vastora/commit/a8e85e9eb3e579d356fa48e3cd159d031281ec6a))
+
 ## [0.1.0-alpha.471](https://github.com/petauron/vastora/compare/v0.1.0-alpha.470...v0.1.0-alpha.471) (2026-11-16)
 
 
