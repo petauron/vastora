@@ -308,7 +308,9 @@ func compileDockerPackage(task DeploymentTask, receipt *InstanceResources) ([]pa
 					return nil, err
 				}
 				options.Config.ExposedPorts[port] = struct{}{}
-				options.HostConfig.PortBindings[port] = []network.PortBinding{{HostIP: bind, HostPort: strconv.Itoa(hostPort)}}
+				if !item.HostNetwork {
+					options.HostConfig.PortBindings[port] = []network.PortBinding{{HostIP: bind, HostPort: strconv.Itoa(hostPort)}}
+				}
 				plan.services = append(plan.services, service)
 			}
 			if item.Health != nil {
@@ -409,6 +411,18 @@ func (b *DockerPackageBackend) Prepare(ctx context.Context, task DeploymentTask,
 		return err
 	}
 	b.plans = plans
+	if task.AppKey == cpaKey && task.Manifest.Runtime != nil && slices.Contains(task.Manifest.Runtime.RequiredCapabilities, "cpa-tunnel-identity") {
+		manager := cpaProxyManager{Docker: b.Docker, StateDirectory: b.StateDirectory}
+		if err := manager.checkKeeperOrigins(ctx, task); err != nil {
+			return err
+		}
+		if err := manager.checkOrigin(ctx, task.ServiceAddress); err != nil {
+			return err
+		}
+		if _, err := manager.ownedTunnel(ctx); err != nil {
+			return errors.New("agent: reconcile the verified isolated Tunnel connector before migrating CPA")
+		}
+	}
 	if task.Operation == "upgrade" {
 		for logical, paths := range receipt.ConfigurationPaths {
 			if len(paths) == 0 {
@@ -452,6 +466,12 @@ func (b *DockerPackageBackend) Prepare(ctx context.Context, task DeploymentTask,
 				for i := range b.plans {
 					if b.plans[i].logical == plan.logical {
 						retained := slices.Clone(current.Container.Config.Env)
+						if task.AppKey == keeperKey && task.Manifest.Runtime != nil && slices.Contains(task.Manifest.Runtime.RequiredCapabilities, "cpa-tunnel-identity") {
+							retained, err = keeperPrivateEndpoint(retained, plan.options.Config.Env, task.ServiceAddress)
+							if err != nil {
+								return err
+							}
+						}
 						if task.AppKey == senulun.ServiceKey && senulunCanonicalEnvironment(plan.options.Config.Env) {
 							retained, err = senulunUpgradeEnvironment(retained, plan.options.Config.Env)
 							if err != nil {
@@ -651,6 +671,14 @@ func (b *DockerPackageBackend) Apply(ctx context.Context, task DeploymentTask, r
 	if err := b.preserveUpgradeConfiguration(ctx, task, receipt, persist); err != nil {
 		return err
 	}
+	if err := b.prepareCPAIngress(task, receipt, persist); err != nil {
+		return err
+	}
+	if receipt.CPAIngress != nil {
+		if err := (cpaProxyManager{Docker: b.Docker, StateDirectory: b.StateDirectory}).prepareTunnel(ctx); err != nil {
+			return err
+		}
+	}
 	if err := b.applyNetwork(ctx, task, receipt, persist); err != nil {
 		return err
 	}
@@ -736,6 +764,9 @@ func (b *DockerPackageBackend) Apply(ctx context.Context, task DeploymentTask, r
 		if err := b.checkPlan(ctx, task, receipt, plan); err != nil {
 			return err
 		}
+	}
+	if receipt.CPAIngress != nil {
+		return (cpaProxyManager{Docker: b.Docker, StateDirectory: b.StateDirectory}).sync(ctx, receipt, true, persist)
 	}
 	return nil
 }
@@ -831,6 +862,7 @@ func (b *DockerPackageBackend) Remove(ctx context.Context, task DeploymentTask, 
 	receipt.Resources = slices.DeleteFunc(receipt.Resources, func(item RuntimeResource) bool {
 		return (item.Kind == "volume" || item.Kind == "retained-volume") && (!item.Persistent || task.DeleteData)
 	})
+	receipt.CPAIngress = nil
 	return nil
 }
 

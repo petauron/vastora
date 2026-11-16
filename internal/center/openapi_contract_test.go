@@ -35,6 +35,9 @@ func TestOpenAPIExecutionRequestsRequireAuthorizationAndDisposition(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := document.Validate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		path, payload string
 		valid         bool
@@ -55,7 +58,7 @@ func TestOpenAPIExecutionRequestsRequireAuthorizationAndDisposition(t *testing.T
 		if err := json.Unmarshal([]byte(tc.payload), &value); err != nil {
 			t.Fatal(err)
 		}
-		err := operation.RequestBody.Value.Content["application/json"].Schema.Value.VisitJSON(value)
+		err := operation.RequestBody.Value.Content["application/json"].Schema.Value.VisitJSON(value, openapi3.EnableJSONSchema2020())
 		if (err == nil) != tc.valid {
 			t.Errorf("%s payload %s validity=%v err=%v", tc.path, tc.payload, tc.valid, err)
 		}
