@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.473](https://github.com/petauron/vastora/compare/v0.1.0-alpha.472...v0.1.0-alpha.473) (2026-11-16)
+
+
+### Bug Fixes
+
+* **agent:** order private network and native gateway startup ([ed3570f](https://github.com/petauron/vastora/commit/ed3570fba3046dfa3b7624e183f20a75ba24d65f))
+
 ## [0.1.0-alpha.472](https://github.com/petauron/vastora/compare/v0.1.0-alpha.471...v0.1.0-alpha.472) (2026-11-16)
 
 
