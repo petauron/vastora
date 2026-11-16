@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.470](https://github.com/petauron/vastora/compare/v0.1.0-alpha.469...v0.1.0-alpha.470) (2026-11-16)
+
+
+### Bug Fixes
+
+* **agent:** retain Keeper private bridge on replacement ([8aa3090](https://github.com/petauron/vastora/commit/8aa3090a82154c8d5e25748974fd300698b00636))
+
 ## [0.1.0-alpha.469](https://github.com/petauron/vastora/compare/v0.1.0-alpha.468...v0.1.0-alpha.469) (2026-11-16)
 
 
