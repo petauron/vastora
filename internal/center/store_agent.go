@@ -743,8 +743,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	now := s.now().UTC()
 	publicationCleanups := []publicationCleanup{}
 	var previousRuntimeGeneration int
+	var previousLastSeen string
 	var storedPublicKey []byte
-	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation, x25519_public_key FROM agents WHERE id = ? AND status='active' AND credential_revoked_at='' AND credential_hash=?`, id, tokenHash(credential)).Scan(&previousRuntimeGeneration, &storedPublicKey); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation, x25519_public_key, last_seen_at FROM agents WHERE id = ? AND status='active' AND credential_revoked_at='' AND credential_hash=?`, id, tokenHash(credential)).Scan(&previousRuntimeGeneration, &storedPublicKey, &previousLastSeen); err != nil {
 		return fmt.Errorf("center: read Agent runtime generation: %w", err)
 	}
 	if len(storedPublicKey) == 0 && len(heartbeat.PublicKey) == 0 {
@@ -753,6 +754,8 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if len(storedPublicKey) != 0 && len(heartbeat.PublicKey) != 0 && !bytes.Equal(storedPublicKey, heartbeat.PublicKey) {
 		return errors.New("center: Agent X25519 identity changed; revoke and enroll it again")
 	}
+	lastSeen, lastSeenErr := time.Parse(time.RFC3339Nano, previousLastSeen)
+	reconnected := heartbeat.Startup || previousLastSeen == "" || (lastSeenErr == nil && !lastSeen.After(now.Add(-agentConnectedMaxAge)))
 	replacePublicEgress := heartbeat.Startup || heartbeat.PublicEgress != nil
 	publicEgress := networking.PublicEgress{}
 	if heartbeat.PublicEgress != nil {
@@ -919,6 +922,13 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	recoveredPublications, err := publicationsAfterNetworkRecovery(ctx, tx, now)
 	if err != nil {
 		return err
+	}
+	if reconnected && !reinstalling {
+		targets, err := publicationVerificationTargetsAfterAgentReconnect(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		recoveredPublications = append(recoveredPublications, targets...)
 	}
 	if err := tx.Commit(); err != nil {
 		return err

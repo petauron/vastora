@@ -201,6 +201,28 @@ func (s *Store) finishPublicationVerification(ctx context.Context, id string, re
 	return err
 }
 
+// A reconnect is a reason to retry only the failed entry on that Agent. The
+// normal revision-fenced verifier still decides whether the entry is ready.
+func publicationVerificationTargetsAfterAgentReconnect(ctx context.Context, tx *sql.Tx, agentID string) ([]publicationVerificationTarget, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, desired_revision FROM publications
+		WHERE entry_node_id = ? AND ingress_owner = 'application_node' AND kind = ?
+		AND status IN ('pending', 'applying', 'degraded') AND last_error = ? AND action_required = 0`,
+		agentID, publicationShared443, publicationShared443TLSUnhealthy)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var targets []publicationVerificationTarget
+	for rows.Next() {
+		var target publicationVerificationTarget
+		if err := rows.Scan(&target.id, &target.revision); err != nil {
+			return nil, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
+}
+
 func (s *Store) publicationVerificationTargetsForGateway(ctx context.Context, tx *sql.Tx, gatewayID string) ([]publicationVerificationTarget, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, desired_revision FROM publications
 		WHERE entry_node_id = ? AND ingress_owner = 'site_gateway' AND kind = 'public_direct' AND status <> 'stopped'`, gatewayID)
