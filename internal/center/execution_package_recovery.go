@@ -133,11 +133,13 @@ func (s *Store) attachPackageSuccessorRecovery(ctx context.Context, tx *sql.Tx, 
 		if comparison < 0 {
 			return nil
 		}
-		// An Agent fix can make the exact abandoned upgrade executable without
-		// a new application release. Bind that recovery to the unchanged recipe,
-		// permissions, inputs and target, as well as the reviewed receipt below.
-		if comparison == 0 && (task.Manifest.Version != previous.Manifest.Version || task.ManifestSHA256 == "" ||
-			task.ManifestSHA256 != previous.ManifestSHA256 || task.PackageRevision != previous.PackageRevision ||
+		// A forward signed recipe revision can repair a failed package without
+		// changing its upstream version. Reusing the same revision still requires
+		// unchanged inputs and permissions. Both paths bind the reviewed receipt.
+		if comparison == 0 && (task.Manifest.Version != previous.Manifest.Version || task.ManifestSHA256 == "" || task.PackageRevision < previous.PackageRevision) {
+			return nil
+		}
+		if comparison == 0 && task.PackageRevision == previous.PackageRevision && (task.ManifestSHA256 != previous.ManifestSHA256 ||
 			task.SourceReceiptSHA256 != previous.SourceReceiptSHA256 || task.Manifest.Runtime.Version != previous.Manifest.Runtime.Version ||
 			!slices.Equal(task.AuthorizedCapabilities, previous.AuthorizedCapabilities) ||
 			!bytes.Equal(task.Config, previous.Config) || !bytes.Equal(task.Secrets, previous.Secrets) ||

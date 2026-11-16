@@ -8,7 +8,7 @@ require (
 	github.com/caddyserver/certmagic v0.25.6
 	github.com/containerd/errdefs v1.0.0
 	github.com/distribution/reference v0.6.0
-	github.com/getkin/kin-openapi v0.149.0
+	github.com/getkin/kin-openapi v0.153.0
 	github.com/google/uuid v1.6.0
 	github.com/libdns/cloudflare v0.2.2
 	github.com/miekg/dns v1.1.73
@@ -16,7 +16,7 @@ require (
 	github.com/moby/moby/client v0.6.2
 	github.com/petauron/catalog v0.4.1-0.20261106034937-53f84d1b4969
 	github.com/petauron/glivela v0.1.0-alpha.24.0.20261018115648-011a0efc9777
-	github.com/pressly/goose/v3 v3.29.0
+	github.com/pressly/goose/v3 v3.30.1
 	github.com/projectdiscovery/cdncheck v1.3.1
 	github.com/sethvargo/go-retry v0.5.0
 	github.com/sigstore/sigstore v1.10.11
@@ -25,10 +25,10 @@ require (
 	golang.org/x/crypto v0.58.0
 	golang.org/x/mod v0.42.0
 	golang.org/x/net v0.62.0
-	golang.org/x/sys v0.49.0
-	golang.org/x/text v0.43.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/text v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.60.1
+	modernc.org/sqlite v1.62.0
 )
 
 require (
@@ -38,7 +38,8 @@ require (
 	github.com/mholt/acmez/v3 v3.1.7 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
+	go.yaml.in/yaml/v4 v4.0.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261110000943-09e21b237f2c // indirect
 )
 
 require (
@@ -59,12 +60,10 @@ require (
 	github.com/google/go-containerregistry v0.22.1 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
-	github.com/mfridman/interpolate v0.0.2 // indirect
+	github.com/mfridman/interpolate v0.2.0 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
-	github.com/oasdiff/yaml v0.1.1 // indirect
-	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -76,9 +75,9 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/secure-systems-lab/go-securesystemslib v0.11.1 // indirect
 	github.com/sigstore/protobuf-specs v0.5.2 // indirect
-	github.com/tidwall/gjson v1.20.0 // indirect
+	github.com/tidwall/gjson v1.20.2 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
-	github.com/tidwall/pretty v1.2.2 // indirect
+	github.com/tidwall/pretty v1.3.0 // indirect
 	github.com/weppos/publicsuffix-go v0.50.3 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -88,13 +87,13 @@ require (
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/exp v0.0.0-20261011100332-faecfb24eb49 // indirect
-	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/exp v0.0.0-20261109185158-a52e3aef5920 // indirect
+	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20261005182115-fad411399dd8 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20261110000943-09e21b237f2c // indirect
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
-	modernc.org/libc v1.78.0 // indirect
+	modernc.org/libc v1.80.2 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
