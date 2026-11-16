@@ -9,6 +9,67 @@ dependency update and the schema 102 merge; current CI and the bounded historica
 copy rehearsal are recorded separately. Do not enable the independent publisher
 or run the maintenance cutover based on unit tests alone.
 
+## Unreleased CPA trusted ingress (#919)
+
+This slice changes code/recipes only; it is not publication or production
+acceptance. CPA recipe revision 3 requires `host-network` and
+`cpa-tunnel-identity`. Its listener remains the confirmed node-private address
+and existing port, not a public wildcard. Keeper revision 2 requires the updated
+executor to replace only its managed `CPA_BASE_URL`, retaining its other
+environment, credentials and storage.
+
+The pinned Keeper image's `app` identity is UID 100/GID 101. The recipe runs its
+official binary directly as that non-root identity with `CapDrop=ALL`, rather
+than attempting the image's root-only `chown`/`su-exec` entrypoint as the generic
+UID 65532. New installations use `/data`; existing upgrade data is retained.
+No recursive ownership migration or host-path change is added. Other legacy
+owners are not silently taken over.
+
+Migration order is explicit: update Keeper to the existing private CPA endpoint,
+then upgrade CPA with its reviewed capability authorization. CPA preflight rejects
+a Keeper still using the disappearing CPA Docker DNS origin. During the approved
+CPA apply, the existing owned Tunnel gains its dedicated origin endpoint while
+retaining its runtime-network endpoint. It does not silently upgrade another
+application or change a remote-access URL.
+
+Tunnel uses the existing owned-bridge implementation for a dedicated
+`vastora-tunnel-origin` network. Its fixed IPv4 address is derived from Docker's
+actual private address pool, excluding gateway/auxiliary addresses; no subnet
+is hard-coded. No other managed application joins this network. Private IP
+origins, Docker-only DNS origins and publication hostnames/paths are retained.
+Foreign endpoints are rejected before replacing a connector. Only protected CPA
+ingress receipts require this second endpoint; ordinary Tunnel updates retain
+the original single-network topology. This affects the node connector, not Center's separate
+connector, Caddy, or application networks. A connector replacement briefly
+interrupts all publications served by that connector, as it did previously.
+
+Before removing a connector, all owned CPA ingress instances stop, persist and
+read back an empty proxy list, and resume without forwarded-header trust. Only
+then can the old endpoint be released. New trust requires the pinned connector
+image, exact container/network/endpoint IDs, exclusive network membership and
+matching fixed address. Granting trust repeats this verification before CPA
+resumes. Unknown ownership, failed configuration I/O or an uncertain restart
+aborts the transition; it never trusts the bridge gateway/subnet as a fallback.
+The dedicated pool prevents another managed app from receiving an old trusted
+address during container/daemon restart. A Docker administrator can alter host
+networking and is outside this trust boundary; direct Docker edits are not a
+supported replacement path.
+
+Opaque CPA upgrade/restore settings are retained; only the managed listener and
+trusted proxy fields are rewritten. Existing upstream-supported file layouts
+remain application-owned, rather than being reset to recipe defaults. No
+management keys, client keys, providers, authentication files or ban thresholds
+are changed by this integration.
+
+Local fake-engine regression is not real Docker or Cloudflare acceptance.
+Separately authorized isolated acceptance must verify two real clients and
+spoofed forwarding headers (including IPv6/multi-hop), Keeper continuity,
+actual private-only binding, all existing Tunnel origins, connector and Docker
+restart/address allocation, and interruption recovery. No such environment or
+production operation is authorized by this checkpoint. Publish reviewed
+program and signed catalog changes separately; do not upgrade installed apps
+automatically.
+
 ## Current main integration (2026-10-04)
 
 The integrated target is schema 109. Released migration files through schema 108
@@ -191,3 +252,35 @@ untouched, including their inode and modification time. Binaries and systemd uni
 remain immutable ownership boundaries. A new configuration location requires an
 explicit migration, not automatic default creation. Backups and the application's
 own migration facilities remain required before version-dependent data changes.
+
+## CPA ingress repair checkpoint (2026-11-16, issue #919)
+
+This draft is carried onto main fd984634ea8d135fff82e364874ef45bdb26022f.
+Earlier observations below/above are historical and do not validate this repair.
+No tests, builds, CI, Cloudflare acceptance or production operation were run for
+this checkpoint.
+
+Ordinary Tunnel updates without an active CPA ingress receipt keep the existing
+runtime network. An explicitly authorized CPA host-network package attaches its
+existing, verified connector to a dedicated static-address bridge without
+removing the original runtime-network endpoint. The original endpoint keeps
+Docker-name sources reachable; the dedicated endpoint has the higher gateway
+priority. Both endpoint identities and network ownership are verified before
+forwarded-header trust is granted. The CPA origin is a confirmed private IPv4
+address outside the shared Docker subnet; forwarded client identities may still
+be IPv4 or IPv6. A daemon that cannot report the required gateway priority cannot
+grant trust. No broad private subnet or shared gateway becomes a trusted proxy.
+
+Before stopping CPA for a trust update, its exact container ID is persisted as
+pending resume intent. Transient read/write/start failures keep this intent.
+A retry verifies the same owned instance and current connector/configuration,
+then resumes only that instance. Instances already stopped without this intent
+remain stopped. Pending intent is cleared only after successful start/readback.
+The generic Tunnel lifecycle reuses the dedicated endpoint only while protected
+CPA ingress receipts require it, and no longer rejects unrelated DNS origins.
+
+Existing draft fixtures were adapted for the two-network topology and pre-stop
+intent persistence; no new test cases or dependencies were introduced here.
+Relevant original verification still needs explicit authorization and execution,
+including initial attachment, retry after interruption, non-CPA Tunnel sources,
+exact identity rejection, Keeper continuity and the approved catalog recipes.

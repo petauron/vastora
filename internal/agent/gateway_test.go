@@ -407,7 +407,7 @@ func TestCaddyHTTPSRouteEnablesTLSAndRedirectsPlaintext(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded := string(payload)
-	for _, wanted := range []string{`"listen":["0.0.0.0:10080"]`, `"listen":["0.0.0.0:10443"]`, `"tls_connection_policies":[{}]`, `"load_pem"`, `"tags":["vastora-cpa.apps.example.test"]`, `"status_code":308`, `"Location":["https://{http.request.host}{http.request.uri}"]`, `"host":["cpa.apps.example.test"]`} {
+	for _, wanted := range []string{`"listen":["0.0.0.0:10080"]`, `"listen":["0.0.0.0:10443"]`, `"tls_connection_policies":[{"match":{"sni":["cpa.apps.example.test"]}},{"drop":true}]`, `"load_pem"`, `"tags":["vastora-cpa.apps.example.test"]`, `"status_code":308`, `"Location":["https://{http.request.host}{http.request.uri}"]`, `"host":["cpa.apps.example.test"]`} {
 		if !strings.Contains(encoded, wanted) {
 			t.Fatalf("HTTPS Caddy configuration missing %s: %s", wanted, encoded)
 		}

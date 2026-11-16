@@ -1,6 +1,7 @@
 package center
 
 import (
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,9 @@ import (
 func TestOpenAPICatalogRuntimeAdmissionContracts(t *testing.T) {
 	doc, err := openapi3.NewLoader().LoadFromFile(filepath.Join("..", "..", "docs", "openapi.json"))
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := doc.Validate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	digest := strings.Repeat("a", 64)
@@ -41,7 +45,7 @@ func TestOpenAPICatalogRuntimeAdmissionContracts(t *testing.T) {
 		if err := json.Unmarshal([]byte(tc.payload), &payload); err != nil {
 			t.Fatal(err)
 		}
-		err := op.RequestBody.Value.Content["application/json"].Schema.Value.VisitJSON(payload)
+		err := op.RequestBody.Value.Content["application/json"].Schema.Value.VisitJSON(payload, openapi3.EnableJSONSchema2020())
 		if (err == nil) != tc.valid {
 			t.Errorf("%s %s valid=%v: %v", tc.path, tc.payload, tc.valid, err)
 		}
