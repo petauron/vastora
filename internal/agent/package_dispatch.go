@@ -180,6 +180,9 @@ func (e ApplicationExecutor) PackageCapabilities(dockerAvailable bool) (map[stri
 			capabilities = append(capabilities, "shared-caddy")
 		}
 	}
+	if dockerAvailable {
+		capabilities = append(capabilities, "cpa-tunnel-identity")
+	}
 	return versions, capabilities
 }
 
