@@ -334,6 +334,7 @@ func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtime
 		binaryPaths:          []string{"/usr/local/bin/vastora", "/usr/local/bin/vastora.previous"},
 		tailscalePaths:       []string{"/etc/apt/sources.list.d/tailscale.list", "/usr/share/keyrings/tailscale-archive-keyring.gpg", "/var/lib/tailscale"},
 		tailscalePrivacyPath: "/etc/systemd/system/tailscaled.service.d/90-vastora-privacy.conf",
+		tailscaleBootPath:    tailscaleBootDropin,
 		tailscaleEndpointPaths: []string{
 			"/etc/vastora/tailscaled.json",
 			"/etc/systemd/system/tailscaled.service.d/91-vastora-endpoint.conf",
@@ -380,6 +381,7 @@ type agentUninstallEnvironment struct {
 	binaryPaths            []string
 	tailscalePaths         []string
 	tailscalePrivacyPath   string
+	tailscaleBootPath      string
 	tailscaleEndpointPaths []string
 	tailscaleHostsPath     string
 	purgeRuntime           func(context.Context, bool) error
@@ -467,6 +469,14 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 		}
 	}
 	if state.TailscaleOwnership == "managed" {
+		if environment.tailscaleBootPath != "" {
+			if err := authorize(ctx, "files"); err != nil {
+				return err
+			}
+			if err := manageTailscaleBootOrder(ctx, environment.tailscaleBootPath, false, environment.run); err != nil {
+				return fmt.Errorf("remove managed Tailscale startup ordering: %w", err)
+			}
+		}
 		if output, err := environment.run(ctx, "systemctl", "disable", "--now", "tailscaled.service"); err != nil {
 			return fmt.Errorf("stop Vastora-managed Tailscale: %s: %w", strings.TrimSpace(string(output)), err)
 		}
