@@ -728,7 +728,7 @@ func runAgent(arguments []string) error {
 			}
 		}
 		if capabilities.Tunnel {
-			client.TunnelProvisioner = agent.DockerTunnelProvisioner{}
+			client.TunnelProvisioner = agent.DockerTunnelProvisioner{StateDirectory: *dataDir}
 		}
 		controlLogger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 		// Upgrade existing managed installations too. This is local platform

@@ -24,7 +24,7 @@ func (b *DockerPackageBackend) prepareNetwork(ctx context.Context, task Deployme
 		}
 	}
 	if count < 2 {
-		return nil
+		return b.preserveKeeperPrivateNetwork(ctx, task, receipt)
 	}
 	engine, ok := b.Docker.(packageNetworkEngine)
 	if !ok {
@@ -51,6 +51,39 @@ func (b *DockerPackageBackend) prepareNetwork(ctx context.Context, task Deployme
 		}
 		plan.options.HostConfig.NetworkMode = container.NetworkMode(name)
 		plan.options.NetworkingConfig = &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{name: {Aliases: []string{plan.logical}}}}
+	}
+	return nil
+}
+
+// Keeper may already share CPA's private bridge. Keep that existing attachment
+// on replacement without claiming ownership of, or deleting, the shared network.
+func (b *DockerPackageBackend) preserveKeeperPrivateNetwork(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
+	if task.AppKey != keeperKey || len(b.plans) != 1 || b.plans[0].options.HostConfig.NetworkMode == "host" || task.Operation != "upgrade" && task.Operation != "configure" {
+		return nil
+	}
+	plan := &b.plans[0]
+	old := resourceNamed(receipt, "container", plan.logical)
+	if old == nil {
+		return nil
+	}
+	current, err := b.Docker.ContainerInspect(ctx, plan.options.Name, client.ContainerInspectOptions{})
+	if err != nil || current.Container.ID != old.ID || current.Container.NetworkSettings == nil {
+		return errors.New("agent: Keeper network source ownership changed")
+	}
+	for name, endpoint := range current.Container.NetworkSettings.Networks {
+		if name == "bridge" {
+			continue
+		}
+		engine, ok := b.Docker.(packageNetworkEngine)
+		if !ok || len(current.Container.NetworkSettings.Networks) != 1 || endpoint == nil {
+			return errors.New("agent: Keeper private network cannot be preserved")
+		}
+		attached, err := engine.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
+		if err != nil || attached.Network.Driver != "bridge" || attached.Network.ID != endpoint.NetworkID {
+			return errors.New("agent: Keeper private network identity changed")
+		}
+		plan.options.HostConfig.NetworkMode = container.NetworkMode(name)
+		plan.options.NetworkingConfig = &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{name: {Aliases: endpoint.Aliases}}}
 	}
 	return nil
 }
