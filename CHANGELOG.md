@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.0-alpha.471](https://github.com/petauron/vastora/compare/v0.1.0-alpha.470...v0.1.0-alpha.471) (2026-11-16)
+
+
+### Bug Fixes
+
+* **center:** recheck failed TLS entries after agent reconnect ([42f5147](https://github.com/petauron/vastora/commit/42f5147877d6cb66b43cd53bef18f688b20be369))
+* **ci:** update pinned GitHub Actions ([cf9ca98](https://github.com/petauron/vastora/commit/cf9ca98a0ef54e61115ad2a12de8874ad0a91344))
+* **deps-dev:** update the web tooling group ([84ddb97](https://github.com/petauron/vastora/commit/84ddb975f8c95d063e1544db3c68e4d855e133fe))
+* **deps:** bump github.com/pressly/goose/v3 to 3.30.1 ([c8ca046](https://github.com/petauron/vastora/commit/c8ca046db4f9d97483e4dfacbef9cef65e1512fd))
+* **deps:** resolve minimatch denial-of-service advisory ([4ae7f4b](https://github.com/petauron/vastora/commit/4ae7f4bafbfb2fcda2625ba4462220cf3b496623))
+* **deps:** update gjson and pretty ([4a5e5ca](https://github.com/petauron/vastora/commit/4a5e5ca5ffbde0130b406c85d987f26994cf8b41))
+* **deps:** update kin-openapi and validate OpenAPI 3.1 contracts ([4b72fd6](https://github.com/petauron/vastora/commit/4b72fd62ab3434054a8ae3f8c53173da27c4c21d))
+* **deps:** update klauspost cpuid ([2671986](https://github.com/petauron/vastora/commit/2671986535ad45c7c7342b0b1c2dc78cdb04e247))
+* **deps:** update React and web runtime dependencies ([8789002](https://github.com/petauron/vastora/commit/878900237ffad1a8e1d9c203c4abf9b1a629ec71))
+* **deps:** update remaining golang-x modules ([ec336f0](https://github.com/petauron/vastora/commit/ec336f012f6273fbcd280768d511762888036288))
+* **deps:** update the Node.js Docker builder image ([324d32e](https://github.com/petauron/vastora/commit/324d32e97867fd5e13675607c37a3440951ba946))
+* **deps:** update the projectdiscovery dependency group ([69fc98e](https://github.com/petauron/vastora/commit/69fc98e16f12a9d983887c9c0a37de63842f3ff8))
+
 ## [0.1.0-alpha.470](https://github.com/petauron/vastora/compare/v0.1.0-alpha.469...v0.1.0-alpha.470) (2026-11-16)
 
 
