@@ -517,7 +517,7 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 	defer tx.Rollback()
 	var protected int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications pub WHERE pub.id=? AND pub.kind='public_shared_443' AND (
-		EXISTS(SELECT 1 FROM three_x_ui_node_protocols p WHERE p.service_id=pub.service_id AND p.hy2_enabled=1)
+		EXISTS(SELECT 1 FROM three_x_ui_node_protocols p JOIN services owner_service ON owner_service.id=p.service_id JOIN applications owner_app ON owner_app.id=owner_service.application_id WHERE p.service_id=pub.service_id AND p.hy2_enabled=1 AND owner_app.app_key='vastora-official/3x-ui')
 		OR EXISTS(SELECT 1 FROM meridian_endpoints endpoint WHERE endpoint.service_id=pub.service_id AND endpoint.hy2_enabled=1 AND endpoint.status<>'retired')
 		OR EXISTS(SELECT 1 FROM application_commands c WHERE json_extract(c.input_json,'$.serviceId')=pub.service_id AND c.kind='3xui.protocols.configure' AND (c.state IN ('pending','running') OR c.reconciliation_required=1))
 	)`, id).Scan(&protected); err != nil {

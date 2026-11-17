@@ -797,7 +797,14 @@ func matchingCloudflareDNSRecord(records []cloudflareDNSRecord, recordType, name
 
 func (client cloudflareClient) deleteDNSRecord(ctx context.Context, recordID string) error {
 	var ignored json.RawMessage
-	return client.do(ctx, http.MethodDelete, "/zones/"+url.PathEscape(client.zoneID)+"/dns_records/"+url.PathEscape(recordID), nil, &ignored)
+	err := client.do(ctx, http.MethodDelete, "/zones/"+url.PathEscape(client.zoneID)+"/dns_records/"+url.PathEscape(recordID), nil, &ignored)
+	var failure *cloudflareAPIError
+	// Only the provider's structured DNS record-not-found response proves
+	// an already-completed removal. Keep auth, transport and other errors.
+	if errors.As(err, &failure) && failure.Code == 81044 && (failure.StatusCode == http.StatusNotFound || failure.StatusCode == http.StatusBadRequest) {
+		return nil
+	}
+	return err
 }
 
 func (client cloudflareClient) do(ctx context.Context, method, path string, body any, output any) error {
