@@ -40,7 +40,7 @@ type panelIdentity struct {
 }
 
 func panelIdentityID(node string) string {
-	sum := sha256.Sum256([]byte("application-panel/v1/" + meridianAppKey + "/" + node))
+	sum := sha256.Sum256([]byte("application-panel/v1/" + glivelaAppKey + "/" + node))
 	return "panel-" + hex.EncodeToString(sum[:])
 }
 func makePanelIdentity(now time.Time) (panelIdentity, error) {
@@ -184,7 +184,7 @@ func (s *Server) handleApplicationPanel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var node, endpoint string
-	err := s.store.db.QueryRowContext(r.Context(), `SELECT a.node_id,sv.endpoint FROM applications a JOIN services sv ON sv.application_id=a.id WHERE a.id=? AND a.app_key=? AND a.status='running' AND sv.name='controller' AND sv.protocol='https' AND sv.status IN ('ready','running','publishing')`, r.PathValue("id"), meridianAppKey).Scan(&node, &endpoint)
+	err := s.store.db.QueryRowContext(r.Context(), `SELECT a.node_id,sv.endpoint FROM applications a JOIN services sv ON sv.application_id=a.id WHERE a.id=? AND a.app_key=? AND a.status='running' AND sv.name='controller' AND sv.protocol='https' AND sv.status IN ('ready','running','publishing')`, r.PathValue("id"), glivelaAppKey).Scan(&node, &endpoint)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("center: application panel unavailable"))
 		return

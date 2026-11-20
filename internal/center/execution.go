@@ -348,8 +348,8 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, err
 		}
 	}
-	if acceptance || task.MeridianAcceptance != nil {
-		if !acceptance || task.MeridianAcceptance == nil || task.Attempt != 1 || task.Reconcile {
+	if acceptance || task.GlivelaAcceptance != nil {
+		if !acceptance || task.GlivelaAcceptance == nil || task.Attempt != 1 || task.Reconcile {
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}
 		expected, err := s.validateReinstallAcceptance(ctx, tx, agentID, task.ID)
@@ -357,7 +357,7 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 			return controlplane.ExecutionAuthorization{}, err
 		}
 		a, _ := json.Marshal(expected)
-		b, _ := json.Marshal(task.MeridianAcceptance)
+		b, _ := json.Marshal(task.GlivelaAcceptance)
 		if string(a) != string(b) {
 			return controlplane.ExecutionAuthorization{}, errExecutionAuthorization
 		}

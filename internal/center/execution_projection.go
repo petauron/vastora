@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 // The claimed outcome is evidence, not authority to mark a rejected business
@@ -104,7 +104,7 @@ func validateExecutionProjection(ctx context.Context, tx *sql.Tx, id string, suc
 		// Export is read-only on the Agent. A successful export can still fail
 		// Center-side validation/import; record that business failure without
 		// misclassifying the Agent result as an uncertain execution.
-		if commandKind == meridianruntime.LegacyExportKind &&
+		if commandKind == glivelaruntime.LegacyExportKind &&
 			(strings.HasPrefix(businessError, "center: Meridian import failed:") || businessError == "center: Agent returned an invalid Meridian legacy export") {
 			return nil
 		}

@@ -20,6 +20,10 @@ func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("agent: create data directory: %w", err)
 	}
+	configDir, err := resolveGlivelaConfigDir(dataDir)
+	if err != nil {
+		return nil, err
+	}
 	databasePath := filepath.Join(dataDir, "agent.db")
 	databaseInfo, statErr := os.Stat(databasePath)
 	existingDatabase := statErr == nil && databaseInfo.Size() > 0
@@ -39,7 +43,6 @@ func Open(dataDir string) (*Store, error) {
 		return nil, errors.New("agent: local key exists without its database")
 	}
 	var key []byte
-	var err error
 	if existingDatabase {
 		key, err = secret.LoadKey(keyPath)
 	} else {
@@ -65,7 +68,7 @@ func Open(dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("agent: open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	store := &Store{db: db, key: key, dataDir: dataDir, now: time.Now, linkChecker: landing.NewLinkChecker()}
+	store := &Store{db: db, key: key, dataDir: dataDir, glivelaConfigDir: configDir, now: time.Now, linkChecker: landing.NewLinkChecker()}
 	if existingDatabase {
 		bound, err := inspectAgentDatabaseKeyBinding(context.Background(), db, key)
 		if err != nil {
@@ -599,7 +602,7 @@ func Open(dataDir string) (*Store, error) {
 		}
 		if version == 20 {
 			// Preserve the legacy worker journal as one-time cutover input and add
-			// a separate complete-artifact journal for Meridian. Translating or
+			// a separate complete-artifact journal for Glivela. Translating or
 			// renaming the old row during Agent startup would let the still-running
 			// legacy writer decode a different state shape before Center has
 			// explicitly fenced it.
@@ -668,7 +671,7 @@ func Open(dataDir string) (*Store, error) {
 			// that key before taking the new independently verifiable snapshot.
 			migrateErr := store.initializeDatabaseKeyBinding(context.Background())
 			if migrateErr == nil {
-				migrateErr = prepareSharedCaddyMigrationBackup(context.Background(), db, dataDir, key)
+				migrateErr = prepareAgentSchemaBackup(context.Background(), db, dataDir, key, "schema-23-backup-shared-caddy", 23)
 			}
 			if migrateErr == nil {
 				_, migrateErr = db.Exec(`BEGIN;
@@ -681,6 +684,13 @@ func Open(dataDir string) (*Store, error) {
 				return nil, fmt.Errorf("agent: migrate database schema from 23 to 24: %w", migrateErr)
 			}
 			version = 24
+		}
+		if version == 24 {
+			if err := store.migrateGlivelaRuntimeState(context.Background()); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 24 to 25: %w", err)
+			}
+			version = glivelaRuntimeSchemaVersion
 		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
@@ -801,7 +811,7 @@ func Open(dataDir string) (*Store, error) {
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed_state BLOB NOT NULL
 		);
-		CREATE TABLE meridian_runtime_state (
+		CREATE TABLE glivela_runtime_state (
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed_state BLOB NOT NULL
 		);
@@ -811,7 +821,7 @@ func Open(dataDir string) (*Store, error) {
 		);
 		CREATE TABLE node_site_journal (application_id TEXT PRIMARY KEY, sealed_state BLOB NOT NULL);
 		CREATE TABLE shared_caddy_sites (application_id TEXT PRIMARY KEY, sealed_state BLOB NOT NULL);
-		` + taskReceiptIndexesSQL + `PRAGMA user_version = 24;`); err != nil {
+		` + taskReceiptIndexesSQL + `PRAGMA user_version = 25;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}

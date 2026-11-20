@@ -1,0 +1,713 @@
+package center
+
+import (
+	"bytes"
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/petauron/glivela"
+	"github.com/petauron/vastora/internal/glivelaruntime"
+	"github.com/petauron/vastora/internal/networking"
+)
+
+func TestLegacySubscriptionSnapshotRemainsExportable(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	node := enrollOrchestrationNode(t, store, "entry-alpha", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.21", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.21", HeadscaleAddress: "100.64.0.21", EnabledKinds: []string{networking.KindHeadscale}})
+	const (
+		applicationID = "entry-alpha"
+		serviceID     = "service-alpha"
+		endpointID    = "endpoint-alpha"
+		accountID     = "account-alpha"
+		credentialID  = "credential-alpha"
+		token         = "subscription-token-alpha"
+		protocolID    = "11111111-1111-4111-8111-111111111111"
+	)
+	ctx := context.Background()
+	siteID := testSiteID(t, store)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at) VALUES(?,?,?,?,?,'','running','docker','',?,?)`, applicationID, "Entry Alpha", node.ID, siteID, glivelaAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,region_code,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at) VALUES(?,?,?,?,?,?,'tcp',443,443,?,'observed',?,0,'0.0.0','ready',?,?)`, serviceID, applicationID, siteID, "inbound-1", "🇺🇸 United States｜Entry Alpha", "US", "100.64.0.21:443", glivelaEntryProtocol, now, now); err != nil {
+		t.Fatal(err)
+	}
+	tokenSecretID, err := store.putSecret(ctx, tx, []byte(token), glivelaAccountSecretContext(accountID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialSecretID, err := store.putSecret(ctx, tx, []byte(protocolID), glivelaCredentialSecretContext(credentialID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpointSecretID, err := store.putSecret(ctx, tx, []byte("test-private-key"), glivelaEndpointSecretContext(endpointID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at) VALUES(?,?,?,?,'100.64.0.61',10443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'test-public-key','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "meridian-entry-alpha", endpointSecretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,desired_revision,applied_revision,status,created_at,updated_at)
+		VALUES('entry-alpha-publication',?,'public_shared_443','application_node',?,'entry.example.test','www.example.com','manual',0,1,1,'ready',?,?)`, serviceID, node.ID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	digest := tokenHash(token)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,expiry_time,reset_days,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at) VALUES(?,?,1000,0,0,1,?,?,1,1,'active',?,?)`, accountID, "Account Alpha", tokenSecretID, hex.EncodeToString(digest), now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at) VALUES(?,?,?,'native','entry-user',?,?,1,?,?)`, credentialID, accountID, endpointID, glivela.Identity(protocolID), credentialSecretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,baseline_bytes,observed_bytes,observed_at) VALUES(?,0,100,?)`, credentialID, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GlivelaSubscription(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCenterEncryptedState(ctx, store.db, store.key); err != nil {
+		t.Fatalf("Glivela encrypted state was not owned by the database key verifier: %v", err)
+	}
+	// Subscription rendering uses only the public endpoint projection. Runtime
+	// private keys stay outside the HTTP request path even if their encrypted
+	// record is temporarily unreadable.
+	if _, err := store.db.ExecContext(ctx, `UPDATE secrets SET sealed=X'00' WHERE id=?`, endpointSecretID); err != nil {
+		t.Fatal(err)
+	}
+
+	initial, err := store.GlivelaSubscription(ctx, token)
+	if err != nil || len(initial.Entries) != 1 || initial.Usage.UsedBytes != 100 {
+		t.Fatalf("legacy export projection unavailable: %v", err)
+	}
+	var sealedSnapshot []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT secret.sealed FROM meridian_subscription_snapshots snapshot JOIN secrets secret ON secret.id=snapshot.secret_id WHERE snapshot.account_id=?`, accountID).Scan(&sealedSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(sealedSnapshot, []byte(token)) || bytes.Contains(sealedSnapshot, []byte(protocolID)) || bytes.Contains(sealedSnapshot, []byte("vless://")) {
+		t.Fatal("applied Glivela subscription snapshot was stored in plaintext")
+	}
+
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, landingSelectionKey, `{"revision":0,"nodeIds":null}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GlivelaSubscription(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET total_bytes=120,used_bytes=105 WHERE id=?`, endpointID); err != nil {
+		t.Fatal(err)
+	}
+	usageTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.observeGlivelaUsageInTx(ctx, usageTx, endpointID, []glivela.CounterSnapshot{{CredentialID: credentialID, UpBytes: 15}}, now); err != nil {
+		usageTx.Rollback()
+		t.Fatal(err)
+	}
+	if err := usageTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var used int64
+	if err := store.db.QueryRowContext(ctx, `SELECT used_bytes FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&used); err != nil || used != 120 {
+		t.Fatalf("shared entry usage=%d err=%v", used, err)
+	}
+	if _, err := store.GlivelaSubscription(ctx, token); !errors.Is(err, errGlivelaSubscriptionNotFound) {
+		t.Fatalf("exhausted entry served a saved subscription: %v", err)
+	}
+	usageTx, err = store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.observeGlivelaUsageInTx(ctx, usageTx, endpointID, []glivela.CounterSnapshot{{CredentialID: credentialID, UpBytes: 3}}, now); err != nil {
+		usageTx.Rollback()
+		t.Fatal(err)
+	}
+	if err := usageTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT used_bytes FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&used); err != nil || used != 123 {
+		t.Fatalf("entry usage after raw counter reset=%d err=%v", used, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET reset_day=1,next_reset_at=?,quota_applied_enabled=0 WHERE id=?`, store.now().UTC().Add(-time.Minute).Format(time.RFC3339Nano), endpointID); err != nil {
+		t.Fatal(err)
+	}
+	resetTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.resetDueGlivelaEndpoints(ctx, resetTx); err != nil {
+		resetTx.Rollback()
+		t.Fatal(err)
+	}
+	if err := resetTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var desired, applied int64
+	var appliedEnabled int
+	if err := store.db.QueryRowContext(ctx, `SELECT used_bytes,desired_revision,applied_revision,quota_applied_enabled FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&used, &desired, &applied, &appliedEnabled); err != nil || used != 0 || desired != 2 || applied != 1 || appliedEnabled != 0 {
+		t.Fatalf("monthly entry reset used=%d revisions=%d/%d applied gate=%d err=%v", used, desired, applied, appliedEnabled, err)
+	}
+	if _, err := store.GlivelaSubscription(ctx, token); !errors.Is(err, errGlivelaSubscriptionNotFound) {
+		t.Fatalf("reset entry served subscription before runtime applied: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET total_bytes=0,reset_day=0,next_reset_at='',quota_applied_enabled=1,applied_revision=desired_revision,runtime_healthy=1,status='ready' WHERE id=?`, endpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GlivelaSubscription(ctx, token); err != nil {
+		t.Fatalf("entry did not recover after runtime applied: %v", err)
+	}
+
+	// The authority route is moved to Center before any legacy runtime is
+	// replaced. During that bounded phase the immutable imported identity set
+	// remains available even though ordinary applied receipts are intentionally
+	// still pending.
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='publish',subscription_authority='meridian',import_sha256=? WHERE id=1`, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_accounts SET applied_revision=0 WHERE id=?`, accountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET applied_revision=0,runtime_healthy=0,status='pending' WHERE id=?`, endpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE services SET status='pending' WHERE id=?`, serviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE publications SET desired_revision=2,applied_revision=1,status='pending' WHERE service_id=?`, serviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GlivelaSubscription(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='complete' WHERE id=1;
+		UPDATE meridian_accounts SET desired_revision=2,applied_revision=1 WHERE id=?;
+		UPDATE meridian_endpoints SET desired_revision=2,applied_revision=1 WHERE id=?`, accountID, endpointID); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := store.GlivelaSubscription(ctx, token)
+	if err != nil || !reflect.DeepEqual(initial.Entries, recovered.Entries) {
+		t.Fatalf("legacy applied snapshot changed: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_accounts SET enabled=0,status='disabled' WHERE id=?`, accountID); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{token, "not-the-token"} {
+		if _, err := store.GlivelaSubscription(ctx, value); !errors.Is(err, errGlivelaSubscriptionNotFound) {
+			t.Fatalf("disabled or unknown legacy account: %v", err)
+		}
+	}
+}
+
+func TestUnavailableGlivelaLandingBlocksOnlyItsFixedRoute(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	entry := enrollOrchestrationNode(t, store, "route-filter-entry", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.71", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.71", HeadscaleAddress: "100.64.0.71", EnabledKinds: []string{networking.KindHeadscale}})
+	egress := enrollOrchestrationNode(t, store, "route-filter-egress", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.72", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.72", HeadscaleAddress: "100.64.0.72", EnabledKinds: []string{networking.KindHeadscale}})
+	ctx := context.Background()
+	siteID := testSiteID(t, store)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	const (
+		applicationID = "route-filter-application"
+		serviceID     = "route-filter-service"
+		endpointID    = "route-filter-endpoint"
+		accountID     = "route-filter-account"
+		baseID        = "route-filter-base"
+		routeID       = "route-filter-routed"
+		grantID       = "route-filter-grant"
+		baseSecret    = "11111111-1111-4111-8111-111111111111"
+		routeSecret   = "22222222-2222-4222-8222-222222222222"
+	)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
+		VALUES(?,?,?,?,?,'','running','docker','',?,?)`, applicationID, "Route filter entry", entry.ID, siteID, glivelaAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
+		VALUES(?,?,?,?,?,'tcp',443,443,?,'observed',?,0,'0.0.0','ready',?,?)`, serviceID, applicationID, siteID, "inbound-1", "Route filter entry", "100.64.0.71:443", glivelaEntryProtocol, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,desired_revision,applied_revision,status,created_at,updated_at)
+		VALUES('route-filter-publication',?,'public_shared_443','application_node',?,'entry.example.test','www.example.com','manual',0,1,1,'ready',?,?)`, serviceID, entry.ID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	endpointSecretID, err := store.putSecret(ctx, tx, []byte("route-filter-private-key"), glivelaEndpointSecretContext(endpointID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
+		VALUES(?,?,?,?,'100.64.0.61',10443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'route-filter-public-key','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "route-filter-inbound", endpointSecretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	tokenSecretID, err := store.putSecret(ctx, tx, []byte("route-filter-token"), glivelaAccountSecretContext(accountID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
+		VALUES(?,?,?, ?,1,1,'active',?,?)`, accountID, "Route filter account", tokenSecretID, glivela.SubscriptionTokenFingerprint("route-filter-token"), now, now); err != nil {
+		t.Fatal(err)
+	}
+	baseSecretID, err := store.putSecret(ctx, tx, []byte(baseSecret), glivelaCredentialSecretContext(baseID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeSecretID, err := store.putSecret(ctx, tx, []byte(routeSecret), glivelaCredentialSecretContext(routeID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at)
+		VALUES(?,?,?,'native','route-filter-native',?,?,1,?,?)`, baseID, accountID, endpointID, glivela.Identity(baseSecret), baseSecretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,egress_node_id,enabled,created_at,updated_at)
+		VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, glivela.RouteUser(grantID), glivela.Identity(routeSecret), routeSecretID, egress.ID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	serverJSON, _ := glivelaAppliedLandingFixtureJSON(t, egress.ID, "100.64.0.72", "100.64.0.71")
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET source_peer_json=? WHERE id=?`, []byte(`{"id":"tailnet-filter-entry","publicKey":"nodekey:test-filter-entry","address":"100.64.0.71"}`), endpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,applied_json,peer_json,status,last_error,updated_at)
+		VALUES(?,1,0,?,'{}','{}','failed','landing unavailable',?)`, egress.ID, serverJSON, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,hide_native,desired_revision,applied_revision,runtime_healthy,status,last_error,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,1,1,1,0,'blocked',?, ?,?)`, grantID, accountID, endpointID, egress.ID, baseID, routeID, glivelaRoutePeerUnavailable, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	base := glivela.Credential{ID: baseID, AccountID: accountID, Kind: glivela.NativeCredential, User: "route-filter-native", Identity: glivela.Identity(baseSecret), EntryID: applicationID, Enabled: true}
+	routed := glivela.Credential{ID: routeID, AccountID: accountID, Kind: glivela.RouteCredential, User: glivela.RouteUser(grantID), Identity: glivela.Identity(routeSecret), EntryID: applicationID, EgressID: egress.ID, Enabled: true}
+	runtimeRoutes, err := store.glivelaRuntimeGrants(ctx, tx, endpointID, "route-filter-inbound", map[string]glivela.CredentialMaterial{
+		baseID:  {Credential: base, ProtocolID: baseSecret},
+		routeID: {Credential: routed, ProtocolID: routeSecret},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtimeRoutes.grants) != 0 || runtimeRoutes.blockedGrants[grantID] != glivelaRoutePeerUnavailable || !runtimeRoutes.disabledCredentialIDs[routeID] {
+		t.Fatalf("unavailable landing projection = %#v", runtimeRoutes)
+	}
+	baseLink := "vless://" + baseSecret + "@entry.example.test:443?security=reality&type=tcp&sni=www.example.com&pbk=public&sid=abcd&fp=chrome&flow=xtls-rprx-vision#Entry"
+	routeLink := "vless://" + routeSecret + "@entry.example.test:443?security=reality&type=tcp&sni=www.example.com&pbk=public&sid=abcd&fp=chrome&flow=xtls-rprx-vision#Entry"
+	grant := glivela.RouteGrant{ID: grantID, AccountID: accountID, EntryID: applicationID, EgressID: egress.ID, InboundTag: "route-filter-inbound", Base: base, Route: routed, Mode: glivela.FixedMode, Enabled: true, HideNative: true, DesiredRev: 1, AppliedRev: 1, RuntimeGood: true}
+	snapshot := glivelaAppliedSubscriptionSnapshot{AccountID: accountID, AccountRevision: 1,
+		Entries: []glivela.NativeEntry{{Material: glivela.CredentialMaterial{Credential: base, ProtocolID: baseSecret}, Protocol: glivela.VLESSReality, Link: baseLink}},
+		Routes:  []glivela.PublishedRoute{{Grant: grant, Protocol: glivela.VLESSReality, EntryName: "Entry", BaseLink: baseLink, RouteLink: routeLink, BaseProtocolIdentity: base.Identity, RouteProtocolIdentity: routed.Identity}},
+	}
+	filtered, err := store.filterGlivelaSubscriptionSnapshotRoutesInTx(ctx, tx, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Routes) != 0 || len(filtered.Entries) != 0 {
+		t.Fatalf("hidden fixed route did not fail closed: %#v", filtered)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET hide_native=0 WHERE id=?`, grantID); err != nil {
+		t.Fatal(err)
+	}
+	filtered, err = store.filterGlivelaSubscriptionSnapshotRoutesInTx(ctx, tx, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Routes) != 0 || len(filtered.Entries) != 1 || filtered.Entries[0].Material.Credential.ID != baseID {
+		t.Fatalf("independent native entry was removed with unavailable route: %#v", filtered)
+	}
+}
+
+func TestGlivelaQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	entryA := enrollOrchestrationNode(t, store, "entry-a", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.31", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.31", HeadscaleAddress: "100.64.0.31", EnabledKinds: []string{networking.KindHeadscale}})
+	entryB := enrollOrchestrationNode(t, store, "entry-b", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.32", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.32", HeadscaleAddress: "100.64.0.32", EnabledKinds: []string{networking.KindHeadscale}})
+	egress := enrollOrchestrationNode(t, store, "egress", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.33", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.33", HeadscaleAddress: "100.64.0.33", EnabledKinds: []string{networking.KindHeadscale}})
+
+	ctx := context.Background()
+	siteID := testSiteID(t, store)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	accountID := "shared-account"
+	tokenSecretID, err := store.putSecret(ctx, tx, []byte("shared-token"), glivelaAccountSecretContext(accountID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,expiry_time,reset_days,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
+		VALUES(?, 'Shared account', 100, 0, 0, 1, ?, ?, 1, 1, 'active', ?, ?)`, accountID, tokenSecretID, glivela.SubscriptionTokenFingerprint("shared-token"), now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	insertEndpoint := func(applicationID, serviceID, endpointID string, nodeID string) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
+			VALUES(?,?,?,?,?,'','running','docker','',?,?) ON CONFLICT(id) DO NOTHING`, applicationID, applicationID, nodeID, siteID, glivelaAppKey, now, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
+			VALUES(?,?,?,?,?,'tcp',443,443,?,'observed',?,0,'0.0.0','ready',?,?)`, serviceID, applicationID, siteID, "inbound-"+endpointID, applicationID, "100.64.0.31:443", glivelaEntryProtocol, now, now); err != nil {
+			t.Fatal(err)
+		}
+		endpointSecretID, err := store.putSecret(ctx, tx, []byte("private-"+endpointID), glivelaEndpointSecretContext(endpointID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
+			VALUES(?,?,?,?,'100.64.0.61',10443,?,443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'public','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "inbound-"+endpointID, endpointID+".example.test", endpointSecretID, now, now); err != nil {
+			t.Fatal(err)
+		}
+		baseID, routeID := "base-"+endpointID, "route-"+endpointID
+		baseProtocolID := "11111111-1111-4111-8111-" + strings.Repeat("1", 12)
+		routeProtocolID := "22222222-2222-4222-8222-" + strings.Repeat("2", 12)
+		baseSecretID, err := store.putSecret(ctx, tx, []byte(baseProtocolID), glivelaCredentialSecretContext(baseID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		routeSecretID, err := store.putSecret(ctx, tx, []byte(routeProtocolID), glivelaCredentialSecretContext(routeID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at)
+			VALUES(?,?,?,'native',?,?,?,1,?,?)`, baseID, accountID, endpointID, "user-"+baseID, glivela.Identity(baseProtocolID), baseSecretID, now, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,egress_node_id,enabled,created_at,updated_at)
+			VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, "user-"+routeID, glivela.Identity(routeProtocolID), routeSecretID, egress.ID, now, now); err != nil {
+			t.Fatal(err)
+		}
+		for _, credentialID := range []string{baseID, routeID} {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,observed_at) VALUES(?,?)`, credentialID, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,desired_revision,applied_revision,runtime_healthy,status,health_expires_unix_ms,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,1,1,1,'ready',?,?,?)`, "grant-"+endpointID, accountID, endpointID, egress.ID, baseID, routeID, store.now().Add(10*time.Second).UnixMilli(), now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertEndpoint("application-a", "service-a", "endpoint-a", entryA.ID)
+	insertEndpoint("application-b", "service-b", "endpoint-b", entryB.ID)
+	// Distinct physical entries must not describe the same public transport.
+	// Reusing the UUID across entries is valid; duplicating host/SNI/REALITY is not.
+	for _, publication := range []struct{ serviceID, endpointID, nodeID string }{
+		{"service-a", "endpoint-a", entryA.ID},
+		{"service-b", "endpoint-b", entryB.ID},
+	} {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,desired_revision,applied_revision,status,created_at,updated_at)
+			VALUES(?,?,'public_shared_443','application_node',?,?,'www.example.com','manual',0,1,1,'ready',?,?)`, "publication-"+publication.serviceID, publication.serviceID, publication.nodeID, publication.endpointID+".example.test", now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A retired endpoint still owns its application identity. Use a separate
+	// installation instead of violating the one-endpoint-per-application key.
+	insertEndpoint("application-retired", "service-retired", "endpoint-retired", egress.ID)
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_credentials SET enabled=0 WHERE endpoint_id='endpoint-retired'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET enabled=0,status='revoked' WHERE endpoint_id='endpoint-retired'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=0,status='retired' WHERE id='endpoint-retired'`); err != nil {
+		t.Fatal(err)
+	}
+
+	// A different account shares the same runtime but has never downloaded its
+	// subscription. Exhausting the first account must not withdraw this account.
+	const (
+		otherAccountID    = "independent-account"
+		otherToken        = "independent-token"
+		otherCredentialID = "independent-base-a"
+		otherProtocolID   = "33333333-3333-4333-8333-333333333333"
+	)
+	otherTokenSecretID, err := store.putSecret(ctx, tx, []byte(otherToken), glivelaAccountSecretContext(otherAccountID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
+		VALUES(?, 'Independent account', 100, 1, ?, ?, 1, 1, 'active', ?, ?)`, otherAccountID, otherTokenSecretID, glivela.SubscriptionTokenFingerprint(otherToken), now, now); err != nil {
+		t.Fatal(err)
+	}
+	otherCredentialSecretID, err := store.putSecret(ctx, tx, []byte(otherProtocolID), glivelaCredentialSecretContext(otherCredentialID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at)
+		VALUES(?,?,'endpoint-a','native','independent-user',?,?,1,?,?)`, otherCredentialID, otherAccountID, glivela.Identity(otherProtocolID), otherCredentialSecretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,observed_bytes,observed_at) VALUES(?,5,?)`, otherCredentialID, now); err != nil {
+		t.Fatal(err)
+	}
+	var initialSnapshots int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_subscription_snapshots WHERE account_id IN (?,?)`, accountID, otherAccountID).Scan(&initialSnapshots); err != nil || initialSnapshots != 0 {
+		t.Fatalf("subscriptions were already snapshotted: count=%d err=%v", initialSnapshots, err)
+	}
+	quotaBefore, err := store.glivelaQuotaStatesInTx(ctx, tx, "endpoint-a")
+	if err != nil || !quotaBefore[accountID] || !quotaBefore[otherAccountID] {
+		t.Fatalf("accounts were not initially within quota: states=%v err=%v", quotaBefore, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_usage_watermarks SET observed_bytes=100 WHERE credential_id='base-endpoint-a'`); err != nil {
+		t.Fatal(err)
+	}
+	quotaAfter, err := store.glivelaQuotaStatesInTx(ctx, tx, "endpoint-a")
+	if err != nil || quotaAfter[accountID] || !quotaAfter[otherAccountID] {
+		t.Fatalf("quota crossing affected the wrong accounts: states=%v err=%v", quotaAfter, err)
+	}
+	if err := store.markGlivelaQuotaBoundaryChanged(ctx, tx, []string{accountID}, now); err != nil {
+		t.Fatal(err)
+	}
+	// No subscription download preceded the usage-driven revision change.
+	// Its last applied entries must still be recoverable during the rebuild.
+	snapshot, err := store.loadGlivelaSubscriptionSnapshotInTx(ctx, tx, accountID)
+	if err != nil || snapshot.AccountRevision != 1 || len(snapshot.Entries) != 2 {
+		t.Fatalf("quota boundary lost applied subscription: revision=%d entries=%d err=%v", snapshot.AccountRevision, len(snapshot.Entries), err)
+	}
+	for _, endpointID := range []string{"endpoint-a", "endpoint-b"} {
+		var desiredRevision, healthy int
+		var status string
+		if err := tx.QueryRowContext(ctx, `SELECT desired_revision,runtime_healthy,status FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&desiredRevision, &healthy, &status); err != nil {
+			t.Fatal(err)
+		}
+		if desiredRevision != 2 || healthy != 0 || status != "pending" {
+			t.Fatalf("endpoint %s did not receive shared quota revision: revision=%d healthy=%d status=%s", endpointID, desiredRevision, healthy, status)
+		}
+		var grantRevision, grantHealthy int
+		if err := tx.QueryRowContext(ctx, `SELECT desired_revision,runtime_healthy FROM meridian_route_grants WHERE endpoint_id=?`, endpointID).Scan(&grantRevision, &grantHealthy); err != nil {
+			t.Fatal(err)
+		}
+		if grantRevision != 2 || grantHealthy != 0 {
+			t.Fatalf("endpoint %s route did not receive shared quota revision: revision=%d healthy=%d", endpointID, grantRevision, grantHealthy)
+		}
+	}
+	var retiredRevision int
+	var retiredStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT desired_revision,status FROM meridian_endpoints WHERE id='endpoint-retired'`).Scan(&retiredRevision, &retiredStatus); err != nil {
+		t.Fatal(err)
+	}
+	if retiredRevision != 1 || retiredStatus != "retired" {
+		t.Fatalf("quota boundary resurrected retired endpoint: revision=%d status=%s", retiredRevision, retiredStatus)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.GlivelaSubscription(ctx, otherToken)
+	if err != nil || len(other.Entries) == 0 {
+		t.Fatalf("unaffected legacy snapshot unavailable: %v", err)
+	}
+	if _, err := store.GlivelaSubscription(ctx, "shared-token"); !errors.Is(err, errGlivelaSubscriptionNotFound) {
+		t.Fatalf("applied snapshot bypassed exhausted account quota: %v", err)
+	}
+	enabled := true
+	if _, err := store.UpdateGlivelaAccount(ctx, accountID, GlivelaAccountInput{DisplayName: "Shared account", TotalBytes: 100, Enabled: &enabled}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision,status FROM meridian_endpoints WHERE id='endpoint-retired'`).Scan(&retiredRevision, &retiredStatus); err != nil {
+		t.Fatal(err)
+	}
+	if retiredRevision != 1 || retiredStatus != "retired" {
+		t.Fatalf("account update resurrected retired endpoint: revision=%d status=%s", retiredRevision, retiredStatus)
+	}
+	peerTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.markGlivelaLandingPeerChanged(ctx, peerTx, egress.ID, now); err != nil {
+		peerTx.Rollback()
+		t.Fatal(err)
+	}
+	if err := peerTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, endpointID := range []string{"endpoint-a", "endpoint-b"} {
+		var revision int
+		if err := store.db.QueryRowContext(ctx, `SELECT desired_revision FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&revision); err != nil {
+			t.Fatal(err)
+		}
+		if revision != 4 {
+			t.Fatalf("landing peer change did not rebuild endpoint %s: revision=%d", endpointID, revision)
+		}
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision,status FROM meridian_endpoints WHERE id='endpoint-retired'`).Scan(&retiredRevision, &retiredStatus); err != nil {
+		t.Fatal(err)
+	}
+	if retiredRevision != 1 || retiredStatus != "retired" {
+		t.Fatalf("landing peer change resurrected retired endpoint: revision=%d status=%s", retiredRevision, retiredStatus)
+	}
+}
+
+func TestInvalidGlivelaRuntimeDoesNotBlockAgentClaims(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	node := enrollOrchestrationNode(t, store, "entry-blocked", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.41", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.41", HeadscaleAddress: "100.64.0.41", EnabledKinds: []string{networking.KindHeadscale}})
+	ctx := context.Background()
+	siteID := testSiteID(t, store)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	// An empty credential set is deployable. An installation with no audited
+	// image is not; its failure must release the claim loop for other work.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
+		VALUES('blocked-application','Blocked entry',?,?,?,'','running','docker','',?,?)`, node.ID, siteID, glivelaAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
+		VALUES('blocked-service','blocked-application',?,'inbound-1','Blocked entry','tcp',443,443,'100.64.0.41:443','observed',?,0,'0.0.0','pending',?,?)`, siteID, glivelaEntryProtocol, now, now); err != nil {
+		t.Fatal(err)
+	}
+	secretID, err := store.putSecret(ctx, tx, []byte("blocked-private-key"), glivelaEndpointSecretContext("blocked-endpoint"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
+		VALUES('blocked-endpoint','blocked-application','blocked-service','blocked-tag','100.64.0.61',10443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'blocked-public-key','["abcd"]','chrome',1,0,0,'pending',?,?)`, secretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.queueNextGlivelaRuntime(ctx, tx, node.ID)
+	if !errors.Is(err, errApplicationCommandDiscarded) {
+		t.Fatalf("undeployable projection did not release the claim loop: %v", err)
+	}
+	var status, lastError string
+	if err := tx.QueryRowContext(ctx, `SELECT status,last_error FROM meridian_endpoints WHERE id='blocked-endpoint'`).Scan(&status, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || !strings.Contains(lastError, "runtime task is invalid") {
+		t.Fatalf("undeployable endpoint status=%s error=%q", status, lastError)
+	}
+}
+
+func TestSupersededGlivelaReceiptLeavesNewestRevisionPending(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	node := enrollOrchestrationNode(t, store, "entry-superseded", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.42", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.42", HeadscaleAddress: "100.64.0.42", EnabledKinds: []string{networking.KindHeadscale}})
+	ctx := context.Background()
+	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	siteID := testSiteID(t, store)
+	queuedSHA := glivela.Identity("superseded-queued-config")
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
+		VALUES('superseded-application','Superseded entry',?,?,?,'','running','docker','',?,?)`, node.ID, siteID, glivelaAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
+		VALUES('superseded-service','superseded-application',?,'inbound-1','Superseded entry','tcp',443,443,'100.64.0.42:443','observed',?,0,'0.0.0','pending',?,?)`, siteID, glivelaEntryProtocol, now, now); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretID, err := store.putSecret(ctx, tx, []byte("superseded-private-key"), glivelaEndpointSecretContext("superseded-endpoint"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_address,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
+		VALUES('superseded-endpoint','superseded-application','superseded-service','superseded-tag','100.64.0.61',10443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'superseded-public-key','["abcd"]','chrome',2,0,0,'pending',?,?)`, secretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,site_id,display_name,agent_id,gateway_node_id,kind,input_json,state,attempt,created_at,updated_at)
+		VALUES('superseded-queued-command','superseded-application',?,'Superseded entry',?,?,?,?,'pending',0,?,?)`, siteID, node.ID, node.ID, glivelaruntime.ApplyKind, []byte(`{"endpointId":"superseded-endpoint"}`), now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO meridian_deployments(endpoint_id,desired_revision,desired_sha256,command_id,status,updated_at)
+		VALUES('superseded-endpoint',1,?,'superseded-queued-command','pending',?)`, queuedSHA, now); err != nil {
+		t.Fatal(err)
+	}
+	claimTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task, claimErr := store.claimApplicationCommand(ctx, claimTx, node.ID); task != nil || claimErr != nil {
+		claimTx.Rollback()
+		t.Fatalf("superseded queued command was not discarded: task=%#v err=%v", task, claimErr)
+	}
+	if err := claimTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var endpointStatus, commandState string
+	var events int
+	var desiredRevision int
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision,status FROM meridian_endpoints WHERE id='superseded-endpoint'`).Scan(&desiredRevision, &endpointStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM application_commands WHERE id='superseded-queued-command'`).Scan(&commandState); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_events WHERE task_id='superseded-queued-command'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if desiredRevision != 2 || endpointStatus != "pending" || commandState != "pending" || events != 0 {
+		t.Fatalf("retired queued command changed retained state: revision=%d endpoint=%s command=%s events=%d", desiredRevision, endpointStatus, commandState, events)
+	}
+
+	completionSHA := glivela.Identity("superseded-completion-config")
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=3 WHERE id='superseded-endpoint'`); err != nil {
+		t.Fatal(err)
+	}
+	// Seed the separate pre-upgrade in-flight scenario on the same archived
+	// row. The migrated schema correctly forbids two active commands per Agent;
+	// no current claim or successful completion is manufactured here.
+	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='running',attempt=1 WHERE id='superseded-queued-command'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_deployments SET desired_revision=2,desired_sha256=?,command_id='superseded-queued-command',status='applying',last_error='',updated_at=? WHERE endpoint_id='superseded-endpoint'`, completionSHA, now); err != nil {
+		t.Fatal(err)
+	}
+	result := ApplicationTaskResult{GlivelaRuntime: &glivelaruntime.Result{Receipt: glivela.AppliedReceipt{Revision: 2, ConfigSHA256: completionSHA, RuntimeReady: true}, Stats: json.RawMessage(`{}`)}}
+	result.Resources = mockIntegratedResources(t, store, "superseded-queued-command")
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, "superseded-queued-command", 1, true, "", raw, false); err == nil {
+		t.Fatal("retired completion was allowed to project a claimed success")
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision,status FROM meridian_endpoints WHERE id='superseded-endpoint'`).Scan(&desiredRevision, &endpointStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM application_commands WHERE id='superseded-queued-command'`).Scan(&commandState); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_events WHERE task_id='superseded-queued-command'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if desiredRevision != 3 || endpointStatus != "pending" || commandState != "running" || events != 0 {
+		t.Fatalf("retired completion changed retained state: revision=%d endpoint=%s command=%s events=%d", desiredRevision, endpointStatus, commandState, events)
+	}
+}

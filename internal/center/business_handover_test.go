@@ -104,7 +104,7 @@ func assertRetiredHandover(t *testing.T, dir string, before map[string]string) {
 	}
 }
 func TestBusinessHandoverPreservesHistoryAndPermanentlyFencesWrites(t *testing.T) {
-	s := openMeridianSharedEndpointSnapshotFixture(t)
+	s := openGlivelaSharedEndpointSnapshotFixture(t)
 	dir := s.dataDir
 	if s.RequireBusinessHandover(context.Background()) == nil {
 		t.Fatal("old business may serve without completed handover")
@@ -175,7 +175,7 @@ func TestBusinessHandoverPreservesHistoryAndPermanentlyFencesWrites(t *testing.T
 	}
 }
 func TestBusinessHandoverRejectsChangedFinalSource(t *testing.T) {
-	s := openMeridianSharedEndpointSnapshotFixture(t)
+	s := openGlivelaSharedEndpointSnapshotFixture(t)
 	dir := s.dataDir
 	s.Close()
 	writeSyntheticHandoverProof(t, dir)
@@ -191,7 +191,7 @@ func TestBusinessHandoverRejectsChangedFinalSource(t *testing.T) {
 	}
 }
 func TestRetiredProxyAPIsCannotMutateOrServeOldSubscriptions(t *testing.T) {
-	s := openMeridianSharedEndpointSnapshotFixture(t)
+	s := openGlivelaSharedEndpointSnapshotFixture(t)
 	defer s.Close()
 	before := handoverTableHashes(t, s.db)
 	handler := NewServer(s, "", false).Handler()
@@ -241,7 +241,7 @@ func TestPrivateBusinessHandoverSchema120Copy(t *testing.T) {
 }
 
 func TestRetiredBusinessKeepsAgentHeartbeatAndClaimUsable(t *testing.T) {
-	s := openMeridianSharedEndpointSnapshotFixture(t)
+	s := openGlivelaSharedEndpointSnapshotFixture(t)
 	ctx := context.Background()
 	n := enrollOrchestrationNode(t, s, "ordinary-worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.23", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.23", LANAddress: "10.0.0.23", EnabledKinds: []string{networking.KindLAN}})
 	if _, err := s.db.Exec(`UPDATE applications SET node_id=? WHERE id=(SELECT application_id FROM meridian_endpoints WHERE id=?)`, n.ID, sharedSnapshotEndpointID); err != nil {
@@ -264,7 +264,7 @@ func TestRetiredBusinessKeepsAgentHeartbeatAndClaimUsable(t *testing.T) {
 			t.Fatal("retirement blocked ordinary task selection", err)
 		}
 	}
-	if err := s.RecordAgentHeartbeat(ctx, n.ID, n.Credential, NodeHeartbeat{Version: Version, Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationEndpointsObserved: true, ApplicationEndpoints: []ApplicationEndpointObservation{{AppKey: meridianAppKey, Name: "inbound-1", Protocol: "tcp", AppProtocol: "vless/tcp/reality", Port: 443}}}); err != nil {
+	if err := s.RecordAgentHeartbeat(ctx, n.ID, n.Credential, NodeHeartbeat{Version: Version, Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationEndpointsObserved: true, ApplicationEndpoints: []ApplicationEndpointObservation{{AppKey: glivelaAppKey, Name: "inbound-1", Protocol: "tcp", AppProtocol: "vless/tcp/reality", Port: 443}}}); err != nil {
 		t.Fatal("retired legacy inventory rejected heartbeat", err)
 	}
 	if !reflect.DeepEqual(before, handoverTableHashes(t, s.db)) {

@@ -211,7 +211,7 @@ func loadManagedRealitySecurityState(ctx context.Context, source realitySecurity
 		if err := source.QueryRowContext(ctx, `SELECT target_host,target_ip,server_name,revision,status FROM three_x_ui_reality_guards WHERE service_id=?`, serviceID).Scan(&state.targetHost, &state.targetIP, &state.serverName, &state.revision, &state.status); err != nil {
 			return managedRealitySecurityState{}, err
 		}
-	case state.appKey == meridianAppKey && state.appProtocol == meridianEntryProtocol:
+	case state.appKey == glivelaAppKey && state.appProtocol == glivelaEntryProtocol:
 		var target string
 		var namesJSON []byte
 		var desiredRevision, appliedRevision int64
@@ -368,7 +368,7 @@ func (s *Store) realitySecurityCheck(ctx context.Context, publicationID string) 
 		AND security.publication_revision = publication.desired_revision
 		AND publication.status = 'ready' AND publication.action_required = 0
 		AND ((application.app_key=? AND service.app_protocol='vless/tcp/reality' AND security.guard_revision=guard.revision AND guard.status='ready')
-		 OR (application.app_key=? AND service.app_protocol=? AND security.guard_revision=endpoint.desired_revision AND endpoint.desired_revision=endpoint.applied_revision AND endpoint.runtime_healthy=1 AND endpoint.vless_enabled=1 AND endpoint.status='ready'))`, publicationID, threeXUIAppKey, meridianAppKey, meridianEntryProtocol).Scan(&status, &scope, &checksJSON, &checkedAt)
+		 OR (application.app_key=? AND service.app_protocol=? AND security.guard_revision=endpoint.desired_revision AND endpoint.desired_revision=endpoint.applied_revision AND endpoint.runtime_healthy=1 AND endpoint.vless_enabled=1 AND endpoint.status='ready'))`, publicationID, threeXUIAppKey, glivelaAppKey, glivelaEntryProtocol).Scan(&status, &scope, &checksJSON, &checkedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -389,7 +389,7 @@ func (s *Store) realitySecurityChecks(ctx context.Context) (map[string]*RealityS
 		WHERE security.publication_revision = publication.desired_revision
 		AND publication.status = 'ready' AND publication.action_required = 0
 		AND ((application.app_key=? AND service.app_protocol='vless/tcp/reality' AND security.guard_revision=guard.revision AND guard.status='ready')
-		 OR (application.app_key=? AND service.app_protocol=? AND security.guard_revision=endpoint.desired_revision AND endpoint.desired_revision=endpoint.applied_revision AND endpoint.runtime_healthy=1 AND endpoint.vless_enabled=1 AND endpoint.status='ready'))`, threeXUIAppKey, meridianAppKey, meridianEntryProtocol)
+		 OR (application.app_key=? AND service.app_protocol=? AND security.guard_revision=endpoint.desired_revision AND endpoint.desired_revision=endpoint.applied_revision AND endpoint.runtime_healthy=1 AND endpoint.vless_enabled=1 AND endpoint.status='ready'))`, threeXUIAppKey, glivelaAppKey, glivelaEntryProtocol)
 	if err != nil {
 		return nil, err
 	}

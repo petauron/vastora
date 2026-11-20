@@ -117,10 +117,10 @@ func (s *Store) ConfigureClientLanding(ctx context.Context, input LandingClientG
 }
 
 func (s *Store) configureClientLanding(ctx context.Context, tx *sql.Tx, input LandingClientGrantInput, checkBusy bool) (LandingClientGrantView, error) {
-	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+	if owns, err := glivelaOwnsLegacyLanding(ctx, tx); err != nil {
 		return LandingClientGrantView{}, err
 	} else if owns {
-		return LandingClientGrantView{}, errMeridianOwnsLegacyLanding
+		return LandingClientGrantView{}, errGlivelaOwnsLegacyLanding
 	}
 	var controllerID, email string
 	var metadata []byte

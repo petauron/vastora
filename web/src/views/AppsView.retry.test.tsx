@@ -22,7 +22,7 @@ afterEach(() => {
 function fixture(): AppData {
   const appKey = "vastora-official/senlun-agent";
   return {
-    meridian: emptyAppData({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.test" }).meridian,
+    glivela: emptyAppData({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.test" }).glivela,
     status: {}, centerUpdate: {}, systemDomain: {}, centerRemoteAccess: null,
     registryCredentials: [], sources: [], organizations: [], sites: [], routes: [],
     actions: [], integrations: [], threeXUIControllerMigrations: [],

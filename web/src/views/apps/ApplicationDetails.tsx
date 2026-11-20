@@ -33,21 +33,21 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
   const [adopting, setAdopting] = useState(false);
   const { application, app, agent, services, deployment, activeChange, locked: serviceAccessLocked } = instance;
   const subscriptionService = services.find((service) => service.name === "subscription");
-  const pilotEndpoints = application.appKey === "vastora-official/glivela-entry" ? data.meridian.endpoints.filter((endpoint) => endpoint.nodeId === application.nodeId && endpoint.status !== "retired") : [];
+  const pilotEndpoints = application.appKey === "vastora-official/glivela-entry" ? data.glivela.endpoints.filter((endpoint) => endpoint.nodeId === application.nodeId && endpoint.status !== "retired") : [];
   const subscriptionPublication = subscriptionService ? data.publications.find((value) => value.serviceId === subscriptionService.id && value.status !== "stopped" && (value.kind === "cloudflare_tunnel" || value.kind === "public_direct")) : undefined;
   const isThreeXUI = application.appKey === "vastora-official/3x-ui";
-	const isMeridian = application.appKey === "vastora-official/meridian";
+	const isGlivela = application.appKey === "vastora-official/meridian";
 	const isCPA = application.appKey === "vastora-official/cpa";
   const isController = isThreeXUI && application.role === "master" && application.id === application.controllerApplicationId;
-  const ownsMeridianCutover = isController && data.meridian.cutover.legacyControllerApplicationId === application.id && data.meridian.cutover.state !== "complete";
-  const canStartMeridianCutover = ownsMeridianCutover && data.meridian.cutover.subscriptionAuthority === "legacy";
+  const ownsGlivelaCutover = isController && data.glivela.cutover.legacyControllerApplicationId === application.id && data.glivela.cutover.state !== "complete";
+  const canStartGlivelaCutover = ownsGlivelaCutover && data.glivela.cutover.subscriptionAuthority === "legacy";
   const isLegacyController = isThreeXUI && application.role === "master" && Boolean(application.controllerApplicationId) && application.id !== application.controllerApplicationId;
   const isWorker = isThreeXUI && application.role === "worker";
   const nodeSyncing = application.nodeSyncStatus === "pending" || application.nodeSyncStatus === "applying";
   const nodeReady = application.nodeSyncStatus === "ready";
   const visibleServices = isWorker || isLegacyController
     ? services.filter((service) => service.protocol !== "http" && service.protocol !== "https")
-    : isMeridian
+    : isGlivela
       ? services.filter((service) => service.name !== "subscription")
       : services;
   const activeWorkers = isController ? data.applications.filter((value) => value.id !== application.id && value.role === "worker" && value.controllerApplicationId === application.id && (value.status !== "stopped" || value.nodeSyncStatus === "pending" || value.nodeSyncStatus === "applying")) : [];
@@ -97,7 +97,7 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
 	        {!hasVLESSNode ? <Button disabled={!canCreateRealityNode(instance) || syncingNode} onClick={onReality} size="sm" variant={isController ? "outline" : "default"}><RadioTowerIcon data-icon="inline-start" />{copy(language, "创建 VLESS", "Create VLESS")}</Button> : null}
         {isController && subscriptionService ? <Button disabled={serviceAccessLocked} onClick={onSubscription} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{subscriptionPublication ? copy(language, "公网订阅", "Public subscription") : copy(language, "开启订阅", "Enable subscription")}</Button> : null}
       </div> : null}
-			{isMeridian || ownsMeridianCutover ? <div className="grid gap-2 sm:grid-cols-2"><Button disabled={Boolean(activeChange)} onClick={onAppManager} size="sm"><UsersIcon data-icon="inline-start" />{canStartMeridianCutover ? copy(language, "迁移到 Glivela", "Migrate to Glivela") : ownsMeridianCutover ? copy(language, "查看 Glivela 迁移", "View Glivela migration") : copy(language, "管理账号与节点", "Manage accounts & nodes")}</Button>{isMeridian && subscriptionService ? <Button disabled={serviceAccessLocked} onClick={onSubscription} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{subscriptionPublication ? copy(language, "公网订阅", "Public subscription") : copy(language, "开启订阅", "Enable subscription")}</Button> : null}</div> : null}
+			{isGlivela || ownsGlivelaCutover ? <div className="grid gap-2 sm:grid-cols-2"><Button disabled={Boolean(activeChange)} onClick={onAppManager} size="sm"><UsersIcon data-icon="inline-start" />{canStartGlivelaCutover ? copy(language, "迁移到 Glivela", "Migrate to Glivela") : ownsGlivelaCutover ? copy(language, "查看 Glivela 迁移", "View Glivela migration") : copy(language, "管理账号与节点", "Manage accounts & nodes")}</Button>{isGlivela && subscriptionService ? <Button disabled={serviceAccessLocked} onClick={onSubscription} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{subscriptionPublication ? copy(language, "公网订阅", "Public subscription") : copy(language, "开启订阅", "Enable subscription")}</Button> : null}</div> : null}
 			{isCPA ? <Button disabled={Boolean(activeChange)} onClick={onCredentials} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "凭据", "Credentials")}</Button> : null}
       {!isWorker && !isLegacyController && deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{application.appKey === "vastora-official/senlun" ? copy(language, "打开监控", "Open monitoring") : copy(language, "打开主页", "Open homepage")}</Button> : !isWorker && !isLegacyController && app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}
       {!isWorker && !isLegacyController && visibleServices.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : null}
@@ -259,8 +259,8 @@ export function ServiceRow({ data, language, service, locked, onPublish, onRenam
 	const activePublication = publications.find((value) => value.status !== "stopped");
 	const cloudflareReady = data.integrations.some((value) => value.kind === "cloudflare" && value.status === "configured");
 	const isLegacyReality = service.appProtocol === "vless/tcp/reality";
-	const isMeridianEntry = service.appProtocol === "meridian/entry";
-	const isManagedEntry = isLegacyReality || isMeridianEntry;
+	const isGlivelaEntry = service.appProtocol === "meridian/entry";
+	const isManagedEntry = isLegacyReality || isGlivelaEntry;
 	const application = data.applications.find((value) => value.id === service.applicationId);
 	const managedSubscription = application?.appKey === "vastora-official/3x-ui" && application.role === "master" && service.name === "subscription";
 	const cpaClientAPI = application?.appKey === "vastora-official/cpa" && service.name === "client-api";

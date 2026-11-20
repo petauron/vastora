@@ -45,7 +45,7 @@ function releaseStyle(url: string) {
   styles.delete(url);
 }
 
-function useOfficialMeridianUI(version: string | undefined) {
+function useOfficialGlivelaUI(version: string | undefined) {
   const [module, setModule] = useState<OfficialUIModule | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
   const [attempt, setAttempt] = useState(0);
@@ -91,7 +91,7 @@ export function OfficialAppWorkspaceHost(props: AppWorkspaceProps) {
   const target = useRef<HTMLDivElement>(null);
   const mounted = useRef<MountedUI<AppWorkspaceProps> | null>(null);
   const latest = useRef(props);
-  const { module, state, retry } = useOfficialMeridianUI(props.group.app?.app.version);
+  const { module, state, retry } = useOfficialGlivelaUI(props.group.app?.app.version);
   const [runtimeFailed, setRuntimeFailed] = useState(false);
   latest.current = props;
   useEffect(() => {
@@ -134,7 +134,7 @@ export function OfficialAppManagerHost(props: AppManagerProps & { version?: stri
   const target = useRef<HTMLDivElement>(null);
   const mounted = useRef<MountedUI<AppManagerProps> | null>(null);
   const latest = useRef(props);
-  const { module, state, retry } = useOfficialMeridianUI(props.version);
+  const { module, state, retry } = useOfficialGlivelaUI(props.version);
   const [runtimeFailed, setRuntimeFailed] = useState(false);
   latest.current = props;
   useEffect(() => {

@@ -14,7 +14,7 @@ import (
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/nodesite"
 	"github.com/petauron/vastora/internal/senulun"
 	"golang.org/x/mod/semver"
@@ -29,27 +29,27 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
-	NodeSite             *nodesite.Result                    `json:"nodeSite,omitempty"`
-	SourceReceiptSHA256  string                              `json:"sourceReceiptSha256,omitempty"`
-	SourceResources      json.RawMessage                     `json:"sourceResources,omitempty"`
-	PackageMaintenance   *PackageMaintenanceResult           `json:"packageMaintenance,omitempty"`
-	Resources            json.RawMessage                     `json:"resources,omitempty"`
-	SenulunRestored      *senulun.RestoreResult              `json:"pulseRestored,omitempty"`
-	Services             []ApplicationServiceResult          `json:"services"`
-	GeneratedSecrets     map[string]string                   `json:"generatedSecrets,omitempty"`
-	ApplicationCommand   *RealityCommandResult               `json:"applicationCommand,omitempty"`
-	SubscriptionCommand  *SubscriptionCommandResult          `json:"subscriptionCommand,omitempty"`
-	ClientCommand        *ThreeXUIClientCommandResult        `json:"clientCommand,omitempty"`
-	NodeCommand          *ThreeXUINodeCommandResult          `json:"nodeCommand,omitempty"`
-	ControllerCommand    *ThreeXUIControllerCommandResult    `json:"controllerCommand,omitempty"`
-	MeridianRuntime      *meridianruntime.Result             `json:"meridianRuntime,omitempty"`
-	MeridianLegacyExport *meridianruntime.LegacyExportResult `json:"meridianLegacyExport,omitempty"`
-	MeridianLegacyRetire *meridianruntime.LegacyRetireResult `json:"meridianLegacyRetire,omitempty"`
+	NodeSite            *nodesite.Result                   `json:"nodeSite,omitempty"`
+	SourceReceiptSHA256 string                             `json:"sourceReceiptSha256,omitempty"`
+	SourceResources     json.RawMessage                    `json:"sourceResources,omitempty"`
+	PackageMaintenance  *PackageMaintenanceResult          `json:"packageMaintenance,omitempty"`
+	Resources           json.RawMessage                    `json:"resources,omitempty"`
+	SenulunRestored     *senulun.RestoreResult             `json:"pulseRestored,omitempty"`
+	Services            []ApplicationServiceResult         `json:"services"`
+	GeneratedSecrets    map[string]string                  `json:"generatedSecrets,omitempty"`
+	ApplicationCommand  *RealityCommandResult              `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandResult         `json:"subscriptionCommand,omitempty"`
+	ClientCommand       *ThreeXUIClientCommandResult       `json:"clientCommand,omitempty"`
+	NodeCommand         *ThreeXUINodeCommandResult         `json:"nodeCommand,omitempty"`
+	ControllerCommand   *ThreeXUIControllerCommandResult   `json:"controllerCommand,omitempty"`
+	GlivelaRuntime      *glivelaruntime.Result             `json:"meridianRuntime,omitempty"`
+	GlivelaLegacyExport *glivelaruntime.LegacyExportResult `json:"meridianLegacyExport,omitempty"`
+	GlivelaLegacyRetire *glivelaruntime.LegacyRetireResult `json:"meridianLegacyRetire,omitempty"`
 }
 
 func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request DeploymentRequest, manifest catalog.AppManifest, now time.Time) (string, error) {
 	if request.ReplaceApplicationID != "" {
-		if err := requireLegacyMeridianApplicationOwner(ctx, tx, request.ReplaceApplicationID); err != nil {
+		if err := requireLegacyGlivelaApplicationOwner(ctx, tx, request.ReplaceApplicationID); err != nil {
 			return "", err
 		}
 		if senlunIdentityRequest(request) {
@@ -83,7 +83,7 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 		if programOnly {
 			ownerErr = requireApplicationDeploymentOwner(ctx, tx, applicationID, request.Operation, manifest)
 		} else {
-			ownerErr = requireLegacyMeridianApplicationOwner(ctx, tx, applicationID)
+			ownerErr = requireLegacyGlivelaApplicationOwner(ctx, tx, applicationID)
 		}
 		if ownerErr != nil {
 			return "", ownerErr
@@ -145,7 +145,7 @@ func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, app
 		return errGlivelaPilotOwnsRuntime
 	}
 	if !preserveProxyHistory {
-		if err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID); err != nil {
+		if err := requireLegacyGlivelaApplicationOwner(ctx, tx, applicationID); err != nil {
 			return err
 		}
 	}
@@ -157,7 +157,7 @@ func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, app
 	if err != nil {
 		return err
 	}
-	if uninstallAppKey == meridianAppKey && !preserveProxyHistory {
+	if uninstallAppKey == glivelaAppKey && !preserveProxyHistory {
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET enabled=0,runtime_healthy=0,status='revoked',last_error='',updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?) AND status<>'revoked'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 			return err
 		}
@@ -303,8 +303,8 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		}
 		*cleanups = append(*cleanups, values...)
 	}
-	if manifest.Runtime == nil && appKey == meridianAppKey && !s.businessRetired {
-		if _, err := s.ensureMeridianSubscriptionServiceInTx(ctx, tx, applicationID, now); err != nil {
+	if manifest.Runtime == nil && appKey == glivelaAppKey && !s.businessRetired {
+		if _, err := s.ensureGlivelaSubscriptionServiceInTx(ctx, tx, applicationID, now); err != nil {
 			return err
 		}
 		if operation == "upgrade" {
@@ -312,7 +312,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 			if err := tx.QueryRowContext(ctx, `SELECT id FROM meridian_endpoints WHERE application_id=? AND status<>'retired'`, applicationID).Scan(&endpointID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			} else if err == nil {
-				if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
+				if err := s.ensureGlivelaSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
 					return err
 				}
 			}
@@ -322,7 +322,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		}
 	}
 	reconcilePublications := true
-	if manifest.Runtime == nil && appKey == meridianAppKey && !s.businessRetired {
+	if manifest.Runtime == nil && appKey == glivelaAppKey && !s.businessRetired {
 		var cutoverProjection bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 			SELECT 1 FROM meridian_endpoints endpoint JOIN meridian_cutover cutover ON cutover.id=1
@@ -337,8 +337,8 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 			return err
 		}
 	}
-	if manifest.Runtime == nil && appKey == meridianAppKey && !s.businessRetired {
-		return s.reconcileMeridianCutoverInTx(ctx, tx, now.Format(time.RFC3339Nano))
+	if manifest.Runtime == nil && appKey == glivelaAppKey && !s.businessRetired {
+		return s.reconcileGlivelaCutoverInTx(ctx, tx, now.Format(time.RFC3339Nano))
 	}
 	return nil
 }
@@ -648,7 +648,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated, &value.InstalledPackageRevision, &value.AdoptionState, &value.AdoptionError, &resourcesRaw, &value.ReplacementApplicationID, &value.NodeSiteStatus); err != nil {
 			return nil, err
 		}
-		value.LegacyGlivela = value.AppKey == meridianAppKey && legacyGlivelaReceipt(resourcesRaw)
+		value.LegacyGlivela = value.AppKey == glivelaAppKey && legacyGlivelaReceipt(resourcesRaw)
 		value.ExecutionRetired = value.ReplacementApplicationID != ""
 		if value.ExecutionRetired {
 			value.Status = "stopped"
@@ -758,7 +758,7 @@ func (s *Store) ListRoutes(ctx context.Context) ([]RouteView, error) {
 // The pilot owns business configuration and counters, not updates to the same
 // native package. Legacy mutation, replacement and retirement remain fenced.
 func requireApplicationDeploymentOwner(ctx context.Context, tx *sql.Tx, applicationID, operation string, manifest catalog.AppManifest) error {
-	err := requireLegacyMeridianApplicationOwner(ctx, tx, applicationID)
+	err := requireLegacyGlivelaApplicationOwner(ctx, tx, applicationID)
 	if err == nil || !errors.Is(err, errGlivelaPilotOwnsRuntime) {
 		return err
 	}

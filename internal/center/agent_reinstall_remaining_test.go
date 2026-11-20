@@ -11,7 +11,7 @@ func TestAgentReinstallRemainingDoesNotTreatEntryAsClientAcceptance(t *testing.T
 		IdentityFingerprint: "replacement",
 		Recovery:            &AgentReinstallOperation{State: "review_required", PrivateIsolation: "withdrawn", ReplacementFingerprint: "replacement"},
 		NetworkReview:       &AgentReinstallNetworkReview{ApprovalCurrent: true},
-		Applications: []AgentReinstallApplication{{ApplicationID: "app", AppKey: meridianAppKey, Recovery: "rebuild_configuration", SharedEntry: true,
+		Applications: []AgentReinstallApplication{{ApplicationID: "app", AppKey: glivelaAppKey, Recovery: "rebuild_configuration", SharedEntry: true,
 			Preparation: &AgentReinstallPreparation{State: "succeeded", Runtime: &AgentReinstallRuntime{State: "succeeded"}, Listener: &AgentReinstallListener{State: "succeeded"}, Access: &AgentReinstallAccess{State: "applied"}, EntryCheck: &AgentReinstallEntryCheck{State: "passed", Current: true}}}},
 	}
 	for _, test := range []struct {

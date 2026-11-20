@@ -32,7 +32,7 @@ const landingServerSchema = `CREATE TABLE landing_server_states (
 // Called inside the topology transaction after resolving managed private
 // identities. Never accept a caller-supplied arbitrary host or source address.
 func (s *Store) queueLandingServer(ctx context.Context, tx *sql.Tx, nodeID string, plan *landing.ServerPlan) error {
-	if frozen, err := meridianCutoverBlocksLandingChanges(ctx, tx); err != nil {
+	if frozen, err := glivelaCutoverBlocksLandingChanges(ctx, tx); err != nil {
 		return err
 	} else if frozen {
 		return nil
@@ -86,7 +86,7 @@ func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID s
 	if s.businessRetired {
 		return nil, nil
 	}
-	if frozen, err := meridianCutoverBlocksLandingChanges(ctx, tx); err != nil {
+	if frozen, err := glivelaCutoverBlocksLandingChanges(ctx, tx); err != nil {
 		return nil, err
 	} else if frozen {
 		return nil, nil
@@ -222,11 +222,11 @@ func (s *Store) projectLandingServer(ctx context.Context, tx *sql.Tx, commit pro
 		return err
 	}
 	if !bytes.Equal(previousPeerJSON, peerJSON) {
-		if err := s.markMeridianLandingPeerChanged(ctx, tx, nodeID, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
+		if err := s.markGlivelaLandingPeerChanged(ctx, tx, nodeID, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	} else if authorizationChanged {
-		if err := s.markMeridianLandingAuthorizationChanged(ctx, tx, nodeID, previousAppliedJSON, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
+		if err := s.markGlivelaLandingAuthorizationChanged(ctx, tx, nodeID, previousAppliedJSON, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}

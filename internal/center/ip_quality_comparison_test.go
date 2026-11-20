@@ -8,7 +8,7 @@ import (
 )
 
 func TestIPQualityComparisonUsesSelectedEgressAndExplicitCurrentAddress(t *testing.T) {
-	store, entry, egress := openMeridianLandingSourcesFixture(t)
+	store, entry, egress := openGlivelaLandingSourcesFixture(t)
 	defer store.Close()
 	ctx := context.Background()
 	const v4 = "203.0.113.8"

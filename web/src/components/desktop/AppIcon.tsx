@@ -5,7 +5,7 @@ const icons: Record<string, VisualIconName> = {
   home: "home", apps: "app-store", nodes: "nodes", settings: "settings",
   updates: "update", backup: "backup", catalog: "catalog",
   network: "network", overview: "info", activity: "activity", assistant: "assistant",
-  "vastora-official/meridian": "meridian",
+  "vastora-official/meridian": "glivela",
   "vastora-official/senlun": "senulun",
   "vastora-official/senlun-agent": "probe",
   "vastora-official/telegram-bot": "telegram",

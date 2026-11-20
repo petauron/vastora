@@ -7,7 +7,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -31,8 +31,8 @@ type AgentReinstallClientCheck struct {
 }
 
 // Durable metadata contains only identity/digest references, never client keys.
-func (s *Store) validateReinstallAcceptance(ctx context.Context, tx *sql.Tx, verifier, id string) (meridianruntime.AcceptanceTask, error) {
-	var empty meridianruntime.AcceptanceTask
+func (s *Store) validateReinstallAcceptance(ctx context.Context, tx *sql.Tx, verifier, id string) (glivelaruntime.AcceptanceTask, error) {
+	var empty glivelaruntime.AcceptanceTask
 	var raw []byte
 	var target, admin string
 	err := tx.QueryRowContext(ctx, `SELECT c.input_json,op.agent_id,op.authorized_by FROM application_commands c JOIN agent_reinstall_client_checks a ON a.command_id=c.id JOIN agent_reinstall_operations op ON op.id=a.operation_id WHERE c.id=? AND c.agent_id=? AND c.attempt<=1 AND (c.state<>'pending' OR c.attempt=0) AND c.reconciliation_requested=0 AND c.reconciliation_required=0 AND `+reinstallAcceptanceAuthoritySQL, id, verifier).Scan(&raw, &target, &admin)
@@ -120,7 +120,7 @@ func (s *Store) queueReinstallClientChecks(ctx context.Context, tx *sql.Tx, targ
 			return nil, err
 		}
 		id = "reinstall-client-" + id
-		if _, err = tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, input.ApplicationID, verifier, target, meridianruntime.AcceptanceKind, raw, now, now); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, input.ApplicationID, verifier, target, glivelaruntime.AcceptanceKind, raw, now, now); err != nil {
 			return nil, err
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO agent_reinstall_client_checks(command_id,operation_id,input_json) VALUES(?,?,?)`, id, input.OperationID, raw); err != nil {
@@ -182,7 +182,7 @@ func (s *Store) readReinstallClientCheck(ctx context.Context, tx *sql.Tx, verifi
 	}
 	var evidence executionResultEvidence
 	var result struct {
-		Acceptance *meridianruntime.AcceptanceResult `json:"meridianAcceptance"`
+		Acceptance *glivelaruntime.AcceptanceResult `json:"meridianAcceptance"`
 	}
 	if json.Unmarshal(proof, &evidence) != nil || !evidence.Succeeded || evidence.Unknown || json.Unmarshal(evidence.Result, &result) != nil || result.Acceptance == nil || result.Acceptance.Validate(task) != nil {
 		return receipt, nil

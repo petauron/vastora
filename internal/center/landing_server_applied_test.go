@@ -9,7 +9,7 @@ import (
 )
 
 func TestLandingServerAppliedStateChangesOnlyAfterSuccessfulReceipt(t *testing.T) {
-	store := openMeridianSharedEndpointSnapshotFixture(t)
+	store := openGlivelaSharedEndpointSnapshotFixture(t)
 	ctx := context.Background()
 	var nodeID string
 	if err := store.db.QueryRow(`SELECT node_id FROM applications WHERE id='snapshot-shared-app'`).Scan(&nodeID); err != nil {
@@ -108,7 +108,7 @@ func TestLandingServerAppliedStateChangesOnlyAfterSuccessfulReceipt(t *testing.T
 func TestLandingServerQueueAndClaimFreezeOnlyDuringCutover(t *testing.T) {
 	for _, phase := range []string{"backup", "import", "publish", "project", "verify", "retire", "complete", "not_required"} {
 		t.Run(phase, func(t *testing.T) {
-			store := openMeridianSharedEndpointSnapshotFixture(t)
+			store := openGlivelaSharedEndpointSnapshotFixture(t)
 			ctx := context.Background()
 			var nodeID string
 			if err := store.db.QueryRow(`SELECT node_id FROM applications WHERE id='snapshot-shared-app'`).Scan(&nodeID); err != nil {
@@ -172,7 +172,7 @@ func TestLandingServerAuthorizationComparisonIgnoresRevisionAndOrder(t *testing.
 }
 
 func TestLandingServerClaimRecomposesIntentFrozenBeforeCompletedCutover(t *testing.T) {
-	store, egressID, _, _ := openMeridianRuntimeIdentityFixture(t)
+	store, egressID, _, _ := openGlivelaRuntimeIdentityFixture(t)
 	ctx := context.Background()
 	var appliedBefore []byte
 	if err := store.db.QueryRow(`SELECT applied_json FROM landing_server_states WHERE node_id=?`, egressID).Scan(&appliedBefore); err != nil {
@@ -217,7 +217,7 @@ func TestLandingServerClaimRecomposesIntentFrozenBeforeCompletedCutover(t *testi
 func TestLandingServerClaimRejectsUnrecoverableFrozenIntent(t *testing.T) {
 	for _, mutation := range []string{"missing-source-pin", "stop-referenced-service", "replace-referenced-address"} {
 		t.Run(mutation, func(t *testing.T) {
-			store, egressID, _, _ := openMeridianRuntimeIdentityFixture(t)
+			store, egressID, _, _ := openGlivelaRuntimeIdentityFixture(t)
 			ctx := context.Background()
 			tx, err := store.db.BeginTx(ctx, nil)
 			if err != nil {

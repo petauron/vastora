@@ -10,7 +10,7 @@ import (
 )
 
 // The private peer observation is authenticated by the Agent heartbeat.
-// Meridian pins this identity when it first authorizes an entry-to-egress
+// Glivela pins this identity when it first authorizes an entry-to-egress
 // route; a later observation cannot silently replace the pin.
 func recordAgentPrivatePeer(ctx context.Context, tx *sql.Tx, nodeID string, runtime *landing.ClientRuntime, now time.Time) error {
 	if runtime == nil || runtime.Generation != landing.ClientRuntimeGeneration || runtime.Peer.ID == "" || runtime.Peer.PublicKey == "" || (landing.ServerPlan{Revision: 1, Address: runtime.Peer.Address}).Validate() != nil {

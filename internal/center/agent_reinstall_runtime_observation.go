@@ -7,18 +7,18 @@ import (
 	"errors"
 	"time"
 
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/secret"
 )
 
 type reinstallRuntimeObservation struct {
-	ObservedAt time.Time              `json:"observedAt"`
-	Result     meridianruntime.Result `json:"result"`
+	ObservedAt time.Time             `json:"observedAt"`
+	Result     glivelaruntime.Result `json:"result"`
 }
 
 // Called only after authenticated replacement heartbeat or runtime completion.
 // Persist evidence without projecting endpoint/route health across the fence.
-func (s *Store) recordReinstallRuntimeObservation(ctx context.Context, tx *sql.Tx, target string, result meridianruntime.Result, now time.Time) error {
+func (s *Store) recordReinstallRuntimeObservation(ctx context.Context, tx *sql.Tx, target string, result glivelaruntime.Result, now time.Time) error {
 	var id, digest string
 	err := tx.QueryRowContext(ctx, `SELECT p.runtime_command_id,p.runtime_task_sha256 FROM agent_reinstall_app_preparations p JOIN agent_reinstall_operations op ON op.id=p.operation_id JOIN application_commands c ON c.id=p.runtime_command_id WHERE op.agent_id=? AND op.state='review_required' AND c.state='succeeded'`, target).Scan(&id, &digest)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -38,13 +38,13 @@ func (s *Store) recordReinstallRuntimeObservation(ctx context.Context, tx *sql.T
 	// authenticated management heartbeats working so the operator can review
 	// the current plan; no runtime or access readiness is inferred.
 	task, err := s.reinstallRuntimeTask(ctx, tx, target, id, false)
-	if err != nil || task == nil || task.MeridianRuntime == nil {
+	if err != nil || task == nil || task.GlivelaRuntime == nil {
 		return invalidate()
 	}
-	if result.Validate(task.MeridianRuntime.Desired) != nil {
+	if result.Validate(task.GlivelaRuntime.Desired) != nil {
 		return errors.New("center: recovery runtime observation does not match restored configuration")
 	}
-	health, err := result.PeerHealth(*task.MeridianRuntime, now)
+	health, err := result.PeerHealth(*task.GlivelaRuntime, now)
 	if err != nil {
 		return err
 	}
@@ -71,10 +71,10 @@ func (s *Store) recordReinstallRuntimeObservation(ctx context.Context, tx *sql.T
 	return err
 }
 
-func (s *Store) currentReinstallRuntimeObservation(ctx context.Context, tx *sql.Tx, id string, task meridianruntime.Task) (meridianruntime.Result, error) {
+func (s *Store) currentReinstallRuntimeObservation(ctx context.Context, tx *sql.Tx, id string, task glivelaruntime.Task) (glivelaruntime.Result, error) {
 	var sealed []byte
 	var digest string
-	var empty meridianruntime.Result
+	var empty glivelaruntime.Result
 	if err := tx.QueryRowContext(ctx, `SELECT runtime_observation,runtime_task_sha256 FROM agent_reinstall_app_preparations WHERE runtime_command_id=?`, id).Scan(&sealed, &digest); err != nil {
 		return empty, err
 	}

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 const (
@@ -154,7 +154,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		return PublicationView{}, errors.New("center: service must be running before it can be published")
 	}
 	cpaClientAPI := isCPAClientAPIService(appKey, serviceName)
-	if (appKey == threeXUIAppKey && applicationRole == threeXUIRoleMaster || appKey == meridianAppKey) && serviceName == meridianSubscriptionServiceName && !managedSubscription {
+	if (appKey == threeXUIAppKey && applicationRole == threeXUIRoleMaster || appKey == glivelaAppKey) && serviceName == glivelaSubscriptionServiceName && !managedSubscription {
 		return PublicationView{}, errors.New("center: use the dedicated public subscription workflow for this service")
 	}
 	if cpaClientAPI && (input.Kind != publicationCloudflare || input.DNSProvider != "cloudflare" || input.Ingress.Owner != ingressTunnelConnector) {
@@ -165,7 +165,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		if err := tx.QueryRowContext(ctx, `SELECT status FROM three_x_ui_reality_guards WHERE service_id = ?`, input.ServiceID).Scan(&guardStatus); err != nil || guardStatus != "ready" {
 			return PublicationView{}, errors.New("center: REALITY service must have a ready fallback guard before publication")
 		}
-	} else if appProtocol == meridianEntryProtocol {
+	} else if appProtocol == glivelaEntryProtocol {
 		var endpointStatus string
 		var desiredRevision, appliedRevision int64
 		var runtimeHealthy int
@@ -285,7 +285,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		}
 		_, port, _ := net.SplitHostPort(endpoint)
 		internalManagedReality := appNodeID == gatewayID && (appKey == threeXUIAppKey && appProtocol == "vless/tcp/reality" ||
-			appKey == meridianAppKey && appProtocol == meridianEntryProtocol)
+			appKey == glivelaAppKey && appProtocol == glivelaEntryProtocol)
 		if appNodeID == gatewayID && port == "443" && !internalManagedReality {
 			return PublicationView{}, errors.New("center: move the application inbound away from port 443 before enabling the node-direct shared listener")
 		}
@@ -500,7 +500,7 @@ func (s *Store) ensureServicePublicationOperationAllowed(ctx context.Context, qu
 	if err := queryer.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) FROM deployments WHERE application_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)) +
 		(SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)
-		AND (? = 0 OR kind <> ?))`, applicationID, applicationID, boolInt(verification), meridianruntime.LegacyExportKind).Scan(&blocked); err != nil {
+		AND (? = 0 OR kind <> ?))`, applicationID, applicationID, boolInt(verification), glivelaruntime.LegacyExportKind).Scan(&blocked); err != nil {
 		return err
 	}
 	if blocked != 0 {
@@ -676,7 +676,7 @@ func (s *Store) publicationAccessURL(ctx context.Context, publication Publicatio
 			break
 		}
 	}
-	if (appKey == threeXUIAppKey || appKey == meridianAppKey) && serviceName == meridianSubscriptionServiceName {
+	if (appKey == threeXUIAppKey || appKey == glivelaAppKey) && serviceName == glivelaSubscriptionServiceName {
 		path = "/sub/"
 	} else if isCPAClientAPIService(appKey, serviceName) {
 		path = cpaClientAPIPath
@@ -734,8 +734,8 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 			homepagePaths[app.Key+"\x00"+app.App.Homepage.Service] = app.App.Homepage.Path
 		}
 	}
-	homepagePaths[threeXUIAppKey+"\x00"+meridianSubscriptionServiceName] = "/sub/"
-	homepagePaths[meridianAppKey+"\x00"+meridianSubscriptionServiceName] = "/sub/"
+	homepagePaths[threeXUIAppKey+"\x00"+glivelaSubscriptionServiceName] = "/sub/"
+	homepagePaths[glivelaAppKey+"\x00"+glivelaSubscriptionServiceName] = "/sub/"
 	homepagePaths[cpaAppKey+"\x00"+cpaClientAPIServiceName] = cpaClientAPIPath
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		p.id, p.service_id, p.kind, p.ingress_owner, COALESCE(p.entry_node_id, ''), p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id,

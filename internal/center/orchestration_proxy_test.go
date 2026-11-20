@@ -51,7 +51,7 @@ func TestRetiredSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testin
 	assertRetiredProxyCommandChannel(t, store, node.ID)
 }
 
-func TestMeridianSubscriptionIsServedByCenterWithoutAgentCommand(t *testing.T) {
+func TestGlivelaSubscriptionIsServedByCenterWithoutAgentCommand(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -65,10 +65,10 @@ func TestMeridianSubscriptionIsServedByCenterWithoutAgentCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		VALUES('meridian-center','Meridian',?,?,?,'','running','docker','',?,?)`, node.ID, testSiteID(t, store), meridianAppKey, now, now); err != nil {
+		VALUES('meridian-center','Meridian',?,?,?,'','running','docker','',?,?)`, node.ID, testSiteID(t, store), glivelaAppKey, now, now); err != nil {
 		t.Fatal(err)
 	}
-	serviceID, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center")
+	serviceID, err := store.ensureGlivelaSubscriptionService(ctx, "meridian-center")
 	if err != nil || serviceID == "" {
 		t.Fatalf("Glivela subscription service = %q, err=%v", serviceID, err)
 	}
@@ -82,7 +82,7 @@ func TestMeridianSubscriptionIsServedByCenterWithoutAgentCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if command.Kind != meridianSubscriptionCommandKind || command.State != "succeeded" || command.PublicationID == "" {
+	if command.Kind != glivelaSubscriptionCommandKind || command.State != "succeeded" || command.PublicationID == "" {
 		t.Fatalf("Glivela subscription command = %#v", command)
 	}
 	var pending int
@@ -94,7 +94,7 @@ func TestMeridianSubscriptionIsServedByCenterWithoutAgentCommand(t *testing.T) {
 	}
 }
 
-func TestMeridianSubscriptionHostMovesOnlyAfterPublicationStops(t *testing.T) {
+func TestGlivelaSubscriptionHostMovesOnlyAfterPublicationStops(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -117,14 +117,14 @@ func TestMeridianSubscriptionHostMovesOnlyAfterPublicationStops(t *testing.T) {
 		id, nodeID string
 	}{{"meridian-center-a", first.ID}, {"meridian-center-b", second.ID}} {
 		if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-			VALUES(?,'Meridian',?,?,?,'','running','docker','',?,?)`, application.id, application.nodeID, siteID, meridianAppKey, now, now); err != nil {
+			VALUES(?,'Meridian',?,?,?,'','running','docker','',?,?)`, application.id, application.nodeID, siteID, glivelaAppKey, now, now); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?)`, setupGatewayBindingSetting, `{"publicAddress":"203.0.113.71","bindAddress":"10.0.0.71"}`); err != nil {
 		t.Fatal(err)
 	}
-	firstServiceID, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center-a")
+	firstServiceID, err := store.ensureGlivelaSubscriptionService(ctx, "meridian-center-a")
 	if err != nil || firstServiceID == "" {
 		t.Fatalf("first Glivela subscription service = %q, err=%v", firstServiceID, err)
 	}
@@ -138,13 +138,13 @@ func TestMeridianSubscriptionHostMovesOnlyAfterPublicationStops(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE settings SET value=? WHERE key=?`, `{"publicAddress":"203.0.113.72","bindAddress":"10.0.0.72"}`, setupGatewayBindingSetting); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center-b"); err == nil || !strings.Contains(err.Error(), "remove the active Glivela subscription entry") {
+	if _, err := store.ensureGlivelaSubscriptionService(ctx, "meridian-center-b"); err == nil || !strings.Contains(err.Error(), "remove the active Glivela subscription entry") {
 		t.Fatalf("unsafe Glivela subscription host move error = %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE publications SET status='stopped' WHERE id=?`, command.PublicationID); err != nil {
 		t.Fatal(err)
 	}
-	secondServiceID, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center-b")
+	secondServiceID, err := store.ensureGlivelaSubscriptionService(ctx, "meridian-center-b")
 	if err != nil || secondServiceID == "" || secondServiceID == firstServiceID {
 		t.Fatalf("moved Glivela subscription service = %q, err=%v", secondServiceID, err)
 	}

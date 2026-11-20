@@ -3,14 +3,14 @@ package center
 import (
 	"context"
 	"github.com/petauron/glivela"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"testing"
 	"time"
 )
 
 func nodeEgressFixture(t *testing.T) (*Store, string) {
 	t.Helper()
-	s := openMeridianSharedEndpointSnapshotFixture(t)
+	s := openGlivelaSharedEndpointSnapshotFixture(t)
 	var id string
 	if err := s.db.QueryRow(`SELECT node_id FROM applications WHERE id='snapshot-shared-app'`).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestArchivedNodeEgressRejectsLateSuccessAndFailureWithoutChangingIdentity(t
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, err := s.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, id)
+		p, err := s.buildGlivelaRuntimeTask(ctx, tx, sharedSnapshotEndpointID, id)
 		_ = tx.Rollback()
 		if err != nil {
 			t.Fatal(err)
@@ -77,11 +77,11 @@ func TestArchivedNodeEgressRejectsLateSuccessAndFailureWithoutChangingIdentity(t
 		if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, command); err != nil {
 			t.Fatal(err)
 		}
-		result := meridianHealthResult(p, s.now(), success)
+		result := glivelaHealthResult(p, s.now(), success)
 		if success {
-			result.Egress = &meridianruntime.EgressObservation{Policy: p.task.NativeEgress, ConfigSHA256: p.task.Desired.ConfigSHA256, Exits: []string{"2001:4860:4860::8888"}, CheckedAt: s.now()}
+			result.Egress = &glivelaruntime.EgressObservation{Policy: p.task.NativeEgress, ConfigSHA256: p.task.Desired.ConfigSHA256, Exits: []string{"2001:4860:4860::8888"}, CheckedAt: s.now()}
 		}
-		assertRetiredMeridianResultPreservesState(t, s, p, command, result)
+		assertRetiredGlivelaResultPreservesState(t, s, p, command, result)
 	}
 }
 

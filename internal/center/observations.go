@@ -15,16 +15,16 @@ import (
 var observedEndpointNamePattern = regexp.MustCompile(`^inbound-[1-9][0-9]*$`)
 
 func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, agentID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
-	if len(observations) > 0 && strings.TrimSpace(observations[0].AppKey) == meridianAppKey {
-		return s.reconcileMeridianEndpoints(ctx, tx, agentID, observations, now, cleanups)
+	if len(observations) > 0 && strings.TrimSpace(observations[0].AppKey) == glivelaAppKey {
+		return s.reconcileGlivelaEndpoints(ctx, tx, agentID, observations, now, cleanups)
 	}
 	if len(observations) == 0 {
-		var meridianInstalled bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM applications WHERE node_id=? AND app_key=? AND status='running')`, agentID, meridianAppKey).Scan(&meridianInstalled); err != nil {
+		var glivelaInstalled bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM applications WHERE node_id=? AND app_key=? AND status='running')`, agentID, glivelaAppKey).Scan(&glivelaInstalled); err != nil {
 			return err
 		}
-		if meridianInstalled {
-			return s.reconcileMeridianEndpoints(ctx, tx, agentID, observations, now, cleanups)
+		if glivelaInstalled {
+			return s.reconcileGlivelaEndpoints(ctx, tx, agentID, observations, now, cleanups)
 		}
 	}
 	seen := map[string]bool{}
@@ -123,7 +123,7 @@ func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, a
 	return nil
 }
 
-func (s *Store) reconcileMeridianEndpoints(ctx context.Context, tx *sql.Tx, agentID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
+func (s *Store) reconcileGlivelaEndpoints(ctx context.Context, tx *sql.Tx, agentID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
 	if s.businessRetired {
 		return nil
 	}
@@ -136,7 +136,7 @@ func (s *Store) reconcileMeridianEndpoints(ctx context.Context, tx *sql.Tx, agen
 		value.AppProtocol = strings.TrimSpace(value.AppProtocol)
 		value.Listen = strings.TrimSpace(value.Listen)
 		value.InboundTag = strings.TrimSpace(value.InboundTag)
-		if value.AppKey != meridianAppKey || !observedEndpointNamePattern.MatchString(value.Name) || value.Protocol != "tcp" || value.AppProtocol != meridianEntryProtocol || value.Port < 1 || value.Port > 65535 || value.RemoteNodeID != 0 || value.InboundTotalBytes < 0 || !validThreeXUIInboundTag(value.InboundTag) {
+		if value.AppKey != glivelaAppKey || !observedEndpointNamePattern.MatchString(value.Name) || value.Protocol != "tcp" || value.AppProtocol != glivelaEntryProtocol || value.Port < 1 || value.Port > 65535 || value.RemoteNodeID != 0 || value.InboundTotalBytes < 0 || !validThreeXUIInboundTag(value.InboundTag) {
 			return errors.New("center: Agent reported an invalid Glivela endpoint")
 		}
 		if value.Listen != "" && net.ParseIP(value.Listen) == nil {
@@ -148,7 +148,7 @@ func (s *Store) reconcileMeridianEndpoints(ctx context.Context, tx *sql.Tx, agen
 		seenNames[value.Name], seenTags[value.InboundTag] = true, true
 	}
 	var applicationID, role string
-	err := tx.QueryRowContext(ctx, `SELECT id,role FROM applications WHERE node_id=? AND app_key=? AND status='running'`, agentID, meridianAppKey).Scan(&applicationID, &role)
+	err := tx.QueryRowContext(ctx, `SELECT id,role FROM applications WHERE node_id=? AND app_key=? AND status='running'`, agentID, glivelaAppKey).Scan(&applicationID, &role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -158,10 +158,10 @@ func (s *Store) reconcileMeridianEndpoints(ctx context.Context, tx *sql.Tx, agen
 	if role != "" {
 		return errors.New("center: Glivela application must not have a topology role")
 	}
-	return s.reconcileObservedMeridianApplication(ctx, tx, applicationID, observations, now, cleanups)
+	return s.reconcileObservedGlivelaApplication(ctx, tx, applicationID, observations, now, cleanups)
 }
 
-func (s *Store) reconcileObservedMeridianApplication(ctx context.Context, tx *sql.Tx, applicationID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
+func (s *Store) reconcileObservedGlivelaApplication(ctx context.Context, tx *sql.Tx, applicationID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
 	var serviceAddress string
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(p.service_address,'') FROM applications a LEFT JOIN agent_network_profiles p ON p.agent_id=a.node_id WHERE a.id=?`, applicationID).Scan(&serviceAddress); err != nil {
 		return err

@@ -204,7 +204,7 @@ func (e ApplicationExecutor) Adopt(ctx context.Context, task DeploymentTask) (Ap
 	if task.ManifestSHA256 == "" || task.PackageRevision != 0 {
 		return ApplicationTaskResult{}, errors.New("agent: adoption requires the original historical manifest digest")
 	}
-	if task.DormantRuntime && task.AppKey != meridianKey {
+	if task.DormantRuntime && task.AppKey != legacyProxyAppKey {
 		return ApplicationTaskResult{}, errors.New("agent: dormant adoption is reserved for Glivela")
 	}
 	digest := sha256.Sum256(task.HistoricalManifest)
@@ -238,7 +238,7 @@ func (e ApplicationExecutor) Adopt(ctx context.Context, task DeploymentTask) (Ap
 		defer docker.Close()
 		backend = &DockerPackageBackend{Docker: docker, StateDirectory: e.packageDirectory()}
 		if task.DormantRuntime {
-			receipt, err = e.historicalDormantMeridianResources(ctx, task, docker)
+			receipt, err = e.historicalDormantGlivelaResources(ctx, task, docker)
 		} else {
 			receipt, err = historicalDockerResources(ctx, task, history, docker, e.packageDirectory())
 		}

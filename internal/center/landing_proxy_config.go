@@ -39,10 +39,10 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 }
 
 func (s *Store) configureLandingProxy(ctx context.Context, tx *sql.Tx, applicationID string, input LandingProxyInput) error {
-	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+	if owns, err := glivelaOwnsLegacyLanding(ctx, tx); err != nil {
 		return err
 	} else if owns {
-		return errMeridianOwnsLegacyLanding
+		return errGlivelaOwnsLegacyLanding
 	}
 	var protocolsBusy int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id=? AND kind=? AND (state IN ('pending','running') OR reconciliation_required=1)`, applicationID, nodeprotocol.CommandKind).Scan(&protocolsBusy); err != nil {
@@ -206,6 +206,6 @@ func (s *Store) configureLandingProxy(ctx context.Context, tx *sql.Tx, applicati
 // snapshot, not the node's possibly changed network profile.
 func (s *Store) removeLandingSource(ctx context.Context, tx *sql.Tx, owner, source string) error {
 	// source identifies the retired use, not exclusive ownership of its address.
-	// Recompute all purposes so another proxy or Meridian grant keeps access.
+	// Recompute all purposes so another proxy or Glivela grant keeps access.
 	return s.refreshClientLandingSources(ctx, tx, owner)
 }

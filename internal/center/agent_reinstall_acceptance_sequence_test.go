@@ -8,7 +8,7 @@ import (
 
 	"github.com/petauron/glivela"
 	"github.com/petauron/vastora/internal/controlplane"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 func TestRetiredAcceptanceCannotAdvanceToAnotherCredential(t *testing.T) {
@@ -21,7 +21,7 @@ func TestRetiredAcceptanceCannotAdvanceToAnotherCredential(t *testing.T) {
 				t.Fatal(err)
 			}
 			protocol := "33333333-3333-4333-8333-333333333333"
-			key, err := s.putSecret(ctx, tx, []byte(protocol), meridianCredentialSecretContext("native-second"))
+			key, err := s.putSecret(ctx, tx, []byte(protocol), glivelaCredentialSecretContext("native-second"))
 			if err != nil {
 				_ = tx.Rollback()
 				t.Fatal(err)
@@ -106,7 +106,7 @@ func TestRetiredAcceptanceCannotAdvanceToAnotherCredential(t *testing.T) {
 			if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, checks[0].CommandID); err != nil {
 				t.Fatal(err)
 			}
-			raw, _ := json.Marshal(map[string]any{"meridianAcceptance": meridianruntime.AcceptanceResult{TaskDigest: digest}})
+			raw, _ := json.Marshal(map[string]any{"meridianAcceptance": glivelaruntime.AcceptanceResult{TaskDigest: digest}})
 			assertRetiredApplicationResultPreservesState(t, s, verifier.ID, checks[0].CommandID, success, raw)
 			var total, active int
 			if err := s.db.QueryRow(`SELECT COUNT(*),SUM(state IN ('pending','running')) FROM application_commands WHERE kind='meridian.recovery.acceptance'`).Scan(&total, &active); err != nil || total != 1 || active != 1 {

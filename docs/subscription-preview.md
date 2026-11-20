@@ -75,7 +75,7 @@ npm run check --prefix ui
 npm test --prefix ui -- src/glivela/SubscriptionPreview.test.tsx src/glivela/Routes.test.tsx src/glivela/RouteHealth.test.tsx src/host-contract.test.tsx
 
 # Vastora
-go test ./internal/center -run 'Test(SubscriptionPreview|Meridian.*Subscription|Meridian.*Snapshot|Meridian.*RouteHealth|MeridianAppliedSnapshot|OpenAPIContractIsValidAndMatchesRegisteredRoutes)' -count=1
+go test ./internal/center -run 'Test(SubscriptionPreview|Glivela.*Subscription|Glivela.*Snapshot|Glivela.*RouteHealth|GlivelaAppliedSnapshot|OpenAPIContractIsValidAndMatchesRegisteredRoutes)' -count=1
 ```
 
 The UI run passed four files and ten tests. Coverage includes ordinary/Mihomo

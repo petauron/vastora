@@ -15,8 +15,8 @@ import (
 
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/tailscalehost"
 )
 
@@ -38,6 +38,7 @@ type Store struct {
 	db                         *sql.DB
 	key                        []byte
 	dataDir                    string
+	glivelaConfigDir           string
 	now                        func() time.Time
 	gatewayMutationMu          sync.Mutex
 	sharedCaddy                *CaddyGatewayDriver
@@ -48,10 +49,10 @@ type Store struct {
 	landingStatusMu            sync.RWMutex
 	landingStatus              landing.MonitorStatus
 	landingPeerStatuses        map[string]landingPeerStatus
-	meridianPeerStatuses       map[string]meridianruntime.PeerObservation
-	meridianMonitorRevision    uint64
-	meridianMonitorSHA256      string
-	meridianMonitorSource      *landing.PeerIdentity
+	glivelaPeerStatuses        map[string]glivelaruntime.PeerObservation
+	glivelaMonitorRevision     uint64
+	glivelaMonitorSHA256       string
+	glivelaMonitorSource       *landing.PeerIdentity
 	landingSubscriptionMu      sync.RWMutex
 	landingSubscriptionAddress string
 	landingLatencyMu           sync.Mutex
@@ -113,7 +114,7 @@ type Connection struct {
 	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = 24
+const agentSchemaVersion = glivelaRuntimeSchemaVersion
 
 // CurrentSchemaVersion is the highest Agent database schema this executable
 // can open. The persistent host updater records it before a candidate can

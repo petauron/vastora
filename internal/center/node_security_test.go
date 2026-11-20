@@ -129,7 +129,7 @@ func TestOrdinaryProxyAndLandingNodesCanPreviewWithoutPublicUDP(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO admins(id,username,password_hash,created_at) VALUES('security-admin','security-admin','test-hash','')`); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{meridianAppKey, threeXUIAppKey} {
+	for _, key := range []string{glivelaAppKey, threeXUIAppKey} {
 		if _, err := s.db.Exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,created_at,updated_at) VALUES(?,?,?,?,?,'running','','')`, "fixture-"+key, key, node.ID, testSiteID(t, s), key); err != nil {
 			t.Fatal(err)
 		}

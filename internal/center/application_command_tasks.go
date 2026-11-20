@@ -163,7 +163,7 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 		return err
 	}
 	if currentState == "succeeded" || currentState == "failed" {
-		if reconciliationRequired && ((appKey != threeXUIAppKey && appKey != meridianAppKey) || currentState != "failed" || currentReconciliationRequired != 1) {
+		if reconciliationRequired && ((appKey != threeXUIAppKey && appKey != glivelaAppKey) || currentState != "failed" || currentReconciliationRequired != 1) {
 			return errInvalidReconciliationDisposition
 		}
 		return nil
@@ -201,7 +201,7 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 // An uncertain Agent result still needs a terminal endpoint projection. Keep a
 // previously verified runtime ready during retirement, but never leave an
 // unapplied first revision displaying "applying" after its command failed.
-func markUncertainMeridianRuntimeFailure(ctx context.Context, tx *sql.Tx, endpointID, commandID, message, stamp string) error {
+func markUncertainGlivelaRuntimeFailure(ctx context.Context, tx *sql.Tx, endpointID, commandID, message, stamp string) error {
 	result, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET status='failed',last_error=?,updated_at=?
 		WHERE endpoint_id=? AND command_id=? AND status IN ('pending','applying')`, message, stamp, endpointID, commandID)
 	if err != nil {

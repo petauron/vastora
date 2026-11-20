@@ -79,7 +79,7 @@ func (s *Store) claimApplicationAdoption(ctx context.Context, tx *sql.Tx, agentI
 		return nil, err
 	}
 	task.HistoricalManifest, task.Config = historical, config
-	if task.AppKey == meridianAppKey {
+	if task.AppKey == glivelaAppKey {
 		var endpoints int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_endpoints WHERE application_id=?`, task.ApplicationID).Scan(&endpoints); err != nil {
 			return nil, err
@@ -151,7 +151,7 @@ func (s *Store) projectApplicationAdoption(ctx context.Context, tx *sql.Tx, agen
 		}
 		if receipt.IntegrationState == "dormant" {
 			var endpoints int
-			if appKey != meridianAppKey || len(receipt.Resources) != 0 {
+			if appKey != glivelaAppKey || len(receipt.Resources) != 0 {
 				return errors.New("center: dormant adoption is reserved for Glivela without runtime resources")
 			}
 			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_endpoints WHERE application_id=?`, appID).Scan(&endpoints); err != nil {

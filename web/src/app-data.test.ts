@@ -30,13 +30,13 @@ describe("screen-scoped data loading", () => {
     vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
     vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
     vi.spyOn(api, "publications").mockResolvedValue({ publications: [] });
-    const meridian = emptyAppData(status).meridian;
-    const loadMeridian = vi.spyOn(api, "meridian").mockResolvedValue(meridian);
+    const glivela = emptyAppData(status).glivela;
+    const loadGlivela = vi.spyOn(api, "glivela").mockResolvedValue(glivela);
 
     const result = await loadScreenData("nodes");
 
-    expect(result.meridian).toBeUndefined();
-    expect(loadMeridian).not.toHaveBeenCalled();
+    expect(result.glivela).toBeUndefined();
+    expect(loadGlivela).not.toHaveBeenCalled();
   });
 
   it("loads the persistent desktop and overview summary without deployment history", async () => {
@@ -75,7 +75,7 @@ describe("screen-scoped data loading", () => {
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
 	vi.spyOn(api, "registryCredentials").mockResolvedValue({ credentials: [] });
 	vi.spyOn(api, "threeXUIControllerMigrations").mockResolvedValue({ migrations: [] });
-    vi.spyOn(api, "meridian").mockResolvedValue(emptyAppData(status).meridian);
+    vi.spyOn(api, "glivela").mockResolvedValue(emptyAppData(status).glivela);
     const centerRemoteAccess = vi.spyOn(api, "centerRemoteAccess").mockResolvedValue({ available: true, enabled: true, status: "configured" });
     const actions = vi.spyOn(api, "actions");
 
@@ -105,7 +105,7 @@ describe("screen-scoped data loading", () => {
     vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
     vi.spyOn(api, "threeXUIControllerMigrations").mockResolvedValue({ migrations: [] });
-    vi.spyOn(api, "meridian").mockResolvedValue(emptyAppData(status).meridian);
+    vi.spyOn(api, "glivela").mockResolvedValue(emptyAppData(status).glivela);
     vi.spyOn(api, "centerRemoteAccess").mockRejectedValue(new APIError("status unavailable", 503));
 
     const result = await loadScreenData("apps");

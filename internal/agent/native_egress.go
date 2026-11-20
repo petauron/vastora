@@ -10,19 +10,19 @@ import (
 	"time"
 
 	"github.com/petauron/glivela"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
-func (e ApplicationExecutor) verifyMeridianEgressClient(ctx context.Context, c meridianruntime.AcceptanceClient, image string, policy glivela.EgressPolicy) (string, error) {
+func (e ApplicationExecutor) verifyGlivelaEgressClient(ctx context.Context, c glivelaruntime.AcceptanceClient, image string, policy glivela.EgressPolicy) (string, error) {
 	var exit string
-	err := e.runMeridianClient(ctx, c, image, nil, func(ctx context.Context, endpoint string) error {
+	err := e.runGlivelaClient(ctx, c, image, nil, func(ctx context.Context, endpoint string) error {
 		var err error
 		exit, err = (landing.Probe{TCPOnly: true}).CheckClientTCP(ctx, endpoint)
 		if err != nil {
 			return fmt.Errorf("agent: native egress verification failed: %w", err)
 		}
-		if !meridianruntime.MatchesEgress(policy, exit) {
+		if !glivelaruntime.MatchesEgress(policy, exit) {
 			return errors.New("agent: native egress returned the wrong address family")
 		}
 		return nil
@@ -33,7 +33,7 @@ func (e ApplicationExecutor) verifyMeridianEgressClient(ctx context.Context, c m
 // Preflight must inspect the actual currently running host runtime namespace.
 // It never enables IPv6 or changes Docker networking. The real protocol probe
 // after apply is separate: successful direct preflight alone is not acceptance.
-func (e ApplicationExecutor) checkNativeEgressNetwork(parent context.Context, task meridianruntime.Task, state meridianRuntimeState) error {
+func (e ApplicationExecutor) checkNativeEgressNetwork(parent context.Context, task glivelaruntime.Task, state glivelaRuntimeState) error {
 	socket := e.DockerSocket
 	if socket == "" {
 		socket = "unix:///var/run/docker.sock"
@@ -43,8 +43,8 @@ func (e ApplicationExecutor) checkNativeEgressNetwork(parent context.Context, ta
 		return err
 	}
 	defer docker.Close()
-	inspected, err := docker.ContainerInspect(parent, meridianXrayContainer, client.ContainerInspectOptions{})
-	if err != nil || state.Applied == nil || verifyMeridianHostContainer(inspected, state.AppliedGID, state.Applied) != nil || inspected.Container.State == nil || !inspected.Container.State.Running {
+	inspected, err := docker.ContainerInspect(parent, legacyXrayRuntimeContainer, client.ContainerInspectOptions{})
+	if err != nil || state.Applied == nil || verifyGlivelaHostContainer(inspected, state.AppliedGID, state.Applied) != nil || inspected.Container.State == nil || !inspected.Container.State.Running {
 		return errors.New("agent: an intact running Glivela host runtime is required for egress preflight")
 	}
 	current, err := os.Readlink("/proc/self/ns/net")
@@ -67,7 +67,7 @@ func (e ApplicationExecutor) checkNativeEgressNetwork(parent context.Context, ta
 	}
 	var target string
 	for _, ip := range addresses {
-		if meridianruntime.MatchesEgress(task.NativeEgress, ip.String()) {
+		if glivelaruntime.MatchesEgress(task.NativeEgress, ip.String()) {
 			target = net.JoinHostPort(ip.String(), "443")
 			break
 		}

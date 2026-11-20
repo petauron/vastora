@@ -19,10 +19,10 @@ import (
 // node. Individual unavailable pairs are withheld without rolling back healthy
 // pairs or the landing service itself.
 func (s *Store) reconcileGlobalLandingPool(ctx context.Context, tx *sql.Tx, refreshReady bool) error {
-	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+	if owns, err := glivelaOwnsLegacyLanding(ctx, tx); err != nil {
 		return err
 	} else if owns {
-		return s.finalizeMeridianLandingRetirements(ctx, tx)
+		return s.finalizeGlivelaLandingRetirements(ctx, tx)
 	}
 	selection, err := readLandingSelection(ctx, tx)
 	if err != nil {

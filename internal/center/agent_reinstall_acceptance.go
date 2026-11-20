@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/petauron/glivela"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 // Reconstruct secret client inputs from current saved intent, after validating
 // the restored runtime. Neither UI input nor a historic score supplies exits.
-func (s *Store) reinstallAcceptanceTasks(ctx context.Context, tx *sql.Tx, target, verifier, adminID string, input AgentReinstallApplicationInput) ([]meridianruntime.AcceptanceTask, error) {
+func (s *Store) reinstallAcceptanceTasks(ctx context.Context, tx *sql.Tx, target, verifier, adminID string, input AgentReinstallApplicationInput) ([]glivelaruntime.AcceptanceTask, error) {
 	plan, err := s.agentReinstallPlan(ctx, tx, target)
 	if err != nil {
 		return nil, err
@@ -56,12 +56,12 @@ func (s *Store) reinstallAcceptanceTasks(ctx context.Context, tx *sql.Tx, target
 		return nil, errExecutionAuthorization
 	}
 	reality.ID, reality.EntryID = endpointID, input.ApplicationID
-	materials, _, err := s.meridianRuntimeMaterials(ctx, tx, endpointID, input.ApplicationID)
+	materials, _, err := s.glivelaRuntimeMaterials(ctx, tx, endpointID, input.ApplicationID)
 	if err != nil {
 		return nil, err
 	}
 	fingerprint := sha256.Sum256(verifierKey)
-	tasks := []meridianruntime.AcceptanceTask{}
+	tasks := []glivelaruntime.AcceptanceTask{}
 	for _, material := range materials {
 		if !material.Credential.Enabled {
 			continue
@@ -82,18 +82,18 @@ func (s *Store) reinstallAcceptanceTasks(ctx context.Context, tx *sql.Tx, target
 		if err != nil {
 			return nil, err
 		}
-		base := meridianruntime.AcceptanceTask{VerifierFingerprint: hex.EncodeToString(fingerprint[:]), OperationID: op.ID, PlanRevision: plan.Revision, TargetAgentID: target, VerifierAgentID: verifier, IdentityFingerprint: plan.IdentityFingerprint, ExpectedExit: exit}
+		base := glivelaruntime.AcceptanceTask{VerifierFingerprint: hex.EncodeToString(fingerprint[:]), OperationID: op.ID, PlanRevision: plan.Revision, TargetAgentID: target, VerifierAgentID: verifier, IdentityFingerprint: plan.IdentityFingerprint, ExpectedExit: exit}
 		if vless {
-			base.Client = meridianruntime.AcceptanceClient{Protocol: glivela.VLESSReality, Reality: &reality, Material: material}
+			base.Client = glivelaruntime.AcceptanceClient{Protocol: glivela.VLESSReality, Reality: &reality, Material: material}
 			if err = base.Validate(); err != nil {
 				return nil, err
 			}
 			tasks = append(tasks, base)
 		}
-		// Routed HY2 is not a supported subscription in the Meridian domain model.
+		// Routed HY2 is not a supported subscription in the Glivela domain model.
 		if hy2 && material.Credential.Kind == glivela.NativeCredential {
 			endpoint := glivela.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: input.ApplicationID, AdvertiseHost: reality.AdvertiseHost, AdvertisePort: 443, ServerName: hy2Name}
-			base.Client = meridianruntime.AcceptanceClient{Protocol: glivela.Hysteria2, Hysteria: &endpoint, Material: material}
+			base.Client = glivelaruntime.AcceptanceClient{Protocol: glivela.Hysteria2, Hysteria: &endpoint, Material: material}
 			if err = base.Validate(); err != nil {
 				return nil, err
 			}

@@ -44,7 +44,7 @@ remains a draft pending review, new CI and the remaining applicable matrix check
    command for the applied revision. It must have started after actual application
    finished, not just after preview. Verify private networking and real existing
    proxy requests, then explicitly confirm the revision in Center.
-8. Center requires fresh healthy evidence for configured landing and Meridian
+8. Center requires fresh healthy evidence for configured landing and Glivela
    links, collected after actual application. Agent also requires the post-apply
    SSH receipt. Otherwise the watchdog rolls back the pending policy on expiry
    or on an intervening reboot. The previous connection staying open is not proof.

@@ -52,14 +52,14 @@ func (s *Store) CompleteAgentReinstall(ctx context.Context, target, admin string
 	}
 	type readyRuntime struct {
 		endpoint, command string
-		projection        meridianRuntimeProjection
+		projection        glivelaRuntimeProjection
 		quota             bool
 	}
 	runtimes := []readyRuntime{}
 	receipt = AgentReinstallCompletion{OperationID: input.OperationID, PlanRevision: input.PlanRevision, IdentityFingerprint: evidence.Plan.IdentityFingerprint, CompletedAt: s.now().UTC(), ClientCommands: evidence.Clients, RuntimeDigests: map[string]string{}}
 	stamp := receipt.CompletedAt.Format(time.RFC3339Nano)
-	// Meridian activates its reviewed profile before client verification. Nodes
-	// without Meridian still need the same approved network restored atomically
+	// Glivela activates its reviewed profile before client verification. Nodes
+	// without Glivela still need the same approved network restored atomically
 	// with completion, after the full evidence gate has succeeded.
 	if !evidence.Plan.NetworkReview.ProfileActive {
 		profile := evidence.Plan.NetworkReview.Approval.Profile
@@ -93,12 +93,12 @@ func (s *Store) CompleteAgentReinstall(ctx context.Context, target, admin string
 		if err != nil {
 			return receipt, err
 		}
-		restore := &meridianRuntimeRestoreTarget{Address: p.Access.ServiceAddress, Image: task.MeridianRuntime.ImageReference, Revision: task.MeridianRuntime.Desired.Revision, RestoreLandings: p.Landing != nil}
-		projection, err := s.buildMeridianRuntimeProjection(ctx, tx, endpoint, target, restore)
+		restore := &glivelaRuntimeRestoreTarget{Address: p.Access.ServiceAddress, Image: task.GlivelaRuntime.ImageReference, Revision: task.GlivelaRuntime.Desired.Revision, RestoreLandings: p.Landing != nil}
+		projection, err := s.buildGlivelaRuntimeProjection(ctx, tx, endpoint, target, restore)
 		if err != nil {
 			return receipt, err
 		}
-		if projection.task.Desired.ConfigSHA256 != task.MeridianRuntime.Desired.ConfigSHA256 {
+		if projection.task.Desired.ConfigSHA256 != task.GlivelaRuntime.Desired.ConfigSHA256 {
 			return receipt, errExecutionAuthorization
 		}
 		// Apply real counters once using existing watermarks. If they change quota
@@ -107,14 +107,14 @@ func (s *Store) CompleteAgentReinstall(ctx context.Context, target, admin string
 		if err != nil {
 			return receipt, err
 		}
-		if err = s.observeMeridianUsageInTx(ctx, tx, endpoint, counters, stamp); err != nil {
+		if err = s.observeGlivelaUsageInTx(ctx, tx, endpoint, counters, stamp); err != nil {
 			return receipt, err
 		}
-		after, err := s.buildMeridianRuntimeProjection(ctx, tx, endpoint, target, restore)
+		after, err := s.buildGlivelaRuntimeProjection(ctx, tx, endpoint, target, restore)
 		if err != nil || after.task.Desired.ConfigSHA256 != projection.task.Desired.ConfigSHA256 {
 			return receipt, errors.New("center: usage changed restored access requirements; review runtime before completion")
 		}
-		quota, err := meridianEndpointQuotaEnabledInTx(ctx, tx, endpoint)
+		quota, err := glivelaEndpointQuotaEnabledInTx(ctx, tx, endpoint)
 		if err != nil {
 			return receipt, err
 		}
@@ -140,7 +140,7 @@ func (s *Store) CompleteAgentReinstall(ctx context.Context, target, admin string
 			return receipt, err
 		}
 		result := evidence.Runtimes[task.ApplicationID]
-		if err = s.projectVerifiedMeridianRuntime(ctx, tx, ready.endpoint, ready.command, ready.projection, &result, ready.quota, receipt.CompletedAt); err != nil {
+		if err = s.projectVerifiedGlivelaRuntime(ctx, tx, ready.endpoint, ready.command, ready.projection, &result, ready.quota, receipt.CompletedAt); err != nil {
 			return receipt, err
 		}
 	}

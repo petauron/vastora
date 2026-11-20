@@ -50,7 +50,7 @@ func (s *Store) claimLandingProxyTask(ctx context.Context, tx *sql.Tx, nodeID st
 	if s.businessRetired {
 		return nil, nil
 	}
-	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+	if owns, err := glivelaOwnsLegacyLanding(ctx, tx); err != nil {
 		return nil, err
 	} else if owns {
 		return nil, nil
