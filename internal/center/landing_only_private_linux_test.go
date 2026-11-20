@@ -189,7 +189,7 @@ func TestLandingOnlyPrivateLinux(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(selection.NodeIDs) == 0 {
-		if err = s.SelectMeridianLanding(ctx, LandingSelection{Revision: selection.Revision, NodeIDs: []string{id}, LandingRegionCodes: map[string]string{id: "US"}}); err != nil {
+		if err = s.SelectGlivelaLanding(ctx, LandingSelection{Revision: selection.Revision, NodeIDs: []string{id}, LandingRegionCodes: map[string]string{id: "US"}}); err != nil {
 			t.Fatal(err)
 		}
 	}

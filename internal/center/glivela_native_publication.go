@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 // Sync only display metadata owned by the authenticated Glivela application.
@@ -31,7 +31,7 @@ func (s *Store) reconcileNativeEntryPublicationsInTx(ctx context.Context, tx *sq
 	if err != nil {
 		return nil, err
 	}
-	var checkpoint meridianruntime.PilotCounters
+	var checkpoint glivelaruntime.PilotCounters
 	if json.Unmarshal(checkpointJSON, &checkpoint) != nil || checkpoint.EntryID != applicationID {
 		return nil, errors.New("center: native entry metadata identity unavailable")
 	}
@@ -39,7 +39,7 @@ func (s *Store) reconcileNativeEntryPublicationsInTx(ctx context.Context, tx *sq
 	if path == "" {
 		path = "/run/glivela-pilot/nodes.json"
 	}
-	evidence, err := meridianruntime.ReadAppliedNativeEntryEndpoint(path, applicationID, endpointID, checkpoint.CertificateID, s.now().UTC())
+	evidence, err := glivelaruntime.ReadAppliedNativeEntryEndpoint(path, applicationID, endpointID, checkpoint.CertificateID, s.now().UTC())
 	if err != nil {
 		return nil, err
 	}

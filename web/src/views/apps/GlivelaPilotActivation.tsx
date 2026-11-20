@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../../api";
 import type { Mutate } from "../../App";
-import type { MeridianEndpoint } from "../../meridian-types";
+import type { GlivelaEndpoint } from "../../glivela-types";
 import type { Language } from "../../translations";
 import { copy, userError } from "../shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,7 +14,7 @@ import { Spinner } from "@/components/ui/spinner";
 // This is an operator entry point for the existing one-node transaction, not
 // another migration orchestrator. Never synthesize timestamps or final counters.
 export function GlivelaPilotActivation({ endpoint, language, mutate, disabled }: {
-  endpoint: MeridianEndpoint; language: Language; mutate: Mutate; disabled: boolean;
+  endpoint: GlivelaEndpoint; language: Language; mutate: Mutate; disabled: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [evidence, setEvidence] = useState("");
@@ -30,7 +30,7 @@ export function GlivelaPilotActivation({ endpoint, language, mutate, disabled }:
     setError("");
     try {
       await mutate(async () => {
-        const result = await api.recoverMeridianEndpoint(endpoint.id);
+        const result = await api.recoverGlivelaEndpoint(endpoint.id);
         if (!result.queued) throw new Error("Recovery was not queued; inspect the current operation.");
         setResumeQueued(true);
         setEvidence("");

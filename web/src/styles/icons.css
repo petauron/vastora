@@ -10,10 +10,10 @@
 /* App identities have a tile; settings feature glyphs remain freestanding. */
 .desktop-app-icon.desktop-asset-icon { border: 0; background: #deebf7; box-shadow: none; overflow: hidden; }
 .desktop-app-icon.desktop-asset-icon > img { width: 90%; height: 90%; }
-.desktop-asset-icon:is([data-icon="app-store"], [data-icon="meridian"]) { background: #deebf7; }
+.desktop-asset-icon:is([data-icon="app-store"], [data-icon="glivela"]) { background: #deebf7; }
 /* One Telegram sky blue; source chroma separates the white detail from colored planes. */
 .vastora-visual-icon[data-icon="app-store"] > img { filter: url("/icons/sky-blue-filters.svg#store"); }
-.vastora-visual-icon[data-icon="meridian"] > img { filter: url("/icons/sky-blue-filters.svg#compass"); }
+.vastora-visual-icon[data-icon="glivela"] > img { filter: url("/icons/sky-blue-filters.svg#compass"); }
 .desktop-asset-icon:is([data-icon="activity"], [data-icon="files"]) { background: #ffe5cf; }
 .desktop-asset-icon:is([data-icon="nodes"], [data-icon="settings"]) { background: #dbe2e9; }
 .desktop-asset-icon:is([data-icon="cpa"], [data-icon="web-gateway"]) { background: #d4eeea; }

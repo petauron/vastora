@@ -59,7 +59,7 @@ func reinstallRemaining(plan AgentReinstallPlan) []AgentReinstallRemaining {
 			}
 			continue
 		}
-		if app.AppKey != meridianAppKey || app.Recovery != "rebuild_configuration" {
+		if app.AppKey != glivelaAppKey || app.Recovery != "rebuild_configuration" {
 			add("application_review", app.ApplicationID)
 			continue
 		}

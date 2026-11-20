@@ -215,7 +215,7 @@ func validatePackageTask(task DeploymentTask) error {
 		if !slices.Contains([]string{"root", "host-network", "host-path", "devices", "meridian-runtime", "native-services", "shared-caddy", "host-tcp-budget", "cpa-tunnel-identity"}, capability) {
 			return errors.New("agent: unsupported runtime capability")
 		}
-		if capability == "meridian-runtime" && task.AppKey != meridianKey {
+		if capability == "meridian-runtime" && task.AppKey != legacyProxyAppKey {
 			return errors.New("agent: Glivela integration capability is reserved for its reviewed package")
 		}
 		if capability == "cpa-tunnel-identity" && task.AppKey != cpaKey && task.AppKey != keeperKey {
@@ -292,7 +292,7 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 	}
 	if task.Operation == "adopt" {
 		if receipt != nil {
-			if receipt.IntegrationState == "dormant" && (!task.DormantRuntime || task.AppKey != meridianKey) {
+			if receipt.IntegrationState == "dormant" && (!task.DormantRuntime || task.AppKey != legacyProxyAppKey) {
 				return result, errors.New("agent: dormant adoption is not authorized")
 			}
 			if err := e.Backend.Inspect(ctx, task, receipt); err != nil {
@@ -300,10 +300,10 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 			}
 			return ApplicationTaskResult{Resources: receipt}, nil
 		}
-		if task.Resources == nil || task.Resources.ApplicationID != task.ApplicationID || task.Resources.AppKey != task.AppKey || task.Resources.Version != 1 || len(task.Resources.Resources) == 0 && !(task.DormantRuntime && task.AppKey == meridianKey && task.Resources.IntegrationState == "dormant" && task.Resources.Runtime == "docker") {
+		if task.Resources == nil || task.Resources.ApplicationID != task.ApplicationID || task.Resources.AppKey != task.AppKey || task.Resources.Version != 1 || len(task.Resources.Resources) == 0 && !(task.DormantRuntime && task.AppKey == legacyProxyAppKey && task.Resources.IntegrationState == "dormant" && task.Resources.Runtime == "docker") {
 			return result, errors.New("agent: adoption requires historical resource evidence")
 		}
-		if task.Resources.IntegrationState == "dormant" && (len(task.Resources.Resources) != 0 || !task.DormantRuntime || task.AppKey != meridianKey) {
+		if task.Resources.IntegrationState == "dormant" && (len(task.Resources.Resources) != 0 || !task.DormantRuntime || task.AppKey != legacyProxyAppKey) {
 			return result, errors.New("agent: invalid dormant adoption receipt")
 		}
 		copy := *task.Resources
@@ -323,7 +323,7 @@ func (e PackageExecutor) Deploy(ctx context.Context, task DeploymentTask) (resul
 		return result, errors.New("agent: existing instance has no verified resource receipt; adopt it before mutation")
 	}
 	dormant := receipt != nil && receipt.IntegrationState == "dormant"
-	if dormant && (task.AppKey != meridianKey || task.Operation != "upgrade" || receipt.State != "ready" || receipt.Runtime != "docker" || task.Manifest.Runtime.Kind != "docker" || len(receipt.Resources) != 0) {
+	if dormant && (task.AppKey != legacyProxyAppKey || task.Operation != "upgrade" || receipt.State != "ready" || receipt.Runtime != "docker" || task.Manifest.Runtime.Kind != "docker" || len(receipt.Resources) != 0) {
 		return result, errors.New("agent: dormant Glivela permits only a verified package upgrade without runtime activation")
 	}
 	if task.Operation == "install" && receipt != nil && receipt.State != "retained" && !recoveringInstall {

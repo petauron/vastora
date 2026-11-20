@@ -49,7 +49,7 @@ func TestRetainedXrayInspectionRemainsReadOnlyAfterControlRetirement(t *testing.
 }
 
 func TestRetiredXrayRecoveryDoesNotCreateWorkDuringHistoricalCutover(t *testing.T) {
-	store := openMeridianSharedEndpointSnapshotFixture(t)
+	store := openGlivelaSharedEndpointSnapshotFixture(t)
 	ctx := context.Background()
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='verify',subscription_authority='meridian' WHERE id=1`); err != nil {
 		t.Fatal(err)

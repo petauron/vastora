@@ -52,7 +52,7 @@ func reinstallLandingFixture(t *testing.T, sameAddress bool) (*Store, AgentCrede
 	exec(`UPDATE meridian_endpoints SET source_peer_json=? WHERE id='restore-endpoint'`, previous)
 	egress := enrollOrchestrationNode(t, s, "reinstall-egress", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.62", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.62", HeadscaleAddress: "100.64.0.62", EnabledKinds: []string{networking.KindHeadscale}})
 	exec(`UPDATE agents SET tailscale_ownership='managed',version=? WHERE id=?`, Version, egress.ID)
-	server, serverPeer := meridianAppliedLandingFixtureJSON(t, egress.ID, "100.64.0.62", old.Address)
+	server, serverPeer := glivelaAppliedLandingFixtureJSON(t, egress.ID, "100.64.0.62", old.Address)
 	exec(`INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,applied_json,peer_json,status,updated_at) VALUES(?,1,1,?,?,?,'ready',?)`, egress.ID, server, server, serverPeer, now)
 	exec(`UPDATE meridian_credentials SET egress_node_id=? WHERE id='route'`, egress.ID)
 	exec(`INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,enabled,status,created_at,updated_at) VALUES('restore-grant','restore-account','restore-endpoint',?,'native','route',1,'blocked',?,?)`, egress.ID, now, now)
@@ -136,13 +136,13 @@ func TestAgentReinstallLandingWithdrawalThenAuthorization(t *testing.T) {
 			if task.ID != receipt.CommandID {
 				t.Fatal("historical runtime identity changed")
 			}
-			if !strings.Contains(string(task.MeridianRuntime.Desired.Config), restoreRouteID) || task.MeridianRuntime.Source == nil || task.MeridianRuntime.Source.PublicKey != "nodekey:replacement-entry" || len(task.MeridianRuntime.Peers) != 1 || task.MeridianRuntime.Peers[0].EgressID != egress.ID {
+			if !strings.Contains(string(task.GlivelaRuntime.Desired.Config), restoreRouteID) || task.GlivelaRuntime.Source == nil || task.GlivelaRuntime.Source.PublicKey != "nodekey:replacement-entry" || len(task.GlivelaRuntime.Peers) != 1 || task.GlivelaRuntime.Peers[0].EgressID != egress.ID {
 				t.Fatal("reviewed fixed route or exact replacement identity missing from restored runtime")
 			}
 			if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, task.ID); err != nil {
 				t.Fatal(err)
 			}
-			assertRetiredMeridianResultPreservesState(t, s, meridianRuntimeProjection{agentID: node.ID}, task.ID, meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now(), true))
+			assertRetiredGlivelaResultPreservesState(t, s, glivelaRuntimeProjection{agentID: node.ID}, task.ID, glivelaHealthResult(glivelaRuntimeProjection{task: *task.GlivelaRuntime}, s.now(), true))
 			var healthy int
 			if err = s.db.QueryRow(`SELECT runtime_healthy FROM meridian_route_grants WHERE id='restore-grant'`).Scan(&healthy); err != nil || healthy != 0 {
 				t.Fatalf("invented route health %d %v", healthy, err)
@@ -251,10 +251,10 @@ func TestAgentReinstallLandingPreservesIndependentSources(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO landing_proxy_states(node_id,application_id,landing_node_id,server_revision,source_address,desired_revision,desired_json,status,updated_at) VALUES(?, 'retained-meridian',?,1,'100.64.0.44',1,'{"proxy":{}}','ready',?)`, egress.ID, egress.ID, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
-	desired, applied, _ := readMeridianAuthorizationServer(t, s, egress.ID)
+	desired, applied, _ := readGlivelaAuthorizationServer(t, s, egress.ID)
 	desired.Plan.Sources = append(desired.Plan.Sources, landing.AuthorizedNode{Address: "100.64.0.44"})
 	applied.Plan.Sources = desired.Plan.Sources
-	writeMeridianAuthorizationServer(t, s, desired, applied, "ready")
+	writeGlivelaAuthorizationServer(t, s, desired, applied, "ready")
 	for _, authorize := range []bool{false, true} {
 		plan, err := s.AgentReinstallPlan(ctx, node.ID)
 		if err != nil {
@@ -265,7 +265,7 @@ func TestAgentReinstallLandingPreservesIndependentSources(t *testing.T) {
 			t.Fatal(err)
 		}
 		applyReinstallLanding(t, s, egress, true)
-		_, applied, _ = readMeridianAuthorizationServer(t, s, egress.ID)
+		_, applied, _ = readGlivelaAuthorizationServer(t, s, egress.ID)
 		preserved := false
 		for _, source := range applied.Plan.Sources {
 			if source.Address == "100.64.0.44" && !source.TCPOnly {
@@ -308,7 +308,7 @@ func TestAgentReinstallLandingClaimDoesNotGrantChangedAuthority(t *testing.T) {
 			// The normal landing claim rebuilds the shared authorization union and
 			// removes an approval that ceased to match, even after it was queued.
 			applyReinstallLanding(t, s, egress, true)
-			_, applied, _ := readMeridianAuthorizationServer(t, s, egress.ID)
+			_, applied, _ := readGlivelaAuthorizationServer(t, s, egress.ID)
 			for _, source := range applied.Plan.Sources {
 				if source.Address == "100.64.0.8" || source.Address == "100.64.0.7" {
 					t.Fatal("claim retained an unreviewed source")
@@ -374,7 +374,7 @@ func TestAgentReinstallLandingRuntimeRejectsChangedAuthorization(t *testing.T) {
 					t.Fatal("runtime claimed missing landing approval")
 				}
 			} else {
-				assertRetiredMeridianResultPreservesState(t, s, meridianRuntimeProjection{agentID: node.ID}, task.ID, meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now(), true))
+				assertRetiredGlivelaResultPreservesState(t, s, glivelaRuntimeProjection{agentID: node.ID}, task.ID, glivelaHealthResult(glivelaRuntimeProjection{task: *task.GlivelaRuntime}, s.now(), true))
 			}
 			var healthy int
 			if err = s.db.QueryRow(`SELECT runtime_healthy FROM meridian_endpoints WHERE id='restore-endpoint'`).Scan(&healthy); err != nil || healthy != 0 {
@@ -390,7 +390,7 @@ func TestRetiredLandingRuntimeRejectsAllTransportReceipts(t *testing.T) {
 			s, node, input := queueReinstallLandingRuntime(t)
 			ctx := context.Background()
 			task := readHistoricalRuntimeTask(t, s, node)
-			result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+			result := glivelaHealthResult(glivelaRuntimeProjection{task: *task.GlivelaRuntime}, s.now().UTC(), true)
 			switch mode {
 			case "blocked":
 				result.Peers[0].Status.State = "blocked"
@@ -404,7 +404,7 @@ func TestRetiredLandingRuntimeRejectsAllTransportReceipts(t *testing.T) {
 			if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, task.ID); err != nil {
 				t.Fatal(err)
 			}
-			assertRetiredMeridianResultPreservesState(t, s, meridianRuntimeProjection{agentID: node.ID}, task.ID, result)
+			assertRetiredGlivelaResultPreservesState(t, s, glivelaRuntimeProjection{agentID: node.ID}, task.ID, result)
 			plan, err := s.AgentReinstallPlan(ctx, node.ID)
 			if err != nil {
 				t.Fatal(err)
@@ -429,7 +429,7 @@ func TestHistoricalTransportObservationValidationDoesNotReplayExecution(t *testi
 	s, node, input := queueReinstallLandingRuntime(t)
 	ctx := context.Background()
 	task := readHistoricalRuntimeTask(t, s, node)
-	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+	result := glivelaHealthResult(glivelaRuntimeProjection{task: *task.GlivelaRuntime}, s.now().UTC(), true)
 	result.Peers[0].Status.State = "blocked"
 	// Seed recorded pre-upgrade state; no current dispatcher/result handler
 	// is allowed to accept this as a newly completed operation.
@@ -448,7 +448,7 @@ func TestHistoricalTransportObservationValidationDoesNotReplayExecution(t *testi
 		t.Fatal(err)
 	}
 	for _, healthy := range []bool{true, false} {
-		result = meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+		result = glivelaHealthResult(glivelaRuntimeProjection{task: *task.GlivelaRuntime}, s.now().UTC(), true)
 		if !healthy {
 			result.Peers[0].Status.State = "blocked"
 		}
@@ -460,7 +460,7 @@ func TestHistoricalTransportObservationValidationDoesNotReplayExecution(t *testi
 			tx.Rollback()
 			t.Fatal(err)
 		}
-		_, observationErr := s.currentReinstallRuntimeObservation(ctx, tx, task.ID, *task.MeridianRuntime)
+		_, observationErr := s.currentReinstallRuntimeObservation(ctx, tx, task.ID, *task.GlivelaRuntime)
 		if (observationErr == nil) != healthy {
 			tx.Rollback()
 			t.Fatalf("current transport healthy=%v: %v", healthy, observationErr)

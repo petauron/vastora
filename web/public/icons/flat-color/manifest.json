@@ -155,8 +155,8 @@
       "cleanup": "Exterior near-white background removed; enclosed white details kept; update/backup cutouts kept. RGB unchanged."
     },
     {
-      "name": "meridian",
-      "file": "meridian.webp",
+      "name": "glivela",
+      "file": "glivela.webp",
       "prompt": "Single desktop application icon: teal circular compass with a white and pale blue directional needle, only four direction ticks. Freestanding silhouette on pure white background; NO extra enclosing white tile. Match a sophisticated Synology-style flat utility icon family. Precise orthographic geometry, opaque color planes and very subtle analogous hue transitions; gradients are COLOR changes, never lighting. No perspective, 3D, bevels, embossing, highlights, light source, shadow, metallic sheen, plastic gloss, texture or decoration. Balanced proportions and deliberate negative space, clear at 32px. Centered shape 78% of square canvas. No labels.",
       "sourceSha256": "0bb92858e06c4fe93efca78b821dc4f81c72d7db3a834bc09a167f6466413954",
       "sha256": "3e86422b7914ed03e0c2dd854e721e3e73b0bae37eafa8bfff9f58f9ef2cd9d6",

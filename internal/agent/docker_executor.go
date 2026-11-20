@@ -8,10 +8,10 @@ import (
 
 const (
 	threeXUIKey                  = "vastora-official/3x-ui"
-	meridianKey                  = "vastora-official/meridian"
+	legacyProxyAppKey            = "vastora-official/meridian"
 	threeXUIContainer            = "vastora-3x-ui"
 	xrayWorkerContainer          = "vastora-xray"
-	meridianXrayContainer        = "meridian-xray"
+	legacyXrayRuntimeContainer   = "meridian-xray"
 	threeXUIDatabaseVolume       = "vastora-3x-ui-db"
 	cpaKey                       = "vastora-official/cpa"
 	cpaContainer                 = "vastora-cpa"
@@ -42,5 +42,5 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 }
 
 func proxyRuntimeApp(appKey string) bool {
-	return appKey == meridianKey || appKey == threeXUIKey
+	return appKey == legacyProxyAppKey || appKey == threeXUIKey
 }

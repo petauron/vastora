@@ -18,7 +18,7 @@ func (s *Store) reconcileLandingSubscriptionOrigin(ctx context.Context, tx *sql.
 	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT a.id,s.id,s.endpoint FROM applications a JOIN services s ON s.application_id=a.id
 		JOIN agent_private_peer_capabilities c ON c.node_id=a.node_id
 		WHERE a.node_id=? AND s.name='subscription' AND s.status<>'stopped' AND s.app_protocol<>? AND c.generation=?
-		AND EXISTS(SELECT 1 FROM three_x_ui_client_accounts p JOIN landing_client_grants g ON g.parent_id=p.id WHERE p.controller_id=a.id AND g.applied_revision>0)`, nodeID, meridianSubscriptionProtocol, landing.ClientRuntimeGeneration)
+		AND EXISTS(SELECT 1 FROM three_x_ui_client_accounts p JOIN landing_client_grants g ON g.parent_id=p.id WHERE p.controller_id=a.id AND g.applied_revision>0)`, nodeID, glivelaSubscriptionProtocol, landing.ClientRuntimeGeneration)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func (s *Store) reconcileLandingSubscriptionOrigin(ctx context.Context, tx *sql.
 }
 
 func (s *Store) reconcileClientLandingSourcesForNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
-	if frozen, err := meridianCutoverBlocksLandingChanges(ctx, tx); err != nil {
+	if frozen, err := glivelaCutoverBlocksLandingChanges(ctx, tx); err != nil {
 		return err
 	} else if frozen {
 		return nil

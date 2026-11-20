@@ -17,14 +17,14 @@ func historicalReceipt(task DeploymentTask, kind string) *InstanceResources {
 	return &InstanceResources{Version: 1, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Runtime: kind, PackageVersion: task.Manifest.Version, PackageRevision: 0, ManifestSHA256: task.ManifestSHA256, State: "ready", TaskID: task.ID}
 }
 
-// A Meridian installation without an endpoint may never have started Xray.
+// A Glivela installation without an endpoint may never have started Xray.
 // Record that state only after both the local database and all reserved
 // container names independently confirm that no runtime exists.
-func (e ApplicationExecutor) historicalDormantMeridianResources(ctx context.Context, task DeploymentTask, docker packageDockerEngine) (*InstanceResources, error) {
-	if task.AppKey != meridianKey || !task.DormantRuntime {
+func (e ApplicationExecutor) historicalDormantGlivelaResources(ctx context.Context, task DeploymentTask, docker packageDockerEngine) (*InstanceResources, error) {
+	if task.AppKey != legacyProxyAppKey || !task.DormantRuntime {
 		return nil, errors.New("agent: dormant adoption is reserved for Glivela")
 	}
-	if err := e.inspectDormantMeridian(ctx, docker); err != nil {
+	if err := e.inspectDormantGlivela(ctx, docker); err != nil {
 		return nil, err
 	}
 	receipt := historicalReceipt(task, "docker")
@@ -32,27 +32,27 @@ func (e ApplicationExecutor) historicalDormantMeridianResources(ctx context.Cont
 	return receipt, nil
 }
 
-func (e ApplicationExecutor) inspectDormantMeridian(ctx context.Context, docker packageDockerEngine) error {
+func (e ApplicationExecutor) inspectDormantGlivela(ctx context.Context, docker packageDockerEngine) error {
 	if e.Store == nil {
 		return errors.New("agent: dormant Glivela requires local runtime evidence")
 	}
 	var rows int
-	if err := e.Store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_runtime_state`).Scan(&rows); err != nil {
+	if err := e.Store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM glivela_runtime_state`).Scan(&rows); err != nil {
 		return err
 	}
 	if rows != 0 {
 		return errors.New("agent: Glivela runtime state exists; dormant package requires review")
 	}
-	if _, err := os.Lstat(filepath.Join(e.Store.dataDir, meridianRuntimeDirectory)); err == nil {
+	if _, err := os.Lstat(e.Store.glivelaConfigDir); err == nil {
 		return errors.New("agent: Glivela configuration artifacts exist; dormant package requires review")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return inspectDormantMeridianContainers(ctx, docker)
+	return inspectDormantGlivelaContainers(ctx, docker)
 }
 
-func inspectDormantMeridianContainers(ctx context.Context, docker packageDockerEngine) error {
-	for _, name := range []string{meridianXrayContainer, meridianXrayCandidateContainer, meridianXrayBackupContainer, meridianXrayCleanupContainer} {
+func inspectDormantGlivelaContainers(ctx context.Context, docker packageDockerEngine) error {
+	for _, name := range []string{legacyXrayRuntimeContainer, legacyXrayCandidateContainer, glivelaXrayBackupContainer, glivelaXrayCleanupContainer} {
 		_, exists, err := inspectXrayWorkerContainer(ctx, docker, name)
 		if err != nil {
 			return err
@@ -72,7 +72,7 @@ func historicalDockerResources(ctx context.Context, task DeploymentTask, history
 		cpaKey:                   {cpaContainer, "cpa", "cpa"},
 		keeperKey:                {keeperContainer, "keeper", "keeper"},
 		threeXUIKey:              {threeXUIContainer, "3x-ui", "3x-ui"},
-		meridianKey:              {meridianXrayContainer, "xray", "xray"},
+		legacyProxyAppKey:        {legacyXrayRuntimeContainer, "xray", "xray"},
 	}
 	binding, ok := names[task.AppKey]
 	if !ok {
@@ -112,7 +112,7 @@ func historicalDockerResources(ctx context.Context, task DeploymentTask, history
 				// configuration is the separate managed bind mount. Retain their
 				// data across adoption and upgrades instead of claiming labels
 				// that Docker never assigned to anonymous volumes.
-				if task.AppKey == meridianKey && (mounted.Destination == "/usr/local/etc/xray" || mounted.Destination == "/var/log/xray") {
+				if task.AppKey == legacyProxyAppKey && (mounted.Destination == "/usr/local/etc/xray" || mounted.Destination == "/var/log/xray") {
 					if _, declared := current.Container.Config.Volumes[mounted.Destination]; !declared {
 						return nil, errors.New("agent: historical Xray volume was not declared by the container")
 					}
@@ -155,7 +155,7 @@ func historicalDockerResources(ctx context.Context, task DeploymentTask, history
 }
 
 func inspectHistoricalXrayVolume(ctx context.Context, docker packageDockerEngine, task DeploymentTask, resource RuntimeResource) error {
-	if task.AppKey != meridianKey || resource.Kind != "retained-volume" || resource.VolumeCreatedAt == "" || len(resource.Name) != 64 || (resource.Path != "/usr/local/etc/xray" && resource.Path != "/var/log/xray") {
+	if task.AppKey != legacyProxyAppKey || resource.Kind != "retained-volume" || resource.VolumeCreatedAt == "" || len(resource.Name) != 64 || (resource.Path != "/usr/local/etc/xray" && resource.Path != "/var/log/xray") {
 		return errors.New("agent: invalid historical Xray volume receipt")
 	}
 	if _, err := hex.DecodeString(resource.Name); err != nil {

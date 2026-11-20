@@ -353,7 +353,7 @@ func TestAgentReinstallAddressApprovalPreservesEntryDependenciesWithoutOldProfil
 			if _, err := s.db.Exec(`DELETE FROM agent_network_profile_recovery WHERE agent_id=?`, node.ID); err != nil {
 				t.Fatal(err)
 			}
-			addReinstallApplication(t, s, node, "entry-app", meridianAppKey, "0.1.0-alpha.12", "install", "succeeded")
+			addReinstallApplication(t, s, node, "entry-app", glivelaAppKey, "0.1.0-alpha.12", "install", "succeeded")
 			stamp := s.now().UTC().Format(time.RFC3339Nano)
 			if _, err := s.db.Exec(`INSERT INTO services(id,application_id,site_id,name,protocol,app_protocol,container_port,host_port,endpoint,source,status,created_at,updated_at)
  VALUES('entry-service','entry-app',?,'web','http','http',8080,8080,'http://10.0.0.7:8080','catalog','ready',?,?)`, testSiteID(t, s), stamp, stamp); err != nil {

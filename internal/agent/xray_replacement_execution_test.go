@@ -17,7 +17,7 @@ import (
 )
 
 func TestXrayConfigurationRestartFailureDoesNotRollback(t *testing.T) {
-	store := openMeridianLandingTestStore(t)
+	store := openGlivelaLandingTestStore(t)
 	previous := testXrayWorkerState()
 	active, err := store.writeXrayWorkerConfig(previous)
 	if err != nil {
@@ -76,7 +76,7 @@ func TestXrayReplacementStopsAtFirstFailure(t *testing.T) {
 		t.Run(runtime, func(t *testing.T) {
 			current, candidate, backup, cleanup := xrayWorkerContainer, xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer
 			if runtime == "meridian" {
-				current, candidate, backup, cleanup = meridianXrayContainer, meridianXrayCandidateContainer, meridianXrayBackupContainer, meridianXrayCleanupContainer
+				current, candidate, backup, cleanup = legacyXrayRuntimeContainer, legacyXrayCandidateContainer, glivelaXrayBackupContainer, glivelaXrayCleanupContainer
 			}
 			sequence := []string{"create:" + candidate, "stop:old", "rename:old:" + backup, "start:candidate-id", "rename:candidate-id:" + current, "rename:old:" + cleanup, "remove:old"}
 			for _, test := range []struct {
@@ -100,8 +100,8 @@ func TestXrayReplacementStopsAtFirstFailure(t *testing.T) {
 						engine.containers["old"].labels = maps.Clone(options.Config.Labels)
 					}
 					if runtime == "meridian" {
-						options.Config.Labels[applicationIdentityLabel] = meridianKey
-						engine.containers["old"].labels[applicationIdentityLabel] = meridianKey
+						options.Config.Labels[applicationIdentityLabel] = legacyProxyAppKey
+						engine.containers["old"].labels[applicationIdentityLabel] = legacyProxyAppKey
 					}
 					switch test.name {
 					case "create":
@@ -174,10 +174,10 @@ func TestXrayReplacementStopsAtFirstFailure(t *testing.T) {
 func TestRuntimeRestartKeepsUncertainRevisionBlocked(t *testing.T) {
 	for _, mode := range []string{"pending", "handover", "retiring-gates", "legacy"} {
 		t.Run(mode, func(t *testing.T) {
-			store := openMeridianLandingTestStore(t)
+			store := openGlivelaLandingTestStore(t)
 			ctx := context.Background()
-			state := meridianLandingFixture()
-			key, id := meridianKey, state.ApplicationID
+			state := glivelaLandingFixture()
+			key, id := legacyProxyAppKey, state.ApplicationID
 			legacy := testXrayWorkerState()
 			if mode == "legacy" {
 				key, id = threeXUIKey, legacy.ApplicationID
@@ -188,14 +188,14 @@ func TestRuntimeRestartKeepsUncertainRevisionBlocked(t *testing.T) {
 			} else {
 				switch mode {
 				case "pending":
-					pending := meridianRecoveryArtifact(8, `{"outbounds":[]}`)
+					pending := glivelaRecoveryArtifact(8, `{"outbounds":[]}`)
 					state.Pending = &pending
 				case "handover":
 					state.HandoverPending = true
 				case "retiring-gates":
 					state.RetiringGates = state.knownLandingGates()
 				}
-				if err := store.saveMeridianRuntimeState(ctx, state); err != nil {
+				if err := store.saveGlivelaRuntimeState(ctx, state); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -224,7 +224,7 @@ func TestRuntimeRestartKeepsUncertainRevisionBlocked(t *testing.T) {
 					t.Fatal("startup advanced legacy revision")
 				}
 			} else {
-				got, err := store.loadMeridianRuntimeState(ctx)
+				got, err := store.loadGlivelaRuntimeState(ctx)
 				if err != nil || !reflect.DeepEqual(got, state) {
 					t.Fatalf("startup changed pending evidence: %v", err)
 				}

@@ -46,7 +46,7 @@ func (s *Store) PurgeSupersededGlivelaHistory(ctx context.Context, oldID, newID,
 	if err != nil {
 		return result, refused
 	}
-	if oldKey != meridianAppKey || newKey != "vastora-official/glivela-entry" || oldNode != newNode || name != confirmation || agentState != "active" || revoked != "" || newState != "running" || (oldState != "pending" && oldState != "stopped" && oldState != "running") {
+	if oldKey != glivelaAppKey || newKey != "vastora-official/glivela-entry" || oldNode != newNode || name != confirmation || agentState != "active" || revoked != "" || newState != "running" || (oldState != "pending" && oldState != "stopped" && oldState != "running") {
 		return result, refused
 	}
 	var evidence GlivelaExecutionRetirement
@@ -237,7 +237,7 @@ func (s *Store) PurgeSupersededGlivelaHistory(ctx context.Context, oldID, newID,
 	if err := remove("application_execution_retirements", `DELETE FROM application_execution_retirements WHERE application_id=? AND replacement_application_id=?`, oldID, newID); err != nil {
 		return result, err
 	}
-	if err := remove("applications", `DELETE FROM applications WHERE id=? AND app_key=?`, oldID, meridianAppKey); err != nil {
+	if err := remove("applications", `DELETE FROM applications WHERE id=? AND app_key=?`, oldID, glivelaAppKey); err != nil {
 		return result, err
 	}
 	if result.Deleted["applications"] != 1 {

@@ -64,7 +64,7 @@ type Task struct {
 	LinkAuth             *LinkBandwidthAuth `json:"linkAuth,omitempty"`
 }
 
-// LinkBandwidthTask is issued only by Center for an authorized Meridian entry
+// LinkBandwidthTask is issued only by Center for an authorized Glivela entry
 // and a selected managed landing. Both addresses are authenticated private peers.
 type LinkBandwidthTask struct {
 	SourceNodeID  string               `json:"sourceNodeId"`

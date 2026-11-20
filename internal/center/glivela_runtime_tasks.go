@@ -1,0 +1,1069 @@
+package center
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"net"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/petauron/glivela"
+	"github.com/petauron/vastora/internal/glivelaruntime"
+	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/secret"
+)
+
+type glivelaRuntimeProjection struct {
+	plan                  glivela.XrayPlan
+	backendAddress        string
+	backendPort           int
+	task                  glivelaruntime.Task
+	agentID               string
+	serviceID             string
+	materials             []glivela.CredentialMaterial
+	readyRouteGrantIDs    []string
+	routePeerIDs          map[string]string
+	routeSecondaryPeerIDs map[string]string
+	blockedRouteGrants    map[string]string
+}
+
+const (
+	glivelaRoutePeerUnavailable = "Landing runtime is unavailable; this fixed egress remains blocked."
+	glivelaRouteAccessBlocked   = "Account access or quota currently blocks this fixed egress."
+)
+
+func (s *Store) resetDueGlivelaAccounts(ctx context.Context, tx *sql.Tx) error {
+	now := s.now().UTC()
+	nowText := now.Format(time.RFC3339Nano)
+	rows, err := tx.QueryContext(ctx, `SELECT id,reset_days FROM meridian_accounts
+		WHERE reset_days>0 AND status='active' AND next_reset_at<>'' AND next_reset_at<=? ORDER BY id`, nowText)
+	if err != nil {
+		return err
+	}
+	type dueAccount struct {
+		id   string
+		days int
+	}
+	due := []dueAccount{}
+	for rows.Next() {
+		var account dueAccount
+		if err := rows.Scan(&account.id, &account.days); err != nil {
+			rows.Close()
+			return err
+		}
+		due = append(due, account)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, account := range due {
+		if account.days < 1 || account.days > glivela.MaxResetDays {
+			return errors.New("center: stored Glivela reset schedule is invalid")
+		}
+		if err := s.ensureGlivelaSubscriptionSnapshotsForAccountEndpointsInTx(ctx, tx, account.id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_usage_watermarks SET baseline_bytes=observed_bytes,observed_at=?
+			WHERE credential_id IN (SELECT id FROM meridian_credentials WHERE account_id=?)`, nowText, account.id); err != nil {
+			return err
+		}
+		next := now.AddDate(0, 0, account.days).Format(time.RFC3339Nano)
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_accounts SET desired_revision=desired_revision+1,last_reset_at=?,next_reset_at=?,last_error='',updated_at=? WHERE id=?`, nowText, next, nowText, account.id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=?
+			WHERE status<>'retired' AND id IN (SELECT endpoint_id FROM meridian_credentials WHERE account_id=?)`, nowText, account.id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,
+			status=CASE WHEN status IN ('revoking','revoked') THEN status ELSE 'pending' END,last_error='',updated_at=? WHERE account_id=?`, nowText, account.id); err != nil {
+			return err
+		}
+	}
+	expiredRows, err := tx.QueryContext(ctx, `SELECT id FROM meridian_accounts
+		WHERE status='active' AND enabled=1 AND expiry_time>0 AND expiry_time<=? ORDER BY id`, now.UnixMilli())
+	if err != nil {
+		return err
+	}
+	expired := []string{}
+	for expiredRows.Next() {
+		var accountID string
+		if err := expiredRows.Scan(&accountID); err != nil {
+			expiredRows.Close()
+			return err
+		}
+		expired = append(expired, accountID)
+	}
+	if err := expiredRows.Err(); err != nil {
+		expiredRows.Close()
+		return err
+	}
+	if err := expiredRows.Close(); err != nil {
+		return err
+	}
+	for _, accountID := range expired {
+		if err := s.ensureGlivelaSubscriptionSnapshotsForAccountEndpointsInTx(ctx, tx, accountID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_accounts SET enabled=0,status='expired',desired_revision=desired_revision+1,last_error='',updated_at=? WHERE id=?`, nowText, accountID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=?
+			WHERE status<>'retired' AND id IN (SELECT endpoint_id FROM meridian_credentials WHERE account_id=?)`, nowText, accountID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,
+			status=CASE WHEN status IN ('revoking','revoked') THEN status ELSE 'pending' END,last_error='',updated_at=? WHERE account_id=?`, nowText, accountID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) queueNextGlivelaRuntime(ctx context.Context, tx *sql.Tx, agentID string) error {
+	var endpointID string
+	err := tx.QueryRowContext(ctx, `SELECT endpoint.id
+		FROM meridian_endpoints endpoint JOIN applications application ON application.id=endpoint.application_id
+		WHERE application.node_id=? AND application.app_key=? AND application.status='running'
+		AND NOT EXISTS (SELECT 1 FROM glivela_pilot_checkpoint pilot WHERE pilot.endpoint_id=endpoint.id)
+		AND NOT EXISTS (
+		 SELECT 1 FROM application_commands command
+		 WHERE command.agent_id=? AND (command.state IN ('pending','running') OR command.reconciliation_required=1)
+		 AND command.kind NOT IN ('3xui.controller.manage','pulse.enrollment.create')
+		)
+		AND endpoint.status='pending' AND endpoint.desired_revision>endpoint.applied_revision
+		AND NOT EXISTS (
+		 SELECT 1 FROM meridian_deployments deployment
+		 WHERE deployment.endpoint_id=endpoint.id AND deployment.desired_revision=endpoint.desired_revision
+		 AND deployment.status IN ('pending','applying')
+		)
+		ORDER BY endpoint.updated_at,endpoint.id LIMIT 1`, agentID, glivelaAppKey, agentID).Scan(&endpointID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = s.queueGlivelaRuntime(ctx, tx, endpointID, false)
+	if err == nil {
+		return nil
+	}
+	// A malformed or temporarily undeployable Glivela projection belongs to
+	// this endpoint. Persist that diagnostic and release the Agent claim loop;
+	// otherwise one bad route peer or certificate would make every unrelated
+	// task on the node return HTTP 500 forever. Recovery remains explicit: a
+	// management mutation (or the cutover resume action) creates a new revision.
+	message := applicationCommandFailureMessage(err)
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	if _, updateErr := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET status='failed',runtime_healthy=0,last_error=?,updated_at=? WHERE id=? AND status='pending'`, message, now, endpointID); updateErr != nil {
+		return updateErr
+	}
+	if _, updateErr := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET status=CASE WHEN status IN ('revoking','revoked') THEN status ELSE 'failed' END,runtime_healthy=0,last_error=?,updated_at=? WHERE endpoint_id=? AND status<>'revoked'`, message, now, endpointID); updateErr != nil {
+		return updateErr
+	}
+	if _, updateErr := tx.ExecContext(ctx, `UPDATE meridian_cutover SET last_error=?,updated_at=? WHERE id=1 AND state IN ('project','verify','retire')`, message, now); updateErr != nil {
+		return updateErr
+	}
+	return errApplicationCommandDiscarded
+}
+
+// queueGlivelaRuntime stores only a secret-free endpoint pointer. The exact
+// artifact is rebuilt inside the claim transaction and must retain the digest
+// committed here; a concurrent state change therefore fails closed instead of
+// delivering a mixed revision to the Agent.
+func (s *Store) queueGlivelaRuntime(ctx context.Context, tx *sql.Tx, endpointID string, replacePendingState bool) (string, error) {
+	if owned, err := glivelaPilotOwnsEndpoint(ctx, tx, endpointID); err != nil {
+		return "", err
+	} else if owned {
+		return "", errGlivelaPilotOwnsRuntime
+	}
+	projection, err := s.buildGlivelaRuntimeTask(ctx, tx, endpointID, "")
+	if err != nil {
+		return "", err
+	}
+	// Reject before queueing or invalidating an applied endpoint. The Agent
+	// cannot authorize a runtime image until historical resources are adopted.
+	var adoptionState string
+	if err := tx.QueryRowContext(ctx, `SELECT adoption_state FROM application_resources WHERE application_id=?`, projection.task.ApplicationID).Scan(&adoptionState); err != nil {
+		return "", errors.New("center: adopt application resources before changing Glivela runtime")
+	}
+	if adoptionState != "ready" {
+		return "", errors.New("center: adopt application resources before changing Glivela runtime")
+	}
+	command := glivelaruntime.Command{EndpointID: endpointID, ReplacePendingState: replacePendingState}
+	encoded, err := json.Marshal(command)
+	if err != nil {
+		return "", err
+	}
+	id, err := randomToken(18)
+	if err != nil {
+		return "", err
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	var siteID, displayName string
+	if err := tx.QueryRowContext(ctx, `SELECT application.site_id,application.name FROM applications application WHERE application.id=?`, projection.task.ApplicationID).Scan(&siteID, &displayName); err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,site_id,display_name,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?, 'pending',?,?)`, id, projection.task.ApplicationID, siteID, displayName, projection.agentID, projection.agentID, glivelaruntime.ApplyKind, encoded, now, now); err != nil {
+		return "", fmt.Errorf("center: queue Glivela runtime: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_deployments(endpoint_id,desired_revision,desired_sha256,command_id,status,updated_at)
+		VALUES(?,?,?,?, 'pending',?)
+		ON CONFLICT(endpoint_id) DO UPDATE SET desired_revision=excluded.desired_revision,desired_sha256=excluded.desired_sha256,
+		command_id=excluded.command_id,status='pending',last_error='',updated_at=excluded.updated_at`, endpointID, projection.task.Desired.Revision, projection.task.Desired.ConfigSHA256, id, now); err != nil {
+		return "", err
+	}
+	if projection.task.RetireLegacy {
+		// Legacy retirement changes only the old installation receipt and
+		// temporary container aliases. The currently applied Glivela artifact
+		// already passed the public cutover gates, so merely queueing cleanup must
+		// not remove this entry or its routes from subscriptions.
+		updated, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET last_error='',updated_at=? WHERE id=? AND status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision`, now, endpointID)
+		if err != nil {
+			return "", err
+		}
+		if changed, _ := updated.RowsAffected(); changed != 1 {
+			return "", errors.New("center: verified Glivela endpoint changed before legacy retirement was queued")
+		}
+	} else {
+		updated, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET status='pending',runtime_healthy=0,last_error='',updated_at=? WHERE id=? AND status<>'retired'`, now, endpointID)
+		if err != nil {
+			return "", err
+		}
+		if changed, _ := updated.RowsAffected(); changed != 1 {
+			return "", errors.New("center: Glivela endpoint changed before its runtime revision was queued")
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET status=CASE WHEN status='revoking' THEN status WHEN enabled=1 THEN 'pending' ELSE status END,runtime_healthy=0,last_error='',updated_at=? WHERE endpoint_id=? AND status<>'revoked'`, now, endpointID); err != nil {
+			return "", err
+		}
+		for grantID, message := range projection.blockedRouteGrants {
+			updated, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET status='blocked',runtime_healthy=0,last_error=?,updated_at=?
+				WHERE id=? AND endpoint_id=? AND enabled=1 AND status<>'revoked'`, message, now, grantID, endpointID)
+			if err != nil {
+				return "", err
+			}
+			if changed, _ := updated.RowsAffected(); changed != 1 {
+				return "", errors.New("center: Glivela blocked route changed before its runtime revision was queued")
+			}
+		}
+	}
+	if err := s.recordTaskEvent(ctx, tx, id, projection.agentID, "application.command", int64(projection.task.Desired.Revision), "queued", "Glivela runtime revision queued"); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// discardSupersededGlivelaRuntimeCommand closes a queued command whose
+// endpoint changed before the Agent could claim it. The latest endpoint stays
+// pending and is projected on the next heartbeat instead of being failed by a
+// digest that correctly belongs to the older revision.
+
+// A replacement restores on the reviewed address. Fixed egress is included
+// only after its separate identity withdrawal and authorization receipts.
+type glivelaRuntimeRestoreTarget struct {
+	RestoreLandings bool
+	Address         string
+	Image           string
+	Revision        uint64
+}
+
+func (s *Store) buildGlivelaRuntimeTask(ctx context.Context, tx *sql.Tx, endpointID, expectedAgentID string) (glivelaRuntimeProjection, error) {
+	if owned, err := glivelaPilotOwnsEndpoint(ctx, tx, endpointID); err != nil {
+		return glivelaRuntimeProjection{}, err
+	} else if owned {
+		return glivelaRuntimeProjection{}, errGlivelaPilotOwnsRuntime
+	}
+	return s.buildGlivelaRuntimeProjection(ctx, tx, endpointID, expectedAgentID, nil)
+}
+
+func (s *Store) buildGlivelaRuntimeProjection(ctx context.Context, tx *sql.Tx, endpointID, expectedAgentID string, restore *glivelaRuntimeRestoreTarget) (glivelaRuntimeProjection, error) {
+	if owned, err := glivelaPilotOwnsEndpoint(ctx, tx, endpointID); err != nil {
+		return glivelaRuntimeProjection{}, err
+	} else if owned {
+		return glivelaRuntimeProjection{}, errGlivelaPilotOwnsRuntime
+	}
+	var projection glivelaRuntimeProjection
+	var endpoint glivela.RealityEndpoint
+	var hysteriaEndpoint glivela.HysteriaEndpoint
+	var serverNamesJSON, shortIDsJSON, sourcePeerJSON []byte
+	var privateKeySecretID, expectedSHA, hy2InboundTag, hy2ServerName, hy2NotAfter, endpointStatus string
+	var hy2CertID, hy2KeyID sql.NullString
+	var vlessEnabled, hy2Enabled, runtimeHealthy, legacyRetired int
+	var revision, appliedRevision int64
+	err := tx.QueryRowContext(ctx, `SELECT endpoint.application_id,application.node_id,application.image,endpoint.service_id,
+		endpoint.inbound_tag,endpoint.listen_address,endpoint.listen_port,endpoint.advertise_host,endpoint.advertise_port,endpoint.target,
+		endpoint.server_names_json,endpoint.private_key_secret_id,endpoint.public_key,endpoint.short_ids_json,endpoint.fingerprint,
+		endpoint.vless_enabled,endpoint.hy2_enabled,endpoint.hy2_inbound_tag,endpoint.hy2_server_name,endpoint.hy2_certificate_secret_id,endpoint.hy2_private_key_secret_id,endpoint.hy2_certificate_not_after,
+		endpoint.desired_revision,endpoint.applied_revision,endpoint.runtime_healthy,endpoint.legacy_retired,endpoint.status,COALESCE(deployment.desired_sha256,''),endpoint.source_peer_json
+		FROM meridian_endpoints endpoint
+		JOIN applications application ON application.id=endpoint.application_id AND application.app_key=? AND (application.status='running' OR ?)
+		LEFT JOIN meridian_deployments deployment ON deployment.endpoint_id=endpoint.id AND deployment.desired_revision=endpoint.desired_revision
+		WHERE endpoint.id=? AND endpoint.status<>'retired'`, glivelaAppKey, restore != nil, endpointID).Scan(
+		&projection.task.ApplicationID, &projection.agentID, &projection.task.ImageReference, &projection.serviceID,
+		&endpoint.InboundTag, &endpoint.ListenAddress, &endpoint.ListenPort, &endpoint.AdvertiseHost, &endpoint.AdvertisePort, &endpoint.Target,
+		&serverNamesJSON, &privateKeySecretID, &endpoint.PublicKey, &shortIDsJSON, &endpoint.Fingerprint,
+		&vlessEnabled, &hy2Enabled, &hy2InboundTag, &hy2ServerName, &hy2CertID, &hy2KeyID, &hy2NotAfter,
+		&revision, &appliedRevision, &runtimeHealthy, &legacyRetired, &endpointStatus, &expectedSHA, &sourcePeerJSON,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return projection, errors.New("center: Glivela endpoint is not deployable")
+	}
+	if err != nil {
+		return projection, fmt.Errorf("center: read Glivela endpoint: %w", err)
+	}
+	if expectedAgentID != "" && projection.agentID != expectedAgentID {
+		return projection, errors.New("center: Glivela endpoint moved to another Agent")
+	}
+	if restore == nil && expectedAgentID != "" && expectedSHA == "" {
+		return projection, errors.New("center: Glivela deployment digest is unavailable")
+	}
+	if restore != nil {
+		if restore.Revision != uint64(revision) {
+			return projection, errors.New("center: reviewed Glivela runtime revision changed")
+		}
+		endpoint.ListenAddress = restore.Address
+		projection.task.ImageReference = restore.Image
+		expectedSHA = ""
+	}
+	endpoint.ID, endpoint.EntryID = endpointID, projection.task.ApplicationID
+	if revision < 1 || json.Unmarshal(serverNamesJSON, &endpoint.ServerNames) != nil || json.Unmarshal(shortIDsJSON, &endpoint.ShortIDs) != nil {
+		return projection, errors.New("center: stored Glivela endpoint is invalid")
+	}
+	privateKey, err := s.glivelaSecretInTx(ctx, tx, privateKeySecretID, glivelaEndpointSecretContext(endpointID))
+	if err != nil {
+		return projection, errors.New("center: stored Glivela endpoint key is unavailable")
+	}
+	endpoint.PrivateKey = string(privateKey)
+	if endpoint.Validate() != nil || vlessEnabled == 0 && hy2Enabled == 0 {
+		return projection, errors.New("center: stored Glivela endpoint is invalid")
+	}
+	realityEndpoints := []glivela.RealityEndpoint{}
+	if vlessEnabled == 1 {
+		realityEndpoints = append(realityEndpoints, endpoint)
+	}
+	hysteriaEndpoints := []glivela.HysteriaEndpoint{}
+	if hy2Enabled == 1 {
+		expiresAt, parseErr := time.Parse(time.RFC3339Nano, hy2NotAfter)
+		if parseErr != nil || !expiresAt.After(s.now().Add(time.Hour)) {
+			return projection, errors.New("center: stored Glivela Hysteria certificate is unavailable or expired")
+		}
+		if !hy2CertID.Valid || !hy2KeyID.Valid {
+			return projection, errors.New("center: stored Glivela Hysteria certificate is unavailable")
+		}
+		certificate, secretErr := s.glivelaSecretInTx(ctx, tx, hy2CertID.String, glivelaHY2CertificateSecretContext(endpointID))
+		if secretErr != nil {
+			return projection, errors.New("center: stored Glivela Hysteria certificate is unavailable")
+		}
+		hy2PrivateKey, secretErr := s.glivelaSecretInTx(ctx, tx, hy2KeyID.String, glivelaHY2PrivateKeySecretContext(endpointID))
+		if secretErr != nil {
+			return projection, errors.New("center: stored Glivela Hysteria key is unavailable")
+		}
+		hysteriaEndpoint = glivela.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: projection.task.ApplicationID, InboundTag: hy2InboundTag, ListenPort: 443, AdvertiseHost: endpoint.AdvertiseHost, AdvertisePort: 443, ServerName: hy2ServerName, CertificatePEM: string(certificate), PrivateKeyPEM: string(hy2PrivateKey)}
+		if hysteriaEndpoint.Validate() != nil {
+			return projection, errors.New("center: stored Glivela Hysteria endpoint is invalid")
+		}
+		hysteriaEndpoints = append(hysteriaEndpoints, hysteriaEndpoint)
+	}
+
+	materials, credentialByID, err := s.glivelaRuntimeMaterials(ctx, tx, endpointID, projection.task.ApplicationID)
+	if err != nil {
+		return projection, err
+	}
+	routeInboundTag := ""
+	if vlessEnabled == 1 {
+		routeInboundTag = endpoint.InboundTag
+	}
+	routes := glivelaRuntimeRoutes{}
+	if restore == nil || restore.RestoreLandings {
+		routes, err = s.glivelaRuntimeGrants(ctx, tx, endpointID, routeInboundTag, credentialByID)
+		if err != nil {
+			return projection, err
+		}
+	}
+	for index := range materials {
+		if routes.disabledCredentialIDs[materials[index].Credential.ID] || restore != nil && !restore.RestoreLandings && materials[index].Credential.EgressID != "" {
+			materials[index].Credential.Enabled = false
+		}
+	}
+	if err := applyNativeEgressProjection(ctx, tx, &projection, endpoint, hysteriaEndpoint, vlessEnabled, hy2Enabled, materials); err != nil {
+		return projection, err
+	}
+	projection.plan = glivela.XrayPlan{
+		NativeEgress: projection.task.NativeEgress,
+		Revision:     uint64(revision), RealityEndpoints: realityEndpoints, HysteriaEndpoints: hysteriaEndpoints, Credentials: materials, Grants: routes.grants, Peers: routes.peers,
+	}
+	artifact, err := glivela.BuildDesiredArtifact(projection.plan)
+	if err != nil || expectedSHA != "" && artifact.ConfigSHA256 != expectedSHA {
+		return projection, errors.New("center: Glivela desired state changed after it was queued")
+	}
+	projection.task.Desired, projection.materials = artifact, materials
+	projection.backendAddress = endpoint.ListenAddress
+	projection.backendPort = endpoint.ListenPort
+	projection.task.Peers, projection.routePeerIDs = routes.runtimePeers, routes.routePeerIDs
+	projection.routeSecondaryPeerIDs = routes.routeSecondaryPeerIDs
+	if len(routes.runtimePeers) != 0 {
+		var source landing.PeerIdentity
+		if json.Unmarshal(sourcePeerJSON, &source) != nil || (glivelaruntime.Peer{EgressID: projection.agentID, Identity: source}).Validate() != nil {
+			return projection, errors.New("center: Glivela entry has no authorized private source identity")
+		}
+		projection.task.Source = &source
+	}
+	projection.readyRouteGrantIDs, projection.blockedRouteGrants = routes.readyGrantIDs, routes.blockedGrants
+	var cutoverState, subscriptionAuthority, importSHA, importSecretID string
+	var backupRevision int64
+	if err := tx.QueryRowContext(ctx, `SELECT state,subscription_authority,import_sha256,COALESCE(import_secret_id,''),backup_revision FROM meridian_cutover WHERE id=1`).Scan(&cutoverState, &subscriptionAuthority, &importSHA, &importSecretID, &backupRevision); err != nil {
+		return projection, err
+	}
+	// Retirement replays only an already verified artifact. A route or landing
+	// mutation during the retirement phase must first apply as a normal runtime
+	// revision before retiring migration evidence; otherwise the recovery
+	// task itself could retire the last known legacy boundary before the new
+	// route is healthy.
+	retirePhase := cutoverState == "retire" && subscriptionAuthority == "meridian" && backupRevision > 0 && len(importSHA) == 64 && importSecretID != ""
+	var unreadyRoutes int
+	if retirePhase && legacyRetired == 0 {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_route_grants
+			WHERE endpoint_id=? AND enabled=1 AND status<>'revoked'
+			AND (status<>'ready' OR runtime_healthy<>1 OR desired_revision<>applied_revision)`, endpointID).Scan(&unreadyRoutes); err != nil {
+			return projection, err
+		}
+	}
+	projection.task.RetireLegacy = restore == nil && retirePhase && legacyRetired == 0 && endpointStatus == "ready" && runtimeHealthy == 1 && appliedRevision == revision && unreadyRoutes == 0
+	if projection.task.Validate() != nil {
+		return projection, errors.New("center: Glivela runtime task is invalid")
+	}
+	return projection, nil
+}
+
+func (s *Store) glivelaRuntimeMaterials(ctx context.Context, tx *sql.Tx, endpointID, entryID string) ([]glivela.CredentialMaterial, map[string]glivela.CredentialMaterial, error) {
+	endpointEnabled, err := glivelaEndpointQuotaEnabledInTx(ctx, tx, endpointID)
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT credential.id,credential.account_id,credential.kind,credential.user_name,credential.identity_sha256,
+		credential.protocol_secret_id,credential.hy2_auth_secret_id,credential.hy2_identity_sha256,credential.egress_node_id,credential.enabled,
+		account.total_bytes,account.expiry_time,account.reset_days,account.enabled,account.status
+		FROM meridian_credentials credential JOIN meridian_accounts account ON account.id=credential.account_id
+		WHERE credential.endpoint_id=? ORDER BY credential.id`, endpointID)
+	if err != nil {
+		return nil, nil, err
+	}
+	type stored struct {
+		material    glivela.CredentialMaterial
+		secretID    string
+		hy2SecretID sql.NullString
+		plan        glivela.AccountPlan
+		status      string
+	}
+	storedValues := []stored{}
+	accountPlans := map[string]glivela.AccountPlan{}
+	accountStatus := map[string]string{}
+	for rows.Next() {
+		var value stored
+		var egress sql.NullString
+		var credentialEnabled, accountEnabled int
+		if err := rows.Scan(&value.material.Credential.ID, &value.material.Credential.AccountID, &value.material.Credential.Kind,
+			&value.material.Credential.User, &value.material.Credential.Identity, &value.secretID, &value.hy2SecretID, &value.material.HysteriaIdentity, &egress, &credentialEnabled,
+			&value.plan.TotalBytes, &value.plan.ExpiryTime, &value.plan.ResetDays, &accountEnabled, &value.status); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		value.material.Credential.EntryID = entryID
+		value.material.Credential.Enabled = credentialEnabled == 1
+		if egress.Valid {
+			value.material.Credential.EgressID = egress.String
+		}
+		value.plan.Enabled = accountEnabled == 1 && value.status == "active" && (value.plan.ExpiryTime == 0 || value.plan.ExpiryTime > s.now().UnixMilli())
+		accountPlans[value.material.Credential.AccountID] = value.plan
+		accountStatus[value.material.Credential.AccountID] = value.status
+		storedValues = append(storedValues, value)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, err
+	}
+	quotaEnabled := map[string]bool{}
+	for accountID, plan := range accountPlans {
+		usage, err := glivelaAccountUsageInTx(ctx, tx, accountID)
+		if err != nil {
+			return nil, nil, err
+		}
+		projection, err := glivela.ProjectQuota(plan, usage)
+		status := accountStatus[accountID]
+		if err != nil || status != "active" && status != "disabled" && status != "expired" {
+			return nil, nil, errors.New("center: stored Glivela quota is invalid")
+		}
+		quotaEnabled[accountID] = status == "active" && projection.Enabled
+	}
+	materials := []glivela.CredentialMaterial{}
+	byID := map[string]glivela.CredentialMaterial{}
+	for _, value := range storedValues {
+		protocolID, err := s.glivelaSecretInTx(ctx, tx, value.secretID, glivelaCredentialSecretContext(value.material.Credential.ID))
+		if err != nil {
+			return nil, nil, errors.New("center: stored Glivela credential is unavailable")
+		}
+		value.material.ProtocolID = string(protocolID)
+		if value.hy2SecretID.Valid {
+			hy2Auth, secretErr := s.glivelaSecretInTx(ctx, tx, value.hy2SecretID.String, glivelaCredentialHY2SecretContext(value.material.Credential.ID))
+			if secretErr != nil {
+				return nil, nil, errors.New("center: stored Glivela Hysteria credential is unavailable")
+			}
+			value.material.HysteriaAuth = string(hy2Auth)
+		}
+		if value.material.Validate() != nil {
+			return nil, nil, errors.New("center: stored Glivela credential is invalid")
+		}
+		value.material.Credential.Enabled = value.material.Credential.Enabled && quotaEnabled[value.material.Credential.AccountID] && endpointEnabled
+		byID[value.material.Credential.ID] = value.material
+		materials = append(materials, value.material)
+	}
+	return materials, byID, nil
+}
+
+type glivelaRuntimeRoutes struct {
+	grants                []glivela.RouteGrant
+	peers                 []glivela.RoutePeer
+	runtimePeers          []glivelaruntime.Peer
+	routePeerIDs          map[string]string
+	routeSecondaryPeerIDs map[string]string
+	readyGrantIDs         []string
+	blockedGrants         map[string]string
+	disabledCredentialIDs map[string]bool
+}
+
+func (s *Store) glivelaRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointID, inboundTag string, credentials map[string]glivela.CredentialMaterial) (glivelaRuntimeRoutes, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.account_id,grant_row.egress_node_id,COALESCE(grant_row.ipv4_egress_node_id,''),grant_row.base_credential_id,grant_row.route_credential_id,
+		grant_row.mode,grant_row.hide_native,grant_row.enabled,grant_row.desired_revision,grant_row.applied_revision,grant_row.runtime_healthy,grant_row.status,
+		CASE WHEN agent.id IS NULL THEN NULL ELSE server.peer_json END,
+		server.applied_json,server.desired_json,COALESCE(server.applied_revision,0),endpoint.source_peer_json
+		FROM meridian_route_grants grant_row
+		JOIN meridian_endpoints endpoint ON endpoint.id=grant_row.endpoint_id
+		LEFT JOIN landing_server_states server ON server.node_id=grant_row.egress_node_id
+		 AND server.status IN ('ready','pending','applying') AND server.applied_revision>0
+		LEFT JOIN agents agent ON agent.id=grant_row.egress_node_id AND agent.status='active' AND agent.credential_revoked_at='' AND agent.tailscale_ownership='managed'
+		WHERE grant_row.endpoint_id=? AND grant_row.status<>'revoked' ORDER BY grant_row.id`, endpointID)
+	if err != nil {
+		return glivelaRuntimeRoutes{}, err
+	}
+	result := glivelaRuntimeRoutes{blockedGrants: map[string]string{}, disabledCredentialIDs: map[string]bool{}, routePeerIDs: map[string]string{}, routeSecondaryPeerIDs: map[string]string{}}
+	peersByID := map[string]glivela.RoutePeer{}
+	runtimePeersByID := map[string]glivelaruntime.Peer{}
+	for rows.Next() {
+		var grant glivela.RouteGrant
+		var baseID, routeID, mode, status string
+		var hideNative, enabled, runtimeHealthy int
+		var peerJSON, appliedJSON, desiredJSON, sourceJSON []byte
+		var serverRevision uint64
+		if err := rows.Scan(&grant.ID, &grant.AccountID, &grant.EgressID, &grant.IPv4EgressID, &baseID, &routeID, &mode, &hideNative, &enabled,
+			&grant.DesiredRev, &grant.AppliedRev, &runtimeHealthy, &status, &peerJSON, &appliedJSON, &desiredJSON, &serverRevision, &sourceJSON); err != nil {
+			rows.Close()
+			return glivelaRuntimeRoutes{}, err
+		}
+		base, baseOK := credentials[baseID]
+		route, routeOK := credentials[routeID]
+		if !baseOK || !routeOK || base.Credential.AccountID != grant.AccountID || route.Credential.AccountID != grant.AccountID {
+			rows.Close()
+			return glivelaRuntimeRoutes{}, errors.New("center: stored Glivela route credentials are incomplete")
+		}
+		grant.EntryID, grant.InboundTag = base.Credential.EntryID, inboundTag
+		grant.Base, grant.Route = base.Credential, route.Credential
+		grant.Mode = glivela.PublishingMode(mode)
+		grant.HideNative, grant.Enabled = hideNative == 1, enabled == 1
+		grant.RuntimeGood = runtimeHealthy == 1 && status == "ready"
+		if !grant.Enabled {
+			continue
+		}
+		if !grant.Base.Enabled || !grant.Route.Enabled {
+			result.blockedGrants[grant.ID] = glivelaRouteAccessBlocked
+			result.disabledCredentialIDs[grant.Route.ID] = true
+			continue
+		}
+		if inboundTag == "" {
+			rows.Close()
+			return glivelaRuntimeRoutes{}, errors.New("center: Glivela routes require a VLESS REALITY entry")
+		}
+		if len(peerJSON) == 0 {
+			result.blockedGrants[grant.ID] = glivelaRoutePeerUnavailable
+			result.disabledCredentialIDs[grant.Route.ID] = true
+			continue
+		}
+		var peer landing.PeerIdentity
+		if json.Unmarshal(peerJSON, &peer) != nil || (glivelaruntime.Peer{EgressID: grant.EgressID, Identity: peer}).Validate() != nil {
+			rows.Close()
+			return glivelaRuntimeRoutes{}, errors.New("center: stored Glivela route peer is invalid")
+		}
+		var source landing.PeerIdentity
+		if json.Unmarshal(sourceJSON, &source) != nil || !glivelaLandingSourceAuthorized(appliedJSON, desiredJSON, grant.EgressID, serverRevision, source, peer) {
+			result.blockedGrants[grant.ID] = glivelaRouteSourceUnauthorized
+			result.disabledCredentialIDs[grant.Route.ID] = true
+			continue
+		}
+		// The landing inventory is keyed by Vastora Agent ID. The reported peer
+		// identity belongs to Tailscale and must retain its separate ID domain.
+		projectedPeer := glivela.RoutePeer{EgressID: grant.EgressID, Address: peer.Address, Port: landing.SOCKSPort}
+		if grant.IPv4EgressID != "" {
+			pair, runtimePair, pairErr := s.readCompositeRoutePeers(ctx, tx, endpointID, grant.EgressID, grant.IPv4EgressID, true, false)
+			if pairErr != nil {
+				result.blockedGrants[grant.ID] = pairErr.Error()
+				result.disabledCredentialIDs[grant.Route.ID] = true
+				continue
+			}
+			if err := glivela.ValidateCompositePeers(grant, pair[0], pair[1]); err != nil {
+				rows.Close()
+				return glivelaRuntimeRoutes{}, err
+			}
+			projectedPeer = pair[0]
+			for i, exit := range pair {
+				peersByID[exit.EgressID] = exit
+				runtimePeersByID[exit.EgressID] = runtimePair[i]
+			}
+			result.routeSecondaryPeerIDs[grant.ID] = grant.IPv4EgressID
+		}
+		if grant.Validate() != nil || !grant.Deployable() || projectedPeer.Validate() != nil {
+			rows.Close()
+			return glivelaRuntimeRoutes{}, errors.New("center: stored Glivela route is invalid")
+		}
+		result.grants = append(result.grants, grant)
+		result.readyGrantIDs = append(result.readyGrantIDs, grant.ID)
+		result.routePeerIDs[grant.ID] = grant.EgressID
+		if _, exists := peersByID[projectedPeer.EgressID]; !exists {
+			peersByID[projectedPeer.EgressID] = projectedPeer
+		}
+		runtimePeersByID[grant.EgressID] = glivelaruntime.Peer{EgressID: grant.EgressID, Identity: peer}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return glivelaRuntimeRoutes{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return glivelaRuntimeRoutes{}, err
+	}
+	result.peers = make([]glivela.RoutePeer, 0, len(peersByID))
+	for _, peer := range peersByID {
+		result.peers = append(result.peers, peer)
+	}
+	slices.SortFunc(result.peers, func(a, b glivela.RoutePeer) int { return strings.Compare(a.EgressID, b.EgressID) })
+	for _, peer := range result.peers {
+		result.runtimePeers = append(result.runtimePeers, runtimePeersByID[peer.EgressID])
+	}
+	return result, nil
+}
+
+func glivelaAccountUsageInTx(ctx context.Context, tx *sql.Tx, accountID string) ([]glivela.UsageMember, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT credential.id,watermark.baseline_bytes,watermark.observed_bytes,credential.enabled
+		FROM meridian_credentials credential LEFT JOIN meridian_usage_watermarks watermark ON watermark.credential_id=credential.id
+		WHERE credential.account_id=? ORDER BY credential.id`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	usage := []glivela.UsageMember{}
+	for rows.Next() {
+		var value glivela.UsageMember
+		var baseline, observed sql.NullInt64
+		var active int
+		if err := rows.Scan(&value.CredentialID, &baseline, &observed, &active); err != nil {
+			return nil, err
+		}
+		if !baseline.Valid || !observed.Valid {
+			return nil, errors.New("center: Glivela usage watermark is missing")
+		}
+		value.Baseline, value.Observed, value.Active = baseline.Int64, observed.Int64, active == 1
+		usage = append(usage, value)
+	}
+	if err := rows.Err(); err != nil || len(usage) == 0 {
+		return nil, errors.Join(errors.New("center: Glivela account has no usage authority"), err)
+	}
+	return usage, nil
+}
+
+func (s *Store) glivelaSecretInTx(ctx context.Context, tx *sql.Tx, id, additionalData string) ([]byte, error) {
+	var sealed []byte
+	if err := tx.QueryRowContext(ctx, `SELECT sealed FROM secrets WHERE id=?`, id).Scan(&sealed); err != nil {
+		return nil, err
+	}
+	return secret.Open(s.key, sealed, []byte(additionalData))
+}
+
+// completeSupersededGlivelaRuntimeCommand accepts the terminal receipt for a
+// revision that was already replaced while the Agent was applying it. The old
+// command is closed, but the endpoint remains pending so the next claim builds
+// the newest complete projection. Treating this ordinary race as an endpoint
+// failure would strand the newer desired revision indefinitely.
+
+func (s *Store) observeGlivelaUsageInTx(ctx context.Context, tx *sql.Tx, endpointID string, snapshots []glivela.CounterSnapshot, observedAt string) error {
+	var endpointDelta int64
+	for _, snapshot := range snapshots {
+		if snapshot.UpBytes < 0 || snapshot.DownBytes < 0 {
+			return errors.New("center: Glivela usage counter is negative")
+		}
+		var baseline, observed, rawUp, rawDown int64
+		err := tx.QueryRowContext(ctx, `SELECT baseline_bytes,observed_bytes,raw_up_bytes,raw_down_bytes FROM meridian_usage_watermarks WHERE credential_id=?`, snapshot.CredentialID).Scan(&baseline, &observed, &rawUp, &rawDown)
+		if errors.Is(err, sql.ErrNoRows) {
+			observed = saturatingAdd(snapshot.UpBytes, snapshot.DownBytes)
+			if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,baseline_bytes,observed_bytes,raw_up_bytes,raw_down_bytes,observed_at) VALUES(?,0,?,?,?,?)`, snapshot.CredentialID, observed, snapshot.UpBytes, snapshot.DownBytes, observedAt); err != nil {
+				return err
+			}
+			if err := observeGlivelaLineUsage(ctx, tx, snapshot.CredentialID, 0, 0, observedAt); err != nil {
+				return err
+			}
+			endpointDelta = saturatingAdd(endpointDelta, observed)
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		upDelta := snapshot.UpBytes
+		if snapshot.UpBytes >= rawUp {
+			upDelta = snapshot.UpBytes - rawUp
+		}
+		downDelta := snapshot.DownBytes
+		if snapshot.DownBytes >= rawDown {
+			downDelta = snapshot.DownBytes - rawDown
+		}
+		if err := observeGlivelaLineUsage(ctx, tx, snapshot.CredentialID, upDelta, downDelta, observedAt); err != nil {
+			return err
+		}
+		nextObserved := saturatingAdd(observed, saturatingAdd(upDelta, downDelta))
+		if nextObserved < baseline {
+			return errors.New("center: Glivela usage watermark overflowed its baseline")
+		}
+		endpointDelta = saturatingAdd(endpointDelta, nextObserved-observed)
+		updated, err := tx.ExecContext(ctx, `UPDATE meridian_usage_watermarks SET observed_bytes=?,raw_up_bytes=?,raw_down_bytes=?,observed_at=? WHERE credential_id=?`, nextObserved, snapshot.UpBytes, snapshot.DownBytes, observedAt, snapshot.CredentialID)
+		if err != nil {
+			return err
+		}
+		if changed, _ := updated.RowsAffected(); changed != 1 {
+			return errors.New("center: Glivela usage watermark changed during observation")
+		}
+	}
+	if endpointDelta > 0 {
+		var used int64
+		if err := tx.QueryRowContext(ctx, `SELECT used_bytes FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&used); err != nil {
+			return err
+		}
+		if used < 0 {
+			return errors.New("center: stored Glivela entry traffic is invalid")
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET used_bytes=?,updated_at=? WHERE id=?`, saturatingAdd(used, endpointDelta), observedAt, endpointID)
+		if err != nil {
+			return err
+		}
+		if changed, _ := result.RowsAffected(); changed != 1 {
+			return errors.New("center: Glivela entry changed during usage observation")
+		}
+	}
+	return nil
+}
+
+func (s *Store) recordGlivelaRuntimeObservation(ctx context.Context, tx *sql.Tx, agentID string, result glivelaruntime.Result, now time.Time) error {
+	var pilotAgent bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM glivela_pilot_checkpoint pilot
+		JOIN meridian_endpoints endpoint ON endpoint.id=pilot.endpoint_id
+		JOIN applications application ON application.id=endpoint.application_id
+		WHERE application.node_id=?)`, agentID).Scan(&pilotAgent); err != nil {
+		return err
+	}
+	if pilotAgent {
+		// Only the authenticated Glivela receipt can advance this entry's ledger.
+		// Late legacy heartbeats cannot restore runtime authority or double count.
+		return nil
+	}
+	var endpointID string
+	var desiredRevision, appliedRevision int64
+	err := tx.QueryRowContext(ctx, `SELECT endpoint.id,endpoint.desired_revision,endpoint.applied_revision FROM meridian_endpoints endpoint
+		JOIN applications application ON application.id=endpoint.application_id
+		WHERE application.node_id=? AND application.app_key=? AND application.status='running' AND endpoint.status<>'retired'`, agentID, glivelaAppKey).Scan(&endpointID, &desiredRevision, &appliedRevision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("center: Agent reported a Glivela runtime without an owned endpoint")
+	}
+	if err != nil {
+		return err
+	}
+	if appliedRevision == 0 || appliedRevision != desiredRevision {
+		return nil
+	}
+	projection, err := s.buildGlivelaRuntimeTask(ctx, tx, endpointID, agentID)
+	if err != nil || result.Validate(projection.task.Desired) != nil {
+		return errors.New("center: Agent reported a Glivela runtime that does not match desired state")
+	}
+	if _, err := result.PeerHealth(projection.task, now); err != nil {
+		return errors.New("center: Agent reported invalid Glivela transport observations")
+	}
+	before, err := s.glivelaQuotaStatesInTx(ctx, tx, endpointID)
+	if err != nil {
+		return err
+	}
+	endpointBefore, err := glivelaEndpointQuotaEnabledInTx(ctx, tx, endpointID)
+	if err != nil {
+		return err
+	}
+	snapshots, err := glivela.ParseXrayUserCounters(projection.materials, result.Stats)
+	if err != nil {
+		return errors.New("center: Agent reported invalid Glivela usage counters")
+	}
+	nowText := now.UTC().Format(time.RFC3339Nano)
+	if err := s.observeGlivelaUsageInTx(ctx, tx, endpointID, snapshots, nowText); err != nil {
+		return err
+	}
+	endpointAfter, err := glivelaEndpointQuotaEnabledInTx(ctx, tx, endpointID)
+	if err != nil {
+		return err
+	}
+	after, err := s.glivelaQuotaStatesInTx(ctx, tx, endpointID)
+	if err != nil {
+		return err
+	}
+	changedAccounts := []string{}
+	for accountID, enabled := range before {
+		if next, ok := after[accountID]; !ok || next != enabled {
+			changedAccounts = append(changedAccounts, accountID)
+		}
+	}
+	if len(changedAccounts) == 0 && endpointBefore == endpointAfter {
+		updated, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=1,last_error='',updated_at=? WHERE id=? AND status='ready' AND desired_revision=applied_revision`, nowText, endpointID)
+		if err != nil {
+			return err
+		}
+		if changed, _ := updated.RowsAffected(); changed != 1 {
+			return errors.New("center: Glivela endpoint changed during runtime observation")
+		}
+		if err := recordGlivelaRouteHealth(ctx, tx, endpointID, projection, result, now); err != nil {
+			return err
+		}
+		return s.reconcileGlivelaCutoverInTx(ctx, tx, nowText)
+	}
+	if len(changedAccounts) != 0 {
+		return s.markGlivelaQuotaBoundaryChanged(ctx, tx, changedAccounts, nowText)
+	}
+	return s.markGlivelaEndpointQuotaBoundaryChanged(ctx, tx, endpointID, nowText)
+}
+
+func (s *Store) markGlivelaQuotaBoundaryChanged(ctx context.Context, tx *sql.Tx, accountIDs []string, nowText string) error {
+	endpointIDs := map[string]bool{}
+	for _, accountID := range accountIDs {
+		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT credential.endpoint_id FROM meridian_credentials credential
+			JOIN meridian_endpoints endpoint ON endpoint.id=credential.endpoint_id
+			WHERE credential.account_id=? AND endpoint.status<>'retired' ORDER BY credential.endpoint_id`, accountID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var affectedEndpointID string
+			if err := rows.Scan(&affectedEndpointID); err != nil {
+				rows.Close()
+				return err
+			}
+			endpointIDs[affectedEndpointID] = true
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+	if len(endpointIDs) == 0 {
+		return errors.New("center: Glivela quota boundary has no affected endpoint")
+	}
+	orderedEndpointIDs := make([]string, 0, len(endpointIDs))
+	for affectedEndpointID := range endpointIDs {
+		orderedEndpointIDs = append(orderedEndpointIDs, affectedEndpointID)
+	}
+	slices.Sort(orderedEndpointIDs)
+	// An endpoint revision also affects accounts whose quota did not change.
+	// Capture every applied subscription before any account or endpoint changes,
+	// including subscriptions that have never been downloaded.
+	for _, affectedEndpointID := range orderedEndpointIDs {
+		if err := s.ensureGlivelaSubscriptionSnapshotsForEndpointInTx(ctx, tx, affectedEndpointID); err != nil {
+			return err
+		}
+	}
+	for _, accountID := range accountIDs {
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_accounts SET desired_revision=desired_revision+1,updated_at=? WHERE id=?`, nowText, accountID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,
+			status=CASE WHEN status IN ('revoking','revoked') THEN status ELSE 'pending' END,last_error='',updated_at=? WHERE account_id=?`, nowText, accountID); err != nil {
+			return err
+		}
+	}
+	for _, affectedEndpointID := range orderedEndpointIDs {
+		resultRow, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE id=?`, nowText, affectedEndpointID)
+		if err != nil {
+			return err
+		}
+		if changed, _ := resultRow.RowsAffected(); changed != 1 {
+			return errors.New("center: Glivela quota boundary references an unavailable endpoint")
+		}
+	}
+	return nil
+}
+
+// markGlivelaLandingPeerChanged rebuilds only entries that route through a
+// landing node whose authenticated private peer identity changed. The
+// subscription query independently requires that peer to be live, so an
+// unavailable landing disappears without taking native entries offline.
+func (s *Store) markGlivelaLandingPeerChanged(ctx context.Context, tx *sql.Tx, nodeID, nowText string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT endpoint_id FROM meridian_route_grants WHERE ? IN (egress_node_id,ipv4_egress_node_id) AND enabled=1 AND status<>'revoked' ORDER BY endpoint_id`, nodeID)
+	if err != nil {
+		return err
+	}
+	endpointIDs := []string{}
+	for rows.Next() {
+		var endpointID string
+		if err := rows.Scan(&endpointID); err != nil {
+			rows.Close()
+			return err
+		}
+		endpointIDs = append(endpointIDs, endpointID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, endpointID := range endpointIDs {
+		if err := s.ensureGlivelaSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=?
+		WHERE ? IN (egress_node_id,ipv4_egress_node_id) AND enabled=1 AND status<>'revoked'`, nowText, nodeID); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=?
+		WHERE status<>'retired' AND id IN (
+		 SELECT DISTINCT endpoint_id FROM meridian_route_grants WHERE ? IN (egress_node_id,ipv4_egress_node_id) AND enabled=1 AND status<>'revoked'
+		)`, nowText, nodeID)
+	return err
+}
+
+func (s *Store) glivelaQuotaStatesInTx(ctx context.Context, tx *sql.Tx, endpointID string) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT account.id,account.total_bytes,account.expiry_time,account.reset_days,account.enabled,account.status
+		FROM meridian_accounts account JOIN meridian_credentials credential ON credential.account_id=account.id
+		WHERE credential.endpoint_id=? ORDER BY account.id`, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	type stored struct {
+		id, status string
+		plan       glivela.AccountPlan
+	}
+	values := []stored{}
+	for rows.Next() {
+		var value stored
+		var enabled int
+		if err := rows.Scan(&value.id, &value.plan.TotalBytes, &value.plan.ExpiryTime, &value.plan.ResetDays, &enabled, &value.status); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		value.plan.Enabled = enabled == 1 && value.status == "active" && (value.plan.ExpiryTime == 0 || value.plan.ExpiryTime > s.now().UnixMilli())
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	states := make(map[string]bool, len(values))
+	for _, value := range values {
+		usage, err := glivelaAccountUsageInTx(ctx, tx, value.id)
+		if err != nil {
+			return nil, err
+		}
+		projection, err := glivela.ProjectQuota(value.plan, usage)
+		if err != nil {
+			return nil, errors.New("center: stored Glivela quota is invalid")
+		}
+		states[value.id] = projection.Enabled
+	}
+	return states, nil
+}
+
+func saturatingAdd(left, right int64) int64 {
+	if left < 0 || right < 0 || left > math.MaxInt64-right {
+		return math.MaxInt64
+	}
+	return left + right
+}
+
+// Shared by ordinary runtime completion and explicitly verified reinstall
+// finalization. The caller owns the transaction and all authorization gates.
+func (s *Store) projectVerifiedGlivelaRuntime(ctx context.Context, tx *sql.Tx, endpointID, taskID string, projection glivelaRuntimeProjection, result *glivelaruntime.Result, quotaEnabled bool, observedAt time.Time) error {
+	now := observedAt.UTC().Format(time.RFC3339Nano)
+	revision := int64(projection.task.Desired.Revision)
+	legacyRetired := 0
+	if result.LegacyRetired {
+		legacyRetired = 1
+	}
+	endpointUpdate, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET applied_revision=?,runtime_healthy=1,legacy_retired=?,quota_applied_enabled=?,status='ready',last_error='',updated_at=? WHERE id=? AND desired_revision=?`, revision, legacyRetired, boolInt(quotaEnabled), now, endpointID, revision)
+	if err != nil {
+		return err
+	}
+	if changed, _ := endpointUpdate.RowsAffected(); changed != 1 {
+		return errors.New("center: Glivela endpoint changed before its runtime receipt was committed")
+	}
+	serviceUpdate, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,protocol='tcp',container_port=?,host_port=?,
+		app_protocol=?,observed_listen=?,status='ready',last_error='',updated_at=?
+		WHERE id=? AND application_id=? AND status<>'stopped'`, net.JoinHostPort(projection.backendAddress, fmt.Sprint(projection.backendPort)), projection.backendPort, projection.backendPort, glivelaEntryProtocol, projection.backendAddress, now, projection.serviceID, projection.task.ApplicationID)
+	if err != nil {
+		return err
+	}
+	if changed, _ := serviceUpdate.RowsAffected(); changed != 1 {
+		return errors.New("center: Glivela service changed before its runtime receipt was committed")
+	}
+	deploymentUpdate, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET applied_revision=?,applied_sha256=?,status='ready',last_error='',updated_at=? WHERE endpoint_id=? AND command_id=? AND desired_revision=?`, revision, projection.task.Desired.ConfigSHA256, now, endpointID, taskID, revision)
+	if err != nil {
+		return err
+	}
+	if changed, _ := deploymentUpdate.RowsAffected(); changed != 1 {
+		return errors.New("center: Glivela deployment changed before its runtime receipt was committed")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET applied_revision=desired_revision,
+		runtime_healthy=0,health_expires_unix_ms=0,status=CASE WHEN status='revoking' THEN 'revoked' ELSE status END,
+		last_error=CASE WHEN status='revoking' THEN '' ELSE last_error END,updated_at=? WHERE endpoint_id=? AND status<>'revoked'`, now, endpointID); err != nil {
+		return err
+	}
+	if err := recordGlivelaRouteHealth(ctx, tx, endpointID, projection, *result, observedAt); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_accounts SET applied_revision=desired_revision,last_error='',updated_at=?
+		WHERE id IN (SELECT account_id FROM meridian_credentials WHERE endpoint_id=?)
+		AND NOT EXISTS (
+		 SELECT 1 FROM meridian_credentials credential JOIN meridian_endpoints endpoint ON endpoint.id=credential.endpoint_id
+		 WHERE credential.account_id=meridian_accounts.id AND credential.enabled=1 AND endpoint.status<>'retired'
+		 AND (endpoint.status<>'ready' OR endpoint.runtime_healthy<>1 OR endpoint.applied_revision<>endpoint.desired_revision)
+		)`, now, endpointID); err != nil {
+		return err
+	}
+	if !projection.task.RetireLegacy {
+		parsedNow, err := time.Parse(time.RFC3339Nano, now)
+		if err != nil {
+			return err
+		}
+		if err := s.reconcileApplicationPublications(ctx, tx, projection.task.ApplicationID, parsedNow); err != nil {
+			return err
+		}
+	}
+	return nil
+}

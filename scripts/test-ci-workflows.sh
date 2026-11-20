@@ -176,7 +176,7 @@ if printf '%s\n' "$test_block" | grep -Fq 'cache-hit'; then
   echo 'Cache hits must still execute integration tests.' >&2
   exit 1
 fi
-require_line "$ci_workflow" 'sudo -- "$RUNNER_TEMP/package-systemd.test" -test.run '\''^TestMeridianHostKernelPreflight$'\'' -test.v'
+require_line "$ci_workflow" 'sudo -- "$RUNNER_TEMP/package-systemd.test" -test.run '\''^TestGlivelaHostKernelPreflight$'\'' -test.v'
 require_line "$ci_workflow" 'sudo env VASTORA_NATIVE_LANDING_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test"'
 if [ "$(grep -c 'go test -c -tags=integration .* ./internal/agent' "$ci_workflow")" -ne 1 ] ||
    grep -Fq 'dante/linux_amd64/' "$ci_workflow"; then

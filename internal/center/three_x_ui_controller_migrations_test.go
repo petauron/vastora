@@ -20,7 +20,7 @@ func TestLegacyControllerMigrationRejectsRemovedExecutorBeforeChangingState(t *t
 				seedLegacyProxyManifest(t, store)
 			}
 			_, err := store.CreateThreeXUIControllerMigration(ctx, deployment.ApplicationID, ThreeXUIControllerMigrationInput{TargetApplicationID: "replacement-controller", Confirm: true})
-			if err == nil || !strings.Contains(err.Error(), "use Meridian cutover") {
+			if err == nil || !strings.Contains(err.Error(), "use Glivela cutover") {
 				t.Fatalf("removed executor allowed controller relocation: %v", err)
 			}
 			for _, table := range []string{"three_x_ui_migrations", "three_x_ui_backups", "application_commands"} {

@@ -80,7 +80,7 @@ func authorizeReinstallTestPackage(t *testing.T, store *Store, deploymentID stri
 func TestAgentReinstallPlanKeepsSavedVersionsAndRecoveryRequirements(t *testing.T) {
 	store, node := reinstallPlanFixture(t)
 	cases := []struct{ id, key, version, recovery, requirement string }{
-		{"meridian", meridianAppKey, "0.1.0-alpha.12", "restore_data", "restore_backup_on_replacement"},
+		{"meridian", glivelaAppKey, "0.1.0-alpha.12", "restore_data", "restore_backup_on_replacement"},
 		{"collector", senulunAgentAppKey, "0.1.0-alpha.5", "restore_data", "restore_backup_on_replacement"},
 		{"monitor", senulunAppKey, "0.1.0-alpha.5", "restore_data", "restore_backup_on_replacement"},
 		{"cpa", "vastora-official/cpa", "7.2.130", "restore_data", "restore_backup_on_replacement"},
@@ -110,7 +110,7 @@ func TestAgentReinstallPlanKeepsSavedVersionsAndRecoveryRequirements(t *testing.
 
 func TestAgentReinstallPlanDoesNotResurrectUninstallOrHidePendingWork(t *testing.T) {
 	store, node := reinstallPlanFixture(t)
-	addReinstallApplication(t, store, node, "app", meridianAppKey, "0.1.0-alpha.12", "install", "succeeded")
+	addReinstallApplication(t, store, node, "app", glivelaAppKey, "0.1.0-alpha.12", "install", "succeeded")
 	// Historical success was updated later, but the later *intent* is uninstall.
 	if _, err := store.db.Exec(`UPDATE deployments SET updated_at='2099-01-01T00:00:00Z'`); err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestAgentReinstallPlanRequiresReviewOfMissingOrInvalidArtifacts(t *testing.
 	for _, mode := range []string{"missing", "invalid", "mismatched-version", "mismatched-app"} {
 		t.Run(mode, func(t *testing.T) {
 			store, node := reinstallPlanFixture(t)
-			addReinstallApplication(t, store, node, "app", meridianAppKey, "0.1.0-alpha.12", "install", "succeeded")
+			addReinstallApplication(t, store, node, "app", glivelaAppKey, "0.1.0-alpha.12", "install", "succeeded")
 			query := map[string]string{
 				"missing":            `DELETE FROM deployments`,
 				"invalid":            `UPDATE deployments SET manifest_json='{}'`,
@@ -201,7 +201,7 @@ func TestAgentReinstallPlanRetainsNetworkAndUncertainEvidence(t *testing.T) {
 
 func TestAgentReinstallPlanHTTPReadOnlyAndNoSecrets(t *testing.T) {
 	store, node := reinstallPlanFixture(t)
-	addReinstallApplication(t, store, node, "app", meridianAppKey, "0.1.0-alpha.12", "install", "succeeded")
+	addReinstallApplication(t, store, node, "app", glivelaAppKey, "0.1.0-alpha.12", "install", "succeeded")
 	session, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple")
 	if err != nil {
 		t.Fatal(err)
@@ -251,7 +251,7 @@ func TestAgentReinstallPlanScopesWorkAndIngressDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	addReinstallApplication(t, store, other, "other-app", meridianAppKey, "0.1.0-alpha.12", "install", "pending")
+	addReinstallApplication(t, store, other, "other-app", glivelaAppKey, "0.1.0-alpha.12", "install", "pending")
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.Exec(`INSERT INTO services(id,application_id,site_id,name,protocol,app_protocol,container_port,host_port,endpoint,source,status,created_at,updated_at)
 		VALUES('other-service','other-app',?,'web','http','http',8080,8080,'http://10.0.0.8:8080','catalog','ready',?,?)`, testSiteID(t, store), stamp, stamp); err != nil {
@@ -272,7 +272,7 @@ func TestAgentReinstallPlanScopesWorkAndIngressDependencies(t *testing.T) {
 
 func TestAgentReinstallPlanIncludesUnclaimedConfigurationRecovery(t *testing.T) {
 	store, node := reinstallPlanFixture(t)
-	addReinstallApplication(t, store, node, "app", meridianAppKey, "0.1.0-alpha.12", "install", "succeeded")
+	addReinstallApplication(t, store, node, "app", glivelaAppKey, "0.1.0-alpha.12", "install", "succeeded")
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.Exec(`INSERT INTO xray_configuration_recoveries(agent_id,application_id,id,action,state,created_at,updated_at)
 		VALUES(?,'app','previous-recovery','agent_state','pending',?,?)`, node.ID, stamp, stamp); err != nil {

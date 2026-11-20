@@ -77,7 +77,7 @@ func TestAgentHeartbeatProjectionFailureIsNotReportedAsAuthenticationFailure(t *
 	requestBody, err := json.Marshal(map[string]any{
 		"publicKey": publicKey, "version": "test", "roles": []string{"worker"},
 		"capabilities": NodeCapabilities{Docker: true}, "applicationEndpointsObserved": true,
-		"applicationEndpoints": []ApplicationEndpointObservation{{AppKey: meridianAppKey, Name: "invalid", Protocol: "tcp", AppProtocol: meridianEntryProtocol, Port: 443, Enabled: true, InboundTag: "test-inbound"}},
+		"applicationEndpoints": []ApplicationEndpointObservation{{AppKey: glivelaAppKey, Name: "invalid", Protocol: "tcp", AppProtocol: glivelaEntryProtocol, Port: 443, Enabled: true, InboundTag: "test-inbound"}},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -1,0 +1,130 @@
+package center
+
+import (
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"math/big"
+	"time"
+
+	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/nodediagnostics"
+)
+
+func (s *Store) StartGlivelaLinkBandwidth(ctx context.Context, sourceID, landingID string) error {
+	if sourceID == "" || landingID == "" || sourceID == landingID {
+		return errors.New("meridian_link_invalid_pair")
+	}
+	// Unclaimed listeners must not start after the paired client has expired.
+	if _, err := s.db.ExecContext(ctx, `UPDATE node_diagnostic_checks SET state='failed',error='expired' WHERE kind IN ('meridian.link-bandwidth','meridian.link-bandwidth-server') AND state='pending' AND attempt=0 AND created_at<?`, s.now().Add(-4*time.Minute).UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
+		return err
+	} else if paused {
+		return errors.New("meridian_link_tasks_paused")
+	}
+	var selected int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM settings selection JOIN json_each(selection.value,'$.nodeIds') node WHERE selection.key=? AND node.value=?)`, landingSelectionKey, landingID).Scan(&selected); err != nil {
+		return err
+	}
+	if selected != 1 {
+		return errors.New("meridian_link_landing_not_selected")
+	}
+	var installed int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM applications WHERE node_id=? AND app_key=? AND status='running')`, sourceID, glivelaAppKey).Scan(&installed); err != nil {
+		return err
+	}
+	if installed != 1 {
+		return errors.New("meridian_link_source_required")
+	}
+	for _, id := range []string{sourceID, landingID} {
+		var capsJSON, lastSeen string
+		if err := tx.QueryRowContext(ctx, `SELECT capabilities_json,last_seen_at FROM agents WHERE id=? AND status='active' AND credential_revoked_at='' AND tailscale_ownership='managed'`, id).Scan(&capsJSON, &lastSeen); err != nil {
+			return errors.New("meridian_link_node_unavailable")
+		}
+		seen, err := time.Parse(time.RFC3339Nano, lastSeen)
+		if err != nil || !seen.After(s.now().Add(-agentConnectedMaxAge)) {
+			return errors.New("meridian_link_node_offline")
+		}
+		var caps NodeCapabilities
+		if json.Unmarshal([]byte(capsJSON), &caps) != nil || !caps.Docker || !caps.GlivelaLinkBandwidth || caps.GlivelaLinkRevision != nodediagnostics.LinkBandwidthRevision {
+			return errors.New("meridian_link_docker_required")
+		}
+		var busy bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded') OR EXISTS(SELECT 1 FROM node_diagnostic_checks WHERE agent_id=? AND state IN ('pending','running'))`, id, id).Scan(&busy); err != nil {
+			return err
+		}
+		if busy {
+			return errors.New("meridian_link_node_busy")
+		}
+	}
+	var sourceJSON, landingJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT peer_json FROM agent_private_peer_capabilities WHERE node_id=?`, sourceID).Scan(&sourceJSON); err != nil {
+		return errors.New("meridian_link_private_peer_unavailable")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT peer_json FROM landing_server_states WHERE node_id=? AND status='ready' AND desired_revision=applied_revision`, landingID).Scan(&landingJSON); err != nil {
+		return errors.New("meridian_link_landing_not_ready")
+	}
+	var source, destination landing.PeerIdentity
+	if json.Unmarshal(sourceJSON, &source) != nil || json.Unmarshal(landingJSON, &destination) != nil || source.ID == "" || source.PublicKey == "" || destination.ID == "" || destination.PublicKey == "" || source.ID == destination.ID || source.PublicKey == destination.PublicKey {
+		return errors.New("meridian_link_private_peer_unavailable")
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(40001))
+	if err != nil {
+		return err
+	}
+	link := nodediagnostics.LinkBandwidthTask{SourceNodeID: sourceID, LandingNodeID: landingID, SourceIP: source.Address, LandingIP: destination.Address, SourcePeer: source, LandingPeer: destination, Port: 20000 + int(n.Int64())}
+	if (nodediagnostics.Task{Link: &link}).ValidateLinkIdentity(nodediagnostics.LinkBandwidthKind) != nil {
+		return errors.New("meridian_link_private_peer_unavailable")
+	}
+	clientAuth, serverAuth, err := newGlivelaLinkAuth()
+	if err != nil {
+		return err
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	for _, side := range []struct{ id, kind, peer string }{{landingID, nodediagnostics.LinkServerKind, sourceID}, {sourceID, nodediagnostics.LinkBandwidthKind, landingID}} {
+		token, err := randomToken(18)
+		if err != nil {
+			return err
+		}
+		id := "node-diagnostic-" + token
+		auth := clientAuth
+		if side.kind == nodediagnostics.LinkServerKind {
+			auth = serverAuth
+		}
+		targetsJSON, err := s.sealGlivelaLink(id, link, auth)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO node_diagnostic_checks(agent_id,kind,pair_key,id,bind_address,target_revision,targets_json,state,created_at,updated_at) VALUES(?,?,?,?,'',?,?,'pending',?,?)
+ ON CONFLICT(agent_id,kind,pair_key) DO UPDATE SET id=excluded.id,bind_address='',target_revision=excluded.target_revision,targets_json=excluded.targets_json,state='pending',attempt=0,lease_expires_at='',error='',result_json='null',checked_at='',created_at=excluded.created_at,updated_at=excluded.updated_at`, side.id, side.kind, side.peer, id, nodediagnostics.LinkBandwidthRevision, string(targetsJSON), now, now)
+		if err != nil {
+			return err
+		}
+		if err := s.recordTaskEvent(ctx, tx, id, side.id, side.kind, nodediagnostics.LinkBandwidthRevision, "queued", ""); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// A task receipt cannot validate measurements against a replaced private peer.
+func currentGlivelaLinkPeers(ctx context.Context, tx *sql.Tx, link nodediagnostics.LinkBandwidthTask) bool {
+	if (nodediagnostics.Task{Link: &link}).ValidateLinkIdentity(nodediagnostics.LinkBandwidthKind) != nil {
+		return false
+	}
+	var sourceJSON, landingJSON []byte
+	if tx.QueryRowContext(ctx, `SELECT peer_json FROM agent_private_peer_capabilities WHERE node_id=?`, link.SourceNodeID).Scan(&sourceJSON) != nil || tx.QueryRowContext(ctx, `SELECT peer_json FROM landing_server_states WHERE node_id=? AND status='ready' AND desired_revision=applied_revision`, link.LandingNodeID).Scan(&landingJSON) != nil {
+		return false
+	}
+	var source, destination landing.PeerIdentity
+	return json.Unmarshal(sourceJSON, &source) == nil && json.Unmarshal(landingJSON, &destination) == nil && source == link.SourcePeer && destination == link.LandingPeer
+}

@@ -14,25 +14,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/realitytarget"
 )
 
 const (
-	centerThreeXUIRealityPort       = 443
-	realityCommandKind              = "3xui.reality.create"
-	realityVerifyCommandKind        = "3xui.reality.verify"
-	realityHardenCommandKind        = "3xui.reality.harden"
-	realityRenameCommandKind        = "3xui.reality.rename"
-	realityRemoveCommandKind        = "3xui.reality.remove"
-	subscriptionCommandKind         = "3xui.subscription.configure"
-	meridianSubscriptionCommandKind = "meridian.subscription.publish"
-	clientCommandKind               = "3xui.clients.manage"
-	nodeCommandKind                 = "3xui.node.reconcile"
-	controllerCommandKind           = "3xui.controller.manage"
+	centerThreeXUIRealityPort      = 443
+	realityCommandKind             = "3xui.reality.create"
+	realityVerifyCommandKind       = "3xui.reality.verify"
+	realityHardenCommandKind       = "3xui.reality.harden"
+	realityRenameCommandKind       = "3xui.reality.rename"
+	realityRemoveCommandKind       = "3xui.reality.remove"
+	subscriptionCommandKind        = "3xui.subscription.configure"
+	glivelaSubscriptionCommandKind = "meridian.subscription.publish"
+	clientCommandKind              = "3xui.clients.manage"
+	nodeCommandKind                = "3xui.node.reconcile"
+	controllerCommandKind          = "3xui.controller.manage"
 )
 
 type RealityCommandInput struct {
@@ -421,8 +421,8 @@ func (s *Store) VerifyRealityTarget(ctx context.Context, applicationID string, i
 		return ApplicationCommandView{}, err
 	}
 	legacyApplication := appKey == threeXUIAppKey && (role == threeXUIRoleMaster || role == threeXUIRoleWorker)
-	meridianApplication := appKey == meridianAppKey && role == ""
-	if status != "running" || !legacyApplication && !meridianApplication {
+	glivelaApplication := appKey == glivelaAppKey && role == ""
+	if status != "running" || !legacyApplication && !glivelaApplication {
 		return ApplicationCommandView{}, errors.New("center: REALITY target verification requires a running managed proxy application")
 	}
 	if !networking.IsPrivateServiceAddress(targetAddress) || net.ParseIP(targetPublicAddress) == nil {
@@ -717,8 +717,8 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		return value, err
 	}
 	switch value.Kind {
-	case meridianruntime.ApplyKind:
-		var input meridianruntime.Command
+	case glivelaruntime.ApplyKind:
+		var input glivelaruntime.Command
 		if json.Unmarshal(inputJSON, &input) != nil || input.Validate() != nil {
 			return value, errors.New("center: stored Glivela runtime command is invalid")
 		}
@@ -764,7 +764,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		if value.TargetHost == "" {
 			value.TargetHost, value.ServerName = input.TargetHost, input.ServerName
 		}
-	case subscriptionCommandKind, meridianSubscriptionCommandKind:
+	case subscriptionCommandKind, glivelaSubscriptionCommandKind:
 		var input SubscriptionCommandTask
 		if json.Unmarshal(inputJSON, &input) != nil || input.Domain == "" || input.BaseURI == "" {
 			return value, errors.New("center: stored subscription operation is invalid")
@@ -814,12 +814,12 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 }
 
 func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID, kind string) (ApplicationCommandView, error) {
-	if kind != nodeprotocol.CommandKind && kind != realityCommandKind && kind != realityVerifyCommandKind && kind != realityHardenCommandKind && kind != realityRenameCommandKind && kind != realityRemoveCommandKind && kind != subscriptionCommandKind && kind != meridianSubscriptionCommandKind && kind != clientCommandKind && kind != nodeCommandKind && kind != controllerCommandKind {
+	if kind != nodeprotocol.CommandKind && kind != realityCommandKind && kind != realityVerifyCommandKind && kind != realityHardenCommandKind && kind != realityRenameCommandKind && kind != realityRemoveCommandKind && kind != subscriptionCommandKind && kind != glivelaSubscriptionCommandKind && kind != clientCommandKind && kind != nodeCommandKind && kind != controllerCommandKind {
 		return ApplicationCommandView{}, errors.New("center: unsupported application operation kind")
 	}
 	var id string
 	condition := `(state IN ('pending', 'running') OR reconciliation_required = 1 OR result_secret_id IS NOT NULL)`
-	if kind == subscriptionCommandKind || kind == meridianSubscriptionCommandKind {
+	if kind == subscriptionCommandKind || kind == glivelaSubscriptionCommandKind {
 		condition = `(state IN ('pending', 'running', 'failed') OR (state = 'succeeded' AND EXISTS (
 			SELECT 1 FROM publications p JOIN services s ON s.id = p.service_id
 			WHERE s.application_id = application_commands.application_id AND p.status <> 'stopped' AND s.name = 'subscription'

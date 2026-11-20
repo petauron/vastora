@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/petauron/glivela"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 type NodeEgressInput struct {
@@ -17,14 +17,14 @@ type NodeEgressInput struct {
 }
 
 type NodeEgressView struct {
-	Policy        glivela.EgressPolicy               `json:"policy"`
-	AppliedPolicy glivela.EgressPolicy               `json:"appliedPolicy"`
-	Revision      int64                              `json:"revision"`
-	State         string                             `json:"state"`
-	Error         string                             `json:"error,omitempty"`
-	Available     bool                               `json:"available"`
-	CommandID     string                             `json:"commandId,omitempty"`
-	Verified      *meridianruntime.EgressObservation `json:"verified,omitempty"`
+	Policy        glivela.EgressPolicy              `json:"policy"`
+	AppliedPolicy glivela.EgressPolicy              `json:"appliedPolicy"`
+	Revision      int64                             `json:"revision"`
+	State         string                            `json:"state"`
+	Error         string                            `json:"error,omitempty"`
+	Available     bool                              `json:"available"`
+	CommandID     string                            `json:"commandId,omitempty"`
+	Verified      *glivelaruntime.EgressObservation `json:"verified,omitempty"`
 }
 
 func (s *Store) NodeEgress(ctx context.Context, nodeID string) (NodeEgressView, error) {
@@ -42,7 +42,7 @@ func (s *Store) NodeEgress(ctx context.Context, nodeID string) (NodeEgressView, 
 		}
 	}
 	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=? AND a.app_key=? AND a.status='running' AND e.status<>'retired'`, nodeID, meridianAppKey).Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=? AND a.app_key=? AND a.status='running' AND e.status<>'retired'`, nodeID, glivelaAppKey).Scan(&count); err != nil {
 		return v, err
 	}
 	if count != 1 {
@@ -51,7 +51,7 @@ func (s *Store) NodeEgress(ctx context.Context, nodeID string) (NodeEgressView, 
 		v.Error = "此节点需要一个已配置的 Glivela 原生入口。远程落地出口不受此策略控制。"
 		return v, nil
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT e.status,e.last_error,COALESCE(d.command_id,'') FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id LEFT JOIN meridian_deployments d ON d.endpoint_id=e.id WHERE a.node_id=? AND a.app_key=? AND a.status='running' AND e.status<>'retired'`, nodeID, meridianAppKey).Scan(&v.State, &v.Error, &v.CommandID)
+	err = s.db.QueryRowContext(ctx, `SELECT e.status,e.last_error,COALESCE(d.command_id,'') FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id LEFT JOIN meridian_deployments d ON d.endpoint_id=e.id WHERE a.node_id=? AND a.app_key=? AND a.status='running' AND e.status<>'retired'`, nodeID, glivelaAppKey).Scan(&v.State, &v.Error, &v.CommandID)
 	if err != nil {
 		return v, err
 	}
@@ -70,7 +70,7 @@ func (s *Store) SetNodeEgress(ctx context.Context, nodeID string, input NodeEgre
 		return "", err
 	}
 	defer tx.Rollback()
-	if err = ensureMeridianManagementWritable(ctx, tx); err != nil {
+	if err = ensureGlivelaManagementWritable(ctx, tx); err != nil {
 		return "", err
 	}
 	if blocked, err := agentReinstallBlocked(ctx, tx, nodeID); err != nil || blocked {
@@ -101,7 +101,7 @@ func (s *Store) SetNodeEgress(ctx context.Context, nodeID string, input NodeEgre
 	}
 	var endpoint string
 	var count int
-	err = tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(min(e.id),'') FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=? AND a.app_key=? AND a.status='running' AND e.status<>'retired'`, nodeID, meridianAppKey).Scan(&count, &endpoint)
+	err = tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(min(e.id),'') FROM meridian_endpoints e JOIN applications a ON a.id=e.application_id WHERE a.node_id=? AND a.app_key=? AND a.status='running' AND e.status<>'retired'`, nodeID, glivelaAppKey).Scan(&count, &endpoint)
 	if err != nil {
 		return "", err
 	}
@@ -116,7 +116,7 @@ func (s *Store) SetNodeEgress(ctx context.Context, nodeID string, input NodeEgre
 	if _, err = tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,status='pending',runtime_healthy=0,last_error='',updated_at=? WHERE id=?`, now, endpoint); err != nil {
 		return "", err
 	}
-	id, err := s.queueMeridianRuntime(ctx, tx, endpoint, false)
+	id, err := s.queueGlivelaRuntime(ctx, tx, endpoint, false)
 	if err != nil {
 		return "", err
 	}
@@ -126,7 +126,7 @@ func (s *Store) SetNodeEgress(ctx context.Context, nodeID string, input NodeEgre
 	return id, tx.Commit()
 }
 
-func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRuntimeProjection, endpoint glivela.RealityEndpoint, hy2 glivela.HysteriaEndpoint, vlessEnabled, hy2Enabled int, materials []glivela.CredentialMaterial) error {
+func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *glivelaRuntimeProjection, endpoint glivela.RealityEndpoint, hy2 glivela.HysteriaEndpoint, vlessEnabled, hy2Enabled int, materials []glivela.CredentialMaterial) error {
 	var policy glivela.EgressPolicy
 	var needsVerification bool
 	err := tx.QueryRowContext(ctx, `SELECT policy,revision<>verified_revision FROM node_egress_policies WHERE node_id=?`, p.agentID).Scan(&policy, &needsVerification)
@@ -137,7 +137,7 @@ func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRun
 		return err
 	}
 	p.task.NativeEgress = policy
-	p.task.ImageReference = meridianruntime.EgressImage
+	p.task.ImageReference = glivelaruntime.EgressImage
 	if !needsVerification {
 		return nil
 	}
@@ -155,12 +155,12 @@ func applyNativeEgressProjection(ctx context.Context, tx *sql.Tx, p *meridianRun
 	// a PROXY header from HAProxy and is not a direct client endpoint.
 	if vlessEnabled == 1 {
 		endpoint.PrivateKey = ""
-		p.task.EgressClients = append(p.task.EgressClients, meridianruntime.AcceptanceClient{Protocol: glivela.VLESSReality, Reality: &endpoint, Material: *material})
+		p.task.EgressClients = append(p.task.EgressClients, glivelaruntime.AcceptanceClient{Protocol: glivela.VLESSReality, Reality: &endpoint, Material: *material})
 	}
 	if hy2Enabled == 1 {
 		hy2.PrivateKeyPEM = ""
 		hy2.CertificatePEM = ""
-		p.task.EgressClients = append(p.task.EgressClients, meridianruntime.AcceptanceClient{Protocol: glivela.Hysteria2, Hysteria: &hy2, Material: *material})
+		p.task.EgressClients = append(p.task.EgressClients, glivelaruntime.AcceptanceClient{Protocol: glivela.Hysteria2, Hysteria: &hy2, Material: *material})
 	}
 	return nil
 }

@@ -7,7 +7,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 const glivelaPilotCheckpointSchema = `CREATE TABLE glivela_pilot_checkpoint (
@@ -25,7 +25,7 @@ func glivelaPilotOwnsEndpoint(ctx context.Context, tx *sql.Tx, endpointID string
 	return owned, err
 }
 
-func requireLegacyMeridianOwner(ctx context.Context, tx *sql.Tx, endpointID string) error {
+func requireLegacyGlivelaOwner(ctx context.Context, tx *sql.Tx, endpointID string) error {
 	owned, err := glivelaPilotOwnsEndpoint(ctx, tx, endpointID)
 	if err != nil {
 		return err
@@ -36,7 +36,7 @@ func requireLegacyMeridianOwner(ctx context.Context, tx *sql.Tx, endpointID stri
 	return nil
 }
 
-func requireLegacyMeridianApplicationOwner(ctx context.Context, tx *sql.Tx, applicationID string) error {
+func requireLegacyGlivelaApplicationOwner(ctx context.Context, tx *sql.Tx, applicationID string) error {
 	var owned bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM glivela_pilot_checkpoint p
 		JOIN meridian_endpoints e ON e.id=p.endpoint_id WHERE e.application_id=?)`, applicationID).Scan(&owned); err != nil {
@@ -52,7 +52,7 @@ func requireLegacyMeridianApplicationOwner(ctx context.Context, tx *sql.Tx, appl
 // Glivela source. It does not accept an arbitrary endpoint from the report.
 // The one-entry checkpoint and existing ledger advance in the same transaction.
 // It does not project a legacy runtime, modify subscriptions, or own an account.
-func (s *Store) recordGlivelaPilotReceipt(ctx context.Context, receipt meridianruntime.PilotReceipt) error {
+func (s *Store) recordGlivelaPilotReceipt(ctx context.Context, receipt glivelaruntime.PilotReceipt) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -64,14 +64,14 @@ func (s *Store) recordGlivelaPilotReceipt(ctx context.Context, receipt meridianr
 	return tx.Commit()
 }
 
-func (s *Store) recordGlivelaPilotReceiptInTx(ctx context.Context, tx *sql.Tx, receipt meridianruntime.PilotReceipt) error {
+func (s *Store) recordGlivelaPilotReceiptInTx(ctx context.Context, tx *sql.Tx, receipt glivelaruntime.PilotReceipt) error {
 	var endpointID string
 	var raw []byte
 	if err := tx.QueryRowContext(ctx, `SELECT p.endpoint_id,p.checkpoint_json FROM glivela_pilot_checkpoint p
 		JOIN meridian_endpoints e ON e.id=p.endpoint_id WHERE e.application_id=?`, receipt.EntryID).Scan(&endpointID, &raw); err != nil {
 		return err
 	}
-	var previous meridianruntime.PilotCounters
+	var previous glivelaruntime.PilotCounters
 	if json.Unmarshal(raw, &previous) != nil {
 		return errors.New("center: invalid Glivela pilot checkpoint")
 	}
@@ -85,7 +85,7 @@ func (s *Store) recordGlivelaPilotReceiptInTx(ctx context.Context, tx *sql.Tx, r
 		return errors.New("center: Glivela pilot entry ownership changed")
 	}
 	now := s.now().UTC()
-	next, err := meridianruntime.AdvancePilotCounters(previous, receipt, now)
+	next, err := glivelaruntime.AdvancePilotCounters(previous, receipt, now)
 	if err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func (s *Store) recordGlivelaPilotReceiptInTx(ctx context.Context, tx *sql.Tx, r
 			return errors.New("center: staged quota changed outside its receipt transaction")
 		}
 	}
-	if err := s.observeMeridianUsageInTx(ctx, tx, endpointID, next.Totals, stamp); err != nil {
+	if err := s.observeGlivelaUsageInTx(ctx, tx, endpointID, next.Totals, stamp); err != nil {
 		return err
 	}
 	if next.Quota != nil {
@@ -168,7 +168,7 @@ func (s *Store) observeGlivelaPilotInTx(ctx context.Context, tx *sql.Tx, agentID
 	if err != nil {
 		return err
 	}
-	var checkpoint meridianruntime.PilotCounters
+	var checkpoint glivelaruntime.PilotCounters
 	if json.Unmarshal(raw, &checkpoint) != nil {
 		return errors.New("center: invalid Glivela pilot checkpoint")
 	}
@@ -176,12 +176,12 @@ func (s *Store) observeGlivelaPilotInTx(ctx context.Context, tx *sql.Tx, agentID
 	if statePath == "" {
 		statePath = "/run/glivela-pilot/nodes.json"
 	}
-	var receipt meridianruntime.PilotReceipt
+	var receipt glivelaruntime.PilotReceipt
 	var sourceErr error
 	if checkpoint.Quota != nil {
-		receipt, sourceErr = meridianruntime.ReadQuotaPilotReceipt(statePath, checkpoint, s.now().UTC())
+		receipt, sourceErr = glivelaruntime.ReadQuotaPilotReceipt(statePath, checkpoint, s.now().UTC())
 	} else {
-		receipt, sourceErr = meridianruntime.ReadUnlimitedPilotReceipt(statePath, checkpoint, s.now().UTC())
+		receipt, sourceErr = glivelaruntime.ReadUnlimitedPilotReceipt(statePath, checkpoint, s.now().UTC())
 	}
 	if sourceErr == nil {
 		// Any ledger/checkpoint conflict is a real transaction error, not a
@@ -300,9 +300,9 @@ func (s *Store) refreshGlivelaPilotSubscriptionInTx(ctx context.Context, tx *sql
 }
 
 func (s *Store) recordGlivelaPilotHealthInTx(ctx context.Context, tx *sql.Tx, endpointID string,
-	checkpoint meridianruntime.PilotCounters, receipt meridianruntime.PilotReceipt) error {
+	checkpoint glivelaruntime.PilotCounters, receipt glivelaruntime.PilotReceipt) error {
 	now := s.now().UTC()
-	readiness, err := meridianruntime.PilotPeerReadiness(checkpoint, receipt, now)
+	readiness, err := glivelaruntime.PilotPeerReadiness(checkpoint, receipt, now)
 	if err != nil {
 		return err
 	}
@@ -338,7 +338,7 @@ func (s *Store) recordGlivelaPilotHealthInTx(ctx context.Context, tx *sql.Tx, en
 		if r.secondary != "" {
 			accepted = accepted && readiness[r.secondary]
 		}
-		healthy, status, message := 0, "blocked", meridianRouteEvidenceUnavailable
+		healthy, status, message := 0, "blocked", glivelaRouteEvidenceUnavailable
 		if accepted {
 			healthy, status, message = 1, "ready", ""
 		}

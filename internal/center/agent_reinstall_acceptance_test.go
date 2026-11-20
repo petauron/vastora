@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/petauron/vastora/internal/controlplane"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"strings"
 	"testing"
 	"time"
@@ -125,8 +125,8 @@ func TestRetiredAgentReinstallAcceptanceCannotProjectOrReleaseRecovery(t *testin
 	if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, checks[0].CommandID); err != nil {
 		t.Fatal(err)
 	}
-	valid, _ := json.Marshal(map[string]any{"meridianAcceptance": meridianruntime.AcceptanceResult{TaskDigest: digest}})
-	malformed, _ := json.Marshal(map[string]any{"meridianAcceptance": meridianruntime.AcceptanceResult{TaskDigest: "changed"}})
+	valid, _ := json.Marshal(map[string]any{"meridianAcceptance": glivelaruntime.AcceptanceResult{TaskDigest: digest}})
+	malformed, _ := json.Marshal(map[string]any{"meridianAcceptance": glivelaruntime.AcceptanceResult{TaskDigest: "changed"}})
 	for _, raw := range []json.RawMessage{valid, malformed, json.RawMessage(`{}`)} {
 		for _, success := range []bool{false, true} {
 			assertRetiredApplicationResultPreservesState(t, s, verifier.ID, checks[0].CommandID, success, raw)

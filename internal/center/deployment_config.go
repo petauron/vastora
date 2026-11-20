@@ -21,7 +21,7 @@ import (
 // This view is used only for form validation, never signing or package identity.
 func managedConfigFields(appKey string) []string {
 	switch appKey {
-	case meridianAppKey:
+	case glivelaAppKey:
 		return []string{panelConfigKey}
 	case cpaAppKey:
 		return []string{"timezone", "management_key", "api_key"}

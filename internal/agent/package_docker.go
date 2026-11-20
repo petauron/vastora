@@ -518,10 +518,10 @@ func (b *DockerPackageBackend) Prepare(ctx context.Context, task DeploymentTask,
 
 func (b *DockerPackageBackend) Inspect(ctx context.Context, task DeploymentTask, receipt *InstanceResources) error {
 	if receipt.IntegrationState == "dormant" {
-		if task.AppKey != meridianKey || receipt.AppKey != meridianKey || receipt.Runtime != "docker" || len(receipt.Resources) != 0 {
+		if task.AppKey != legacyProxyAppKey || receipt.AppKey != legacyProxyAppKey || receipt.Runtime != "docker" || len(receipt.Resources) != 0 {
 			return errors.New("agent: invalid dormant Glivela receipt")
 		}
-		return inspectDormantMeridianContainers(ctx, b.Docker)
+		return inspectDormantGlivelaContainers(ctx, b.Docker)
 	}
 	for _, resource := range receipt.Resources {
 		switch resource.Kind {

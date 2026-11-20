@@ -42,10 +42,10 @@ func TestHostUpdateRetainsCandidateAfterActivationCanMigrateSchema(t *testing.T)
 		t.Fatal(err)
 	}
 	// Reconstruct the schema-15 fixture by removing the tables and indexes
-	// introduced by schemas 16 through 24. Starting the candidate runs the actual Agent migration,
+	// introduced by schemas 16 through 25. Starting the candidate runs the Agent migration,
 	// rather than only rewriting the user_version number.
 	const sourceSchema = 15
-	if agent.CurrentSchemaVersion() != 24 {
+	if agent.CurrentSchemaVersion() != 25 {
 		t.Fatal("update this fixture to preserve the complete historical schema-15 shape")
 	}
 	database, err := sql.Open("sqlite", filepath.Join(dataDir, "agent.db"))
@@ -57,7 +57,7 @@ func TestHostUpdateRetainsCandidateAfterActivationCanMigrateSchema(t *testing.T)
 		DROP INDEX task_receipts_expiry;
 		DROP TABLE shared_caddy_sites;
 		DROP TABLE node_site_journal;
-		DROP TABLE meridian_runtime_state;
+		DROP TABLE glivela_runtime_state;
 		DROP TABLE xray_worker_state;
 		DROP TABLE landing_controller_state;
 		DROP TABLE landing_runtime_state;

@@ -22,10 +22,10 @@ func (s *Store) revokeClientLanding(ctx context.Context, input LandingClientGran
 }
 
 func (s *Store) revokeClientLandingTx(ctx context.Context, tx *sql.Tx, input LandingClientGrantInput) (LandingClientGrantView, error) {
-	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+	if owns, err := glivelaOwnsLegacyLanding(ctx, tx); err != nil {
 		return LandingClientGrantView{}, err
 	} else if owns {
-		return LandingClientGrantView{}, errMeridianOwnsLegacyLanding
+		return LandingClientGrantView{}, errGlivelaOwnsLegacyLanding
 	}
 	var id string
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM landing_client_grants WHERE parent_id=? AND service_id=? AND landing_node_id=?`, input.ParentID, input.ServiceID, input.LandingNodeID).Scan(&id); err != nil {

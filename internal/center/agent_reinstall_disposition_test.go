@@ -22,7 +22,7 @@ func TestAgentReinstallRetiredWorkRequiresNewIntent(t *testing.T) {
 				id := "saved-deployment"
 				stamp := s.now().UTC().Format(time.RFC3339Nano)
 				if kind == "application.apply" {
-					addReinstallApplication(t, s, node, "saved", meridianAppKey, "0.1.0-alpha.12", "install", "failed")
+					addReinstallApplication(t, s, node, "saved", glivelaAppKey, "0.1.0-alpha.12", "install", "failed")
 					if _, err := s.db.Exec(`UPDATE deployments SET attempt=1 WHERE id=?`, id); err != nil {
 						t.Fatal(err)
 					}

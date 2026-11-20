@@ -35,8 +35,8 @@ func TestCanonicalGatewayServiceEndpointUsesVastoraXrayForWorker(t *testing.T) {
 
 func TestCanonicalGatewayServiceEndpointKeepsCenterSubscriptionOriginBeforeApplicationConversion(t *testing.T) {
 	endpoint := dockerruntime.CenterAlias + ":8080"
-	for _, appKey := range []string{threeXUIAppKey, meridianAppKey} {
-		if got := canonicalGatewayServiceEndpoint(appKey, "docker", threeXUIRoleMaster, "node-a", "node-a", meridianSubscriptionServiceName, 8080, endpoint); got != endpoint {
+	for _, appKey := range []string{threeXUIAppKey, glivelaAppKey} {
+		if got := canonicalGatewayServiceEndpoint(appKey, "docker", threeXUIRoleMaster, "node-a", "node-a", glivelaSubscriptionServiceName, 8080, endpoint); got != endpoint {
 			t.Fatalf("%s subscription endpoint = %q, want %q", appKey, got, endpoint)
 		}
 	}

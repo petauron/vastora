@@ -72,13 +72,23 @@ func verifyAgentEncryptedState(ctx context.Context, db *sql.DB, key []byte) erro
 		}
 	}
 
-	for _, journal := range []struct{ table, aad string }{{"landing_runtime_state", "agent-landing-runtime"}, {"landing_controller_state", "agent-landing-controller"}, {"meridian_runtime_state", "agent-meridian-runtime"}, {"xray_worker_state", "agent-xray-worker"}} {
+	var version int
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	runtimeTable, glivelaAAD := "glivela_runtime_state", glivelaRuntimeStateAAD
+	if version < glivelaRuntimeSchemaVersion {
+		runtimeTable, glivelaAAD = "meridian_runtime_state", legacyRuntimeStateAAD
+	}
+	for _, journal := range []struct{ table, aad string }{{"landing_runtime_state", "agent-landing-runtime"}, {"landing_controller_state", "agent-landing-controller"}, {runtimeTable, glivelaAAD}, {"xray_worker_state", "agent-xray-worker"}} {
 		if exists, err := agentTableHasColumns(ctx, db, journal.table, "id", "sealed_state"); err != nil {
 			return err
-		} else if exists {
-			if err := verifyAgentCiphertextRows(ctx, db, key, "SELECT CAST(id AS TEXT), sealed_state FROM "+journal.table, func(string) []byte { return []byte(journal.aad) }, "landing journal"); err != nil {
-				return err
+		} else if !exists {
+			if journal.table == runtimeTable && version >= 21 {
+				return errors.New("agent: runtime journal does not match the database schema")
 			}
+		} else if err := verifyAgentCiphertextRows(ctx, db, key, "SELECT CAST(id AS TEXT), sealed_state FROM "+journal.table, func(string) []byte { return []byte(journal.aad) }, "landing journal"); err != nil {
+			return err
 		}
 	}
 	if exists, err := agentTableHasColumns(ctx, db, "applied_installations", "instance_id", "sealed_state"); err != nil {

@@ -255,8 +255,8 @@ func storePackageReceipt(ctx context.Context, tx *sql.Tx, taskID, applicationID,
 	if version != receipt.PackageVersion || revision != receipt.PackageRevision || digest == "" || digest != receipt.ManifestSHA256 || !slices.Equal(grants, receipt.AuthorizedCapabilities) {
 		return errors.New("center: package resource receipt does not match the authorized deployment")
 	}
-	if appKey == meridianAppKey && operation == "upgrade" {
-		dormant, err := dormantMeridianUpgrade(ctx, tx, taskID)
+	if appKey == glivelaAppKey && operation == "upgrade" {
+		dormant, err := dormantGlivelaUpgrade(ctx, tx, taskID)
 		if err != nil {
 			return err
 		}
@@ -268,7 +268,7 @@ func storePackageReceipt(ctx context.Context, tx *sql.Tx, taskID, applicationID,
 				SHA256      string `json:"sha256"`
 			}
 			if receipt.IntegrationState != "awaiting-configuration" || len(receipt.Resources) != 1 || json.Unmarshal(receipt.Resources[0], &image) != nil || image.Kind != "image" || image.LogicalName != "xray-core" || len(manifest.Images) != 1 || manifest.Images[0].Name != image.LogicalName || manifest.Images[0].Reference != image.Name || !strings.HasSuffix(image.Name, "@sha256:"+image.SHA256) || len(image.SHA256) != 64 {
-				return errors.New("center: dormant Meridian upgrade must stage only its authorized image")
+				return errors.New("center: dormant Glivela upgrade must stage only its authorized image")
 			}
 		}
 	}

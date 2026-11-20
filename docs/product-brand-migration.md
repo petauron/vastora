@@ -46,8 +46,7 @@ catalog entry's label does not install, enroll, restart or upgrade an instance.
 ## Canonical repository migration
 
 Vastora imports `github.com/petauron/glivela` at an immutable checked commit.
-The Go package name remains `meridian`; there is no old-module alias, `replace`
-fallback or parallel implementation. A pinned pseudo-version permits this
+The Go package is `glivela` at the current pin. Vastora imports it directly. A pinned pseudo-version permits this
 dependency change without publishing a Glivela version solely for the rename.
 Historical tags retain their original module declarations and must not move.
 

@@ -125,7 +125,7 @@ func TestAgentReinstallLocalSettlementAcceptsOnlyUnclaimedWork(t *testing.T) {
 
 func TestAgentReinstallPlanBindsSuccessfulApplicationRestoreInput(t *testing.T) {
 	store, node := reinstallPlanFixture(t)
-	addReinstallApplication(t, store, node, "saved", meridianAppKey, "0.1.0-alpha.12", "install", "succeeded")
+	addReinstallApplication(t, store, node, "saved", glivelaAppKey, "0.1.0-alpha.12", "install", "succeeded")
 	ctx := context.Background()
 	previous, err := store.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {

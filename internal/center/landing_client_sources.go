@@ -7,8 +7,8 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
 var errLandingSourceReconciliation = errors.New("center: landing source authorization requires explicit repair")
@@ -16,8 +16,8 @@ var errLandingSourceReconciliation = errors.New("center: landing source authoriz
 const landingSourceReconciliationMessage = "Landing source authorization requires explicit repair; the previous applied plan is unchanged."
 
 // Freeze the shared landing authorization writer only during the authority
-// handover. After completion, Meridian grants still need that same queue.
-func meridianCutoverBlocksLandingChanges(ctx context.Context, queryer networkQueryer) (bool, error) {
+// handover. After completion, Glivela grants still need that same queue.
+func glivelaCutoverBlocksLandingChanges(ctx context.Context, queryer networkQueryer) (bool, error) {
 	var blocked bool
 	err := queryer.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_cutover
 		WHERE id=1 AND state IN ('backup','import','publish','project','verify','retire'))`).Scan(&blocked)
@@ -27,7 +27,7 @@ func meridianCutoverBlocksLandingChanges(ctx context.Context, queryer networkQue
 // Regenerate protocol capabilities from the union of independent purposes.
 // Old source snapshots stay referenced until route/session revocation succeeds.
 func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, landingID string) error {
-	if blocked, err := meridianCutoverBlocksLandingChanges(ctx, tx); err != nil {
+	if blocked, err := glivelaCutoverBlocksLandingChanges(ctx, tx); err != nil {
 		return err
 	} else if blocked {
 		return nil
@@ -135,7 +135,7 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 			return err
 		}
 		var peer landing.PeerIdentity
-		if json.Unmarshal(raw, &peer) != nil || (meridianruntime.Peer{EgressID: entryID, Identity: peer}).Validate() != nil {
+		if json.Unmarshal(raw, &peer) != nil || (glivelaruntime.Peer{EgressID: entryID, Identity: peer}).Validate() != nil {
 			rows.Close()
 			return errors.Join(errLandingSourceReconciliation, errors.New("center: invalid Glivela grant source snapshot"))
 		}
@@ -151,7 +151,7 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 			continue
 		}
 		var observed landing.PeerIdentity
-		if json.Unmarshal(observedJSON, &observed) == nil && (meridianruntime.Peer{EgressID: entryID, Identity: observed}).Validate() == nil && observed != peer {
+		if json.Unmarshal(observedJSON, &observed) == nil && (glivelaruntime.Peer{EgressID: entryID, Identity: observed}).Validate() == nil && observed != peer {
 			// Exact authenticated replacement evidence revokes the old address.
 			// Never authorize the replacement or rewrite the durable pin here.
 			continue

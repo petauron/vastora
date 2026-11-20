@@ -17,7 +17,7 @@ import (
 type Server struct {
 	installer         deployapi.HeadscaleInstaller
 	publicEntryProber deployapi.PublicEntryProber
-	meridianProber    deployapi.MeridianProber
+	glivelaProber     deployapi.GlivelaProber
 	centerUpdater     deployapi.CenterUpdater
 	remoteAccess      deployapi.CenterRemoteAccessManager
 	headscaleMu       sync.Mutex
@@ -54,7 +54,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/headscale/api-key/prepare", server.prepareHeadscaleAPIKeyRotation)
 	mux.HandleFunc("POST /v1/headscale/api-key/commit", server.commitHeadscaleAPIKeyRotation)
 	mux.HandleFunc("POST /v1/public-entry/probes", server.startPublicEntryProbe)
-	mux.HandleFunc("POST /v1/meridian/verify", server.verifyMeridianEntry)
+	mux.HandleFunc("POST /v1/meridian/verify", server.verifyGlivelaEntry)
 	mux.HandleFunc("DELETE /v1/public-entry/probes/{id}", server.stopPublicEntryProbe)
 	mux.HandleFunc("GET /v1/center/update", server.centerUpdateStatus)
 	mux.HandleFunc("POST /v1/center/update", server.startCenterUpdate)

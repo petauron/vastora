@@ -60,7 +60,7 @@ func (s *Store) readReinstallPreparation(ctx context.Context, tx *sql.Tx, agentI
 }
 
 // This is an approved package preparation, not a replay of the old deployment.
-// Meridian's existing installer pulls its audited image without creating a
+// Glivela's existing installer pulls its audited image without creating a
 // runtime. The recovery fence and original business state remain in place.
 func (s *Store) QueueAgentReinstallPreparation(ctx context.Context, agentID, adminID string, input AgentReinstallApplicationInput) (AgentReinstallPreparation, error) {
 	var result AgentReinstallPreparation
@@ -115,7 +115,7 @@ func (s *Store) QueueAgentReinstallPreparation(ctx context.Context, agentID, adm
 		return result, errors.New("center: approve the replacement network before preparing applications")
 	}
 	index := slices.IndexFunc(plan.Applications, func(app AgentReinstallApplication) bool { return app.ApplicationID == input.ApplicationID })
-	if index < 0 || plan.Applications[index].AppKey != meridianAppKey || plan.Applications[index].Recovery != "rebuild_configuration" {
+	if index < 0 || plan.Applications[index].AppKey != glivelaAppKey || plan.Applications[index].Recovery != "rebuild_configuration" {
 		return result, errors.New("center: only a reviewed Glivela package can be prepared")
 	}
 	source := plan.Applications[index]
@@ -168,7 +168,7 @@ func (s *Store) QueueAgentReinstallPreparation(ctx context.Context, agentID, adm
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	_, err = tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,operation,state,created_at,updated_at,application_id,service_address,runtime_generation,pre_dispatch_application_status)
- VALUES(?,?,?,?,?,?,'install','pending',?,?,?,?,?,(SELECT status FROM applications WHERE id=?))`, id, agentID, meridianAppKey, version, manifest, config, now, now, input.ApplicationID, address, platform.ApplicationRuntimeGeneration, input.ApplicationID)
+ VALUES(?,?,?,?,?,?,'install','pending',?,?,?,?,?,(SELECT status FROM applications WHERE id=?))`, id, agentID, glivelaAppKey, version, manifest, config, now, now, input.ApplicationID, address, platform.ApplicationRuntimeGeneration, input.ApplicationID)
 	if err != nil {
 		return result, err
 	}
