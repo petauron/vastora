@@ -55,9 +55,18 @@ type ArmEvidence struct {
 // ReconnectReport is observed by the restored Agent after a new boot. Center
 // compares it with the authenticated identity and its own pre-install record.
 type ReconnectReport struct {
-	TaskID  string            `json:"taskId"`
-	After   Inspection        `json:"after"`
-	Network StaticNetworkPlan `json:"network"`
+	TaskID     string             `json:"taskId"`
+	After      Inspection         `json:"after"`
+	Network    StaticNetworkPlan  `json:"network"`
+	Onboarding OnboardingEvidence `json:"onboarding"`
+}
+
+// OnboardingEvidence contains only digests, never SSH keys or Agent state.
+type OnboardingEvidence struct {
+	Username             string `json:"username"`
+	SSHPort              int    `json:"sshPort"`
+	AuthorizedKeysSHA256 string `json:"authorizedKeysSha256"`
+	AgentUnitSHA256      string `json:"agentUnitSha256"`
 }
 
 // ReconnectMarker contains no credential. It is written by the installer into
@@ -65,10 +74,12 @@ type ReconnectReport struct {
 type ReconnectMarker struct {
 	TaskID      string `json:"taskId"`
 	ExecutionID string `json:"executionId"`
+	Username    string `json:"username"`
+	SSHPort     int    `json:"sshPort"`
 }
 
 func (m ReconnectMarker) Validate() error {
-	if !safeAgentID.MatchString(m.TaskID) || !safeAgentID.MatchString(m.ExecutionID) {
+	if !safeAgentID.MatchString(m.TaskID) || !safeAgentID.MatchString(m.ExecutionID) || !safeUser.MatchString(m.Username) || m.SSHPort < 1 || m.SSHPort > 65535 {
 		return errors.New("reinstall: invalid reconnect marker")
 	}
 	return nil

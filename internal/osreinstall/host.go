@@ -150,7 +150,7 @@ func readOSReleaseIdentity(data []byte) (string, string) {
 // It does not install packages or change software sources.
 func MissingPrerequisites() []string {
 	missing := []string{}
-	for _, name := range []string{"bash", "curl", "grep", "gzip", "cpio", "ip", "lsblk", "blkid", "dpkg-deb", "grub-editenv", "grub-reboot"} {
+	for _, name := range []string{"bash", "curl", "grep", "gzip", "cpio", "ip", "ss", "systemctl", "lsblk", "blkid", "dpkg-deb", "grub-editenv", "grub-reboot"} {
 		if _, err := exec.LookPath(name); err != nil {
 			missing = append(missing, name)
 		}
