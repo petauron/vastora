@@ -19,17 +19,21 @@
   failed/interrupted required run or an explicitly requested benchmark. Main
   cache warming compiles only; PR checks and main CodeQL remain required.
 
-- Use Release Please v5, pinned to a reviewed full commit SHA, with the built-in
-  `GITHUB_TOKEN`. Do not add a PAT or a separate release-token secret. Grant only
-  the job permissions needed; never weaken branch protection to enable releases.
+- Use Release Please v5, pinned to a reviewed full commit SHA. Version PR
+  creation/updates use a short-lived, repository-scoped installation token from
+  the minimal-permission organization release GitHub App (`petauron-nova`:
+  `contents: write` and `pull-requests: write` via `RELEASE_APP_ID` and
+  `RELEASE_APP_PRIVATE_KEY`) so normal `pull_request` CI and CodeQL checks run
+  automatically; do not add a personal PAT. Actual release creation and asset
+  publication continue using the built-in `GITHUB_TOKEN`. Grant only the job
+  permissions needed; never weaken branch protection to enable releases.
 - Release through the generated version PR and the repository's Release Please
   config/manifest. Use Conventional Commits, including the final squash title;
   do not hide a releasable fix under a `ci:` or `chore:` title. Do not manually
   bump versions, move tags, or add a second tag-triggered release path.
 - Required checks must represent real checks on the exact version PR head SHA.
-  When token-created PRs do not trigger them, explicitly dispatch the existing
-  workflows. Metadata validation is a separate check, not a substitute for CI
-  or CodeQL; never manufacture successful required-check results.
+  Metadata validation is a separate check, not a substitute for CI or CodeQL;
+  never manufacture successful required-check results.
 - Publish only from an immutable, checked commit on protected `main`. Use the
   Release Please output SHA/tag throughout checkout, build, provenance and
   publication; fail closed on identity/version mismatches or failed checks.

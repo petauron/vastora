@@ -365,10 +365,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      actions: write
-      contents: write
-      issues: write
-      pull-requests: write
+      contents: read
     steps:
       - name: Check out release baseline metadata
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -380,11 +377,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: sh scripts/require-release-baseline.sh
 
+      - name: Mint short-lived release app token
+        id: release_app_token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Create or update the next release pull request without publishing
         id: release_pr_action
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         with:
-          token: ${{ github.token }}
+          token: ${{ steps.release_app_token.outputs.token }}
           target-branch: main
           skip-github-release: true
 
@@ -409,23 +415,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Record the checked version PR head
-        id: release_pr_head
-        if: steps.release_pr_action.outputs.prs_created == 'true'
-        run: echo "sha=$(git -C .release-pr rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
       - name: Validate release pull request metadata
         if: steps.release_pr_action.outputs.prs_created == 'true'
         env:
           BASE_SHA: ${{ steps.release_pr.outputs.base_sha }}
         run: scripts/validate-release-metadata.sh "$BASE_SHA" .release-pr
-
-      # Reuse exact-head PR checks, including approval-required runs. Dispatch
-      # only missing workflows; metadata validation never substitutes for CI.
-      - name: Dispatch required checks for the version PR
-        if: steps.release_pr_action.outputs.prs_created == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_BRANCH: ${{ steps.release_pr.outputs.head_branch }}
-          RELEASE_HEAD_SHA: ${{ steps.release_pr_head.outputs.sha }}
-        run: sh scripts/ensure-version-pr-checks.sh "$RELEASE_BRANCH" "$RELEASE_HEAD_SHA"
