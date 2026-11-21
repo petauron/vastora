@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0](https://github.com/petauron/vastora/compare/v0.1.0-alpha.473...v0.1.0) (2026-11-21)
+
+
+### Bug Fixes
+
+* **agent:** add exponential backoff for task stream retries and gRPC keepalive ([#1374](https://github.com/petauron/vastora/issues/1374)) ([b2d17a3](https://github.com/petauron/vastora/commit/b2d17a36eca4bbaffe4b43ff3056c01559bd493a))
+* **center:** ignore 81044 DNS not found error and verify publication ownership ([#1377](https://github.com/petauron/vastora/issues/1377)) ([f6609f8](https://github.com/petauron/vastora/commit/f6609f8452f8d5a94bfb4ded9939232f909fb6a4)), closes [#1302](https://github.com/petauron/vastora/issues/1302)
+
+
+### Miscellaneous Chores
+
+* **release:** graduate Vastora from alpha to 0.1.0 ([#1380](https://github.com/petauron/vastora/issues/1380)) ([5f9570a](https://github.com/petauron/vastora/commit/5f9570a98b8944a8e00084bb1a24467d1cf605b0)), closes [#1379](https://github.com/petauron/vastora/issues/1379)
+
 ## [0.1.0-alpha.473](https://github.com/petauron/vastora/compare/v0.1.0-alpha.472...v0.1.0-alpha.473) (2026-11-16)
 
 
