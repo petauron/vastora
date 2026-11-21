@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.0](https://github.com/petauron/vastora/compare/v0.1.0...v0.2.0) (2026-11-21)
+
+
+### Features
+
+* **backup:** add Center-host managed service restic backup controls ([#1385](https://github.com/petauron/vastora/issues/1385)) ([30dd07f](https://github.com/petauron/vastora/commit/30dd07fb1d0d160c9af6515d03f3899acdaffa69))
+
+
+### Bug Fixes
+
+* **onboarding:** verify SSH policy and Agent unit after node recovery ([#1382](https://github.com/petauron/vastora/issues/1382)) ([a125d38](https://github.com/petauron/vastora/commit/a125d38708d6d7324360c452dac5ed868dc629ce))
+* **osreinstall:** mask and purge qemu-guest-agent after Debian 13 KVM reinstall ([#1383](https://github.com/petauron/vastora/issues/1383)) ([d6e6c4a](https://github.com/petauron/vastora/commit/d6e6c4afaa9584eaa5b5c142ee59b72f3b40339b))
+
 ## [0.1.0](https://github.com/petauron/vastora/compare/v0.1.0-alpha.473...v0.1.0) (2026-11-21)
 
 
