@@ -9,3 +9,10 @@ web/dist
 !catalog/trust/README.md
 LICENSE
 NOTICE
+
+tasks/
+archive/
+workspaces/
+docs/
+deploy/center/tls/
+deploy/center/generated/
