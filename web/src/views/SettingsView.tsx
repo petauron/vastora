@@ -18,6 +18,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { AgentUpdateCard } from "./AgentUpdateCard";
 import { CenterUpdateCard } from "./CenterUpdateCard";
+import { HostBackupCard } from "./HostBackupCard";
 import { TailscaleUpdateCard } from "./TailscaleUpdateCard";
 import { isInstalledApplication } from "./appAccess";
 import { ManagedDomainSettings } from "./ManagedDomainSettings";
@@ -95,6 +96,7 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
           <p className="mt-4 text-xs leading-5 text-muted-foreground">{copy(language, "恢复时先停止 Center，再使用 vastora center restore 将备份恢复到新的空数据目录。", "To restore, stop Center and use vastora center restore with a new empty data directory.")}</p>
         </CardContent>
       </Card>
+      {section === "data" ? <HostBackupCard language={language} /> : null}
       </section>
       <section className="mac-settings-panel" id="settings-assistant" hidden={section !== "assistant"} aria-label={copy(language, "AI 助手", "AI Assistant")}>
         <PageHeading title={copy(language, "AI 助手", "AI Assistant")} />

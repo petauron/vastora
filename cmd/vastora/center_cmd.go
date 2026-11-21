@@ -286,6 +286,7 @@ func runCenter(arguments []string) error {
 			}
 			centerServer.WithInfrastructureManager(installer)
 			centerServer.WithCenterUpdater(installer)
+			centerServer.WithHostBackupManager(installer)
 			go centerServer.RunSystemEndpointAliasMaintenance(maintenanceContext, time.Minute, func(err error) {
 				fmt.Fprintf(os.Stderr, "Center system endpoint alias maintenance: %v\n", err)
 			})

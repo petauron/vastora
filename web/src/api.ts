@@ -1,3 +1,4 @@
+import type { HostBackupSettings, HostBackupStatus } from "./host-backup-types";
 import type { ManagedDomain, ManagedDomainInput } from "./managed-domain-types";
 import type { NodeSiteCertificate, NodeSiteCertificateInput } from "./node-site-types";
 type OSReinstallTask = { id: string; agentId: string; state: "pending" | "running" | "backup_ready" | "armed" | "succeeded" | "failed" | "unknown" | "cancelled"; error?: string; canRecheck: boolean; updatedAt: string };
@@ -94,6 +95,9 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
+  hostBackup: (signal?: AbortSignal) => request<HostBackupStatus>("/api/v1/host-backup", { signal }),
+  configureHostBackup: (settings: HostBackupSettings & { password?: string }) => request<HostBackupStatus>("/api/v1/host-backup", { method: "PUT", body: JSON.stringify(settings) }),
+  startHostBackup: () => request<HostBackupStatus>("/api/v1/host-backup", { method: "POST", body: "{}" }),
   managedDomains: (applicationId: string, signal?: AbortSignal) => request<{ domains: ManagedDomain[] }>(`/api/v1/managed-domains?applicationId=${encodeURIComponent(applicationId)}`, { signal }),
   ensureManagedDomain: (input: ManagedDomainInput) => request<ManagedDomain>("/api/v1/managed-domains", { method: "POST", body: JSON.stringify(input) }),
   nodeSiteCertificate: (id: string, signal?: AbortSignal) => request<NodeSiteCertificate>(`/api/v1/applications/${encodeURIComponent(id)}/node-site-certificate`, { signal }),

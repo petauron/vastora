@@ -15,6 +15,7 @@ import (
 )
 
 type Server struct {
+	hostBackups       deployapi.HostBackupManager
 	installer         deployapi.HeadscaleInstaller
 	publicEntryProber deployapi.PublicEntryProber
 	glivelaProber     deployapi.GlivelaProber
@@ -44,6 +45,9 @@ func (server *Server) WithCenterRemoteAccessManager(manager deployapi.CenterRemo
 
 func (server *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/host-backup", server.hostBackup)
+	mux.HandleFunc("PUT /v1/host-backup", server.hostBackup)
+	mux.HandleFunc("POST /v1/host-backup", server.hostBackup)
 	mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
 	})

@@ -76,6 +76,7 @@ func runDeployer(arguments []string) error {
 		WithGlivelaProber(&deployer.GlivelaProbeService{Socket: *dockerSocket, RuntimeImage: *runtimeImage}).
 		WithPublicEntryProber(deployer.NewPublicEntryProbeService(*dockerSocket, *runtimeImage)).
 		WithCenterRemoteAccessManager(deployer.DockerCenterRemoteAccessManager{Socket: *dockerSocket}).
+		WithHostBackupManager(&deployer.FileHostBackupManager{InstallDir: *centerInstallDir}).
 		WithCenterUpdater(deployer.FileCenterUpdater{InstallDir: *centerInstallDir, RuntimeImage: *runtimeImage})
 	return deployer.ServeUnix(*socket, *centerUID, *centerGID, server.Handler())
 }
