@@ -15,6 +15,7 @@ import (
 // outage must not permanently kill the task receiver while heartbeats survive.
 // Invalid evidence/acknowledgements still stop closed; no business task is replayed.
 func (c Client) transferLegacyReceiptsBeforeTasks(ctx context.Context, store *Store, report func(error)) bool {
+	var retry taskRetryBackoff
 	for {
 		err := c.TransferLegacyReceipts(ctx, store)
 		if err == nil {
@@ -33,7 +34,7 @@ func (c Client) transferLegacyReceiptsBeforeTasks(ctx context.Context, store *St
 		if errors.As(err, &response) {
 			retryable = response.status == http.StatusTooManyRequests || response.status == http.StatusBadGateway || response.status == http.StatusServiceUnavailable || response.status == http.StatusGatewayTimeout
 		}
-		if !retryable || !waitForTaskRetry(ctx) {
+		if !retryable || !retry.wait(ctx) {
 			return false
 		}
 	}

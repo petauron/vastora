@@ -38,6 +38,7 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 			report(err)
 		}
 	}
+	var retry taskRetryBackoff
 	for {
 		session, err := newExecutionSessionID()
 		if err != nil {
@@ -47,11 +48,12 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 		c.executionSession = session
 		for {
 			if err := c.registerExecutionSession(ctx, store); err == nil {
+				retry.reset()
 				break
 			} else {
 				reportError(err)
 			}
-			if !waitForTaskRetry(ctx) {
+			if !retry.wait(ctx) {
 				return
 			}
 		}
@@ -59,11 +61,12 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 		// authenticated post-install identity and network to Center.
 		for {
 			if err := c.reinstallReconnect(ctx, store); err == nil {
+				retry.reset()
 				break
 			} else {
 				reportError(err)
 			}
-			if !waitForTaskRetry(ctx) {
+			if !retry.wait(ctx) {
 				return
 			}
 		}
@@ -72,10 +75,11 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 		}
 		terminal := false
 		for !terminal && ctx.Err() == nil {
+			started := time.Now()
 			stream, connection, closeStream, err := c.openTaskStream(ctx, store)
 			if err != nil {
 				reportError(err)
-				if !waitForTaskRetry(ctx) {
+				if !retry.wait(ctx) {
 					return
 				}
 				continue
@@ -99,6 +103,7 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 					err = decodeErr
 					break
 				}
+				retry.reset()
 				if c.processTaskWithLease(ctx, store, *task, report) {
 					terminal = true
 					break
@@ -108,12 +113,18 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 			if terminal || ctx.Err() != nil {
 				break
 			}
+			if time.Since(started) > time.Minute {
+				retry.reset()
+			}
 			reportError(agentGRPCError(err))
-			if !waitForTaskRetry(ctx) {
+			if !retry.wait(ctx) {
 				return
 			}
 		}
-		if !waitForTaskRetry(ctx) {
+		if terminal {
+			retry.reset()
+		}
+		if !retry.wait(ctx) {
 			return
 		}
 	}
@@ -264,11 +275,31 @@ func (c Client) renewTaskLeaseLoop(ctx context.Context, store *Store, task Deplo
 	}
 }
 
-func waitForTaskRetry(ctx context.Context) bool {
+const (
+	taskRetryInitialDelay = time.Second
+	taskRetryMaxDelay     = 30 * time.Second
+)
+
+type taskRetryBackoff struct {
+	delay time.Duration
+}
+
+func (b *taskRetryBackoff) reset() {
+	b.delay = taskRetryInitialDelay
+}
+
+func (b *taskRetryBackoff) wait(ctx context.Context) bool {
+	delay := b.delay
+	if delay < taskRetryInitialDelay {
+		delay = taskRetryInitialDelay
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return false
-	case <-time.After(time.Second):
+	case <-timer.C:
+		b.delay = min(delay*2, taskRetryMaxDelay)
 		return true
 	}
 }
