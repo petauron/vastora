@@ -58,7 +58,7 @@ sed -e '/^check_mail$/d' -e '/^\[\[ \$2 -eq 4 \]\]&&check_dnsbl /d' -e '/^show_m
 bash /tmp/check.sh -i "$1" "$2" -E -n -p -f -j > /tmp/report.json || [ "$?" -eq 1 ]
 cat /tmp/report.json
 if [ "$2" = '-4' ] && curl --proto '=https' --tlsv1.2 --ipv4 --interface "$1" --noproxy '*' --max-time 12 --max-filesize 16384 -fsS https://my.ippure.com/v1/info -o /tmp/ippure.json 2>/dev/null; then
-  printf '\n__MERIDIAN_IPPURE__\n'
+  printf '\n__GLIVELA_IPPURE__\n'
   cat /tmp/ippure.json
 fi
 `
@@ -72,7 +72,7 @@ func ipQualityContainerOptions(task ipquality.Task) client.ContainerCreateOption
 	return client.ContainerCreateOptions{
 		Config: &container.Config{Image: ipQualityImage, User: "65534:65534", WorkingDir: "/tmp", Env: []string{"TERM=dumb", "HOME=/tmp"},
 			Entrypoint: []string{"timeout", "-s", "KILL", "210", "/bin/sh", "-c", ipQualityScript, "ip-quality"}, Cmd: []string{task.BindAddress, family},
-			Labels: map[string]string{"io.vastora.diagnostic": "ip-quality", "io.vastora.application": "meridian"}},
+			Labels: map[string]string{"io.vastora.diagnostic": "ip-quality", "io.vastora.application": "glivela"}},
 		HostConfig: &container.HostConfig{NetworkMode: "host", AutoRemove: false, ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"},
 			Tmpfs: map[string]string{"/tmp": "rw,noexec,nosuid,size=32m,mode=1777"}, LogConfig: container.LogConfig{Type: "none"},
 			Resources: container.Resources{Memory: 128 * 1024 * 1024, MemorySwap: 128 * 1024 * 1024, NanoCPUs: 500000000, PidsLimit: &pids}},
@@ -164,7 +164,7 @@ func (e ApplicationExecutor) CheckIPQuality(parent context.Context, task ipquali
 			return ipquality.Result{Error: "detection_failed"}, nil
 		}
 	}
-	parts := bytes.SplitN(stdout, []byte("\n__MERIDIAN_IPPURE__\n"), 2)
+	parts := bytes.SplitN(stdout, []byte("\n__GLIVELA_IPPURE__\n"), 2)
 	report, parseErr := ipquality.Parse(parts[0], task.Address)
 	if parseErr != nil {
 		return ipquality.Result{Error: parseErr.Error()}, nil

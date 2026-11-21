@@ -277,7 +277,7 @@ func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID str
 		input.Link = &nodediagnostics.LinkBandwidthTask{}
 		err = json.Unmarshal([]byte(targetsJSON), input.Link)
 		if err == nil {
-			input.LinkAuth, err = s.openMeridianLinkAuth(id, targetsJSON)
+			input.LinkAuth, err = s.openGlivelaLinkAuth(id, targetsJSON)
 		}
 	} else if kind == nodediagnostics.HostProfileKind {
 		switch targetsJSON {
@@ -358,7 +358,7 @@ func (s *Store) completeNodeDiagnostic(ctx context.Context, commit projectionCom
 		diagnosticError = envelope.NodeDiagnostics.Error
 		if diagnosticError == "" && (kind == nodediagnostics.LinkBandwidthKind || kind == nodediagnostics.LinkServerKind) {
 			var link nodediagnostics.LinkBandwidthTask
-			if json.Unmarshal([]byte(targetsJSON), &link) != nil || !currentMeridianLinkPeers(ctx, tx, link) {
+			if json.Unmarshal([]byte(targetsJSON), &link) != nil || !currentGlivelaLinkPeers(ctx, tx, link) {
 				diagnosticError = "peer_identity_changed"
 				envelope.NodeDiagnostics = &nodediagnostics.Result{Error: diagnosticError}
 			}

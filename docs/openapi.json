@@ -2008,6 +2008,18 @@
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
+                          "nodeSiteStatus": {
+                            "type": "string",
+                            "enum": [
+                              "unconfigured",
+                              "issuing",
+                              "pending",
+                              "ready",
+                              "action_required",
+                              "rolled_back"
+                            ],
+                            "description": "Read-only managed website summary. ready requires a running application, matching site ownership, confirmed desired/applied revision and an unexpired certificate. Does not create a publication or probe a node."
+                          },
                           "id": {
                             "type": "string"
                           },
@@ -9708,7 +9720,7 @@
             }
           }
         },
-        "description": "Activate the reviewed replacement network profile and one restored Meridian service binding after exact runtime and applicable shared-listener receipts. Atomically retain original address approval and activation evidence. Repeated requests return the same receipt; changed bindings require inspection. Does not alter DNS, landing identities, account usage or business readiness, and never releases the recovery fence."
+        "description": "Activate the reviewed replacement network profile and one restored Glivela service binding after exact runtime and applicable shared-listener receipts. Atomically retain original address approval and activation evidence. Repeated requests return the same receipt; changed bindings require inspection. Does not alter DNS, landing identities, account usage or business readiness, and never releases the recovery fence."
       }
     },
     "/api/v1/agents/{id}/reinstall/complete": {
@@ -10083,7 +10095,7 @@
             }
           }
         },
-        "description": "Restore the reviewed saved shared listener after native Meridian runtime restoration. Uses only the approved backend and public bind address; other shared applications or a gateway require restoration first. A listener receipt does not verify public reachability, publish subscriptions or release the recovery fence."
+        "description": "Restore the reviewed saved shared listener after native Glivela runtime restoration. Uses only the approved backend and public bind address; other shared applications or a gateway require restoration first. A listener receipt does not verify public reachability, publish subscriptions or release the recovery fence."
       }
     },
     "/api/v1/agents/{id}/reinstall-applications/current/verify": {

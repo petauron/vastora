@@ -297,6 +297,11 @@ func (driver *CaddyGatewayDriver) ReloadSites(ctx context.Context) error {
 	if err := driver.load(ctx, raw); err != nil {
 		return errors.New("agent: shared Caddy rejected the website configuration")
 	}
+	if driver.SiteApplied != nil {
+		if err := driver.SiteApplied(ctx, raw); err != nil {
+			return err
+		}
+	}
 	if len(sites) == 0 && desired.Revision == 0 && driver.SiteIdle != nil {
 		return driver.SiteIdle(ctx)
 	}

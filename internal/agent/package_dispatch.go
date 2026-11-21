@@ -174,10 +174,14 @@ func (e ApplicationExecutor) PackageCapabilities(dockerAvailable bool) (map[stri
 	}
 	capabilities := []string{"root", "host-network", "host-path", "devices"}
 	if versions["systemd"] == 2 || versions["native"] == 2 {
-		capabilities = append(capabilities, "native-services")
+		// Recognize the permission even on read-only hosts; the socket enforces host eligibility.
+		capabilities = append(capabilities, "native-services", "host-tcp-budget")
 		if e.Store != nil && e.Store.sharedCaddy != nil {
 			capabilities = append(capabilities, "shared-caddy")
 		}
+	}
+	if dockerAvailable {
+		capabilities = append(capabilities, "cpa-tunnel-identity")
 	}
 	return versions, capabilities
 }
@@ -200,7 +204,7 @@ func (e ApplicationExecutor) Adopt(ctx context.Context, task DeploymentTask) (Ap
 	if task.ManifestSHA256 == "" || task.PackageRevision != 0 {
 		return ApplicationTaskResult{}, errors.New("agent: adoption requires the original historical manifest digest")
 	}
-	if task.DormantRuntime && task.AppKey != meridianKey {
+	if task.DormantRuntime && task.AppKey != legacyProxyAppKey {
 		return ApplicationTaskResult{}, errors.New("agent: dormant adoption is reserved for Glivela")
 	}
 	digest := sha256.Sum256(task.HistoricalManifest)
@@ -234,7 +238,7 @@ func (e ApplicationExecutor) Adopt(ctx context.Context, task DeploymentTask) (Ap
 		defer docker.Close()
 		backend = &DockerPackageBackend{Docker: docker, StateDirectory: e.packageDirectory()}
 		if task.DormantRuntime {
-			receipt, err = e.historicalDormantMeridianResources(ctx, task, docker)
+			receipt, err = e.historicalDormantGlivelaResources(ctx, task, docker)
 		} else {
 			receipt, err = historicalDockerResources(ctx, task, history, docker, e.packageDirectory())
 		}

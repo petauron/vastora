@@ -39,7 +39,7 @@ func TestAgentReinstallRejectsUnreviewedOrChangedPlan(t *testing.T) {
 	if _, err := store.CreateAgentReconnectEnrollment(ctx, node.ID, "unknown-admin", input); err == nil {
 		t.Fatal("unknown administrator accepted")
 	}
-	addReinstallApplication(t, store, node, "changed-app", meridianAppKey, "0.1.0-alpha.12", "install", "succeeded")
+	addReinstallApplication(t, store, node, "changed-app", glivelaAppKey, "0.1.0-alpha.12", "install", "succeeded")
 	if _, err := store.CreateAgentReconnectEnrollment(ctx, node.ID, "reinstall-review-admin", input); err == nil {
 		t.Fatal("stale review accepted")
 	}
@@ -91,7 +91,7 @@ func TestAgentReinstallReplaysGrantAfterCenterRestart(t *testing.T) {
 func TestAgentReinstallFencesPendingWorkAndRuntimeRebuild(t *testing.T) {
 	store, node := prepareReinstallNode(t)
 	ctx := context.Background()
-	addReinstallApplication(t, store, node, "saved-app", meridianAppKey, "0.1.0-alpha.12", "install", "succeeded")
+	addReinstallApplication(t, store, node, "saved-app", glivelaAppKey, "0.1.0-alpha.12", "install", "succeeded")
 	addReinstallApplication(t, store, node, "pending-app", senulunAgentAppKey, "0.1.0-alpha.5", "install", "pending")
 	if _, err := store.db.Exec(`INSERT INTO agent_network_profiles(agent_id,service_address,lan_address,enabled_kinds_json,direct_public,confirmed_at,candidate_observed_at) VALUES(?,'10.0.0.7','10.0.0.7','["lan"]',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`, node.ID); err != nil {
 		t.Fatal(err)

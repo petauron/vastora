@@ -14,6 +14,8 @@ import (
 
 var errVLESSVerificationNotApplicable = errors.New("center: VLESS is disabled; its TLS check does not apply to HY2")
 
+const publicationShared443TLSUnhealthy = "exact-SNI TLS 1.3 health check did not pass"
+
 // VerifyPublication performs an on-demand DNS and reachability check from the
 // Center. A check that has not passed remains pending rather than being marked
 // failed, because DNS and certificate propagation are expected to be eventual.
@@ -173,10 +175,10 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 		}
 		if publication.Kind == publicationShared443 {
 			if err := verifyShared443TLS(ctx, verificationAddress, publication.SNIHostname); err != nil {
-				return s.recordPublicationVerification(ctx, id, expectedRevision, "exact-SNI TLS 1.3 health check did not pass")
+				return s.recordPublicationVerification(ctx, id, expectedRevision, publicationShared443TLSUnhealthy)
 			}
-			if appKey == meridianAppKey {
-				return s.verifyMeridianPublication(ctx, publication, expectedRevision)
+			if appKey == glivelaAppKey {
+				return s.verifyGlivelaPublication(ctx, publication, expectedRevision)
 			}
 			return s.markPublicationReady(ctx, id, expectedRevision)
 		}
@@ -362,7 +364,7 @@ func (s *Store) markPublicationReadyChecked(ctx context.Context, id string, expe
 		if err := s.retireMigratedTunnelConnector(ctx, tx, id, readyAt); err != nil {
 			return PublicationView{}, err
 		}
-		if err := s.reconcileMeridianCutoverInTx(ctx, tx, readyAt.Format(time.RFC3339Nano)); err != nil {
+		if err := s.reconcileGlivelaCutoverInTx(ctx, tx, readyAt.Format(time.RFC3339Nano)); err != nil {
 			return PublicationView{}, err
 		}
 	}

@@ -319,7 +319,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	} else if c.Capabilities.LandingOnly && !landingOnlyTaskAllowed(task.Kind) && !nativeLifecycle {
 		err = errors.New("agent: task is not authorized for a landing-only node")
 	} else if task.Kind == "landing.server.apply" || task.Kind == "landing.proxy.apply" || task.XrayRecovery != nil ||
-		task.MeridianRuntime != nil || task.MeridianLegacyRetire != nil || task.MeridianLegacyExport != nil || task.MeridianAcceptance != nil ||
+		task.GlivelaRuntime != nil || task.GlivelaLegacyRetire != nil || task.GlivelaLegacyExport != nil || task.GlivelaAcceptance != nil ||
 		task.ApplicationCommand != nil || task.SubscriptionCommand != nil || task.ClientCommand != nil || task.NodeCommand != nil || task.ControllerCommand != nil || task.ProtocolCommand != nil {
 		// These fields are RealityCommandTask, ThreeXUIClientCommandTask,
 		// ThreeXUINodeCommandTask, ThreeXUIControllerCommandTask and the
@@ -443,22 +443,22 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			}
 		case nodediagnostics.LinkServerKind:
 			checker, ok := c.Executor.(interface {
-				CheckMeridianLinkServer(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+				CheckGlivelaLinkServer(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
 			})
-			if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
+			if !ok || !c.Capabilities.GlivelaLinkBandwidth || task.NodeDiagnostics == nil {
 				err = errors.New("agent: Glivela link server is unavailable")
 			} else {
-				value, checkErr := checker.CheckMeridianLinkServer(ctx, *task.NodeDiagnostics)
+				value, checkErr := checker.CheckGlivelaLinkServer(ctx, *task.NodeDiagnostics)
 				result.NodeDiagnostics, err = &value, checkErr
 			}
 		case nodediagnostics.LinkBandwidthKind:
 			checker, ok := c.Executor.(interface {
-				CheckMeridianLinkBandwidth(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+				CheckGlivelaLinkBandwidth(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
 			})
-			if !ok || !c.Capabilities.MeridianLinkBandwidth || task.NodeDiagnostics == nil {
+			if !ok || !c.Capabilities.GlivelaLinkBandwidth || task.NodeDiagnostics == nil {
 				err = errors.New("agent: Glivela link bandwidth is unavailable")
 			} else {
-				value, checkErr := checker.CheckMeridianLinkBandwidth(ctx, *task.NodeDiagnostics)
+				value, checkErr := checker.CheckGlivelaLinkBandwidth(ctx, *task.NodeDiagnostics)
 				result.NodeDiagnostics, err = &value, checkErr
 			}
 		case nodediagnostics.HostProfileKind:

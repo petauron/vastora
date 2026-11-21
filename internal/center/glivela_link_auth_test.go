@@ -1,0 +1,77 @@
+package center
+
+import (
+	"bytes"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
+	"testing"
+
+	"github.com/petauron/vastora/internal/nodediagnostics"
+)
+
+func TestGlivelaLinkAuthIsSeparateEncryptedAndTaskBound(t *testing.T) {
+	client, server, err := newGlivelaLinkAuth()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubBlock, _ := pem.Decode([]byte(client.KeyPEM))
+	privateBlock, _ := pem.Decode([]byte(server.KeyPEM))
+	pub, err := x509.ParsePKIXPublicKey(pubBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	private, err := x509.ParsePKCS1PrivateKey(privateBlock.Bytes)
+	if err != nil || !pub.(*rsa.PublicKey).Equal(&private.PublicKey) {
+		t.Fatal("invalid iperf RSA pair")
+	}
+	hash := sha256.Sum256([]byte("{meridian}" + client.Password))
+	if server.PasswordHash != hex.EncodeToString(hash[:]) || server.Password != "" || client.PasswordHash != "" {
+		t.Fatal("iperf credentials crossed roles")
+	}
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	for _, auth := range []nodediagnostics.LinkBandwidthAuth{client, server} {
+		stored, err := store.sealGlivelaLink("probe", nodediagnostics.LinkBandwidthTask{}, auth)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain, _ := json.Marshal(auth)
+		if bytes.Contains(stored, plain) || bytes.Contains(stored, []byte(client.Password)) || bytes.Contains(stored, []byte("PRIVATE KEY")) {
+			t.Fatal("plaintext authentication persisted")
+		}
+		opened, err := store.openGlivelaLinkAuth("probe", string(stored))
+		if err != nil || *opened != auth {
+			t.Fatalf("auth readback failed: %v", err)
+		}
+		if _, err := store.openGlivelaLinkAuth("other-probe", string(stored)); err == nil {
+			t.Fatal("ciphertext replay accepted for another task")
+		}
+	}
+}
+
+func TestGlivelaLinkAuthUsesIndependent256BitProtocolTokens(t *testing.T) {
+	seen := map[string]bool{}
+	for range 3 {
+		client, server, err := newGlivelaLinkAuth()
+		if err != nil {
+			t.Fatal(err)
+		}
+		token, err := base64.RawURLEncoding.Strict().DecodeString(client.Password)
+		if err != nil || len(token) != nodediagnostics.LinkBandwidthCredentialBytes || base64.RawURLEncoding.EncodeToString(token) != client.Password {
+			t.Fatal("probe credential is not a canonical 256-bit random token")
+		}
+		if seen[client.Password] {
+			t.Fatal("independent probes reused a credential")
+		}
+		seen[client.Password] = true
+		hash := sha256.Sum256([]byte("{meridian}" + client.Password))
+		if server.PasswordHash != hex.EncodeToString(hash[:]) || server.Password != "" || client.PasswordHash != "" {
+			t.Fatal("fixed-entropy credentials no longer match the iperf3 wire format")
+		}
+	}
+}

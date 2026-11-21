@@ -43,7 +43,7 @@ func (s *Store) reinstallAccessTarget(ctx context.Context, tx *sql.Tx, agentID, 
 	if task == nil {
 		return "", nil, errExecutionAuthorization
 	}
-	if _, err := s.currentReinstallRuntimeObservation(ctx, tx, runtimeID, *task.MeridianRuntime); err != nil {
+	if _, err := s.currentReinstallRuntimeObservation(ctx, tx, runtimeID, *task.GlivelaRuntime); err != nil {
 		return "", nil, err
 	}
 	if shared || listenerID != "" {
@@ -177,14 +177,14 @@ func (s *Store) ActivateAgentReinstallAccess(ctx context.Context, agentID, admin
 	if _, err = tx.ExecContext(ctx, `UPDATE meridian_endpoints SET listen_address=?,updated_at=? WHERE id=?`, profile.ServiceAddress, now.Format(time.RFC3339Nano), endpointID); err != nil {
 		return result, err
 	}
-	update, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,observed_listen=?,container_port=?,host_port=?,protocol='tcp',app_protocol=?,status='degraded',last_error='Reinstall recovery: client access verification pending',updated_at=? WHERE id=? AND application_id=? AND status<>'stopped'`, endpoint, profile.ServiceAddress, port, port, meridianEntryProtocol, now.Format(time.RFC3339Nano), serviceID, input.ApplicationID)
+	update, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,observed_listen=?,container_port=?,host_port=?,protocol='tcp',app_protocol=?,status='degraded',last_error='Reinstall recovery: client access verification pending',updated_at=? WHERE id=? AND application_id=? AND status<>'stopped'`, endpoint, profile.ServiceAddress, port, port, glivelaEntryProtocol, now.Format(time.RFC3339Nano), serviceID, input.ApplicationID)
 	if err != nil {
 		return result, err
 	}
 	if n, _ := update.RowsAffected(); n != 1 {
 		return result, errExecutionAuthorization
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE applications SET image=?,status='running',updated_at=? WHERE id=? AND node_id=?`, task.MeridianRuntime.ImageReference, now.Format(time.RFC3339Nano), input.ApplicationID, agentID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE applications SET image=?,status='running',updated_at=? WHERE id=? AND node_id=?`, task.GlivelaRuntime.ImageReference, now.Format(time.RFC3339Nano), input.ApplicationID, agentID); err != nil {
 		return result, err
 	}
 	// The address projection must still compile to the exact task already applied.

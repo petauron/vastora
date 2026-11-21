@@ -31,6 +31,7 @@ type CaddyGatewayDriver struct {
 	// gateway reload includes it; a website never owns a separate /load writer.
 	Sites         func(context.Context) ([]CaddySite, error)
 	SiteRuntime   func(context.Context, gateway.DesiredState, []CaddySite) error
+	SiteApplied   func(context.Context, []byte) error
 	SiteIdle      func(context.Context) error
 	SiteContainer bool
 
@@ -304,6 +305,7 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 		}
 		httpRoutes := make([]caddyRoute, 0)
 		httpsRoutes := make([]caddyRoute, 0)
+		tlsHosts := make([]string, 0)
 		redirectHosts := map[string]bool{}
 		for _, route := range desired.Routes {
 			if route.ListenerKind != listener.Kind {
@@ -346,6 +348,7 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 				}
 				httpsRoutes = append(httpsRoutes, candidate)
 				if !redirectHosts[route.Hostname] {
+					tlsHosts = append(tlsHosts, route.Hostname)
 					redirect := map[string]any{"handler": "static_response", "status_code": 308, "headers": map[string][]string{"Location": {"https://{http.request.host}{http.request.uri}"}}}
 					httpRoutes = append(httpRoutes, caddyRoute{Match: []map[string]any{{"host": []string{route.Hostname}}}, Handle: []map[string]any{redirect}, Terminal: true})
 					redirectHosts[route.Hostname] = true
@@ -362,7 +365,13 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 			}
 		}
 		if len(httpsRoutes) != 0 {
-			servers["vastora-"+listener.Kind+"-https"] = map[string]any{"listen": []string{net.JoinHostPort("0.0.0.0", strconv.Itoa(internalHTTPSPort))}, "routes": httpsRoutes, "tls_connection_policies": []map[string]any{{}}}
+			// Reject unmatched SNI at the same stage as the local TLS origin,
+			// before certificate selection exposes a different TLS alert record.
+			policies := []map[string]any{
+				{"match": map[string]any{"sni": tlsHosts}},
+				{"drop": true},
+			}
+			servers["vastora-"+listener.Kind+"-https"] = map[string]any{"listen": []string{net.JoinHostPort("0.0.0.0", strconv.Itoa(internalHTTPSPort))}, "routes": httpsRoutes, "tls_connection_policies": policies}
 		}
 	}
 	if len(localRoutes) != 0 {

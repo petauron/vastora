@@ -146,7 +146,7 @@ func TestAgentReinstallWorkRevisionBindsConfigurationAndExecutionEvidence(t *tes
 	} {
 		t.Run(mutation, func(t *testing.T) {
 			store, node := reinstallPlanFixture(t)
-			addReinstallApplication(t, store, node, "saved", meridianAppKey, "0.1.0-alpha.12", "install", "pending")
+			addReinstallApplication(t, store, node, "saved", glivelaAppKey, "0.1.0-alpha.12", "install", "pending")
 			if _, err := store.db.Exec(`INSERT INTO gateway_states(gateway_node_id,desired_revision,desired_json,status,updated_at) VALUES(?,1,'{}','pending','')`, node.ID); err != nil {
 				t.Fatal(err)
 			}

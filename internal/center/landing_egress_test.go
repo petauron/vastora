@@ -8,7 +8,7 @@ import (
 )
 
 func TestLandingEgressPreservesGrantsAndFencesOldExecutors(t *testing.T) {
-	store, entry, egress := openMeridianLandingSourcesFixture(t)
+	store, entry, egress := openGlivelaLandingSourcesFixture(t)
 	ctx := context.Background()
 	for _, statement := range []string{
 		`UPDATE meridian_cutover SET state='complete',subscription_authority='meridian' WHERE id=1`,

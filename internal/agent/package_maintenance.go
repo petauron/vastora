@@ -296,6 +296,11 @@ func (b *DockerPackageBackend) Resume(ctx context.Context, task DeploymentTask, 
 	if err := b.Inspect(ctx, task, receipt); err != nil {
 		return err
 	}
+	if receipt.CPAIngress != nil {
+		if err := (cpaProxyManager{Docker: b.Docker, StateDirectory: b.StateDirectory}).sync(ctx, receipt, true, func() error { return (PackageExecutor{StateDirectory: b.StateDirectory}).save(receipt) }); err != nil {
+			return err
+		}
+	}
 	// Backup stops dependents first. Resume their dependencies first.
 	for i := len(b.resumeIDs) - 1; i >= 0; i-- {
 		id := b.resumeIDs[i]

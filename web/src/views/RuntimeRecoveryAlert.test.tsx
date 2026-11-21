@@ -66,9 +66,9 @@ it.each(["project", "verify", "retire"] as const)("keeps generic application rec
   const data = emptyAppData({ version: "test", agentInstallerAvailable: false, agentConnectionMode: "lan", agentConnectUrl: "https://center.example" });
   const agent = { ...agentFixture(), runtimeRecoveryApplications: [{ appKey: "vastora-official/meridian", applicationId: "meridian", reason: "state_incomplete" as const }] };
   data.applications = [{ id: "meridian", name: "Glivela", nodeId: agent.id, siteId: "site-a", appKey: "vastora-official/meridian", role: "worker", status: "failed", image: "", runtime: "docker", updateAvailable: false, createdAt: "", updatedAt: "" }];
-  data.meridian.cutover.state = state;
-  data.meridian.cutover.subscriptionAuthority = "meridian";
-  data.meridian.endpoints = [{ applicationId: "meridian", nodeId: agent.id, legacyRetired: false } as typeof data.meridian.endpoints[number]];
+  data.glivela.cutover.state = state;
+  data.glivela.cutover.subscriptionAuthority = "meridian";
+  data.glivela.endpoints = [{ applicationId: "meridian", nodeId: agent.id, legacyRetired: false } as typeof data.glivela.endpoints[number]];
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -77,14 +77,14 @@ it.each(["project", "verify", "retire"] as const)("keeps generic application rec
   expect(container.textContent).not.toContain("Explicit config recovery");
   expect(container.textContent).toContain("Application recovery blocked");
   expect(container.textContent).toContain("View apps");
-  data.meridian.endpoints[0].legacyRetired = true;
+  data.glivela.endpoints[0].legacyRetired = true;
   render();
   expect(container.textContent).not.toContain("Explicit config recovery");
-  data.meridian.endpoints[0].legacyRetired = false;
-  data.meridian.cutover.subscriptionAuthority = "legacy";
-  data.meridian.cutover.subscriptionAuthority = "meridian";
-  data.meridian.cutover.state = "not_required";
-  data.meridian.cutover.state = state;
+  data.glivela.endpoints[0].legacyRetired = false;
+  data.glivela.cutover.subscriptionAuthority = "legacy";
+  data.glivela.cutover.subscriptionAuthority = "meridian";
+  data.glivela.cutover.state = "not_required";
+  data.glivela.cutover.state = state;
   data.applications[0].status = "stopped";
 });
 

@@ -231,7 +231,7 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 	}
 }
 
-func TestLegacyProxyRuntimeMigrationDefersToMeridianCutover(t *testing.T) {
+func TestLegacyProxyRuntimeMigrationDefersToGlivelaCutover(t *testing.T) {
 	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()

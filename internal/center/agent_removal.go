@@ -419,7 +419,7 @@ func (s *Store) removeAgentSubscriptionNodes(ctx context.Context, id string) err
 	return nil
 }
 
-// Completed Meridian cutover receipts prove the old controller and worker
+// Completed Glivela cutover receipts prove the old controller and worker
 // runtimes were retired. Their retained topology is history, not an installed
 // 3x-ui node to remove remotely. In-flight commands still require reconciliation.
 func retireMigratedAgentTopology(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
@@ -433,7 +433,7 @@ func retireMigratedAgentTopology(ctx context.Context, tx *sql.Tx, id string, now
 		AND NOT EXISTS (SELECT 1 FROM meridian_endpoints WHERE application_id=worker_application_id AND legacy_retired=0)
 		AND NOT EXISTS (SELECT 1 FROM application_commands WHERE application_id=worker_application_id
 			AND kind=? AND (state IN ('pending','running') OR reconciliation_required=1))`,
-		now.Format(time.RFC3339Nano), id, meridianAppKey, meridianAppKey, nodeCommandKind)
+		now.Format(time.RFC3339Nano), id, glivelaAppKey, glivelaAppKey, nodeCommandKind)
 	return err
 }
 

@@ -50,9 +50,13 @@ CDN/WAF、协议和访问策略会变化；候选可能全部不通过。增加�
 管理员仍可主动检查或修改目标。相同 HAProxy 配置在运行时保留原容器，恢复网络
 或进程不等于重建共享入口。
 
+双角色节点的共享 443 将未知或缺失 SNI 送到本机 Caddy 后，由该 HTTPS 监听的
+已配置域名匹配策略在证书选择前拒绝；与专用回环 TLS 源站保持同一拒绝阶段。
+正常网站沿用原 TLS 版本设置，REALITY 的 exact-SNI 分流与订阅参数不变。
+
 固定 IP 和一次检查不能证明永久安全。HAProxy 的外层 SNI 过滤不能验证加密后的
 HTTP Host；REALITY 未认证回落边界和已有安全拒绝规则仍须保留。这里不承诺
 “不会被偷流量”、零中转或抗 DDoS。参考 [REALITY 上游](https://github.com/XTLS/REALITY)
 及 [Xray 传输配置](https://xtls.github.io/config/transport.html)。
 
-代码配有回归用例；本轮按仓库约定未运行本地测试、构建或线上探测。
+共享 443 拒绝响应的修复与隔离验证记录见 [Vastora #1127](https://github.com/petauron/vastora/issues/1127)。

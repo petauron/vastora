@@ -598,6 +598,18 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return err
 		}
+		if runtime.GOOS == "linux" && os.Geteuid() == 0 && !isOpenRCHost() && hostState.TailscaleOwnership == "managed" && hostState.TailscaleEnrolled {
+			setup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			if err := manageTailscaleBootOrder(setup, tailscaleBootDropin, true, runHostCommand); err != nil {
+				fmt.Fprintln(os.Stderr, "Agent Tailscale startup ordering unavailable:", err)
+			}
+			cancel()
+		}
+		stopBudget, budgetErr := store.StartTCPBudget()
+		if budgetErr != nil {
+			fmt.Fprintln(os.Stderr, "Agent host TCP budget operation unavailable")
+		}
+		defer stopBudget()
 		client := agent.Client{Roles: roles, Capabilities: capabilities, TailscaleEnrolled: hostState.TailscaleEnrolled, TailscaleOwnership: hostState.TailscaleOwnership}
 		closeCenterSession := client.UseCenterGRPCSession()
 		defer closeCenterSession()
@@ -682,6 +694,7 @@ func runAgent(arguments []string) error {
 				provisioner := agent.NativeCaddySiteRuntime{StateDirectory: *dataDir, Sites: store.SharedCaddySites}
 				caddyDriver.SystemGateway, caddyDriver.SiteContainer = nil, false
 				caddyDriver.SiteRuntime, caddyDriver.SiteIdle = provisioner.ReconcileWebsites, provisioner.Idle
+				caddyDriver.SiteApplied = provisioner.SyncBootWait
 				gatewayProvisioner, runtimeProvisioner = provisioner, provisioner
 			}
 			layer4 := agent.DockerLayer4Provisioner{Image: *haproxyImage}
@@ -717,13 +730,22 @@ func runAgent(arguments []string) error {
 				provisioner := agent.NativeCaddySiteRuntime{StateDirectory: *dataDir}
 				driver.SiteRuntime = provisioner.ReconcileWebsites
 				driver.SiteIdle = provisioner.Idle
+				driver.SiteApplied = provisioner.SyncBootWait
 			}
 			if err := store.ConfigureSharedCaddy(driver); err != nil {
 				return err
 			}
 		}
 		if capabilities.Tunnel {
-			client.TunnelProvisioner = agent.DockerTunnelProvisioner{}
+			client.TunnelProvisioner = agent.DockerTunnelProvisioner{StateDirectory: *dataDir}
+		}
+		if nativeWebsiteRuntime && runtime.GOOS == "linux" && os.Geteuid() == 0 && !isOpenRCHost() {
+			provisioner := agent.NativeCaddySiteRuntime{StateDirectory: *dataDir}
+			setup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			if err := provisioner.SyncBootWait(setup, nil); err != nil {
+				fmt.Fprintln(os.Stderr, "Agent native Caddy startup ordering unavailable:", err)
+			}
+			cancel()
 		}
 		controlLogger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 		// Upgrade existing managed installations too. This is local platform

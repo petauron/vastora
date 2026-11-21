@@ -51,7 +51,7 @@ func legacyGlivelaReceipt(raw []byte) bool {
 			Component string `json:"component"`
 		} `json:"resources"`
 	}
-	if json.Unmarshal(raw, &receipt) != nil || receipt.AppKey != meridianAppKey || receipt.Runtime != "docker" {
+	if json.Unmarshal(raw, &receipt) != nil || receipt.AppKey != glivelaAppKey || receipt.Runtime != "docker" {
 		return false
 	}
 	xray := false
@@ -92,7 +92,7 @@ func (s *Store) RetireGlivelaExecutionRecord(ctx context.Context, evidence Glive
  JOIN application_resources new_resources ON new_resources.application_id=new.id
  JOIN agents node ON node.id=old.node_id AND node.status='active' AND node.credential_revoked_at=''
  WHERE old.id=?`, evidence.ReplacementApplicationID, evidence.ApplicationID).Scan(&oldNode, &newNode, &oldKey, &newKey, &oldState, &newState, &oldAdoption, &newAdoption, &oldRaw, &newRaw)
-	if err != nil || oldNode != newNode || oldKey != meridianAppKey || newKey != "vastora-official/glivela-entry" || newState != "running" || oldAdoption != "ready" || newAdoption != "ready" || !legacyGlivelaReceipt(oldRaw) || rawManifestDigest(oldRaw) != evidence.SourceReceiptSHA256 || rawManifestDigest(newRaw) != evidence.ReplacementReceiptSHA256 {
+	if err != nil || oldNode != newNode || oldKey != glivelaAppKey || newKey != "vastora-official/glivela-entry" || newState != "running" || oldAdoption != "ready" || newAdoption != "ready" || !legacyGlivelaReceipt(oldRaw) || rawManifestDigest(oldRaw) != evidence.SourceReceiptSHA256 || rawManifestDigest(newRaw) != evidence.ReplacementReceiptSHA256 {
 		return errors.New("center: inspected legacy execution and same-node native replacement no longer match")
 	}
 	var replacement struct {

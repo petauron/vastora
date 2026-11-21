@@ -15,7 +15,7 @@ import (
 // A retry reuses the one consistent pre-migration recovery point only while its
 // logical state still matches. A changed source requires explicit review, not
 // another unbounded series of snapshots or overwriting the previous snapshot.
-func prepareSharedCaddyMigrationBackup(ctx context.Context, db *sql.DB, directory string, key []byte) error {
+func prepareAgentSchemaBackup(ctx context.Context, db *sql.DB, directory string, key []byte, backupDir string, sourceVersion int) error {
 	// Resolve only the caller-selected root, as receiptPath does for macOS
 	// /var. Descendants remain subject to the normal no-symlink ownership check.
 	resolved, err := filepath.EvalSymlinks(directory)
@@ -23,7 +23,7 @@ func prepareSharedCaddyMigrationBackup(ctx context.Context, db *sql.DB, director
 		return err
 	}
 	directory = resolved
-	path := filepath.Join(directory, "schema-23-backup-shared-caddy", "agent.db")
+	path := filepath.Join(directory, backupDir, "agent.db")
 	if err := checkPackageParents(path); err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func prepareSharedCaddyMigrationBackup(ctx context.Context, db *sql.DB, director
 		return err
 	}
 	var version int
-	if err := recovery.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 23 {
+	if err := recovery.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != sourceVersion {
 		return errors.New("agent: recovery schema does not match the migration")
 	}
 	before, err := agentLogicalDatabaseHash(ctx, recovery)
@@ -75,7 +75,7 @@ func prepareSharedCaddyMigrationBackup(ctx context.Context, db *sql.DB, director
 		return err
 	}
 	if before != current {
-		return errors.New("agent: source changed since its shared Caddy recovery point; review before retrying")
+		return errors.New("agent: source changed since its schema recovery point; review before retrying")
 	}
 	return nil
 }

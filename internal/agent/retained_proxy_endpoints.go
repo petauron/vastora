@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// observeMeridianState decodes a retained artifact without contacting or managing a runtime.
-func observeMeridianState(artifact glivela.DesiredArtifact) ([]ApplicationEndpointObservation, error) {
+// observeGlivelaState decodes a retained artifact without contacting or managing a runtime.
+func observeGlivelaState(artifact glivela.DesiredArtifact) ([]ApplicationEndpointObservation, error) {
 	if artifact.Validate() != nil {
 		return nil, errors.New("agent: Glivela runtime artifact is invalid")
 	}
@@ -69,7 +69,7 @@ func observeMeridianState(artifact glivela.DesiredArtifact) ([]ApplicationEndpoi
 		return nil, errors.New("agent: Glivela runtime has no managed endpoint")
 	}
 	return []ApplicationEndpointObservation{{
-		AppKey: meridianKey, Name: "inbound-1", Protocol: "tcp",
+		AppKey: legacyProxyAppKey, Name: "inbound-1", Protocol: "tcp",
 		AppProtocol: "meridian/entry", Listen: listen, Port: port,
 		Enabled: true, InboundTag: selectedTag,
 	}}, nil

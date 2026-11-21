@@ -452,14 +452,14 @@ for (const route of routes) {
     };
     operation.responses["202"].headers = noStoreHeaders;
   }
-  if (route.handler === "handleMeridianSubscriptionPreview") {
+  if (route.handler === "handleGlivelaSubscriptionPreview") {
     operation.responses[status].headers = noStoreHeaders;
-    operation.responses[status].content["application/json"].schema = schemaForGoType("MeridianSubscriptionPreview");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("GlivelaSubscriptionPreview");
     operation.description = "Administrator-only, credential-free preview of the actual subscription inventory. Uses the public live/applied-snapshot resolution and rendering paths without saving snapshots, launching tasks or revealing subscription tokens, connection URLs or credentials.";
   }
-  if (route.handler === "handleMeridianRouteHealth") {
+  if (route.handler === "handleGlivelaRouteHealth") {
     operation.responses[status].headers = noStoreHeaders;
-    operation.responses[status].content["application/json"].schema = schemaForGoType("MeridianRouteHealthView");
+    operation.responses[status].content["application/json"].schema = schemaForGoType("GlivelaRouteHealthView");
     operation.description = "Read current route verification evidence and at most 20 state changes from the last seven days. Does not launch probes or tasks, extend leases, or change traffic authorization. Exit information is limited to the address family; credentials and arbitrary remote error text are excluded.";
   }
   if (route.handler === "handleCreateAgentReconnectEnrollment") {
@@ -501,7 +501,7 @@ for (const route of routes) {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallAccess");
-    operation.description = "Activate the reviewed replacement network profile and one restored Meridian service binding after exact runtime and applicable shared-listener receipts. Atomically retain original address approval and activation evidence. Repeated requests return the same receipt; changed bindings require inspection. Does not alter DNS, landing identities, account usage or business readiness, and never releases the recovery fence.";
+    operation.description = "Activate the reviewed replacement network profile and one restored Glivela service binding after exact runtime and applicable shared-listener receipts. Atomically retain original address approval and activation evidence. Repeated requests return the same receipt; changed bindings require inspection. Does not alter DNS, landing identities, account usage or business readiness, and never releases the recovery fence.";
   }
   if (route.handler === "handleAgentReinstallEntryCheck") {
     operation.responses[status].headers = noStoreHeaders;
@@ -513,19 +513,19 @@ for (const route of routes) {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallListener");
-    operation.description = "Restore the reviewed saved shared listener after native Meridian runtime restoration. Uses only the approved backend and public bind address; other shared applications or a gateway require restoration first. A listener receipt does not verify public reachability, publish subscriptions or release the recovery fence.";
+    operation.description = "Restore the reviewed saved shared listener after native Glivela runtime restoration. Uses only the approved backend and public bind address; other shared applications or a gateway require restoration first. A listener receipt does not verify public reachability, publish subscriptions or release the recovery fence.";
   }
   if (route.handler === "handleAgentReinstallRuntime") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallRuntime");
-    operation.description = "Restore one reviewed native Meridian runtime using the saved package and credentials on the approved replacement address. Fixed egress is restored only after reviewed source replacement and applied landing authorization; otherwise it remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery.";
+    operation.description = "Restore one reviewed native Glivela runtime using the saved package and credentials on the approved replacement address. Fixed egress is restored only after reviewed source replacement and applied landing authorization; otherwise it remains disabled. The task digest is bound at approval, selection, sealing and projection. A runtime receipt does not activate network profiles, publish services or complete business recovery.";
   }
   if (route.handler === "handleAgentReinstallPreparation") {
     operation.responses[status].headers = noStoreHeaders;
     operation.requestBody.content["application/json"].schema = schemaForGoType("AgentReinstallApplicationInput");
     operation.responses[status].content["application/json"].schema = schemaForGoType("AgentReinstallPreparation");
-    operation.description = "Prepare the reviewed saved Meridian package on its authorized replacement machine. Creates one durable application deployment bound to original intent and approved network, without activating services or releasing the recovery fence. Source changes and uncertain outcomes require review.";
+    operation.description = "Prepare the reviewed saved Glivela package on its authorized replacement machine. Creates one durable application deployment bound to original intent and approved network, without activating services or releasing the recovery fence. Source changes and uncertain outcomes require review.";
   }
   if (route.handler === "handleAgentReinstallMonitorReporting") {
     operation.responses[status].headers = noStoreHeaders;
@@ -677,6 +677,8 @@ for (const route of routes) {
     const [field, type] = { handleListDeployments: ["deployments", "DeploymentView"], handleListApplications: ["applications", "ApplicationView"], handleListAgents: ["agents", "AgentView"] }[route.handler];
     const item = schemaForGoType(type);
     if (type === "ApplicationView") {
+      item.properties.nodeSiteStatus.enum = ["unconfigured", "issuing", "pending", "ready", "action_required", "rolled_back"];
+      item.properties.nodeSiteStatus.description = "Read-only managed website summary. ready requires a running application, matching site ownership, confirmed desired/applied revision and an unexpired certificate. Does not create a publication or probe a node.";
       item.properties.installedPackageRevision.minimum = 0;
       item.properties.availablePackageRevision.minimum = 0;
       item.properties.adoptionState.enum = ["pending", "ready", "blocked"];
@@ -747,14 +749,14 @@ for (const route of routes) {
       "applicationId", "regionCode", "name",
       "dnsProvider", "targetHost", "serverName", "verificationId", "targetIp",
     ];
-  } else if (route.handler === "handleMeridianTraffic") {
+  } else if (route.handler === "handleGlivelaTraffic") {
     operation.description = "Read directional traffic grouped by entry node and egress. Totals start at the first authenticated tracking sample, never infer historical direction, never reset or enforce quotas, and are not provider billing. Stale means no current active credential sample within 15 minutes.";
     operation.responses["200"].headers = noStoreHeaders;
-    operation.responses["200"].content["application/json"].schema = schemaForGoType("MeridianTrafficView");
+    operation.responses["200"].content["application/json"].schema = schemaForGoType("GlivelaTrafficView");
   } else if (route.handler === "handleRegisterGlivelaNativeEntry") {
     operation.requestBody.content["application/json"].schema.required = ["applicationId", "regionCode", "name"];
     operation.responses["201"].headers = noStoreHeaders;
-  } else if (route.handler === "handleCreateMeridianEndpoint") {
+  } else if (route.handler === "handleCreateGlivelaEndpoint") {
     operation.requestBody.content["application/json"].schema.required = [
       "applicationId", "verificationId", "targetIp", "targetHost", "serverName", "regionCode", "name",
     ];

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/petauron/glivela"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 // Native registration imports an already running, authenticated Glivela entry.
@@ -30,7 +30,7 @@ func (s *Store) RegisterGlivelaNativeEntry(ctx context.Context, adminID string, 
 	if path == "" {
 		path = "/run/glivela-pilot/nodes.json"
 	}
-	evidence, err := meridianruntime.ReadNativeEntryRegistration(path, input.ApplicationID, now)
+	evidence, err := glivelaruntime.ReadNativeEntryRegistration(path, input.ApplicationID, now)
 	if err != nil {
 		return "", err
 	}
@@ -43,7 +43,7 @@ func (s *Store) RegisterGlivelaNativeEntry(ctx context.Context, adminID string, 
 		return "", err
 	}
 	defer tx.Rollback()
-	if err := ensureMeridianManagementWritable(ctx, tx); err != nil {
+	if err := ensureGlivelaManagementWritable(ctx, tx); err != nil {
 		return "", err
 	}
 	var admin bool
@@ -79,7 +79,7 @@ func (s *Store) RegisterGlivelaNativeEntry(ctx context.Context, adminID string, 
 		return "", err
 	}
 	var duplicate int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE app_protocol=? AND status<>'stopped' AND display_name=? COLLATE NOCASE`, meridianEntryProtocol, name).Scan(&duplicate); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE app_protocol=? AND status<>'stopped' AND display_name=? COLLATE NOCASE`, glivelaEntryProtocol, name).Scan(&duplicate); err != nil {
 		return "", err
 	}
 	if duplicate != 0 {
@@ -95,7 +95,7 @@ func (s *Store) RegisterGlivelaNativeEntry(ctx context.Context, adminID string, 
 			return "", errors.New("center: native direct registration requires an existing active unlimited account")
 		}
 	}
-	provider, err := meridianEndpointDNSProvider(ctx, tx, endpoint.AdvertiseHost)
+	provider, err := glivelaEndpointDNSProvider(ctx, tx, endpoint.AdvertiseHost)
 	if err != nil {
 		return "", err
 	}
@@ -108,15 +108,15 @@ func (s *Store) RegisterGlivelaNativeEntry(ctx context.Context, adminID string, 
 	if err != nil {
 		return "", err
 	}
-	if err := s.ensureAllMeridianSubscriptionSnapshotsInTx(ctx, tx); err != nil {
+	if err := s.ensureAllGlivelaSubscriptionSnapshotsInTx(ctx, tx); err != nil {
 		return "", err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,region_code,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
- VALUES(?,?,?,?,?,?,'tcp',?,?,?,'observed',?,0,?,'ready',?,?)`, serviceID, input.ApplicationID, siteID, "native-entry", name, region, endpoint.ListenPort, endpoint.ListenPort, net.JoinHostPort(public, strconv.Itoa(endpoint.ListenPort)), meridianEntryProtocol, public, stamp, stamp)
+ VALUES(?,?,?,?,?,?,'tcp',?,?,?,'observed',?,0,?,'ready',?,?)`, serviceID, input.ApplicationID, siteID, "native-entry", name, region, endpoint.ListenPort, endpoint.ListenPort, net.JoinHostPort(public, strconv.Itoa(endpoint.ListenPort)), glivelaEntryProtocol, public, stamp, stamp)
 	if err != nil {
 		return "", err
 	}
-	secretID, err := s.putSecret(ctx, tx, []byte(endpoint.PrivateKey), meridianEndpointSecretContext(endpoint.ID))
+	secretID, err := s.putSecret(ctx, tx, []byte(endpoint.PrivateKey), glivelaEndpointSecretContext(endpoint.ID))
 	if err != nil {
 		return "", err
 	}
@@ -127,10 +127,10 @@ func (s *Store) RegisterGlivelaNativeEntry(ctx context.Context, adminID string, 
 	if err != nil {
 		return "", err
 	}
-	checkpoint := meridianruntime.PilotCounters{EntryID: input.ApplicationID, CertificateID: evidence.CertificateID, ConfigSHA256: evidence.ConfigSHA256, Revision: evidence.Plan.Revision, CutoverAt: createdAt}
+	checkpoint := glivelaruntime.PilotCounters{EntryID: input.ApplicationID, CertificateID: evidence.CertificateID, ConfigSHA256: evidence.ConfigSHA256, Revision: evidence.Plan.Revision, CutoverAt: createdAt}
 	for _, m := range evidence.Plan.Credentials {
 		c := m.Credential
-		secret, err := s.putSecret(ctx, tx, []byte(m.ProtocolID), meridianCredentialSecretContext(c.ID))
+		secret, err := s.putSecret(ctx, tx, []byte(m.ProtocolID), glivelaCredentialSecretContext(c.ID))
 		if err != nil {
 			return "", err
 		}

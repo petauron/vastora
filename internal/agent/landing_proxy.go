@@ -55,9 +55,9 @@ func (s *Store) prepareLandingXrayRuntimeMigration(ctx context.Context, task Dep
 			return nil, err
 		}
 	}
-	// The audited Meridian install only prepares its image. The complete runtime
+	// The audited legacy Glivela install only prepares its image. The complete runtime
 	// command, not package preparation, owns the one-way landing handover.
-	if task.AppKey == meridianKey && task.Operation == "install" && task.Manifest.ID == "meridian" && validatePackageTask(task) == nil {
+	if task.AppKey == legacyProxyAppKey && task.Operation == "install" && task.Manifest.ID == "meridian" && validatePackageTask(task) == nil {
 		if state, err := s.landingRuntime(ctx); err != nil {
 			return nil, err
 		} else if state != nil && state.Route != nil && state.ApplicationID != task.ApplicationID {
@@ -97,9 +97,9 @@ func (s *Store) prepareLandingXrayRuntimeMigration(ctx context.Context, task Dep
 func (s *Store) ResumeLandingRuntime(ctx context.Context) (result error) {
 	s.landingMutationMu.Lock()
 	defer s.landingMutationMu.Unlock()
-	// A staged Meridian authority is a one-way boundary, even if its first
+	// A staged Glivela authority is a one-way boundary, even if its first
 	// command failed. Its recovery owns all retained landing gates and journals.
-	if _, err := s.loadMeridianRuntimeState(ctx); !errors.Is(err, errApplicationNotInstalled) {
+	if _, err := s.loadGlivelaRuntimeState(ctx); !errors.Is(err, errApplicationNotInstalled) {
 		return err
 	}
 	return s.resumeLandingRuntimeLocked(ctx)

@@ -53,7 +53,7 @@ Agent 旧回执只在任务循环进入时按加密证据归档，Center 确認�
 
 ```sh
 go test ./internal/agent ./internal/center \
-  -run 'Test(XrayReplacement|XrayConfigurationRestartFailure|RuntimeRestart|Execution|LegacyReceipt|Glivela.*Recovery|ReplaceMeridian|CompletedMeridian|ResumeXray|ControllerConvergenceStops)' \
+  -run 'Test(XrayReplacement|XrayConfigurationRestartFailure|RuntimeRestart|Execution|LegacyReceipt|Glivela.*Recovery|ReplaceGlivela|CompletedGlivela|ResumeXray|ControllerConvergenceStops)' \
   -count=1 -timeout=90s
 ```
 

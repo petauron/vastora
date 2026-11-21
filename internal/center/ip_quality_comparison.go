@@ -15,11 +15,11 @@ func (s *Store) compareIPQuality(ctx context.Context, nodeID, address string, ch
 	if err != nil {
 		return nil, err
 	}
-	endpoints, err := s.listMeridianEndpoints(ctx)
+	endpoints, err := s.listGlivelaEndpoints(ctx)
 	if err != nil {
 		return nil, err
 	}
-	grants, err := s.listMeridianRouteGrants(ctx)
+	grants, err := s.listGlivelaRouteGrants(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -41,10 +41,10 @@ func (s *Store) compareIPQuality(ctx context.Context, nodeID, address string, ch
 		current.Assessment = ipquality.Assess(nil, "", false, s.now(), preferences)
 	}
 	entryIDs := map[string]bool{}
-	meridianSource := false
+	glivelaSource := false
 	for _, endpoint := range endpoints {
 		if endpoint.NodeID == nodeID && endpoint.VLESS {
-			meridianSource = true
+			glivelaSource = true
 		}
 		if endpoint.NodeID == nodeID && endpoint.VLESS && endpoint.RuntimeHealthy && endpoint.Status == "ready" && endpoint.DesiredRevision == endpoint.AppliedRevision {
 			entryIDs[endpoint.ID] = true
@@ -78,7 +78,7 @@ func (s *Store) compareIPQuality(ctx context.Context, nodeID, address string, ch
 	if err != nil {
 		return nil, err
 	}
-	sourceEligible := len(entryIDs) > 0 || !meridianSource && len(applicationIDs) > 0
+	sourceEligible := len(entryIDs) > 0 || !glivelaSource && len(applicationIDs) > 0
 	for _, proxy := range view.Proxies {
 		if !applicationIDs[proxy.ApplicationID] || !proxy.Enabled || proxy.Status != "ready" || proxy.Connection != "healthy" {
 			continue

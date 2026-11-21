@@ -2,7 +2,7 @@ import type { AgentView, AppData, Application, AppView, Deployment, Publication,
 import { isInstalledApplication } from "./appAccess";
 
 export const threeXUIAppKey = "vastora-official/3x-ui";
-export const meridianAppKey = "vastora-official/meridian";
+export const glivelaAppKey = "vastora-official/meridian";
 
 export type InstalledAppInstance = {
   application: Application;
@@ -30,7 +30,7 @@ export type InstalledAppGroup = {
 };
 
 export function publicationNeedsAttention(publication: Publication) {
-  return Boolean(publication.actionRequired || publication.lastError || publication.status === "failed" || publication.status === "degraded");
+  return Boolean(publication.lastError || publication.status !== "stopped" && (publication.actionRequired || publication.status === "failed" || publication.status === "degraded"));
 }
 
 export function serviceNeedsAttention(service: Service) {
@@ -47,9 +47,9 @@ export function canCreateRealityNode(instance: InstalledAppInstance) {
 export function showInstalledNode(instance: InstalledAppInstance) {
   const legacyControllerOnly = instance.application.appKey === threeXUIAppKey && instance.application.role === "master"
     && instance.application.id === instance.application.controllerApplicationId && instance.realityServices.length === 0;
-  const meridianControllerOnly = instance.application.appKey === meridianAppKey && instance.realityServices.length === 0
+  const glivelaControllerOnly = instance.application.appKey === glivelaAppKey && instance.realityServices.length === 0
     && instance.services.some((service) => service.appProtocol === "meridian/subscription");
-  return !legacyControllerOnly && !meridianControllerOnly;
+  return !legacyControllerOnly && !glivelaControllerOnly;
 }
 
 function indexBy<T>(values: T[], key: (value: T) => string) {
@@ -70,7 +70,7 @@ export function installedAppGroups(data: Pick<AppData, "applications" | "apps" |
   const agents = new Map(data.agents.map((agent) => [agent.id, agent]));
   const sites = new Map(data.sites.map((site) => [site.id, site]));
   const servicesByApplication = indexBy(data.services.filter((service) => service.status !== "stopped"), (service) => service.applicationId);
-  const publicationsByService = indexBy(data.publications.filter((publication) => publication.status !== "stopped" || publication.actionRequired), (publication) => publication.serviceId);
+  const publicationsByService = indexBy(data.publications.filter((publication) => publication.status !== "stopped" || publicationNeedsAttention(publication)), (publication) => publication.serviceId);
   const deploymentsByApplication = indexBy(data.deployments.filter((deployment) => Boolean(deployment.applicationId)), (deployment) => deployment.applicationId!);
   const instances = new Map<string, InstalledAppInstance>();
 
@@ -80,7 +80,7 @@ export function installedAppGroups(data: Pick<AppData, "applications" | "apps" |
       && referencedController.role === "master" ? referencedController : undefined;
     const services = servicesByApplication.get(application.id) ?? [];
     const realityServices = services.filter((service) => service.appProtocol === "vless/tcp/reality"
-      || application.appKey === meridianAppKey && service.appProtocol === "meridian/entry");
+      || application.appKey === glivelaAppKey && service.appProtocol === "meridian/entry");
     const deployments = deploymentsByApplication.get(application.id) ?? [];
     const activeChange = deployments.find((deployment) => deployment.state === "pending" || deployment.state === "running" || deployment.reconciliationRequired);
     instances.set(application.id, {
@@ -114,7 +114,7 @@ export function installedAppGroups(data: Pick<AppData, "applications" | "apps" |
     const controller = group.appKey === threeXUIAppKey
       ? group.instances.map((instance) => instance.controller).find((application): application is Application => Boolean(application))
       : undefined;
-    const controllerInstance = group.appKey === meridianAppKey
+    const controllerInstance = group.appKey === glivelaAppKey
       ? group.instances.find((instance) => instance.services.some((service) => service.appProtocol === "meridian/subscription"))
       : controller ? instances.get(controller.id) : group.controller;
     const legacyControllers = group.appKey === threeXUIAppKey

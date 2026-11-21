@@ -35,7 +35,7 @@ func reinstallPreparationNetworkFixture(t *testing.T, public bool, publicExit ..
 	if err := s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
 		t.Fatal(err)
 	}
-	addReinstallApplication(t, s, node, "retained-meridian", meridianAppKey, "0.1.0-alpha.12", "install", "succeeded")
+	addReinstallApplication(t, s, node, "retained-meridian", glivelaAppKey, "0.1.0-alpha.12", "install", "succeeded")
 	if _, err := s.db.Exec(`UPDATE deployments SET config_json='{}',manifest_json=json_set(manifest_json,'$.images[0].name','xray-core','$.runtime.docker.containers[0].image','xray-core') WHERE application_id='retained-meridian'`); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestAgentReinstallPreparationAuthorizationRejectsSubstitutedPayload(t *test
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	task := AgentTask{ID: id, Kind: "application.apply", ApplicationID: input.ApplicationID, AppKey: meridianAppKey, ServiceAddress: "10.0.0.99", Attempt: 1}
+	task := AgentTask{ID: id, Kind: "application.apply", ApplicationID: input.ApplicationID, AppKey: glivelaAppKey, ServiceAddress: "10.0.0.99", Attempt: 1}
 	if _, err := s.persistExecutionAuthorization(ctx, tx, node.ID, "package-preparation-session", task); err == nil {
 		t.Fatal("retired substituted payload sealed")
 	}

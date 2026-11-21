@@ -29,12 +29,12 @@ const xrayWorkerConfigPath = "/etc/vastora/config.json"
 const xrayWorkerRuntimeLabel = "io.vastora.proxy-runtime"
 
 const (
-	xrayWorkerCandidateContainer   = xrayWorkerContainer + "-candidate"
-	xrayWorkerBackupContainer      = xrayWorkerContainer + "-rollback"
-	xrayWorkerCleanupContainer     = xrayWorkerContainer + "-cleanup"
-	meridianXrayCandidateContainer = meridianXrayContainer + "-candidate"
-	meridianXrayBackupContainer    = meridianXrayContainer + "-rollback"
-	meridianXrayCleanupContainer   = meridianXrayContainer + "-cleanup"
+	xrayWorkerCandidateContainer = xrayWorkerContainer + "-candidate"
+	xrayWorkerBackupContainer    = xrayWorkerContainer + "-rollback"
+	xrayWorkerCleanupContainer   = xrayWorkerContainer + "-cleanup"
+	legacyXrayCandidateContainer = legacyXrayRuntimeContainer + "-candidate"
+	glivelaXrayBackupContainer   = legacyXrayRuntimeContainer + "-rollback"
+	glivelaXrayCleanupContainer  = legacyXrayRuntimeContainer + "-cleanup"
 )
 
 func xrayWorkerContainerOptions(task DeploymentTask, imageRef, configPath string, hy2Enabled bool) client.ContainerCreateOptions {
@@ -45,13 +45,13 @@ func xrayWorkerContainerOptions(task DeploymentTask, imageRef, configPath string
 		exposed[hy2DockerPort] = struct{}{}
 		bindings[hy2DockerPort] = []dockernetwork.PortBinding{{HostIP: netip.IPv4Unspecified(), HostPort: "443"}}
 	}
-	aliases := []string{dockerruntime.MeridianAlias}
+	aliases := []string{dockerruntime.LegacyGlivelaAlias}
 	if task.AppKey == threeXUIKey {
 		aliases = []string{dockerruntime.LegacyXrayAlias}
 	}
 	candidateName := xrayWorkerCandidateContainer
-	if task.AppKey == meridianKey {
-		candidateName = meridianXrayCandidateContainer
+	if task.AppKey == legacyProxyAppKey {
+		candidateName = legacyXrayCandidateContainer
 	}
 	options := client.ContainerCreateOptions{
 		Name: candidateName,
@@ -100,8 +100,8 @@ func inspectXrayWorkerContainer(ctx context.Context, docker threeXUIContainerEng
 }
 
 // inspectOwnedProxyRuntimeContainer recognizes both the old panel container
-// and the Xray-only runtime. During the one-way Meridian replacement the old
-// container can temporarily carry a Meridian rollback/cleanup name, so name
+// and the Xray-only runtime. During the one-way Glivela replacement the old
+// container can temporarily carry a Glivela rollback/cleanup name, so name
 // alone must never decide its ownership or make the residue impossible to
 // recover.
 func inspectOwnedProxyRuntimeContainer(ctx context.Context, docker threeXUIContainerEngine, name string) (client.ContainerInspectResult, bool, error) {
@@ -132,7 +132,7 @@ func inspectOwnedProxyRuntimeContainer(ctx context.Context, docker threeXUIConta
 
 // inspectCurrentXrayWorkerRuntime recognizes old container identities only as
 // explicit, one-way migration sources. Newly created and recovered runtimes
-// use the Meridian identity exclusively.
+// use the Glivela identity exclusively.
 func inspectCurrentXrayWorkerRuntime(ctx context.Context, docker threeXUIContainerEngine) (client.ContainerInspectResult, string, bool, error) {
 	current, exists, err := inspectXrayWorkerContainer(ctx, docker, xrayWorkerContainer)
 	if err != nil || exists {
@@ -145,17 +145,17 @@ func inspectCurrentXrayWorkerRuntime(ctx context.Context, docker threeXUIContain
 	return legacy, threeXUIContainer, legacyExists, nil
 }
 
-func inspectCurrentMeridianRuntime(ctx context.Context, docker threeXUIContainerEngine) (client.ContainerInspectResult, string, bool, error) {
-	current, exists, err := inspectXrayWorkerContainer(ctx, docker, meridianXrayContainer)
+func inspectCurrentGlivelaRuntime(ctx context.Context, docker threeXUIContainerEngine) (client.ContainerInspectResult, string, bool, error) {
+	current, exists, err := inspectXrayWorkerContainer(ctx, docker, legacyXrayRuntimeContainer)
 	if err != nil || exists {
-		return current, meridianXrayContainer, exists, err
+		return current, legacyXrayRuntimeContainer, exists, err
 	}
 	return inspectCurrentXrayWorkerRuntime(ctx, docker)
 }
 
 func validateXrayWorkerOwnership(ctx context.Context, docker threeXUIContainerEngine, expectedApplicationID string) error {
 	applicationID := ""
-	for _, name := range []string{xrayWorkerContainer, xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer, meridianXrayContainer, meridianXrayCandidateContainer, meridianXrayBackupContainer, meridianXrayCleanupContainer} {
+	for _, name := range []string{xrayWorkerContainer, xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer, legacyXrayRuntimeContainer, legacyXrayCandidateContainer, glivelaXrayBackupContainer, glivelaXrayCleanupContainer} {
 		inspected, exists, err := inspectOwnedProxyRuntimeContainer(ctx, docker, name)
 		if err != nil {
 			return fmt.Errorf("agent: verify Xray worker ownership: %w", err)
@@ -193,11 +193,11 @@ func requireNoInterruptedXrayWorkerDeploy(ctx context.Context, docker threeXUICo
 }
 
 func requireNoUnreviewedXrayWorkerDeploy(ctx context.Context, docker threeXUIContainerEngine, reviewedID string) error {
-	for _, name := range []string{xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer, meridianXrayCandidateContainer, meridianXrayBackupContainer, meridianXrayCleanupContainer} {
+	for _, name := range []string{xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer, legacyXrayCandidateContainer, glivelaXrayBackupContainer, glivelaXrayCleanupContainer} {
 		if current, exists, err := inspectOwnedProxyRuntimeContainer(ctx, docker, name); err != nil {
 			return err
 		} else if exists {
-			if name == meridianXrayCandidateContainer && reviewedID != "" && current.Container.ID == reviewedID {
+			if name == legacyXrayCandidateContainer && reviewedID != "" && current.Container.ID == reviewedID {
 				continue
 			}
 			return uncertainTaskOutcome(fmt.Errorf("agent: retained Xray replacement %s requires explicit review", name))
@@ -217,9 +217,9 @@ func replaceXrayWorkerContainer(ctx context.Context, docker threeXUIContainerEng
 	appKey := options.Config.Labels[applicationIdentityLabel]
 	currentName, candidateName, backupName, cleanupName := xrayWorkerContainer, xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer
 	inspectCurrent := inspectCurrentXrayWorkerRuntime
-	if appKey == meridianKey {
-		currentName, candidateName, backupName, cleanupName = meridianXrayContainer, meridianXrayCandidateContainer, meridianXrayBackupContainer, meridianXrayCleanupContainer
-		inspectCurrent = inspectCurrentMeridianRuntime
+	if appKey == legacyProxyAppKey {
+		currentName, candidateName, backupName, cleanupName = legacyXrayRuntimeContainer, legacyXrayCandidateContainer, glivelaXrayBackupContainer, glivelaXrayCleanupContainer
+		inspectCurrent = inspectCurrentGlivelaRuntime
 	} else if appKey != threeXUIKey {
 		return "", errors.New("agent: Xray worker candidate application is unsupported")
 	}
@@ -598,17 +598,17 @@ func validateXrayWorkerConfigAs(ctx context.Context, docker *client.Client, imag
 
 // ResumeXrayWorker selects recovery from the encrypted authority journal, not
 // from whichever Docker name happens to exist. A pre-cutover worker keeps its
-// legacy writer until the first Meridian revision has been durably staged;
-// once that journal exists, recovery is Meridian-only and never falls back.
+// legacy writer until the first Glivela revision has been durably staged;
+// once that journal exists, recovery is Glivela-only and never falls back.
 func (s *Store) ResumeXrayWorker(ctx context.Context, dockerSocket string) error {
-	_, err := s.loadMeridianRuntimeState(ctx)
+	_, err := s.loadGlivelaRuntimeState(ctx)
 	if err == nil || !errors.Is(err, errApplicationNotInstalled) {
-		return s.resumeMeridianRuntime(ctx, dockerSocket)
+		return s.resumeGlivelaRuntime(ctx, dockerSocket)
 	}
 	return s.resumeLegacyXrayWorker(ctx, dockerSocket)
 }
 
-func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) (result error) {
+func (s *Store) resumeGlivelaRuntime(ctx context.Context, dockerSocket string) (result error) {
 	s.landingMutationMu.Lock()
 	defer s.landingMutationMu.Unlock()
 	applicationID := ""
@@ -617,12 +617,12 @@ func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) 
 			return
 		}
 		if result != nil {
-			s.setApplicationRecovery(controlplane.RecoveryApplication{AppKey: meridianKey, ApplicationID: applicationID, Reason: "state_incomplete"})
+			s.setApplicationRecovery(controlplane.RecoveryApplication{AppKey: legacyProxyAppKey, ApplicationID: applicationID, Reason: "state_incomplete"})
 			return
 		}
-		s.clearApplicationRecovery(meridianKey)
+		s.clearApplicationRecovery(legacyProxyAppKey)
 	}()
-	state, err := s.loadMeridianRuntimeState(ctx)
+	state, err := s.loadGlivelaRuntimeState(ctx)
 	if errors.Is(err, errApplicationNotInstalled) {
 		return nil
 	}
@@ -630,7 +630,7 @@ func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) 
 		return err
 	}
 	applicationID = state.ApplicationID
-	installation, err := s.AppliedInstallation(ctx, meridianKey)
+	installation, err := s.AppliedInstallation(ctx, legacyProxyAppKey)
 	if errors.Is(err, errApplicationNotInstalled) {
 		// Retained encrypted state must never resurrect an uninstalled runtime.
 		return nil
@@ -642,7 +642,7 @@ func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) 
 		return errors.New("agent: Glivela recovery state belongs to another application")
 	}
 	if state.Pending != nil || state.HandoverPending || len(state.RetiringGates) != 0 {
-		return errMeridianExplicitRecoveryRequired
+		return errGlivelaExplicitRecoveryRequired
 	}
 	socket := dockerSocket
 	if socket == "" {
@@ -652,7 +652,7 @@ func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) 
 	if err := s.stopLandingMonitor(ctx); err != nil {
 		return err
 	}
-	if err := closeMeridianGates(ctx, state.knownLandingGates(), meridianTrafficGateFactory); err != nil {
+	if err := closeGlivelaGates(ctx, state.knownLandingGates(), glivelaTrafficGateFactory); err != nil {
 		return err
 	}
 	if state.Applied == nil {
@@ -663,10 +663,10 @@ func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) 
 		return err
 	}
 	defer docker.Close()
-	if err := executor.prepareMeridianRuntimeStart(ctx, docker, state, *state.Applied, state.AppliedPeers); err != nil {
+	if err := executor.prepareGlivelaRuntimeStart(ctx, docker, state, *state.Applied, state.AppliedPeers); err != nil {
 		return err
 	}
-	return executor.finishMeridianLandingHandover(ctx, &state)
+	return executor.finishGlivelaLandingHandover(ctx, &state)
 }
 
 func (s *Store) resumeLegacyXrayWorker(ctx context.Context, dockerSocket string) (result error) {

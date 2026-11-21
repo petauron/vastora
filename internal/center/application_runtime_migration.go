@@ -71,7 +71,7 @@ func (s *Store) queueApplicationRuntimeMigration(ctx context.Context, tx *sql.Tx
 }
 
 func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.Tx, agentID string, generation int, now time.Time) error {
-	// Legacy proxy installations are input to the explicit Meridian cutover.
+	// Legacy proxy installations are input to the explicit Glivela cutover.
 	// A generic Agent runtime upgrade must not reinstall their removed package
 	// or replace their running state before the subscription handoff is verified.
 	rows, err := tx.QueryContext(ctx, `SELECT a.id, a.app_key, d.id, d.app_version, d.manifest_json, d.config_json, d.service_address, d.secret_id, d.registry_credential_id

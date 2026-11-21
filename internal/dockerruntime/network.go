@@ -20,14 +20,14 @@ type NetworkEngine interface {
 const (
 	NetworkName = "vastora-runtime"
 
-	CenterAlias      = "vastora-center"
-	HeadscaleAlias   = "vastora-center-headscale"
-	CaddyAlias       = "vastora-gateway-caddy"
-	HAProxyAlias     = "vastora-gateway-haproxy"
-	ThreeXUIAlias    = "vastora-3x-ui"
-	LegacyXrayAlias  = "vastora-xray"
-	MeridianAlias    = "meridian-xray"
-	CloudflaredAlias = "vastora-cloudflared"
+	CenterAlias        = "vastora-center"
+	HeadscaleAlias     = "vastora-center-headscale"
+	CaddyAlias         = "vastora-gateway-caddy"
+	HAProxyAlias       = "vastora-gateway-haproxy"
+	ThreeXUIAlias      = "vastora-3x-ui"
+	LegacyXrayAlias    = "vastora-xray"
+	LegacyGlivelaAlias = "meridian-xray"
+	CloudflaredAlias   = "vastora-cloudflared"
 )
 
 const (

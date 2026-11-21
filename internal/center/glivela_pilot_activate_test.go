@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/petauron/glivela"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 func TestGlivelaPilotActivationFinalCountersAndFenceAreAtomic(t *testing.T) {
@@ -22,7 +22,7 @@ func TestGlivelaPilotActivationFinalCountersAndFenceAreAtomic(t *testing.T) {
 }
 
 func TestGlivelaPilotExportPreservesRetainedPlan(t *testing.T) {
-	store := openMeridianSharedEndpointSnapshotFixture(t)
+	store := openGlivelaSharedEndpointSnapshotFixture(t)
 	ctx := context.Background()
 	if _, err := store.db.Exec(`UPDATE applications SET image='example.test/xray:current' WHERE id='snapshot-shared-app'`); err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestGlivelaPilotExportPreservesRetainedPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projection, err := store.buildMeridianRuntimeProjection(ctx, tx, sharedSnapshotEndpointID, "", nil)
+	projection, err := store.buildGlivelaRuntimeProjection(ctx, tx, sharedSnapshotEndpointID, "", nil)
 	tx.Rollback()
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestGlivelaPilotQuotaActivationAndResetPreserveLifetimeLedger(t *testing.T)
 
 func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 	t.Helper()
-	store := openMeridianSharedEndpointSnapshotFixture(t)
+	store := openGlivelaSharedEndpointSnapshotFixture(t)
 	seedSecondTakeoverEntry(t, store)
 	if _, err := store.db.Exec(`INSERT INTO glivela_pilot_checkpoint(endpoint_id,checkpoint_json,updated_at) VALUES('second-endpoint','{"retained":true}','original')`); err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projection, err := store.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, "")
+	projection, err := store.buildGlivelaRuntimeTask(ctx, tx, sharedSnapshotEndpointID, "")
 	tx.Rollback()
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 	digest := sha256.Sum256(native.Config)
 	native.ConfigSHA256 = hex.EncodeToString(digest[:])
 	input.ConfigSHA256 = native.ConfigSHA256
-	var seed meridianruntime.PilotQuota
+	var seed glivelaruntime.PilotQuota
 	if finite {
 		var initial int64
 		if err := store.db.QueryRow(`SELECT used_bytes FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID).Scan(&initial); err != nil {
@@ -118,7 +118,7 @@ func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 				active++
 			}
 		}
-		seed = meridianruntime.PilotQuota{TotalBytes: initial + int64(10*active) + 5, UsedBytes: initial + int64(10*active), ResetDay: 1, CutoverAt: input.SampledAt}
+		seed = glivelaruntime.PilotQuota{TotalBytes: initial + int64(10*active) + 5, UsedBytes: initial + int64(10*active), ResetDay: 1, CutoverAt: input.SampledAt}
 		if err := store.db.QueryRow(`SELECT site.timezone FROM meridian_endpoints e JOIN services service ON service.id=e.service_id JOIN sites site ON site.id=service.site_id WHERE e.id=?`, sharedSnapshotEndpointID).Scan(&seed.Timezone); err != nil {
 			t.Fatal(err)
 		}
@@ -227,13 +227,13 @@ func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 	if err := store.db.QueryRow(`SELECT checkpoint_json FROM glivela_pilot_checkpoint WHERE endpoint_id=?`, sharedSnapshotEndpointID).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
-	var checkpoint meridianruntime.PilotCounters
+	var checkpoint glivelaruntime.PilotCounters
 	if err := json.Unmarshal(raw, &checkpoint); err != nil {
 		t.Fatal(err)
 	}
 	now := checkpoint.CutoverAt.Add(2 * time.Second)
 	store.now = func() time.Time { return now }
-	receipt := meridianruntime.PilotReceipt{EntryID: checkpoint.EntryID, ConfigSHA256: checkpoint.ConfigSHA256,
+	receipt := glivelaruntime.PilotReceipt{EntryID: checkpoint.EntryID, ConfigSHA256: checkpoint.ConfigSHA256,
 		Ready: true, StartedAt: checkpoint.CutoverAt.Add(time.Second), SampledAt: now}
 	for _, c := range input.Counters {
 		receipt.Counters = append(receipt.Counters, glivela.CounterSnapshot{CredentialID: c.CredentialID, UpBytes: 4, DownBytes: 6})
@@ -268,7 +268,7 @@ func checkGlivelaPilotActivation(t *testing.T, finite bool) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.resetDueMeridianEndpoints(ctx, tx); err != nil {
+		if err := store.resetDueGlivelaEndpoints(ctx, tx); err != nil {
 			tx.Rollback()
 			t.Fatal(err)
 		}

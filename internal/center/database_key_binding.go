@@ -124,6 +124,32 @@ func verifyCenterEncryptedState(ctx context.Context, db *sql.DB, key []byte) err
 		}
 	}
 
+	// Panel identities use a deterministic node-owned ID instead of a foreign
+	// key. Derive only IDs the actual panel reader can request; a missing panel
+	// identity is valid for nodes that have never provisioned panel access.
+	panelIdentities := make(map[string]bool)
+	if exists, err := tableHasColumns(ctx, db, "agents", "id"); err != nil {
+		return err
+	} else if exists {
+		rows, err := db.QueryContext(ctx, `SELECT id FROM agents`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var nodeID string
+			if err := rows.Scan(&nodeID); err != nil {
+				rows.Close()
+				return err
+			}
+			panelIdentities[panelIdentityID(nodeID)] = true
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+
 	secretsTable, err := tableHasColumns(ctx, db, "secrets", "id", "sealed")
 	if err != nil {
 		return err
@@ -143,6 +169,13 @@ func verifyCenterEncryptedState(ctx context.Context, db *sql.DB, key []byte) err
 			return fmt.Errorf("center: inspect encrypted record: %w", err)
 		}
 		additionalData, ok := references[id]
+		if panelIdentities[id] {
+			if ok && additionalData != id {
+				rows.Close()
+				return fmt.Errorf("center: encrypted record %s has conflicting panel ownership", id)
+			}
+			additionalData, ok = id, true
+		}
 		if !ok {
 			_ = rows.Close()
 			return fmt.Errorf("center: encrypted record %s has no verifiable owner", id)

@@ -15,8 +15,8 @@ import (
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/tailscalehost"
 )
@@ -29,32 +29,32 @@ var (
 )
 
 type NodeCapabilities struct {
-	TailscaleUpdate       *tailscalehost.UpdateStatus `json:"tailscaleUpdate,omitempty"`
-	LandingOnly           bool                        `json:"landingOnly,omitempty"`
-	ExecutorVersions      map[string]int              `json:"executorVersions,omitempty"`
-	RuntimeCapabilities   []string                    `json:"runtimeCapabilities,omitempty"`
-	NativeEgress          bool                        `json:"nativeEgress"`
-	SenulunRestore        bool                        `json:"pulseRestore"`
-	MeridianAcceptance    bool                        `json:"meridianAcceptance"`
-	SenulunReporting      bool                        `json:"pulseReporting"`
-	SenulunRotation       bool                        `json:"pulseRotation"`
-	SenulunInspection     bool                        `json:"pulseInspection"`
-	IPQuality             bool                        `json:"ipQuality"`
-	NetworkDiagnostics    bool                        `json:"networkDiagnostics"`
-	ReturnRoute           bool                        `json:"returnRoute"`
-	BandwidthDiagnostics  bool                        `json:"bandwidthDiagnostics"`
-	LandingEgressIP       bool                        `json:"landingEgressIP"`
-	MeridianLinkBandwidth bool                        `json:"meridianLinkBandwidth"`
-	MeridianLinkRevision  int                         `json:"meridianLinkRevision"`
-	HostProfile           bool                        `json:"hostProfile"`
-	OSReinstallPreflight  bool                        `json:"osReinstallPreflight"`
-	OSReinstall           bool                        `json:"osReinstall"`
-	NodeSecurity          bool                        `json:"nodeSecurity"`
-	Docker                bool                        `json:"docker"`
-	Gateway               bool                        `json:"gateway"`
-	Tunnel                bool                        `json:"tunnel"`
-	Metrics               bool                        `json:"metrics"`
-	Logs                  bool                        `json:"logs"`
+	TailscaleUpdate      *tailscalehost.UpdateStatus `json:"tailscaleUpdate,omitempty"`
+	LandingOnly          bool                        `json:"landingOnly,omitempty"`
+	ExecutorVersions     map[string]int              `json:"executorVersions,omitempty"`
+	RuntimeCapabilities  []string                    `json:"runtimeCapabilities,omitempty"`
+	NativeEgress         bool                        `json:"nativeEgress"`
+	SenulunRestore       bool                        `json:"pulseRestore"`
+	GlivelaAcceptance    bool                        `json:"meridianAcceptance"`
+	SenulunReporting     bool                        `json:"pulseReporting"`
+	SenulunRotation      bool                        `json:"pulseRotation"`
+	SenulunInspection    bool                        `json:"pulseInspection"`
+	IPQuality            bool                        `json:"ipQuality"`
+	NetworkDiagnostics   bool                        `json:"networkDiagnostics"`
+	ReturnRoute          bool                        `json:"returnRoute"`
+	BandwidthDiagnostics bool                        `json:"bandwidthDiagnostics"`
+	LandingEgressIP      bool                        `json:"landingEgressIP"`
+	GlivelaLinkBandwidth bool                        `json:"meridianLinkBandwidth"`
+	GlivelaLinkRevision  int                         `json:"meridianLinkRevision"`
+	HostProfile          bool                        `json:"hostProfile"`
+	OSReinstallPreflight bool                        `json:"osReinstallPreflight"`
+	OSReinstall          bool                        `json:"osReinstall"`
+	NodeSecurity         bool                        `json:"nodeSecurity"`
+	Docker               bool                        `json:"docker"`
+	Gateway              bool                        `json:"gateway"`
+	Tunnel               bool                        `json:"tunnel"`
+	Metrics              bool                        `json:"metrics"`
+	Logs                 bool                        `json:"logs"`
 }
 
 type NodeHeartbeat struct {
@@ -73,7 +73,7 @@ type NodeHeartbeat struct {
 	PublicEgress                 *networking.PublicEgress
 	ApplicationEndpoints         []ApplicationEndpointObservation
 	ApplicationEndpointsObserved bool
-	MeridianRuntime              *meridianruntime.Result
+	GlivelaRuntime               *glivelaruntime.Result
 	GatewayHealthy               bool
 	RuntimeRecovery              string
 	RuntimeRecoveryApplications  []controlplane.RecoveryApplication
@@ -133,6 +133,7 @@ type SiteView struct {
 }
 
 type ApplicationView struct {
+	NodeSiteStatus           string     `json:"nodeSiteStatus,omitempty"`
 	ID                       string     `json:"id"`
 	Name                     string     `json:"name"`
 	NodeID                   string     `json:"nodeId"`

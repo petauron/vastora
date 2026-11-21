@@ -13,7 +13,7 @@ import (
 	"github.com/moby/moby/client"
 )
 
-func TestManagedUpgradeDormantMeridianStagesImageWithoutRuntimeActivation(t *testing.T) {
+func TestManagedUpgradeDormantGlivelaStagesImageWithoutRuntimeActivation(t *testing.T) {
 	for _, scenario := range []string{"upgrade", "configure", "state", "directory", "container", "receipt-resource", "during-pull"} {
 		t.Run(scenario, func(t *testing.T) {
 			store, err := Open(t.TempDir())
@@ -22,7 +22,7 @@ func TestManagedUpgradeDormantMeridianStagesImageWithoutRuntimeActivation(t *tes
 			}
 			defer store.Close()
 			task := packageTestTask(t)
-			task.AppKey, task.Manifest.ID, task.Operation = meridianKey, "meridian", "upgrade"
+			task.AppKey, task.Manifest.ID, task.Operation = legacyProxyAppKey, "meridian", "upgrade"
 			task.Manifest.Images[0].Name, task.Manifest.Images[0].Reference = "xray-core", xrayWorkerImageReference
 			task.Manifest.Runtime.Docker.Containers[0].Image = "xray-core"
 			packageTaskDigest(t, &task)
@@ -35,12 +35,12 @@ func TestManagedUpgradeDormantMeridianStagesImageWithoutRuntimeActivation(t *tes
 				receipt.Resources = []RuntimeResource{{Kind: "image", LogicalName: "unowned"}}
 			}
 			if scenario == "state" {
-				if _, err := store.db.Exec(`INSERT INTO meridian_runtime_state(id,sealed_state) VALUES(1,?)`, []byte("unexpected-state")); err != nil {
+				if _, err := store.db.Exec(`INSERT INTO glivela_runtime_state(id,sealed_state) VALUES(1,?)`, []byte("unexpected-state")); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if scenario == "directory" {
-				if err := os.Mkdir(filepath.Join(store.dataDir, meridianRuntimeDirectory), 0700); err != nil {
+				if err := os.Mkdir(filepath.Join(store.dataDir, glivelaRuntimeDirectory), 0700); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -51,7 +51,7 @@ func TestManagedUpgradeDormantMeridianStagesImageWithoutRuntimeActivation(t *tes
 				case r.URL.Path == "/_ping":
 					w.Header().Set("API-Version", "1.55")
 				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/containers/") && strings.HasSuffix(r.URL.Path, "/json"):
-					if scenario == "container" && strings.Contains(r.URL.Path, meridianXrayContainer+"/json") {
+					if scenario == "container" && strings.Contains(r.URL.Path, legacyXrayRuntimeContainer+"/json") {
 						_, _ = w.Write([]byte(`{"Id":"unexpected-container","Config":{}}`))
 					} else {
 						w.WriteHeader(http.StatusNotFound)
@@ -60,7 +60,7 @@ func TestManagedUpgradeDormantMeridianStagesImageWithoutRuntimeActivation(t *tes
 				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/images/create"):
 					pulls.Add(1)
 					if scenario == "during-pull" {
-						if err := os.Mkdir(filepath.Join(store.dataDir, meridianRuntimeDirectory), 0700); err != nil {
+						if err := os.Mkdir(filepath.Join(store.dataDir, glivelaRuntimeDirectory), 0700); err != nil {
 							t.Error(err)
 						}
 					}
@@ -77,7 +77,7 @@ func TestManagedUpgradeDormantMeridianStagesImageWithoutRuntimeActivation(t *tes
 			}
 			defer docker.Close()
 			directory := packageTestDirectory(t)
-			backend := &meridianPackageBackend{DockerPackageBackend: &DockerPackageBackend{Docker: docker, StateDirectory: directory}, Executor: ApplicationExecutor{Store: store}, Client: docker}
+			backend := &glivelaPackageBackend{DockerPackageBackend: &DockerPackageBackend{Docker: docker, StateDirectory: directory}, Executor: ApplicationExecutor{Store: store}, Client: docker}
 			executor := PackageExecutor{StateDirectory: directory, Backend: backend}
 			if err := executor.save(receipt); err != nil {
 				t.Fatal(err)
@@ -104,7 +104,7 @@ func TestManagedUpgradeDormantMeridianStagesImageWithoutRuntimeActivation(t *tes
 				}
 			}
 			var rows int
-			if err := store.db.QueryRow(`SELECT COUNT(*) FROM meridian_runtime_state`).Scan(&rows); err != nil {
+			if err := store.db.QueryRow(`SELECT COUNT(*) FROM glivela_runtime_state`).Scan(&rows); err != nil {
 				t.Fatal(err)
 			}
 			if scenario != "state" && rows != 0 {

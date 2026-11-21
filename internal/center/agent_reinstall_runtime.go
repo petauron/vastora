@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 type AgentReinstallRuntime struct {
@@ -40,7 +40,7 @@ func (s *Store) reinstallRuntimeTask(ctx context.Context, tx *sql.Tx, agentID, c
 	err := tx.QueryRowContext(ctx, `SELECT p.deployment_id,p.runtime_endpoint_id,p.runtime_revision,p.runtime_task_sha256,p.task_json,c.input_json,c.attempt
  FROM agent_reinstall_app_preparations p JOIN deployments d ON d.id=p.deployment_id JOIN application_commands c ON c.id=p.runtime_command_id
  WHERE c.id=? AND d.agent_id=? AND c.agent_id=d.agent_id AND c.gateway_node_id=d.agent_id AND c.application_id=p.application_id
- AND d.state='succeeded' AND c.kind=? AND c.reconciliation_requested=0 AND c.reconciliation_required=0`, commandID, agentID, meridianruntime.ApplyKind).Scan(&preparationID, &endpointID, &revision, &expected, &packageJSON, &input, &attempt)
+ AND d.state='succeeded' AND c.kind=? AND c.reconciliation_requested=0 AND c.reconciliation_required=0`, commandID, agentID, glivelaruntime.ApplyKind).Scan(&preparationID, &endpointID, &revision, &expected, &packageJSON, &input, &attempt)
 	if errors.Is(err, sql.ErrNoRows) && !strings.HasPrefix(commandID, "reinstall-runtime-") {
 		return nil, nil
 	}
@@ -52,7 +52,7 @@ func (s *Store) reinstallRuntimeTask(ctx context.Context, tx *sql.Tx, agentID, c
 	} else if !valid {
 		return nil, errExecutionAuthorization
 	}
-	var command meridianruntime.Command
+	var command glivelaruntime.Command
 	if json.Unmarshal(input, &command) != nil || command.EndpointID != endpointID || command.ReplacePendingState || attempt > 1 || revision == 0 {
 		return nil, errExecutionAuthorization
 	}
@@ -66,7 +66,7 @@ func (s *Store) reinstallRuntimeTask(ctx context.Context, tx *sql.Tx, agentID, c
 			image = entry.Reference
 		}
 	}
-	target := &meridianRuntimeRestoreTarget{Address: prepared.ServiceAddress, Image: image, Revision: revision}
+	target := &glivelaRuntimeRestoreTarget{Address: prepared.ServiceAddress, Image: image, Revision: revision}
 	landing, err := s.readReinstallLandingSource(ctx, tx, agentID, preparationID)
 	if err != nil {
 		return nil, err
@@ -77,14 +77,14 @@ func (s *Store) reinstallRuntimeTask(ctx context.Context, tx *sql.Tx, agentID, c
 		}
 		target.RestoreLandings = true
 	}
-	projection, err := s.buildMeridianRuntimeProjection(ctx, tx, endpointID, agentID, target)
+	projection, err := s.buildGlivelaRuntimeProjection(ctx, tx, endpointID, agentID, target)
 	if err != nil {
 		return nil, err
 	}
 	if projection.task.ApplicationID != prepared.ApplicationID {
 		return nil, errExecutionAuthorization
 	}
-	task := &AgentTask{Kind: "application.command", ID: commandID, Attempt: 1, Revision: int64(revision), MeridianRuntime: &projection.task}
+	task := &AgentTask{Kind: "application.command", ID: commandID, Attempt: 1, Revision: int64(revision), GlivelaRuntime: &projection.task}
 	encoded, err := json.Marshal(task)
 	if err != nil {
 		return nil, err
@@ -182,8 +182,8 @@ func (s *Store) QueueAgentReinstallRuntime(ctx context.Context, agentID, adminID
 		return result, err
 	}
 	id = "reinstall-runtime-" + id
-	encoded, _ := json.Marshal(meridianruntime.Command{EndpointID: endpointID})
-	if _, err = tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, input.ApplicationID, agentID, agentID, meridianruntime.ApplyKind, encoded, now, now); err != nil {
+	encoded, _ := json.Marshal(glivelaruntime.Command{EndpointID: endpointID})
+	if _, err = tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?)`, id, input.ApplicationID, agentID, agentID, glivelaruntime.ApplyKind, encoded, now, now); err != nil {
 		return result, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE agent_reinstall_app_preparations SET runtime_command_id=?,runtime_endpoint_id=?,runtime_plan_revision=?,runtime_revision=? WHERE deployment_id=? AND runtime_command_id IS NULL`, id, endpointID, input.PlanRevision, revision+1, preparationID); err != nil {

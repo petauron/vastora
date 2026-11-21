@@ -122,11 +122,11 @@ func (s *Store) resumeThreeXUIControllerConvergence(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	var meridianOwnsConvergence bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state IN ('backup','import','publish','project','verify','retire','complete'))`).Scan(&meridianOwnsConvergence); err != nil {
+	var glivelaOwnsConvergence bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state IN ('backup','import','publish','project','verify','retire','complete'))`).Scan(&glivelaOwnsConvergence); err != nil {
 		return err
 	}
-	if meridianOwnsConvergence {
+	if glivelaOwnsConvergence {
 		return tx.Commit()
 	}
 	// A stopped or uncertain execution is not permission to start an unrelated
@@ -323,7 +323,7 @@ func requireLandingControllerTransferSafe(ctx context.Context, tx *sql.Tx, sourc
 }
 
 func (s *Store) CreateThreeXUIControllerMigration(ctx context.Context, sourceApplicationID string, input ThreeXUIControllerMigrationInput) (ThreeXUIControllerMigrationView, error) {
-	return ThreeXUIControllerMigrationView{}, errors.New("center: legacy controller relocation is unavailable; use Meridian cutover")
+	return ThreeXUIControllerMigrationView{}, errors.New("center: legacy controller relocation is unavailable; use Glivela cutover")
 }
 
 func (s *Store) ListThreeXUIControllerMigrations(ctx context.Context) ([]ThreeXUIControllerMigrationView, error) {

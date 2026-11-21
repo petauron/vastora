@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 const (
@@ -154,7 +154,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		return PublicationView{}, errors.New("center: service must be running before it can be published")
 	}
 	cpaClientAPI := isCPAClientAPIService(appKey, serviceName)
-	if (appKey == threeXUIAppKey && applicationRole == threeXUIRoleMaster || appKey == meridianAppKey) && serviceName == meridianSubscriptionServiceName && !managedSubscription {
+	if (appKey == threeXUIAppKey && applicationRole == threeXUIRoleMaster || appKey == glivelaAppKey) && serviceName == glivelaSubscriptionServiceName && !managedSubscription {
 		return PublicationView{}, errors.New("center: use the dedicated public subscription workflow for this service")
 	}
 	if cpaClientAPI && (input.Kind != publicationCloudflare || input.DNSProvider != "cloudflare" || input.Ingress.Owner != ingressTunnelConnector) {
@@ -165,7 +165,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		if err := tx.QueryRowContext(ctx, `SELECT status FROM three_x_ui_reality_guards WHERE service_id = ?`, input.ServiceID).Scan(&guardStatus); err != nil || guardStatus != "ready" {
 			return PublicationView{}, errors.New("center: REALITY service must have a ready fallback guard before publication")
 		}
-	} else if appProtocol == meridianEntryProtocol {
+	} else if appProtocol == glivelaEntryProtocol {
 		var endpointStatus string
 		var desiredRevision, appliedRevision int64
 		var runtimeHealthy int
@@ -285,7 +285,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		}
 		_, port, _ := net.SplitHostPort(endpoint)
 		internalManagedReality := appNodeID == gatewayID && (appKey == threeXUIAppKey && appProtocol == "vless/tcp/reality" ||
-			appKey == meridianAppKey && appProtocol == meridianEntryProtocol)
+			appKey == glivelaAppKey && appProtocol == glivelaEntryProtocol)
 		if appNodeID == gatewayID && port == "443" && !internalManagedReality {
 			return PublicationView{}, errors.New("center: move the application inbound away from port 443 before enabling the node-direct shared listener")
 		}
@@ -500,7 +500,7 @@ func (s *Store) ensureServicePublicationOperationAllowed(ctx context.Context, qu
 	if err := queryer.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) FROM deployments WHERE application_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)) +
 		(SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)
-		AND (? = 0 OR kind <> ?))`, applicationID, applicationID, boolInt(verification), meridianruntime.LegacyExportKind).Scan(&blocked); err != nil {
+		AND (? = 0 OR kind <> ?))`, applicationID, applicationID, boolInt(verification), glivelaruntime.LegacyExportKind).Scan(&blocked); err != nil {
 		return err
 	}
 	if blocked != 0 {
@@ -535,12 +535,31 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 		return err
 	}
 	if status == "stopped" {
-		return errors.New("center: publication is already stopped")
+		// Reconcile only a fully retired website entry. A ready, caught-up
+		// gateway and the absence of routes/external resources prove that
+		// clearing its stale attention flag cannot change the data plane.
+		result, err := tx.ExecContext(ctx, `UPDATE publications SET action_required=0, updated_at=?
+			WHERE id=? AND status='stopped' AND kind='public_direct' AND ingress_owner='site_gateway'
+			AND cleanup_pending=0 AND dns_record_id='' AND access_application_id='' AND last_error=''
+			AND NOT EXISTS(SELECT 1 FROM routes WHERE publication_id=publications.id)
+			AND EXISTS(SELECT 1 FROM gateway_states g WHERE g.gateway_node_id=publications.entry_node_id
+				AND g.status='ready' AND g.desired_revision=g.applied_revision AND g.last_error='')`, s.now().UTC().Format(time.RFC3339Nano), id)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return errors.New("center: stopped entry still needs resource or gateway reconciliation")
+		}
+		return tx.Commit()
 	}
 	now := s.now().UTC()
 	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1,
 		cleanup_pending = CASE WHEN dns_record_id <> '' OR access_application_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
-		cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), id); err != nil {
+		cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', action_required = 0, updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), id); err != nil {
 		return err
 	}
 	if err := s.retireMigratedTunnelConnector(ctx, tx, id, now); err != nil {
@@ -657,7 +676,7 @@ func (s *Store) publicationAccessURL(ctx context.Context, publication Publicatio
 			break
 		}
 	}
-	if (appKey == threeXUIAppKey || appKey == meridianAppKey) && serviceName == meridianSubscriptionServiceName {
+	if (appKey == threeXUIAppKey || appKey == glivelaAppKey) && serviceName == glivelaSubscriptionServiceName {
 		path = "/sub/"
 	} else if isCPAClientAPIService(appKey, serviceName) {
 		path = cpaClientAPIPath
@@ -715,8 +734,8 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 			homepagePaths[app.Key+"\x00"+app.App.Homepage.Service] = app.App.Homepage.Path
 		}
 	}
-	homepagePaths[threeXUIAppKey+"\x00"+meridianSubscriptionServiceName] = "/sub/"
-	homepagePaths[meridianAppKey+"\x00"+meridianSubscriptionServiceName] = "/sub/"
+	homepagePaths[threeXUIAppKey+"\x00"+glivelaSubscriptionServiceName] = "/sub/"
+	homepagePaths[glivelaAppKey+"\x00"+glivelaSubscriptionServiceName] = "/sub/"
 	homepagePaths[cpaAppKey+"\x00"+cpaClientAPIServiceName] = cpaClientAPIPath
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		p.id, p.service_id, p.kind, p.ingress_owner, COALESCE(p.entry_node_id, ''), p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id,

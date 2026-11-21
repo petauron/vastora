@@ -296,13 +296,13 @@ func TestCatalogRuntimeAdoptionOnlyChangesManagementRecords(t *testing.T) {
 	}
 }
 
-func TestManagedUpgradeDormantMeridianRequiresAdoptionAndOnlyStagesImage(t *testing.T) {
+func TestManagedUpgradeDormantGlivelaRequiresAdoptionAndOnlyStagesImage(t *testing.T) {
 	store, node, _ := independentRuntimeStore(t)
 	ctx := context.Background()
 	app := independentTestPackage(t)
 	app.ID = "meridian"
 	seedIndependentPackage(t, store, app)
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: meridianAppKey, Config: json.RawMessage(`{}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: glivelaAppKey, Config: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestManagedUpgradeDormantMeridianRequiresAdoptionAndOnlyStagesImage(t *test
 	app.Images[0].Name = "xray-core"
 	app.Runtime.Docker.Containers[0].Image = "xray-core"
 	seedIndependentPackage(t, store, app)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: meridianAppKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: glivelaAppKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 	upgrade := claimTask(t, store, node)

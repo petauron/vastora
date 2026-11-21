@@ -407,7 +407,7 @@ func TestCaddyHTTPSRouteEnablesTLSAndRedirectsPlaintext(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded := string(payload)
-	for _, wanted := range []string{`"listen":["0.0.0.0:10080"]`, `"listen":["0.0.0.0:10443"]`, `"tls_connection_policies":[{}]`, `"load_pem"`, `"tags":["vastora-cpa.apps.example.test"]`, `"status_code":308`, `"Location":["https://{http.request.host}{http.request.uri}"]`, `"host":["cpa.apps.example.test"]`} {
+	for _, wanted := range []string{`"listen":["0.0.0.0:10080"]`, `"listen":["0.0.0.0:10443"]`, `"tls_connection_policies":[{"match":{"sni":["cpa.apps.example.test"]}},{"drop":true}]`, `"load_pem"`, `"tags":["vastora-cpa.apps.example.test"]`, `"status_code":308`, `"Location":["https://{http.request.host}{http.request.uri}"]`, `"host":["cpa.apps.example.test"]`} {
 		if !strings.Contains(encoded, wanted) {
 			t.Fatalf("HTTPS Caddy configuration missing %s: %s", wanted, encoded)
 		}
@@ -455,7 +455,7 @@ func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 		Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
 		Routes:    []gateway.Route{{ID: "center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}}},
 		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "vastora-gateway-caddy", CaddyPort: 443, Routes: []gateway.Layer4Route{
-			{ID: "vless", Hostname: "vless.example.test", ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: dockerruntime.MeridianAlias, Port: 443}}},
+			{ID: "vless", Hostname: "vless.example.test", ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: dockerruntime.LegacyGlivelaAlias, Port: 443}}},
 			{ID: "raw", Hostname: "raw.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 3443}}},
 		}},
 	}

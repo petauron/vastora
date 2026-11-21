@@ -52,7 +52,17 @@ func (s *Store) purgeRemovedProxyHistory(ctx context.Context, id, confirmation s
 		return err
 	}
 	var entryApps, controllers int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(app_key='vastora-official/glivela-entry'),0),COALESCE(SUM(app_key IN('vastora-official/glivela','vastora-official/glivela-controller','vastora-official/meridian')),0) FROM applications WHERE node_id=?`, id).Scan(&entryApps, &controllers); err != nil {
+	// Legacy entry installations also used the meridian key. Only classify one
+	// as an entry when its retained services positively identify that role;
+	// unknown owners, management services and controller references stay fenced.
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(a.app_key='vastora-official/glivela-entry'),0),
+		COALESCE(SUM(a.app_key IN('vastora-official/glivela','vastora-official/glivela-controller') OR
+		(a.app_key='vastora-official/meridian' AND (
+		 a.role IN('master','controller') OR
+		 NOT EXISTS(SELECT 1 FROM services s WHERE s.application_id=a.id AND s.app_protocol='meridian/entry') OR
+		 EXISTS(SELECT 1 FROM services s WHERE s.application_id=a.id AND (s.management=1 OR s.app_protocol<>'meridian/entry')) OR
+		 EXISTS(SELECT 1 FROM three_x_ui_nodes n WHERE n.master_application_id=a.id)
+		))),0) FROM applications a WHERE a.node_id=?`, id).Scan(&entryApps, &controllers); err != nil {
 		return err
 	}
 	if (!entry && entries != 0) || (entry && entries == 0 && entryApps == 0) || controllers != 0 || active != 0 {
@@ -124,7 +134,11 @@ func (s *Store) purgeRemovedProxyHistory(ctx context.Context, id, confirmation s
 				scopes[i].query += " OR endpoint_id IN(" + endpoint + ")"
 			}
 		}
-		scopes = append(scopes, scope{table: "meridian_endpoints", column: "id", query: "SELECT id FROM meridian_endpoints WHERE id IN(" + endpoint + ")"})
+		scopes = append(scopes,
+			scope{table: "meridian_deployments", column: "endpoint_id", query: "SELECT endpoint_id FROM meridian_deployments WHERE endpoint_id IN(" + endpoint + ")"},
+			scope{table: "glivela_pilot_checkpoint", column: "endpoint_id", query: "SELECT endpoint_id FROM glivela_pilot_checkpoint WHERE endpoint_id IN(" + endpoint + ")"},
+			scope{table: "meridian_endpoints", column: "id", query: "SELECT id FROM meridian_endpoints WHERE id IN(" + endpoint + ")"},
+		)
 	}
 	for i := range scopes {
 		item := &scopes[i]
@@ -143,24 +157,8 @@ func (s *Store) purgeRemovedProxyHistory(ctx context.Context, id, confirmation s
 		if len(item.ids) == 0 {
 			continue
 		}
-		trigger := "retired_proxy_" + item.table + "_delete"
-		if err := tx.QueryRowContext(ctx, `SELECT sql FROM sqlite_schema WHERE type='trigger' AND name=?`, trigger).Scan(&item.original); err != nil {
-			return err
-		}
-		prefix := "CREATE TRIGGER " + trigger + " BEFORE DELETE ON " + item.table + " WHEN EXISTS(SELECT 1 FROM retired_proxy_business WHERE id=1)"
-		suffix := " BEGIN SELECT RAISE(ABORT,'proxy business permanently handed over to Glivela'); END"
-		if strings.TrimSuffix(item.original, ";") != prefix+suffix {
-			return errors.New("center: frozen history guard differs")
-		}
-		values := make([]string, len(item.ids))
-		for j, key := range item.ids {
-			values[j] = "'" + strings.ReplaceAll(key, "'", "''") + "'"
-		}
-		if _, err := tx.ExecContext(ctx, "DROP TRIGGER "+trigger); err != nil {
-			return err
-		}
-		guard := prefix + " AND OLD." + item.column + " NOT IN (" + strings.Join(values, ",") + ")" + suffix
-		if _, err := tx.ExecContext(ctx, guard); err != nil {
+		item.original, err = allowFrozenHistoryDelete(ctx, tx, item.table, item.column, item.ids)
+		if err != nil {
 			return err
 		}
 	}
@@ -198,10 +196,7 @@ func (s *Store) purgeRemovedProxyHistory(ctx context.Context, id, confirmation s
 		if item.original == "" {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, "DROP TRIGGER retired_proxy_"+item.table+"_delete"); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, item.original); err != nil {
+		if err := restoreFrozenHistoryDelete(ctx, tx, item.table, item.original); err != nil {
 			return err
 		}
 	}

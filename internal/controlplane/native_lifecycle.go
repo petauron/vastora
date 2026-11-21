@@ -20,7 +20,7 @@ func NativeLifecycleAllowed(runtimeKind string, version int, operation string, g
 		switch grant {
 		case "native-services":
 			native = true
-		case "root", "shared-caddy":
+		case "root", "shared-caddy", "host-tcp-budget":
 		default:
 			return false
 		}

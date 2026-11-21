@@ -1101,10 +1101,10 @@ CREATE TABLE agent_reinstall_access_activations (
 	if _, err := tx.ExecContext(ctx, xrayConfigurationRecoverySchemaSQL); err != nil {
 		return fmt.Errorf("center: initialize Xray configuration recovery schema: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, meridianSchema); err != nil {
-		return fmt.Errorf("center: initialize Meridian schema: %w", err)
+	if _, err := tx.ExecContext(ctx, glivelaSchema); err != nil {
+		return fmt.Errorf("center: initialize Glivela schema: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, meridianHealthDiagnosticsSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, glivelaHealthDiagnosticsSchema); err != nil {
 		return fmt.Errorf("center: initialize route health diagnostics: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, currentRetirementSchema); err != nil {

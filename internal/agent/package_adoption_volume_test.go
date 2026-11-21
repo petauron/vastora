@@ -21,7 +21,7 @@ func (e historicalVolumeEngine) VolumeInspect(context.Context, string, client.Vo
 func TestHistoricalXrayVolumeIdentity(t *testing.T) {
 	name := strings.Repeat("a", 64)
 	resource := RuntimeResource{Kind: "retained-volume", Name: name, Path: "/var/log/xray", VolumeCreatedAt: "2026-01-01T00:00:00Z", Persistent: true}
-	task := DeploymentTask{AppKey: meridianKey}
+	task := DeploymentTask{AppKey: legacyProxyAppKey}
 	valid := func() volume.Volume {
 		return volume.Volume{Name: name, Driver: "local", Scope: "local", CreatedAt: resource.VolumeCreatedAt, Labels: map[string]string{"com.docker.volume.anonymous": ""}}
 	}
