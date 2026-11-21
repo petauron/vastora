@@ -19,6 +19,33 @@
 
 有问题时保留任务和恢复资料，通过控制台排查。仅明确未获得启动授权的失败可在网页重新检查后创建新任务；启动已授权或结果不明时不会自动重放擦盘命令。网络或镜像等待超过执行窗口后，同一未撤销任务仍可提交严格核验的完成证明，这不会恢复执行权限或发出第二次启动授权。
 
+## 重装安全收尾：移除 qemu-guest-agent
+
+Debian 13 安装器（`debian-installer`）在 `finish-install` 阶段的 `08hw-detect` 检测到 KVM 虚拟化时，会自动安装 `qemu-guest-agent`；只要宿主机向来宾暴露了 virtio-serial 通道（`/dev/virtio-ports/org.qemu.guest_agent.0`），udev 就会在开机后自动拉起该服务。Debian 默认发行版配置未屏蔽 `guest-exec`、`guest-file-open`、`guest-file-write` 与 `guest-set-user-password` 等高危 RPC，意味着宿主机侧可绕过 SSH 与防火墙，直接以 `root` 身份在来宾系统内执行命令或读写文件。
+
+网页重装脚本已在安装与首次启动阶段加入自动防护（本说明不自动授权批量修改既有节点；该自动清理逻辑的隔离 KVM 实机端到端验收尚未完成，上线前须单独核验）：
+
+- 在 `preseed/late_command`（`07preseed`）预先将 `/target/etc/systemd/system/qemu-guest-agent.service` 屏蔽至 `/dev/null`，并写入 `/usr/lib/finish-install.d/09remove-qemu-guest-agent` 钩子，待 `08hw-detect` 运行后如检测到已安装或残余配置即通过 `dpkg --purge qemu-guest-agent` 彻底卸载，并校验 `/target/usr/sbin/qemu-ga` 不存在。
+- 在首次启动脚本（`fix-eth-name.hardened.sh`，运行于 `network.target` 之前）再次校验屏蔽链接并兜底卸载残留包。
+
+对于尚未通过上述流程重装的既有 KVM 节点，或重装完成后的接入前复核，仍须执行以下清理与回读核验：
+
+1. 停止、禁用并屏蔽服务，防止 udev 或后续包操作重新拉起：
+
+```sh
+systemctl disable --now qemu-guest-agent.service
+systemctl mask qemu-guest-agent.service
+```
+
+2. 先模拟卸载，确认只移除 `qemu-guest-agent` 且不牵连其他包，再执行彻底卸载：
+
+```sh
+apt-get --simulate purge qemu-guest-agent
+apt-get purge -y qemu-guest-agent
+```
+
+3. 回读核验：确认 `dpkg-query -W qemu-guest-agent` 返回未安装、`/usr/sbin/qemu-ga` 不存在、无 `qemu-ga` 进程，且 `/etc/systemd/system/qemu-guest-agent.service` 仍指向 `/dev/null`。在后续已授权重启后复核一次，确认未被重新安装或拉起。非 KVM 环境或本身未安装该包的节点核实未安装即可。
+
 ## 网络恢复边界
 
 自动读取受支持的 Netplan/ifupdown 声明并与运行状态交叉核对，按 MAC 恢复网卡名称，保存 IPv4、静态 IPv6、默认网关、onlink、声明的直连路由、DNS/搜索域和 RA/autoconf 策略。DHCP/RA 租约不会被固化为静态地址。
