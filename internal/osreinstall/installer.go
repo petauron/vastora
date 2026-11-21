@@ -171,6 +171,20 @@ mkdir_clear "$tmp"`, spec.Disk.Path, spec.Disk.MajorMinor, spec.Disk.Path, strin
       chmod 0644 /target/etc/resolv.conf; \
       rm /target/root/vastora-reinstall/agent-backup.enc /target/root/vastora-reinstall/recovery.password; \
       rmdir /target/root/vastora-reinstall; \
+      mkdir -p /target/etc/systemd/system /usr/lib/finish-install.d; \
+      ln -sfn /dev/null /target/etc/systemd/system/qemu-guest-agent.service; \
+      printf '%%s\n' \
+        '#!/bin/sh' \
+        'set -e' \
+        'mkdir -p /target/etc/systemd/system' \
+        'ln -sfn /dev/null /target/etc/systemd/system/qemu-guest-agent.service' \
+        'if in-target dpkg-query -s qemu-guest-agent 2>/dev/null | grep -Eq "^Status: (install|deinstall|hold) "; then' \
+        '  in-target env DEBIAN_FRONTEND=noninteractive dpkg --purge qemu-guest-agent' \
+        'fi' \
+        'ln -sfn /dev/null /target/etc/systemd/system/qemu-guest-agent.service' \
+        '[ ! -e /target/usr/sbin/qemu-ga ]' \
+        >/usr/lib/finish-install.d/09remove-qemu-guest-agent; \
+      chmod 0755 /usr/lib/finish-install.d/09remove-qemu-guest-agent; \
     ) || exit 1; \
 `, spec.AgentID, spec.IdentitySHA256)
 	if !spec.Network.DynamicDNS && (spec.Network.DHCP4 || spec.Network.DHCP6) {
@@ -231,6 +245,13 @@ mkdir_clear "$tmp"`, spec.Disk.Path, spec.Disk.MajorMinor, spec.Disk.Path, strin
 	var firstBoot strings.Builder
 	firstBoot.WriteString("#!/bin/sh\nset -eu\n")
 	fmt.Fprintf(&firstBoot, "printf '%%s\\n' %s >/etc/hostname\nhostname %s\n", spec.Hostname, spec.Hostname)
+	firstBoot.WriteString("mkdir -p /etc/systemd/system\n")
+	firstBoot.WriteString("ln -sfn /dev/null /etc/systemd/system/qemu-guest-agent.service\n")
+	firstBoot.WriteString("if dpkg-query -s qemu-guest-agent 2>/dev/null | grep -Eq '^Status: (install|deinstall|hold) '; then\n")
+	firstBoot.WriteString("  DEBIAN_FRONTEND=noninteractive dpkg --purge qemu-guest-agent\n")
+	firstBoot.WriteString("fi\n")
+	firstBoot.WriteString("ln -sfn /dev/null /etc/systemd/system/qemu-guest-agent.service\n")
+	firstBoot.WriteString("[ ! -e /usr/sbin/qemu-ga ]\n")
 	for _, nic := range planNICs(spec.Network) {
 		fmt.Fprintf(&firstBoot, "[ \"$(cat /sys/class/net/%s/address)\" = \"%s\" ] || exit 1\n", nic.Interface, nic.MAC)
 	}
