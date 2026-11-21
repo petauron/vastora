@@ -10,8 +10,8 @@
 
 # Local Vastora state and generated development credentials
 /.vastora/
-/.env
-/.env.*
+.env
+.env.*
 !.env.example
 /deploy/center/generated/
 /deploy/center/tls/
@@ -25,3 +25,9 @@
 /internal/dantebundle/assets/*.sha256
 /internal/dantebundle/assets/Dante-LICENSE
 /internal/dantebundle/assets/Dante-NOTICE
+
+/tasks/
+/archive/
+/workspaces/
+__pycache__/
+.venv/
