@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/hostservice"
 	"github.com/petauron/vastora/internal/nodesecurity"
+	"github.com/petauron/vastora/internal/osreinstall"
 	"github.com/petauron/vastora/internal/tailscalehost"
 	"github.com/sethvargo/go-retry"
 )
@@ -53,6 +53,23 @@ func runAgent(arguments []string) error {
 		return agent.RunOpenRCProcess(*path, *digest)
 	case "execute-os-reinstall":
 		return executeOSReinstall(arguments[1:])
+	case "verify-onboarding":
+		flags := flag.NewFlagSet("agent verify-onboarding", flag.ContinueOnError)
+		username := flags.String("ssh-user", "", "reviewed SSH maintenance account")
+		port := flags.Int("ssh-port", 0, "reviewed SSH listener port")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("agent verify-onboarding takes no positional arguments")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := osreinstall.VerifyRestoredOnboarding(ctx, *username, *port); err != nil {
+			return err
+		}
+		fmt.Println("SSH configuration and Agent service verified; a fresh SSH login and business acceptance are still required")
+		return nil
 	case "prepare-center-upgrade-recovery":
 		return runPrepareCenterUpgradeRecovery(arguments[1:])
 	case "retire-legacy-execution":
@@ -1181,30 +1198,8 @@ func openRCAgentService(executable, dataDir, roles, capabilities string) string 
 }
 
 func systemdAgentUnit(executable, dataDir, roles, capabilities string) string {
-	after := "network-online.target docker.service"
-	if capabilities == "landing" {
-		after = "network-online.target tailscaled.service"
-	}
-	return `[Unit]
-Description=Vastora Agent
-After=` + after + `
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=` + systemdQuote(executable) + ` agent serve --data-dir ` + systemdQuote(dataDir) + ` --roles ` + systemdQuote(roles) + ` --capabilities ` + systemdQuote(capabilities) + `
-Restart=always
-RestartSec=5s
-TimeoutStopSec=30s
-LogRateLimitIntervalSec=30s
-LogRateLimitBurst=100
-
-[Install]
-WantedBy=multi-user.target
-`
+	return hostservice.SystemdAgentUnit(executable, dataDir, roles, capabilities)
 }
-
-func systemdQuote(value string) string { return strconv.Quote(value) }
 
 func nodeCapabilitiesString(value agent.Capabilities) string {
 	capabilities := make([]string, 0, 3)

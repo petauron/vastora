@@ -87,6 +87,7 @@ Usage:
   vastora agent install --center-url URL --token-file FILE [--ca-certificate FILE] [--replace-existing]
   vastora agent status [--data-dir /var/lib/vastora/agent]
   vastora agent configure --roles worker[,gateway] --capabilities docker[,gateway,tunnel]
+  vastora agent verify-onboarding --ssh-user USER --ssh-port PORT
   vastora agent configure-center --center-url URL [--ca-certificate FILE] [--defer-loopback-health-verification]
   vastora agent adopt-tailscale --confirm-vastora-ownership
   vastora agent check-tailscale [--require-running]

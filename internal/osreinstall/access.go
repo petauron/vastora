@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -55,6 +56,22 @@ type AccessSnapshot struct {
 	AuthorizedKeys []byte `json:"authorizedKeys"`
 	RootKeys       []byte `json:"rootKeys,omitempty"`
 	AgentUnit      []byte `json:"agentUnit"`
+}
+
+func sha256Digest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// VerifyOnboardingEvidence binds the post-boot readback to the protected,
+// pre-install access snapshot; it neither returns nor logs the stored keys.
+func VerifyOnboardingEvidence(a AccessSnapshot, observed OnboardingEvidence, username string, port int) error {
+	if a.Username != username || a.SSHPort != port || observed.Username != username || observed.SSHPort != port ||
+		!safeAgentHash.MatchString(observed.AuthorizedKeysSHA256) || !safeAgentHash.MatchString(observed.AgentUnitSHA256) ||
+		observed.AuthorizedKeysSHA256 != sha256Digest(a.AuthorizedKeys) || observed.AgentUnitSHA256 != sha256Digest(a.AgentUnit) {
+		return errors.New("reinstall: restored SSH credentials or Agent service differ from the reviewed snapshot")
+	}
+	return nil
 }
 
 func ValidateAccessSnapshot(a AccessSnapshot, expectedUser string, expectedPort int, expectedHostKey string) error {
