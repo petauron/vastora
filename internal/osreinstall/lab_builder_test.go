@@ -34,6 +34,9 @@ func TestLabVerifiedInstallerBuilder(t *testing.T) {
 	if !strings.Contains(string(out.Preseed), "blkid -s PTUUID") || !strings.Contains(string(out.Preseed), "network.interfaces") || !strings.Contains(string(out.Interfaces), "dns-search example.test") {
 		t.Fatal("missing disk or network restoration")
 	}
+	if !strings.Contains(string(out.Preseed), "/usr/lib/finish-install.d/09remove-qemu-guest-agent") || !strings.Contains(string(out.Preseed), "ln -sfn /dev/null /target/etc/systemd/system/qemu-guest-agent.service") || !strings.Contains(string(out.FirstBoot), "dpkg --purge qemu-guest-agent") {
+		t.Fatal("missing qemu-guest-agent mask and purge")
+	}
 	spec.Network.Address = "192.0.2.10/32"
 	spec.Network.Gateway = "192.0.2.1"
 	spec.Network.GatewayOnLink = true
