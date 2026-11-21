@@ -1009,8 +1009,8 @@
         "tags": [
           "System"
         ],
-        "summary": "Host Backup",
-        "operationId": "hostBackup_get",
+        "summary": "Host Backup Status",
+        "operationId": "hostBackupStatus_get",
         "x-vastora-audience": "browser-admin",
         "security": [
           {
@@ -1041,31 +1041,14 @@
           "500": {
             "$ref": "#/components/responses/Error"
           }
-        },
-        "requestBody": {
-          "required": true,
-          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "password": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
         }
       },
       "put": {
         "tags": [
           "System"
         ],
-        "summary": "Host Backup",
-        "operationId": "hostBackup_put",
+        "summary": "Configure Host Backup",
+        "operationId": "configureHostBackup_put",
         "x-vastora-audience": "browser-admin",
         "security": [
           {
@@ -1120,8 +1103,8 @@
         "tags": [
           "System"
         ],
-        "summary": "Host Backup",
-        "operationId": "hostBackup_post",
+        "summary": "Start Host Backup",
+        "operationId": "startHostBackup_post",
         "x-vastora-audience": "browser-admin",
         "security": [
           {
@@ -1152,23 +1135,6 @@
           },
           "500": {
             "$ref": "#/components/responses/Error"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "password": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
           }
         }
       }

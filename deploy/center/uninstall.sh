@@ -212,19 +212,14 @@ if [ -d "$install_dir/.host-backup" ]; then
     exit 1
   fi
 fi
-for backup_unit in service timer; do
-  backup_target="$systemd_unit_dir/vastora-host-backup.$backup_unit"
-  if [ -e "$backup_target" ] && ! grep -qx '# Managed by Vastora host backup' "$backup_target"; then
+backup_service_unit="$systemd_unit_dir/vastora-host-backup.service"
+backup_timer_unit="$systemd_unit_dir/vastora-host-backup.timer"
+for backup_target in "$backup_service_unit" "$backup_timer_unit"; do
+  if [ -L "$backup_target" ] || { [ -e "$backup_target" ] && ! grep -qx '# Managed by Vastora host backup' "$backup_target"; }; then
     echo "Refusing to remove unowned backup unit: $backup_target" >&2
     exit 1
   fi
 done
-if [ -f "$systemd_unit_dir/vastora-host-backup.timer" ]; then
-  systemctl disable --now vastora-host-backup.timer
-  rm -f "$systemd_unit_dir/vastora-host-backup.timer" "$systemd_unit_dir/vastora-host-backup.service"
-  rm -f "$install_dir/.backup-service-enabled"
-  systemctl daemon-reload
-fi
 
 service_unit="$systemd_unit_dir/vastora-center-update.service"
 path_unit="$systemd_unit_dir/vastora-center-update.path"
@@ -401,6 +396,14 @@ if [ -e "$service_unit" ] || [ -e "$path_unit" ]; then
   rm -f "$service_unit" "$path_unit"
   systemctl daemon-reload
   update_path_paused=no
+fi
+
+if [ -e "$backup_timer_unit" ] || [ -e "$backup_service_unit" ]; then
+  if [ -e "$backup_timer_unit" ]; then
+    systemctl disable --now vastora-host-backup.timer >/dev/null
+  fi
+  rm -f "$backup_timer_unit" "$backup_service_unit" "$install_dir/.backup-service-enabled"
+  systemctl daemon-reload
 fi
 
 if [ "$managed_install" = yes ]; then
