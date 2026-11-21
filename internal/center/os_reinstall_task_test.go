@@ -7,8 +7,10 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"golang.org/x/crypto/ssh"
 	"os"
 	"path/filepath"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/hostservice"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/osreinstall"
@@ -62,7 +65,8 @@ func reinstallAccessFixture(t *testing.T) (osreinstall.AccessSnapshot, string) {
 	if err = z.Close(); err != nil {
 		t.Fatal(err)
 	}
-	return osreinstall.AccessSnapshot{Username: "debian", SSHPort: 22, SudoPolicy: "passwordless_all", SSHArchive: buf.Bytes(), AuthorizedKeys: pub, AgentUnit: []byte("[Service]\nExecStart=/usr/local/bin/vastora agent serve\n")}, ssh.FingerprintSHA256(signer.PublicKey())
+	unit := hostservice.SystemdAgentUnit("/usr/local/bin/vastora", "/var/lib/vastora/agent", "worker", "docker")
+	return osreinstall.AccessSnapshot{Username: "debian", SSHPort: 22, SudoPolicy: "passwordless_all", SSHArchive: buf.Bytes(), AuthorizedKeys: pub, AgentUnit: []byte(unit)}, ssh.FingerprintSHA256(signer.PublicKey())
 }
 
 func TestOSReinstallRequiresFreshEvidenceAndDurableBackup(t *testing.T) {
@@ -252,7 +256,10 @@ func testOSReinstallReceipt(t *testing.T, expired bool) {
 	after := inspection
 	after.BootID = "07e175ea-1e37-426c-9b50-22f366f06f88"
 	after.OSVersion = "13"
-	report := osreinstall.ReconnectReport{TaskID: view.ID, After: after, Network: plan}
+	report := osreinstall.ReconnectReport{TaskID: view.ID, After: after, Network: plan,
+		Onboarding: osreinstall.OnboardingEvidence{Username: "debian", SSHPort: 22,
+			AuthorizedKeysSHA256: fmt.Sprintf("sha256:%x", sha256.Sum256(access.AuthorizedKeys)),
+			AgentUnitSHA256:      fmt.Sprintf("sha256:%x", sha256.Sum256(access.AgentUnit))}}
 	if err = store.CompleteOSReinstall(ctx, node.ID, node.Credential, session, task.Authorization.ID, report); err == nil {
 		t.Fatal("original session accepted as a new boot")
 	}
@@ -261,6 +268,21 @@ func testOSReinstallReceipt(t *testing.T, expired bool) {
 		t.Fatal(err)
 	}
 	badReport := report
+	badReport.Onboarding = osreinstall.OnboardingEvidence{}
+	if err = store.CompleteOSReinstall(ctx, node.ID, node.Credential, newSession, task.Authorization.ID, badReport); err == nil {
+		t.Fatal("missing onboarding evidence accepted")
+	}
+	badReport = report
+	badReport.Onboarding.AuthorizedKeysSHA256 = "sha256:" + strings.Repeat("0", 64)
+	if err = store.CompleteOSReinstall(ctx, node.ID, node.Credential, newSession, task.Authorization.ID, badReport); err == nil {
+		t.Fatal("changed SSH credentials accepted")
+	}
+	badReport = report
+	badReport.Onboarding.AgentUnitSHA256 = "sha256:" + strings.Repeat("0", 64)
+	if err = store.CompleteOSReinstall(ctx, node.ID, node.Credential, newSession, task.Authorization.ID, badReport); err == nil {
+		t.Fatal("changed Agent service accepted")
+	}
+	badReport = report
 	badReport.After.BootID = inspection.BootID
 	if err = store.CompleteOSReinstall(ctx, node.ID, node.Credential, newSession, task.Authorization.ID, badReport); err == nil {
 		t.Fatal("same boot accepted")

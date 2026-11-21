@@ -31,19 +31,28 @@ func (s *Store) CompleteOSReinstall(ctx context.Context, agentID, credential, se
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	var taskID, raw, oldSession, taskState, executionState string
-	var sealedPlan, publicKey []byte
-	err = tx.QueryRowContext(ctx, `SELECT q.id,q.input_json,q.sealed_network,e.session_id,a.x25519_public_key,q.state,e.state
+	var sealedPlan, publicKey, sealedPassword, encryptedAccess []byte
+	err = tx.QueryRowContext(ctx, `SELECT q.id,q.input_json,q.sealed_network,e.session_id,a.x25519_public_key,q.state,e.state,q.sealed_password,q.encrypted_access
         FROM os_reinstall_tasks q JOIN task_executions e ON e.task_id=q.id AND e.agent_id=q.agent_id AND e.attempt=q.attempt
         JOIN agents a ON a.id=q.agent_id JOIN agent_execution_sessions current ON current.agent_id=q.agent_id
         WHERE q.id=? AND q.agent_id=? AND q.state IN ('armed','succeeded') AND q.attempt=1
         AND e.id=? AND e.kind=? AND ((e.state='helper_running' AND e.phase='reinstall_armed' AND e.expires_at<>'') OR (e.state='unknown' AND e.phase='reinstall_armed' AND e.expires_at<>'' AND e.expires_at<=?) OR (e.state='succeeded' AND e.phase='reinstall_verified')) AND e.disposition='' AND e.identity_retired_at='' AND current.session_id=? AND e.session_id<>? AND a.status='active' AND a.credential_revoked_at=''`,
 		report.TaskID, agentID, executionID, osreinstall.TaskKind, now, sessionID, sessionID).
-		Scan(&taskID, &raw, &sealedPlan, &oldSession, &publicKey, &taskState, &executionState)
+		Scan(&taskID, &raw, &sealedPlan, &oldSession, &publicKey, &taskState, &executionState, &sealedPassword, &encryptedAccess)
 	if err != nil || len(publicKey) != 32 {
 		return bad()
 	}
 	var task osreinstall.Task
 	if json.Unmarshal([]byte(raw), &task) != nil {
+		return bad()
+	}
+	password, err := secret.Open(s.key, sealedPassword, []byte("os-reinstall-password:"+taskID))
+	if err != nil {
+		return bad()
+	}
+	access, err := osreinstall.OpenAccessSnapshot(encryptedAccess, string(password), taskID)
+	if err != nil || osreinstall.ValidateAccessSnapshot(access, task.Username, task.SSHPort, task.Inspection.SSHHostKeySHA256) != nil ||
+		osreinstall.VerifyOnboardingEvidence(access, report.Onboarding, task.Username, task.SSHPort) != nil {
 		return bad()
 	}
 	clear, err := secret.Open(s.key, sealedPlan, []byte("os-reinstall-network:"+taskID))
@@ -84,7 +93,7 @@ func (s *Store) CompleteOSReinstall(ctx context.Context, agentID, credential, se
 	if n, _ := updated.RowsAffected(); n != 1 {
 		return bad()
 	}
-	if err = s.recordTaskEvent(ctx, tx, taskID, agentID, osreinstall.TaskKind, 1, "succeeded", "Debian 13 and original network verified"); err != nil {
+	if err = s.recordTaskEvent(ctx, tx, taskID, agentID, osreinstall.TaskKind, 1, "succeeded", "Debian 13, original network, SSH policy and Agent service verified"); err != nil {
 		return err
 	}
 	return tx.Commit()

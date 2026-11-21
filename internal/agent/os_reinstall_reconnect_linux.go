@@ -45,6 +45,10 @@ func (c Client) reinstallReconnect(parent context.Context, store *Store) error {
 	if err != nil {
 		return err
 	}
+	onboarding, err := osreinstall.VerifyRestoredOnboarding(ctx, marker.Username, marker.SSHPort)
+	if err != nil {
+		return err
+	}
 	connection, err := store.Connection(ctx)
 	if err != nil {
 		return err
@@ -53,7 +57,7 @@ func (c Client) reinstallReconnect(parent context.Context, store *Store) error {
 	if err != nil {
 		return err
 	}
-	report := osreinstall.ReconnectReport{TaskID: marker.TaskID, After: after, Network: network}
+	report := osreinstall.ReconnectReport{TaskID: marker.TaskID, After: after, Network: network, Onboarding: onboarding}
 	if err = c.CompleteOSReinstall(ctx, connection, marker.ExecutionID, c.executionSession, report); err != nil {
 		return err
 	}

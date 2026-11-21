@@ -132,7 +132,7 @@ func PrepareInstallerAssets(ctx context.Context, input StageInputs) (PreparedSta
 	if err != nil {
 		return PreparedStage{}, err
 	}
-	marker := ReconnectMarker{TaskID: input.Spec.TaskID, ExecutionID: input.Spec.ExecutionID}
+	marker := ReconnectMarker{TaskID: input.Spec.TaskID, ExecutionID: input.Spec.ExecutionID, Username: input.Spec.Username, SSHPort: input.Spec.SSHPort}
 	if marker.Validate() != nil {
 		return bad()
 	}
