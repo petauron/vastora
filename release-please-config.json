@@ -5,9 +5,7 @@
       "release-type": "simple",
       "package-name": "vastora",
       "draft": true,
-      "prerelease": true,
-      "prerelease-type": "alpha",
-      "versioning": "prerelease",
+      "versioning": "default",
       "include-component-in-tag": false,
       "include-v-in-tag": true,
       "bump-minor-pre-major": true
