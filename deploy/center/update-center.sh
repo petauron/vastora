@@ -25,6 +25,16 @@ for required in awk curl docker grep mktemp sha256sum; do
   fi
 done
 
+# Share the host backup lock so neither runner can replace/stop the other.
+if [ -d "$install_dir/.host-backup" ]; then
+  exec 9>"$install_dir/.host-backup/lock"
+  flock -x 9
+  if [ -f "$install_dir/.host-backup/restart.json" ]; then
+    echo "Backup service recovery is pending; update deferred." >&2
+    exit 1
+  fi
+fi
+
 request="$install_dir/.update-request"
 status_file="$install_dir/.update-status.json"
 if [ ! -f "$request" ]; then

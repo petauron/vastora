@@ -43,6 +43,7 @@ deployment-check:
 	sh -n deploy/center/setup.sh
 	sh -n deploy/center/upgrade.sh
 	sh -n deploy/center/uninstall.sh
+	sh -n deploy/center/install-backup-service.sh
 	sh -n scripts/package-center-install.sh
 	sh -n scripts/create-installer-release-manifest.sh
 	sh -n scripts/github-installer-release-assets.sh
@@ -82,6 +83,7 @@ deployment-check:
 	scripts/test-ci-workflows.sh
 	scripts/test-publish-installer-r2.sh
 	scripts/test-github-installer-release-assets.sh
+	python3 -m unittest discover -s deploy/center -p test_host_backup.py
 
 security-check:
 	gitleaks detect --no-git --redact --source .

@@ -34,7 +34,7 @@ if [ ! -f "$install_dir/.env" ] || [ ! -f "$install_dir/compose.yaml" ] || [ ! -
   echo "$install_dir is not a complete Center installation." >&2
   exit 1
 fi
-for required_file in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compare-semver.awk runtime-network.sh compose.yaml release.env; do
+for required_file in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh install-backup-service.sh host-backup.py compare-semver.awk runtime-network.sh compose.yaml release.env; do
   if [ ! -f "$source_dir/$required_file" ]; then
     echo "The upgrade bundle is incomplete: missing $required_file" >&2
     exit 1
@@ -108,7 +108,7 @@ if [ "$(docker inspect -f '{{.State.Running}}' vastora-gateway-haproxy 2>/dev/nu
 fi
 
 restore_files() {
-  for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compare-semver.awk runtime-network.sh compose.yaml release.env .env; do
+  for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh install-backup-service.sh host-backup.py compare-semver.awk runtime-network.sh compose.yaml release.env .env; do
     if [ -f "$backup_dir/$relative" ]; then
       install -d -m 0755 "$(dirname "$install_dir/$relative")"
       install -m 0644 "$backup_dir/$relative" "$install_dir/$relative"
@@ -122,6 +122,8 @@ restore_files() {
   if [ -f "$install_dir/install-host-cli.sh" ]; then chmod 0755 "$install_dir/install-host-cli.sh"; fi
   if [ -f "$install_dir/install-update-service.sh" ]; then chmod 0755 "$install_dir/install-update-service.sh"; fi
   if [ -f "$install_dir/update-center.sh" ]; then chmod 0755 "$install_dir/update-center.sh"; fi
+  if [ -f "$install_dir/install-backup-service.sh" ]; then chmod 0755 "$install_dir/install-backup-service.sh"; fi
+  if [ -f "$install_dir/host-backup.py" ]; then chmod 0755 "$install_dir/host-backup.py"; fi
 }
 
 cleanup() {
@@ -295,7 +297,7 @@ if [ "$protocol_transition" = yes ] && [ "$cohost_agent_present" = yes ]; then
 	echo "Co-located Agent $new_version is staged until the updated Center becomes healthy."
 fi
 
-for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compare-semver.awk runtime-network.sh compose.yaml release.env .env; do
+for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh install-backup-service.sh host-backup.py compare-semver.awk runtime-network.sh compose.yaml release.env .env; do
   if [ -f "$install_dir/$relative" ]; then
     install -d -m 0755 "$(dirname "$backup_dir/$relative")"
     install -m 0644 "$install_dir/$relative" "$backup_dir/$relative"
@@ -309,6 +311,8 @@ install -m 0755 "$source_dir/uninstall.sh" "$install_dir/uninstall.sh"
 install -m 0755 "$source_dir/install-host-cli.sh" "$install_dir/install-host-cli.sh"
 install -m 0755 "$source_dir/install-update-service.sh" "$install_dir/install-update-service.sh"
 install -m 0755 "$source_dir/update-center.sh" "$install_dir/update-center.sh"
+install -m 0755 "$source_dir/install-backup-service.sh" "$install_dir/install-backup-service.sh"
+install -m 0755 "$source_dir/host-backup.py" "$install_dir/host-backup.py"
 install -m 0644 "$source_dir/compare-semver.awk" "$install_dir/compare-semver.awk"
 install -m 0644 "$source_dir/runtime-network.sh" "$install_dir/runtime-network.sh"
 install -m 0644 "$source_dir/compose.yaml" "$install_dir/compose.yaml"
