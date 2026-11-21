@@ -169,9 +169,9 @@ func TestPackageAdoptionOnlyInspectsAndWritesReceipt(t *testing.T) {
 	}
 }
 
-func TestDormantMeridianAdoptionCannotStartPackageRuntime(t *testing.T) {
+func TestDormantGlivelaAdoptionCannotStartPackageRuntime(t *testing.T) {
 	task := packageTestTask(t)
-	task.AppKey = meridianKey
+	task.AppKey = legacyProxyAppKey
 	task.ApplicationID = "unconfigured-meridian"
 	task.Manifest.ID = "meridian"
 	task.Manifest.Runtime = nil
@@ -194,37 +194,37 @@ func TestDormantMeridianAdoptionCannotStartPackageRuntime(t *testing.T) {
 	}
 }
 
-func TestDormantMeridianAdoptionRequiresNoLocalRuntimeStateOrContainers(t *testing.T) {
+func TestDormantGlivelaAdoptionRequiresNoLocalRuntimeStateOrContainers(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	task := DeploymentTask{ID: "adopt-meridian", ApplicationID: "unconfigured-meridian", AppKey: meridianKey, DormantRuntime: true, ManifestSHA256: strings.Repeat("a", 64), Manifest: catalog.AppManifest{Version: "0.1.0-alpha.2"}}
+	task := DeploymentTask{ID: "adopt-meridian", ApplicationID: "unconfigured-meridian", AppKey: legacyProxyAppKey, DormantRuntime: true, ManifestSHA256: strings.Repeat("a", 64), Manifest: catalog.AppManifest{Version: "0.1.0-alpha.2"}}
 	executor := ApplicationExecutor{Store: store}
 	docker := newPackageDocker()
-	receipt, err := executor.historicalDormantMeridianResources(context.Background(), task, docker)
+	receipt, err := executor.historicalDormantGlivelaResources(context.Background(), task, docker)
 	if err != nil || receipt.IntegrationState != "dormant" || len(receipt.Resources) != 0 {
 		t.Fatalf("empty runtime was not recorded explicitly: %+v %v", receipt, err)
 	}
-	docker.containers[meridianXrayCandidateContainer] = client.ContainerInspectResult{Container: container.InspectResponse{ID: "unexpected-runtime", Config: &container.Config{}}}
-	if _, err := executor.historicalDormantMeridianResources(context.Background(), task, docker); err == nil {
+	docker.containers[legacyXrayCandidateContainer] = client.ContainerInspectResult{Container: container.InspectResponse{ID: "unexpected-runtime", Config: &container.Config{}}}
+	if _, err := executor.historicalDormantGlivelaResources(context.Background(), task, docker); err == nil {
 		t.Fatal("candidate container was ignored")
 	}
-	delete(docker.containers, meridianXrayCandidateContainer)
-	if err := os.Mkdir(filepath.Join(store.dataDir, meridianRuntimeDirectory), 0700); err != nil {
+	delete(docker.containers, legacyXrayCandidateContainer)
+	if err := os.Mkdir(filepath.Join(store.dataDir, glivelaRuntimeDirectory), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executor.historicalDormantMeridianResources(context.Background(), task, docker); err == nil {
+	if _, err := executor.historicalDormantGlivelaResources(context.Background(), task, docker); err == nil {
 		t.Fatal("Glivela configuration artifacts were ignored")
 	}
-	if err := os.Remove(filepath.Join(store.dataDir, meridianRuntimeDirectory)); err != nil {
+	if err := os.Remove(filepath.Join(store.dataDir, glivelaRuntimeDirectory)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`INSERT INTO meridian_runtime_state(id,sealed_state) VALUES(1,?)`, []byte("stale-state")); err != nil {
+	if _, err := store.db.Exec(`INSERT INTO glivela_runtime_state(id,sealed_state) VALUES(1,?)`, []byte("stale-state")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executor.historicalDormantMeridianResources(context.Background(), task, docker); err == nil {
+	if _, err := executor.historicalDormantGlivelaResources(context.Background(), task, docker); err == nil {
 		t.Fatal("persisted Glivela runtime state was ignored")
 	}
 }

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/petauron/catalog/catalog"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -74,7 +74,7 @@ func (s *Store) reinstallLocalExecutionTask(ctx context.Context, tx *sql.Tx, exe
 	case "agent.update", "agent.decommission", "node.ip-quality", "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server", "node.listener.apply", "landing.server.apply", "landing.proxy.apply", "xray.configuration.inspect", "xray.configuration.apply":
 		return &task, nil
 	case "application.apply":
-		if task.AppKey != meridianAppKey || task.Manifest.ID != "meridian" || catalog.ValidateApp(task.Manifest) != nil {
+		if task.AppKey != glivelaAppKey || task.Manifest.ID != "meridian" || catalog.ValidateApp(task.Manifest) != nil {
 			return nil, nil
 		}
 		var matches bool
@@ -85,11 +85,11 @@ func (s *Store) reinstallLocalExecutionTask(ctx context.Context, tx *sql.Tx, exe
 			return &task, nil
 		}
 	case "application.command":
-		if task.MeridianRuntime == nil || task.MeridianRuntime.Validate() != nil {
+		if task.GlivelaRuntime == nil || task.GlivelaRuntime.Validate() != nil {
 			return nil, nil
 		}
 		var matches bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND gateway_node_id=agent_id AND kind=? AND attempt=?)`, task.ID, execution.AgentID, meridianruntime.ApplyKind, task.Attempt).Scan(&matches); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=? AND gateway_node_id=agent_id AND kind=? AND attempt=?)`, task.ID, execution.AgentID, glivelaruntime.ApplyKind, task.Attempt).Scan(&matches); err != nil {
 			return nil, err
 		}
 		if matches {

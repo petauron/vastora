@@ -818,13 +818,13 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
-	if !s.businessRetired && reinstalling && heartbeat.MeridianRuntime != nil {
-		if err := s.recordReinstallRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
+	if !s.businessRetired && reinstalling && heartbeat.GlivelaRuntime != nil {
+		if err := s.recordReinstallRuntimeObservation(ctx, tx, id, *heartbeat.GlivelaRuntime, now); err != nil {
 			return err
 		}
 	}
-	if !s.businessRetired && !executionBlocked && heartbeat.MeridianRuntime != nil {
-		if err := s.recordMeridianRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
+	if !s.businessRetired && !executionBlocked && heartbeat.GlivelaRuntime != nil {
+		if err := s.recordGlivelaRuntimeObservation(ctx, tx, id, *heartbeat.GlivelaRuntime, now); err != nil {
 			return err
 		}
 	}
@@ -1229,7 +1229,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 			return nil, errors.New("center: invalid stored Agent capabilities")
 		}
 		// Advertise availability only for the current execution contract.
-		agent.Capabilities.MeridianLinkBandwidth = agent.Capabilities.MeridianLinkBandwidth && agent.Capabilities.MeridianLinkRevision == nodediagnostics.LinkBandwidthRevision
+		agent.Capabilities.GlivelaLinkBandwidth = agent.Capabilities.GlivelaLinkBandwidth && agent.Capabilities.GlivelaLinkRevision == nodediagnostics.LinkBandwidthRevision
 		if agent.Roles == nil {
 			agent.Roles = []string{}
 		}

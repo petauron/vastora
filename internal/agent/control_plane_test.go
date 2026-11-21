@@ -292,7 +292,7 @@ func TestHeartbeatPreservesLegacyInboundsWithoutObservingThem(t *testing.T) {
 	}
 }
 
-func TestHeartbeatAllowsMeridianSubscriptionHostWithoutLocalXrayRuntime(t *testing.T) {
+func TestHeartbeatAllowsGlivelaSubscriptionHostWithoutLocalXrayRuntime(t *testing.T) {
 	heartbeats := 0
 	server := controlFixtureServer(&controlGRPCFixture{heartbeat: func(_ context.Context, request *agentpb.AgentDocument) (*agentpb.Document, error) {
 		if request.AgentId != "agent-1" {
@@ -301,12 +301,12 @@ func TestHeartbeatAllowsMeridianSubscriptionHostWithoutLocalXrayRuntime(t *testi
 		var payload struct {
 			ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
 			ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
-			MeridianRuntime              json.RawMessage                  `json:"meridianRuntime"`
+			GlivelaRuntime               json.RawMessage                  `json:"meridianRuntime"`
 		}
 		if err := json.Unmarshal(request.Json, &payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload.ApplicationEndpointsObserved || len(payload.ApplicationEndpoints) != 0 || len(payload.MeridianRuntime) != 0 {
+		if payload.ApplicationEndpointsObserved || len(payload.ApplicationEndpoints) != 0 || len(payload.GlivelaRuntime) != 0 {
 			t.Fatalf("controller-only Glivela package reported a proxy runtime: %#v", payload)
 		}
 		heartbeats++
@@ -322,7 +322,7 @@ func TestHeartbeatAllowsMeridianSubscriptionHostWithoutLocalXrayRuntime(t *testi
 		t.Fatal(err)
 	}
 	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{
-		InstanceID: "meridian-controller", ApplicationID: "controller", AppKey: meridianKey,
+		InstanceID: "meridian-controller", ApplicationID: "controller", AppKey: legacyProxyAppKey,
 		Version: "1.0.0", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`), ServiceAddress: "127.0.0.1",
 	}); err != nil {
 		t.Fatal(err)

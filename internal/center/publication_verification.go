@@ -177,8 +177,8 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 			if err := verifyShared443TLS(ctx, verificationAddress, publication.SNIHostname); err != nil {
 				return s.recordPublicationVerification(ctx, id, expectedRevision, publicationShared443TLSUnhealthy)
 			}
-			if appKey == meridianAppKey {
-				return s.verifyMeridianPublication(ctx, publication, expectedRevision)
+			if appKey == glivelaAppKey {
+				return s.verifyGlivelaPublication(ctx, publication, expectedRevision)
 			}
 			return s.markPublicationReady(ctx, id, expectedRevision)
 		}
@@ -364,7 +364,7 @@ func (s *Store) markPublicationReadyChecked(ctx context.Context, id string, expe
 		if err := s.retireMigratedTunnelConnector(ctx, tx, id, readyAt); err != nil {
 			return PublicationView{}, err
 		}
-		if err := s.reconcileMeridianCutoverInTx(ctx, tx, readyAt.Format(time.RFC3339Nano)); err != nil {
+		if err := s.reconcileGlivelaCutoverInTx(ctx, tx, readyAt.Format(time.RFC3339Nano)); err != nil {
 			return PublicationView{}, err
 		}
 	}

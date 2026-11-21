@@ -2,7 +2,7 @@ import type { AgentView, AppData, Application, AppView, Deployment, Publication,
 import { isInstalledApplication } from "./appAccess";
 
 export const threeXUIAppKey = "vastora-official/3x-ui";
-export const meridianAppKey = "vastora-official/meridian";
+export const glivelaAppKey = "vastora-official/meridian";
 
 export type InstalledAppInstance = {
   application: Application;
@@ -47,9 +47,9 @@ export function canCreateRealityNode(instance: InstalledAppInstance) {
 export function showInstalledNode(instance: InstalledAppInstance) {
   const legacyControllerOnly = instance.application.appKey === threeXUIAppKey && instance.application.role === "master"
     && instance.application.id === instance.application.controllerApplicationId && instance.realityServices.length === 0;
-  const meridianControllerOnly = instance.application.appKey === meridianAppKey && instance.realityServices.length === 0
+  const glivelaControllerOnly = instance.application.appKey === glivelaAppKey && instance.realityServices.length === 0
     && instance.services.some((service) => service.appProtocol === "meridian/subscription");
-  return !legacyControllerOnly && !meridianControllerOnly;
+  return !legacyControllerOnly && !glivelaControllerOnly;
 }
 
 function indexBy<T>(values: T[], key: (value: T) => string) {
@@ -80,7 +80,7 @@ export function installedAppGroups(data: Pick<AppData, "applications" | "apps" |
       && referencedController.role === "master" ? referencedController : undefined;
     const services = servicesByApplication.get(application.id) ?? [];
     const realityServices = services.filter((service) => service.appProtocol === "vless/tcp/reality"
-      || application.appKey === meridianAppKey && service.appProtocol === "meridian/entry");
+      || application.appKey === glivelaAppKey && service.appProtocol === "meridian/entry");
     const deployments = deploymentsByApplication.get(application.id) ?? [];
     const activeChange = deployments.find((deployment) => deployment.state === "pending" || deployment.state === "running" || deployment.reconciliationRequired);
     instances.set(application.id, {
@@ -114,7 +114,7 @@ export function installedAppGroups(data: Pick<AppData, "applications" | "apps" |
     const controller = group.appKey === threeXUIAppKey
       ? group.instances.map((instance) => instance.controller).find((application): application is Application => Boolean(application))
       : undefined;
-    const controllerInstance = group.appKey === meridianAppKey
+    const controllerInstance = group.appKey === glivelaAppKey
       ? group.instances.find((instance) => instance.services.some((service) => service.appProtocol === "meridian/subscription"))
       : controller ? instances.get(controller.id) : group.controller;
     const legacyControllers = group.appKey === threeXUIAppKey

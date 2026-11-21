@@ -30,7 +30,7 @@ Those older descriptions are retained for historical context.
 
 ## Local validation — 2026-10-25
 
-- `go test ./internal/meridianruntime ./internal/landing ./internal/agent ./internal/center`: passed.
+- `go test ./internal/glivelaruntime ./internal/landing ./internal/agent ./internal/center`: passed.
 - Regression coverage includes startup proof lifetime, quota/revocation/disable behavior, subscription snapshots, forward migration and preservation of revocation state.
 
 Self-review completed for changed execution, receipt, publication and migration

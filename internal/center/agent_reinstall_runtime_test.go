@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/petauron/glivela"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 )
@@ -36,10 +36,10 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...str
 	defer tx.Rollback()
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err = tx.Exec(`INSERT INTO services(id,application_id,site_id,name,display_name,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
- SELECT 'restore-service',id,site_id,'entry','Entry','tcp',10443,10443,'10.0.0.7:10443','observed',?,0,'10.0.0.7','ready',?,? FROM applications WHERE id=?`, meridianEntryProtocol, now, now, input.ApplicationID); err != nil {
+ SELECT 'restore-service',id,site_id,'entry','Entry','tcp',10443,10443,'10.0.0.7:10443','observed',?,0,'10.0.0.7','ready',?,? FROM applications WHERE id=?`, glivelaEntryProtocol, now, now, input.ApplicationID); err != nil {
 		t.Fatal(err)
 	}
-	endpointSecret, err := s.putSecret(ctx, tx, []byte("original-private-key"), meridianEndpointSecretContext("restore-endpoint"))
+	endpointSecret, err := s.putSecret(ctx, tx, []byte("original-private-key"), glivelaEndpointSecretContext("restore-endpoint"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...str
  VALUES('restore-endpoint',?,'restore-service','restore-entry','10.0.0.7',10443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'original-public-key','["abcd"]','chrome',4,4,1,'ready',?,?)`, input.ApplicationID, endpointSecret, now, now); err != nil {
 		t.Fatal(err)
 	}
-	token, err := s.putSecret(ctx, tx, []byte("retained-subscription-token"), meridianAccountSecretContext("restore-account"))
+	token, err := s.putSecret(ctx, tx, []byte("retained-subscription-token"), glivelaAccountSecretContext("restore-account"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func reinstallRuntimeNetworkFixture(t *testing.T, public bool, publicExit ...str
 		id, kind, protocol string
 		egress             any
 	}{{"native", "native", restoreNativeID, nil}, {"route", "route", restoreRouteID, node.ID}} {
-		key, err := s.putSecret(ctx, tx, []byte(entry.protocol), meridianCredentialSecretContext(entry.id))
+		key, err := s.putSecret(ctx, tx, []byte(entry.protocol), glivelaCredentialSecretContext(entry.id))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,11 +96,11 @@ func TestArchivedReinstallRuntimeRetainsIdentityWithoutDispatchOrPublication(t *
 	}
 	task, err := s.reinstallRuntimeTask(ctx, tx, node.ID, receipt.CommandID, false)
 	_ = tx.Rollback()
-	if err != nil || task == nil || task.MeridianRuntime == nil {
+	if err != nil || task == nil || task.GlivelaRuntime == nil {
 		t.Fatalf("historical native configuration unavailable: %v", err)
 	}
-	config := string(task.MeridianRuntime.Desired.Config)
-	if task.Revision != 5 || !strings.Contains(config, "10.0.0.8") || strings.Contains(config, "10.0.0.7") || !strings.Contains(config, restoreNativeID) || strings.Contains(config, restoreRouteID) || !strings.Contains(config, "original-private-key") || task.MeridianRuntime.Source != nil || len(task.MeridianRuntime.Peers) != 0 || task.MeridianRuntime.ReplacePendingState || task.MeridianRuntime.RetireLegacy {
+	config := string(task.GlivelaRuntime.Desired.Config)
+	if task.Revision != 5 || !strings.Contains(config, "10.0.0.8") || strings.Contains(config, "10.0.0.7") || !strings.Contains(config, restoreNativeID) || strings.Contains(config, restoreRouteID) || !strings.Contains(config, "original-private-key") || task.GlivelaRuntime.Source != nil || len(task.GlivelaRuntime.Peers) != 0 || task.GlivelaRuntime.ReplacePendingState || task.GlivelaRuntime.RetireLegacy {
 		t.Fatal("historical rendering lost identity or enabled unreviewed landing")
 	}
 	var metadata string
@@ -116,9 +116,9 @@ func TestArchivedReinstallRuntimeRetainsIdentityWithoutDispatchOrPublication(t *
 	if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, receipt.CommandID); err != nil {
 		t.Fatal(err)
 	}
-	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+	result := glivelaHealthResult(glivelaRuntimeProjection{task: *task.GlivelaRuntime}, s.now().UTC(), true)
 	result.LegacyRetired = true
-	assertRetiredMeridianResultPreservesState(t, s, meridianRuntimeProjection{agentID: node.ID}, receipt.CommandID, result)
+	assertRetiredGlivelaResultPreservesState(t, s, glivelaRuntimeProjection{agentID: node.ID}, receipt.CommandID, result)
 	plan, err := s.AgentReinstallPlan(ctx, node.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -192,8 +192,8 @@ func TestAgentReinstallRuntimeRejectsChangedAuthorization(t *testing.T) {
 						t.Fatal("changed authority claimed")
 					}
 				} else {
-					result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
-					raw, marshalErr := json.Marshal(ApplicationTaskResult{MeridianRuntime: &result})
+					result := glivelaHealthResult(glivelaRuntimeProjection{task: *task.GlivelaRuntime}, s.now().UTC(), true)
+					raw, marshalErr := json.Marshal(ApplicationTaskResult{GlivelaRuntime: &result})
 					if marshalErr != nil {
 						t.Fatal(marshalErr)
 					}
@@ -290,11 +290,11 @@ func TestAgentReinstallRuntimeRejectsInvalidAndFailedResults(t *testing.T) {
 			if _, err := s.db.Exec(`UPDATE application_commands SET state='running',attempt=1 WHERE id=?`, receipt.CommandID); err != nil {
 				t.Fatal(err)
 			}
-			result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now(), true)
+			result := glivelaHealthResult(glivelaRuntimeProjection{task: *task.GlivelaRuntime}, s.now(), true)
 			if mode == "invalid" {
 				result.Receipt.ConfigSHA256 = strings.Repeat("f", 64)
 			}
-			raw, _ := json.Marshal(ApplicationTaskResult{MeridianRuntime: &result})
+			raw, _ := json.Marshal(ApplicationTaskResult{GlivelaRuntime: &result})
 			assertRetiredApplicationResultPreservesState(t, s, node.ID, receipt.CommandID, mode != "failed", raw)
 			plan, err := s.AgentReinstallPlan(ctx, node.ID)
 			if err != nil {
@@ -326,7 +326,7 @@ func TestAgentReinstallRuntimeSealingRejectsTaskSubstitution(t *testing.T) {
 		_ = tx.Rollback()
 		t.Fatalf("historical task: %v", err)
 	}
-	task.MeridianRuntime.ReplacePendingState = true
+	task.GlivelaRuntime.ReplacePendingState = true
 	_, err = s.persistExecutionAuthorization(ctx, tx, node.ID, "package-preparation-session", *task)
 	_ = tx.Rollback()
 	if err == nil {
@@ -354,7 +354,7 @@ func TestReinstallHeartbeatUpdatesNetworkWithoutRenewingRetiredProxyEvidence(t *
 		return raw
 	}
 	before := read()
-	heartbeat := NodeHeartbeat{Startup: true, Version: Version, PublicKey: key, Capabilities: NodeCapabilities{Docker: true}, Roles: []string{"worker"}, NetworkCandidates: []networking.Candidate{{Address: "10.0.0.8", Interface: "eth0", Kind: networking.KindLAN}}, MeridianRuntime: &meridianruntime.Result{Receipt: glivela.AppliedReceipt{Revision: 999, ConfigSHA256: strings.Repeat("f", 64), RuntimeReady: true}}}
+	heartbeat := NodeHeartbeat{Startup: true, Version: Version, PublicKey: key, Capabilities: NodeCapabilities{Docker: true}, Roles: []string{"worker"}, NetworkCandidates: []networking.Candidate{{Address: "10.0.0.8", Interface: "eth0", Kind: networking.KindLAN}}, GlivelaRuntime: &glivelaruntime.Result{Receipt: glivela.AppliedReceipt{Revision: 999, ConfigSHA256: strings.Repeat("f", 64), RuntimeReady: true}}}
 	if err := s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
 		t.Fatalf("management heartbeat blocked by retired runtime data: %v", err)
 	}
@@ -504,13 +504,13 @@ func seedSuccessfulHistoricalRuntime(t *testing.T, s *Store, node AgentCredentia
 	}
 	defer tx.Rollback()
 	task, err := s.reinstallRuntimeTask(ctx, tx, node.ID, receipt.CommandID, false)
-	if err != nil || task == nil || task.MeridianRuntime == nil {
+	if err != nil || task == nil || task.GlivelaRuntime == nil {
 		t.Fatalf("historical runtime fixture: %v", err)
 	}
 	if _, err := tx.Exec(`UPDATE application_commands SET state='succeeded',attempt=1,result_json='{"transportReady":true}' WHERE id=?`, receipt.CommandID); err != nil {
 		t.Fatal(err)
 	}
-	result := meridianHealthResult(meridianRuntimeProjection{task: *task.MeridianRuntime}, s.now().UTC(), true)
+	result := glivelaHealthResult(glivelaRuntimeProjection{task: *task.GlivelaRuntime}, s.now().UTC(), true)
 	result.LegacyRetired = true
 	if err := s.recordReinstallRuntimeObservation(ctx, tx, node.ID, result, s.now().UTC()); err != nil {
 		t.Fatal(err)
@@ -532,7 +532,7 @@ func readHistoricalRuntimeTask(t *testing.T, s *Store, node AgentCredential) *Ag
 		t.Fatal(err)
 	}
 	task, err := s.reinstallRuntimeTask(context.Background(), tx, node.ID, id, false)
-	if err != nil || task == nil || task.MeridianRuntime == nil {
+	if err != nil || task == nil || task.GlivelaRuntime == nil {
 		t.Fatalf("historical runtime task unavailable: %v", err)
 	}
 	return task

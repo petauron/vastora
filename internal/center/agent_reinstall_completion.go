@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -22,11 +22,11 @@ type reinstallCompletionEvidence struct {
 	Current  map[string]currentReinstallCompletion
 	Plan     AgentReinstallPlan
 	Clients  map[string][]string
-	Runtimes map[string]meridianruntime.Result
+	Runtimes map[string]glivelaruntime.Result
 }
 
 func (s *Store) requireReinstallCompletion(ctx context.Context, tx *sql.Tx, target, admin, operation, revision string) (reinstallCompletionEvidence, error) {
-	evidence := reinstallCompletionEvidence{Current: map[string]currentReinstallCompletion{}, Clients: map[string][]string{}, Runtimes: map[string]meridianruntime.Result{}}
+	evidence := reinstallCompletionEvidence{Current: map[string]currentReinstallCompletion{}, Clients: map[string][]string{}, Runtimes: map[string]glivelaruntime.Result{}}
 	plan, err := s.agentReinstallPlan(ctx, tx, target)
 	if err != nil {
 		return evidence, err
@@ -95,7 +95,7 @@ func (s *Store) requireReinstallCompletion(ctx context.Context, tx *sql.Tx, targ
 			if !verified {
 				return evidence, errors.New("center: fresh reports from the original monitoring identity are required")
 			}
-		case app.AppKey == meridianAppKey && app.Recovery == "rebuild_configuration":
+		case app.AppKey == glivelaAppKey && app.Recovery == "rebuild_configuration":
 			p := app.Preparation
 			if p == nil || p.State != "succeeded" || p.Runtime == nil || p.Runtime.State != "succeeded" || p.Access == nil || p.Access.State != "applied" || p.Landing != nil && p.Landing.State != "authorized" {
 				return evidence, errors.New("center: restored application runtime and reviewed access are required")
@@ -110,7 +110,7 @@ func (s *Store) requireReinstallCompletion(ctx context.Context, tx *sql.Tx, targ
 			if err != nil {
 				return evidence, err
 			}
-			runtime, err := s.reinstallRuntimeProof(ctx, tx, target, p.Runtime.CommandID, *task.MeridianRuntime)
+			runtime, err := s.reinstallRuntimeProof(ctx, tx, target, p.Runtime.CommandID, *task.GlivelaRuntime)
 			if err != nil {
 				return evidence, err
 			}
@@ -127,8 +127,8 @@ func (s *Store) requireReinstallCompletion(ctx context.Context, tx *sql.Tx, targ
 	return evidence, nil
 }
 
-func (s *Store) reinstallRuntimeProof(ctx context.Context, tx *sql.Tx, target, id string, task meridianruntime.Task) (meridianruntime.Result, error) {
-	var result meridianruntime.Result
+func (s *Store) reinstallRuntimeProof(ctx context.Context, tx *sql.Tx, target, id string, task glivelaruntime.Task) (glivelaruntime.Result, error) {
+	var result glivelaruntime.Result
 	var execution string
 	var sealed []byte
 	if err := tx.QueryRowContext(ctx, `SELECT id,sealed_result FROM task_executions WHERE task_id=? AND agent_id=? AND kind='application.command' AND attempt=1 AND state='succeeded' AND phase='reported' AND identity_retired_at=''`, id, target).Scan(&execution, &sealed); err != nil {
@@ -140,7 +140,7 @@ func (s *Store) reinstallRuntimeProof(ctx context.Context, tx *sql.Tx, target, i
 	}
 	var proof executionResultEvidence
 	var envelope ApplicationTaskResult
-	if json.Unmarshal(raw, &proof) != nil || !proof.Succeeded || proof.Unknown || json.Unmarshal(proof.Result, &envelope) != nil || envelope.MeridianRuntime == nil || envelope.MeridianRuntime.Validate(task.Desired) != nil {
+	if json.Unmarshal(raw, &proof) != nil || !proof.Succeeded || proof.Unknown || json.Unmarshal(proof.Result, &envelope) != nil || envelope.GlivelaRuntime == nil || envelope.GlivelaRuntime.Validate(task.Desired) != nil {
 		return result, errExecutionAuthorization
 	}
 	return s.currentReinstallRuntimeObservation(ctx, tx, id, task)

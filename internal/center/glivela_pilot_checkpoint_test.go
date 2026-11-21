@@ -19,17 +19,17 @@ import (
 
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/glivela"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
 )
 
 func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
-	store := openMeridianSharedEndpointSnapshotFixture(t)
+	store := openGlivelaSharedEndpointSnapshotFixture(t)
 	ctx := context.Background()
 	now := store.now().UTC()
-	p := meridianruntime.PilotCounters{EntryID: "snapshot-shared-app", ConfigSHA256: strings.Repeat("a", 64), CertificateID: strings.Repeat("b", 64), Revision: 1, CutoverAt: now.Add(-10 * time.Second)}
+	p := glivelaruntime.PilotCounters{EntryID: "snapshot-shared-app", ConfigSHA256: strings.Repeat("a", 64), CertificateID: strings.Repeat("b", 64), Revision: 1, CutoverAt: now.Add(-10 * time.Second)}
 	rows, err := store.db.Query(`SELECT id FROM meridian_credentials WHERE endpoint_id=? ORDER BY id`, sharedSnapshotEndpointID)
 	if err != nil {
 		t.Fatal(err)
@@ -67,19 +67,19 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.queueMeridianRuntime(ctx, tx, sharedSnapshotEndpointID, false); err != errGlivelaPilotOwnsRuntime {
+	if _, err := store.queueGlivelaRuntime(ctx, tx, sharedSnapshotEndpointID, false); err != errGlivelaPilotOwnsRuntime {
 		t.Fatal("legacy queue not fenced", err)
 	}
-	if _, err := store.buildMeridianRuntimeTask(ctx, tx, sharedSnapshotEndpointID, ""); err != errGlivelaPilotOwnsRuntime {
+	if _, err := store.buildGlivelaRuntimeTask(ctx, tx, sharedSnapshotEndpointID, ""); err != errGlivelaPilotOwnsRuntime {
 		t.Fatal("legacy claim not fenced", err)
 	}
 	if owned, err := glivelaPilotOwnsEndpoint(ctx, tx, "another-endpoint"); err != nil || owned {
 		t.Fatal("pilot widened to another endpoint", err)
 	}
-	if err := requireLegacyMeridianApplicationOwner(ctx, tx, p.EntryID); err != errGlivelaPilotOwnsRuntime {
+	if err := requireLegacyGlivelaApplicationOwner(ctx, tx, p.EntryID); err != errGlivelaPilotOwnsRuntime {
 		t.Fatal("legacy application management not fenced", err)
 	}
-	if err := requireLegacyMeridianApplicationOwner(ctx, tx, "another-application"); err != nil {
+	if err := requireLegacyGlivelaApplicationOwner(ctx, tx, "another-application"); err != nil {
 		t.Fatal("another application's lifecycle blocked", err)
 	}
 	var cleanups []publicationCleanup
@@ -91,10 +91,10 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT service_id FROM meridian_endpoints WHERE id=?`, sharedSnapshotEndpointID).Scan(&serviceID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.configureMeridianNodeProtocols(ctx, serviceID, nodeprotocol.Selection{VLESS: true, HY2: true}); err != errGlivelaPilotOwnsRuntime {
+	if _, err := store.configureGlivelaNodeProtocols(ctx, serviceID, nodeprotocol.Selection{VLESS: true, HY2: true}); err != errGlivelaPilotOwnsRuntime {
 		t.Fatal("legacy protocol change was not fenced before certificate acquisition", err)
 	}
-	r := meridianruntime.PilotReceipt{EntryID: p.EntryID, ConfigSHA256: p.ConfigSHA256, StartedAt: now.Add(-5 * time.Second), SampledAt: now.Add(-time.Second), Ready: true}
+	r := glivelaruntime.PilotReceipt{EntryID: p.EntryID, ConfigSHA256: p.ConfigSHA256, StartedAt: now.Add(-5 * time.Second), SampledAt: now.Add(-time.Second), Ready: true}
 	r.PublicationSuspended = true // New traffic is still accounted exactly once while publication is paused.
 	for _, c := range p.Totals {
 		r.Counters = append(r.Counters, glivela.CounterSnapshot{CredentialID: c.CredentialID, UpBytes: 3, DownBytes: 7})
@@ -156,7 +156,7 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 	if _, err := store.db.Exec(`UPDATE meridian_endpoints SET runtime_healthy=0 WHERE id=?`, sharedSnapshotEndpointID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB); err != nil {
+	if _, err := store.GlivelaSubscription(ctx, sharedSnapshotTokenB); err != nil {
 		t.Fatal("subscription did not refresh pilot receipt", err)
 	}
 	var ready bool
@@ -232,7 +232,7 @@ func TestGlivelaPilotLedgerTransactionAndLegacyFence(t *testing.T) {
 }
 
 func TestGlivelaNativeRegistrationKeepsOriginalLedger(t *testing.T) {
-	s := openMeridianSharedEndpointSnapshotFixture(t)
+	s := openGlivelaSharedEndpointSnapshotFixture(t)
 	ctx := context.Background()
 	now := s.now().UTC()
 	stamp := now.Format(time.RFC3339Nano)
@@ -319,7 +319,7 @@ func TestGlivelaNativeRegistrationKeepsOriginalLedger(t *testing.T) {
 			if err := requireApplicationDeploymentOwner(ctx, tx, ep.EntryID, "upgrade", manifest); err != nil {
 				t.Fatal("completion ownership", err)
 			}
-			if err := requireLegacyMeridianApplicationOwner(ctx, tx, ep.EntryID); !errors.Is(err, errGlivelaPilotOwnsRuntime) {
+			if err := requireLegacyGlivelaApplicationOwner(ctx, tx, ep.EntryID); !errors.Is(err, errGlivelaPilotOwnsRuntime) {
 				t.Fatal("business fence removed", err)
 			}
 		}

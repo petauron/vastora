@@ -183,7 +183,7 @@ jobs:
           sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestNativeServerKernelPolicy$' -test.v
           VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteConfiguration$' -test.v
           VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteTransfersTCPAndUDP$' -test.v
-          sudo -- "$RUNNER_TEMP/package-systemd.test" -test.run '^TestMeridianHostKernelPreflight$' -test.v
+          sudo -- "$RUNNER_TEMP/package-systemd.test" -test.run '^TestGlivelaHostKernelPreflight$' -test.v
           sudo env VASTORA_NATIVE_LANDING_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test" -test.run '^TestLandingNativeHostLifecycle$' -test.v
       - name: Validate native landing routes with catalog Xray
         if: ${{ !cancelled() }}

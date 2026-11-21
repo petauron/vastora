@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Application, Publication, Service } from "../types";
-import { canCreateRealityNode, installedAppGroups, meridianAppKey, publicationNeedsAttention, showInstalledNode, threeXUIAppKey } from "./installed-apps-model";
+import { canCreateRealityNode, installedAppGroups, glivelaAppKey, publicationNeedsAttention, showInstalledNode, threeXUIAppKey } from "./installed-apps-model";
 
 const application = (id: string, overrides: Partial<Application> = {}): Application => ({
   id, name: "3x-ui", nodeId: id, siteId: "site-a", appKey: threeXUIAppKey,
@@ -41,8 +41,8 @@ describe("installed application grouping", () => {
   it("separates the Glivela subscription host from native entry nodes", () => {
     const input = data();
     input.applications = [
-      application("meridian-controller", { appKey: meridianAppKey, name: "Glivela", role: undefined }),
-      application("meridian-entry", { appKey: meridianAppKey, name: "Glivela", role: undefined }),
+      application("meridian-controller", { appKey: glivelaAppKey, name: "Glivela", role: undefined }),
+      application("meridian-entry", { appKey: glivelaAppKey, name: "Glivela", role: undefined }),
     ];
     input.services = [
       service("meridian-subscription", "meridian-controller", { protocol: "http", appProtocol: "meridian/subscription", name: "subscription" }),

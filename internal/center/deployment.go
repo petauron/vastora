@@ -76,12 +76,12 @@ const cpaAppKey = "vastora-official/cpa"
 const cpaClientAPIServiceName = "client-api"
 const cpaClientAPIPath = "/v1"
 const cpaClientAPIHealthPath = "/v1/models"
-const meridianSubscriptionServiceName = "subscription"
-const meridianEntryProtocol = "meridian/entry"
+const glivelaSubscriptionServiceName = "subscription"
+const glivelaEntryProtocol = "meridian/entry"
 const cpaClientAPITunnelPath = "^/v1(/.*)?$"
 const (
 	threeXUIAppKey = "vastora-official/3x-ui"
-	meridianAppKey = "vastora-official/meridian"
+	glivelaAppKey  = "vastora-official/meridian"
 )
 const komariAppKey = "vastora-official/komari-agent"
 
@@ -90,7 +90,7 @@ func isCPAClientAPIService(appKey, serviceName string) bool {
 }
 
 func cloudflareAccessRequiredForService(appKey, serviceName string) bool {
-	proxySubscription := serviceName == meridianSubscriptionServiceName && (appKey == threeXUIAppKey || appKey == meridianAppKey)
+	proxySubscription := serviceName == glivelaSubscriptionServiceName && (appKey == threeXUIAppKey || appKey == glivelaAppKey)
 	return !proxySubscription && !isCPAClientAPIService(appKey, serviceName)
 }
 
@@ -279,8 +279,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if request.AppKey == meridianAppKey && request.Operation == "uninstall" {
-		if err := s.validateMeridianUninstall(ctx, request.AgentID); err != nil {
+	if request.AppKey == glivelaAppKey && request.Operation == "uninstall" {
+		if err := s.validateGlivelaUninstall(ctx, request.AgentID); err != nil {
 			return DeploymentView{}, err
 		}
 	}
@@ -291,7 +291,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if executionRetired {
 		return DeploymentView{}, errors.New("center: superseded execution is archived; manage its current replacement instead")
 	}
-	if request.AppKey == meridianAppKey && request.Operation != "uninstall" {
+	if request.AppKey == glivelaAppKey && request.Operation != "uninstall" {
 		var receiptRaw []byte
 		err := s.db.QueryRowContext(ctx, `SELECT r.resources_json FROM application_resources r JOIN applications a ON a.id=r.application_id WHERE a.node_id=? AND a.app_key=?`, request.AgentID, request.AppKey).Scan(&receiptRaw)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -334,8 +334,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, errors.New("center: installed package requires an explicit upgrade to a reviewed schema 4 recipe before configuration")
 	}
 	if request.Operation == "upgrade" {
-		if request.AppKey == meridianAppKey {
-			if _, err := dormantMeridianUpgrade(ctx, s.db, active.ID); err != nil {
+		if request.AppKey == glivelaAppKey {
+			if _, err := dormantGlivelaUpgrade(ctx, s.db, active.ID); err != nil {
 				return DeploymentView{}, err
 			}
 		}
@@ -453,7 +453,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				}
 			}
 		}
-		if request.AppKey == meridianAppKey {
+		if request.AppKey == glivelaAppKey {
 			deploymentConfig, err = removeJSONObjectKeys(deploymentConfig, panelConfigKey)
 			if err != nil {
 				return DeploymentView{}, err
@@ -506,7 +506,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if request.AppKey == meridianAppKey && request.Operation != "uninstall" {
+	if request.AppKey == glivelaAppKey && request.Operation != "uninstall" {
 		secrets, err = s.withPanelAccess(ctx, request.AgentID, manifest, secrets)
 		if err != nil {
 			return DeploymentView{}, err
@@ -687,7 +687,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	return deployment, nil
 }
 
-func (s *Store) validateMeridianUninstall(ctx context.Context, agentID string) error {
+func (s *Store) validateGlivelaUninstall(ctx context.Context, agentID string) error {
 	var cutoverState string
 	if err := s.db.QueryRowContext(ctx, `SELECT state FROM meridian_cutover WHERE id=1`).Scan(&cutoverState); err != nil {
 		return err
@@ -700,7 +700,7 @@ func (s *Store) validateMeridianUninstall(ctx context.Context, agentID string) e
 		JOIN services service ON service.application_id=application.id AND service.name=? AND service.status<>'stopped'
 		JOIN publications publication ON publication.service_id=service.id AND publication.status<>'stopped'
 		JOIN meridian_cutover cutover ON cutover.id=1 AND cutover.subscription_authority='meridian'
-		WHERE application.node_id=? AND application.app_key=?`, meridianSubscriptionServiceName, agentID, meridianAppKey).Scan(&activeSubscriptionEntries); err != nil {
+		WHERE application.node_id=? AND application.app_key=?`, glivelaSubscriptionServiceName, agentID, glivelaAppKey).Scan(&activeSubscriptionEntries); err != nil {
 		return err
 	}
 	if activeSubscriptionEntries != 0 {

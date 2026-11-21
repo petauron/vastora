@@ -26,7 +26,7 @@ func (s *Store) SetLandingEgress(ctx context.Context, nodeID string, input Landi
 		return err
 	}
 	defer tx.Rollback()
-	if err := ensureMeridianManagementWritable(ctx, tx); err != nil {
+	if err := ensureGlivelaManagementWritable(ctx, tx); err != nil {
 		return err
 	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {

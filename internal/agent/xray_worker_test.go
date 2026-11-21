@@ -447,7 +447,7 @@ func TestXrayWorkerLocalReconcilerAppliesExpiryOnce(t *testing.T) {
 }
 
 func TestXrayWorkerUsesHardenedBridgeRuntime(t *testing.T) {
-	options := xrayWorkerContainerOptions(DeploymentTask{AppKey: meridianKey, ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", false)
+	options := xrayWorkerContainerOptions(DeploymentTask{AppKey: legacyProxyAppKey, ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", false)
 	host := options.HostConfig
 	if host == nil || host.NetworkMode != container.NetworkMode(dockerruntime.NetworkName) || !host.ReadonlyRootfs || len(host.PortBindings) != 0 || options.NetworkingConfig == nil {
 		t.Fatalf("unexpected Xray network/runtime options: %#v", host)
@@ -465,7 +465,7 @@ func TestXrayWorkerUsesHardenedBridgeRuntime(t *testing.T) {
 	if host.PidsLimit == nil || *host.PidsLimit != 512 || host.LogConfig.Type != "json-file" || host.LogConfig.Config["max-size"] != "10m" || host.LogConfig.Config["max-file"] != "3" {
 		t.Fatalf("unexpected Xray resource/log boundary: %#v", host)
 	}
-	hy2 := xrayWorkerContainerOptions(DeploymentTask{AppKey: meridianKey, ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", true)
+	hy2 := xrayWorkerContainerOptions(DeploymentTask{AppKey: legacyProxyAppKey, ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", true)
 	bindings := hy2.HostConfig.PortBindings[hy2DockerPort]
 	_, udpExposed := hy2.Config.ExposedPorts[hy2DockerPort]
 	if len(bindings) != 1 || bindings[0].HostIP != netip.IPv4Unspecified() || bindings[0].HostPort != "443" || !udpExposed {
@@ -473,7 +473,7 @@ func TestXrayWorkerUsesHardenedBridgeRuntime(t *testing.T) {
 	}
 }
 
-func TestObserveMeridianStateAcceptsCurrentHysteriaStreamMethod(t *testing.T) {
+func TestObserveGlivelaStateAcceptsCurrentHysteriaStreamMethod(t *testing.T) {
 	config := []byte(`{
 		"inbounds":[
 			{"listen":"127.0.0.1","port":10085,"protocol":"dokodemo-door","tag":"api","streamSettings":{}},
@@ -482,7 +482,7 @@ func TestObserveMeridianStateAcceptsCurrentHysteriaStreamMethod(t *testing.T) {
 		]
 	}`)
 	digest := sha256.Sum256(config)
-	observed, err := observeMeridianState(glivela.DesiredArtifact{Revision: 1, Config: config, ConfigSHA256: hex.EncodeToString(digest[:])})
+	observed, err := observeGlivelaState(glivela.DesiredArtifact{Revision: 1, Config: config, ConfigSHA256: hex.EncodeToString(digest[:])})
 	if err != nil || len(observed) != 1 || observed[0].InboundTag != "meridian-entry" || observed[0].Port != 443 {
 		t.Fatalf("current Hysteria stream method was not observed: %#v err=%v", observed, err)
 	}
@@ -764,21 +764,21 @@ func TestXrayWorkerAppliedReceiptCanOnlyRecoverMatchingActiveConfig(t *testing.T
 	}
 }
 
-func TestMeridianArtifactHY2DetectionControlsUDP443Publication(t *testing.T) {
+func TestGlivelaArtifactHY2DetectionControlsUDP443Publication(t *testing.T) {
 	artifact := func(config string) glivela.DesiredArtifact {
 		encoded := []byte(config)
 		digest := sha256.Sum256(encoded)
 		return glivela.DesiredArtifact{Revision: 1, Config: encoded, ConfigSHA256: hex.EncodeToString(digest[:])}
 	}
-	hasHY2, err := meridianArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"hysteria","port":443}]}`))
+	hasHY2, err := glivelaArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"hysteria","port":443}]}`))
 	if err != nil || !hasHY2 {
 		t.Fatalf("HY2 artifact = %v, err=%v", hasHY2, err)
 	}
-	hasHY2, err = meridianArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"vless","port":443}]}`))
+	hasHY2, err = glivelaArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"vless","port":443}]}`))
 	if err != nil || hasHY2 {
 		t.Fatalf("VLESS-only artifact = %v, err=%v", hasHY2, err)
 	}
-	if _, err := meridianArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"hysteria","port":10443}]}`)); err == nil {
+	if _, err := glivelaArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"hysteria","port":10443}]}`)); err == nil {
 		t.Fatal("Glivela accepted Hysteria away from UDP 443")
 	}
 }

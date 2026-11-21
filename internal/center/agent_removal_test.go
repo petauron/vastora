@@ -300,8 +300,8 @@ func TestOfflineLegacyRemovalPreservesUnconfirmedSubscriptionHistory(t *testing.
 	}
 }
 
-func TestRemoveOfflineMeridianAgentAfterFailedLegacyCleanup(t *testing.T) {
-	s := openMeridianSharedEndpointSnapshotFixture(t)
+func TestRemoveOfflineGlivelaAgentAfterFailedLegacyCleanup(t *testing.T) {
+	s := openGlivelaSharedEndpointSnapshotFixture(t)
 	defer s.Close()
 	ctx := context.Background()
 	controller := enrollAccessTestNode(t, s, "Glivela subscription host", "10.0.0.92")
@@ -309,7 +309,7 @@ func TestRemoveOfflineMeridianAgentAfterFailedLegacyCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routeSecretID, err := s.putSecret(ctx, tx, []byte("22222222-2222-4222-8222-222222222222"), meridianCredentialSecretContext("removal-route-credential"))
+	routeSecretID, err := s.putSecret(ctx, tx, []byte("22222222-2222-4222-8222-222222222222"), glivelaCredentialSecretContext("removal-route-credential"))
 	if err != nil {
 		tx.Rollback()
 		t.Fatal(err)
@@ -330,7 +330,7 @@ func TestRemoveOfflineMeridianAgentAfterFailedLegacyCleanup(t *testing.T) {
 		{`UPDATE meridian_endpoints SET legacy_retired=1 WHERE id=?`, []any{sharedSnapshotEndpointID}},
 		{`INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,egress_node_id,enabled,created_at,updated_at) VALUES('removal-route-credential',?,?,'route','removal-route-credential',? ,?,?,1,?,?)`, []any{sharedSnapshotAccountA, sharedSnapshotEndpointID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", routeSecretID, controller.ID, stamp, stamp}},
 		{`INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,enabled,status,created_at,updated_at) VALUES('removal-route',?,?,?,?,'removal-route-credential',1,'ready',?,?)`, []any{sharedSnapshotAccountA, sharedSnapshotEndpointID, controller.ID, sharedSnapshotAccountA + "-native", stamp, stamp}},
-		{`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at) VALUES('removal-meridian-controller','Meridian',?,? ,?,'running','docker','',?,?)`, []any{controller.ID, testSiteID(t, s), meridianAppKey, stamp, stamp}},
+		{`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at) VALUES('removal-meridian-controller','Meridian',?,? ,?,'running','docker','',?,?)`, []any{controller.ID, testSiteID(t, s), glivelaAppKey, stamp, stamp}},
 		{`UPDATE meridian_cutover SET state='complete',subscription_authority='meridian',legacy_controller_application_id='removal-meridian-controller' WHERE id=1`, nil},
 		{`INSERT INTO three_x_ui_nodes(worker_application_id,master_application_id,remote_node_id,status,created_at,updated_at) VALUES('snapshot-shared-app','removal-meridian-controller',8,'failed',?,?)`, []any{stamp, stamp}},
 		{`INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,attempt,error,created_at,updated_at) VALUES('removal-obsolete-command','snapshot-shared-app',?,?,?,'{"action":"remove","workerApplicationId":"snapshot-shared-app","remoteNodeId":8}','failed',1,'agent: official 3x-ui is not installed',?,?)`, []any{controller.ID, controller.ID, nodeCommandKind, stamp, stamp}},

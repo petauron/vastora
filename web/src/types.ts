@@ -1,4 +1,4 @@
-import type { MeridianInventory } from "./meridian-types";
+import type { GlivelaInventory } from "./glivela-types";
 
 export type LocalizedText = { en: string; "zh-CN": string };
 
@@ -48,7 +48,7 @@ export type AppData = {
   integrations: Integration[];
   actions: Action[];
   threeXUIControllerMigrations: ThreeXUIControllerMigration[];
-  meridian: MeridianInventory;
+  glivela: GlivelaInventory;
   systemDomain: SystemDomain;
   tailscaleFixedEndpoint?: TailscaleFixedEndpoint;
   centerRemoteAccess: CenterRemoteAccess | null;
@@ -315,7 +315,7 @@ export type AgentView = {
   credentialRevoked: boolean;
   siteId: string;
   roles: string[];
-  capabilities: { tailscaleUpdate?: TailscaleUpdateStatus; landingOnly?: boolean; meridianAcceptance?: boolean; executorVersions?: Record<string, number>; runtimeCapabilities?: string[]; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; meridianLinkBandwidth?: boolean; hostProfile?: boolean; osReinstallPreflight?: boolean; osReinstall?: boolean; nodeSecurity?: boolean };
+  capabilities: { tailscaleUpdate?: TailscaleUpdateStatus; landingOnly?: boolean; "meridianAcceptance"?: boolean; executorVersions?: Record<string, number>; runtimeCapabilities?: string[]; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; "meridianLinkBandwidth"?: boolean; hostProfile?: boolean; osReinstallPreflight?: boolean; osReinstall?: boolean; nodeSecurity?: boolean };
   networkCandidates: NetworkCandidate[];
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;

@@ -235,7 +235,7 @@ func TestNodeSiteAgentMigrationPreservesExistingState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version=22;`); err != nil {
+	if _, err = s.db.Exec(`DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; ALTER TABLE glivela_runtime_state RENAME TO meridian_runtime_state; PRAGMA user_version=22;`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

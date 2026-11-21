@@ -13,7 +13,7 @@ import (
 
 func supersededHistoryFixture(t *testing.T) *Store {
 	t.Helper()
-	s := openMeridianSharedEndpointSnapshotFixture(t)
+	s := openGlivelaSharedEndpointSnapshotFixture(t)
 	exec := func(q string, args ...any) {
 		t.Helper()
 		if _, err := s.db.Exec(q, args...); err != nil {

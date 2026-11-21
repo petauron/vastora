@@ -31,7 +31,7 @@ export function ReinstallClientAcceptance({ plan, language, revision }: { plan: 
       try {
         const [agents, receipts] = await Promise.all([api.agents(), api.agentReinstallClientChecks(plan.agentId)]);
         if (generation.current !== current) return;
-        setNodes(agents.agents.filter((node) => node.id !== plan.agentId && node.connected && node.status === "active" && !node.credentialRevoked && node.capabilities.meridianAcceptance && !node.reinstall));
+        setNodes(agents.agents.filter((node) => node.id !== plan.agentId && node.connected && node.status === "active" && !node.credentialRevoked && node.capabilities["meridianAcceptance"] && !node.reinstall));
         setChecks(receipts);
       } catch (cause) { if (generation.current === current) setError(userError(language, cause)); }
       finally { if (generation.current === current) setBusy(false); }

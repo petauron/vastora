@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
 type AgentReinstallLandingSource struct {
 	State    string                        `json:"state"`
-	Identity MeridianSourceRecoveryView    `json:"identity"`
+	Identity GlivelaSourceRecoveryView     `json:"identity"`
 	Landings []AgentReinstallLandingTarget `json:"landings"`
 }
 
@@ -25,8 +25,8 @@ type AgentReinstallLandingTarget struct {
 	PeerFingerprint string `json:"peerFingerprint"`
 }
 
-func (s *Store) reinstallLandingIdentity(ctx context.Context, tx *sql.Tx, agentID, preparationID string) (string, MeridianSourceRecoveryView, []byte, error) {
-	var view MeridianSourceRecoveryView
+func (s *Store) reinstallLandingIdentity(ctx context.Context, tx *sql.Tx, agentID, preparationID string) (string, GlivelaSourceRecoveryView, []byte, error) {
+	var view GlivelaSourceRecoveryView
 	if valid, err := s.validateReinstallPreparation(ctx, tx, agentID, preparationID); err != nil || !valid {
 		return "", view, nil, errExecutionAuthorization
 	}
@@ -45,7 +45,7 @@ func (s *Store) reinstallLandingIdentity(ctx context.Context, tx *sql.Tx, agentI
 	}
 	var previous landing.PeerIdentity
 	current := *review.Approval.PrivatePeer
-	if json.Unmarshal(previousJSON, &previous) != nil || (meridianruntime.Peer{EgressID: agentID, Identity: previous}).Validate() != nil || (meridianruntime.Peer{EgressID: agentID, Identity: current}).Validate() != nil {
+	if json.Unmarshal(previousJSON, &previous) != nil || (glivelaruntime.Peer{EgressID: agentID, Identity: previous}).Validate() != nil || (glivelaruntime.Peer{EgressID: agentID, Identity: current}).Validate() != nil {
 		return "", view, nil, errExecutionAuthorization
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT replacement_network_observed_at FROM agent_reinstall_operations WHERE agent_id=? AND state='review_required'`, agentID).Scan(&view.ObservedAt); err != nil {
@@ -55,7 +55,7 @@ func (s *Store) reinstallLandingIdentity(ctx context.Context, tx *sql.Tx, agentI
 	if err != nil || observed.After(s.now().UTC()) || !observed.After(s.now().UTC().Add(-landingHealthFreshness)) {
 		return "", view, nil, errExecutionAuthorization
 	}
-	view.PreviousFingerprint, view.CurrentFingerprint = meridianPeerFingerprint(previous), meridianPeerFingerprint(current)
+	view.PreviousFingerprint, view.CurrentFingerprint = glivelaPeerFingerprint(previous), glivelaPeerFingerprint(current)
 	view.PreviousAddress, view.CurrentAddress = previous.Address, current.Address
 	encoded, _ := json.Marshal(current)
 	return endpointID, view, encoded, nil
@@ -79,10 +79,10 @@ func reinstallLandingTargets(ctx context.Context, tx *sql.Tx, endpointID string)
 			return nil, err
 		}
 		var peer landing.PeerIdentity
-		if json.Unmarshal(encoded, &peer) != nil || (meridianruntime.Peer{EgressID: target.NodeID, Identity: peer}).Validate() != nil {
+		if json.Unmarshal(encoded, &peer) != nil || (glivelaruntime.Peer{EgressID: target.NodeID, Identity: peer}).Validate() != nil {
 			return nil, errExecutionAuthorization
 		}
-		target.PeerFingerprint = meridianPeerFingerprint(peer)
+		target.PeerFingerprint = glivelaPeerFingerprint(peer)
 		targets = append(targets, target)
 	}
 	return targets, rows.Err()
@@ -113,16 +113,16 @@ func (s *Store) reinstallLandingSourceAllowed(ctx context.Context, tx *sql.Tx, a
 	if err != nil {
 		return false, true, err
 	}
-	var expected MeridianSourceRecoveryView
+	var expected GlivelaSourceRecoveryView
 	var targets []AgentReinstallLandingTarget
 	var approval AgentReinstallNetworkApproval
 	var pin, observed landing.PeerIdentity
 	if json.Unmarshal(identityJSON, &expected) != nil || json.Unmarshal(targetsJSON, &targets) != nil ||
 		json.Unmarshal(approvalJSON, &approval) != nil || approval.PrivatePeer == nil || approval.ControllerID == "" ||
 		json.Unmarshal(pinJSON, &pin) != nil || json.Unmarshal(observedJSON, &observed) != nil ||
-		meridianPeerFingerprint(pin) != expected.CurrentFingerprint || meridianPeerFingerprint(peer) != expected.CurrentFingerprint ||
-		meridianPeerFingerprint(*approval.PrivatePeer) != expected.CurrentFingerprint ||
-		observed.ID != "" && meridianPeerFingerprint(observed) != expected.CurrentFingerprint {
+		glivelaPeerFingerprint(pin) != expected.CurrentFingerprint || glivelaPeerFingerprint(peer) != expected.CurrentFingerprint ||
+		glivelaPeerFingerprint(*approval.PrivatePeer) != expected.CurrentFingerprint ||
+		observed.ID != "" && glivelaPeerFingerprint(observed) != expected.CurrentFingerprint {
 		return false, true, nil
 	}
 	for _, target := range targets {
@@ -134,7 +134,7 @@ func (s *Store) reinstallLandingSourceAllowed(ctx context.Context, tx *sql.Tx, a
 			return false, true, err
 		}
 		var actual landing.PeerIdentity
-		return json.Unmarshal(raw, &actual) == nil && meridianPeerFingerprint(actual) == target.PeerFingerprint, true, nil
+		return json.Unmarshal(raw, &actual) == nil && glivelaPeerFingerprint(actual) == target.PeerFingerprint, true, nil
 	}
 	return false, true, nil
 }
@@ -212,7 +212,7 @@ func (s *Store) readReinstallLandingSource(ctx context.Context, tx *sql.Tx, agen
 			return result, nil
 		}
 		want := phase == "authorize"
-		if meridianServerAuthorizesSource(desired, target.NodeID, result.Identity.CurrentAddress) != want || result.Identity.PreviousAddress != result.Identity.CurrentAddress && meridianServerAuthorizesSource(desired, target.NodeID, result.Identity.PreviousAddress) {
+		if glivelaServerAuthorizesSource(desired, target.NodeID, result.Identity.CurrentAddress) != want || result.Identity.PreviousAddress != result.Identity.CurrentAddress && glivelaServerAuthorizesSource(desired, target.NodeID, result.Identity.PreviousAddress) {
 			return result, nil
 		}
 		if status != "ready" || revision != target.Revision {
@@ -223,7 +223,7 @@ func (s *Store) readReinstallLandingSource(ctx context.Context, tx *sql.Tx, agen
 		if json.Unmarshal(applied, &state) != nil || state.Validate() != nil || state.NodeID != target.NodeID || state.Revision != uint64(revision) || state.Plan == nil {
 			return result, nil
 		}
-		if meridianServerAuthorizesSource(applied, target.NodeID, result.Identity.CurrentAddress) != want || result.Identity.PreviousAddress != result.Identity.CurrentAddress && meridianServerAuthorizesSource(applied, target.NodeID, result.Identity.PreviousAddress) {
+		if glivelaServerAuthorizesSource(applied, target.NodeID, result.Identity.CurrentAddress) != want || result.Identity.PreviousAddress != result.Identity.CurrentAddress && glivelaServerAuthorizesSource(applied, target.NodeID, result.Identity.PreviousAddress) {
 			return result, nil
 		}
 	}
@@ -286,7 +286,7 @@ func (s *Store) UpdateAgentReinstallLandingSource(ctx context.Context, agentID, 
 	if len(plan.Executions) != 0 || len(plan.UnclaimedLocalWork) != 0 {
 		return result, errors.New("center: settle previous work before restoring landing access")
 	}
-	if err = ensureMeridianManagementWritable(ctx, tx); err != nil {
+	if err = ensureGlivelaManagementWritable(ctx, tx); err != nil {
 		return result, err
 	}
 	for _, target := range previous.Landings {
@@ -308,7 +308,7 @@ func (s *Store) UpdateAgentReinstallLandingSource(ctx context.Context, agentID, 
 		}
 		// The common helper requires applied removal on every landing and keeps all
 		// existing credentials. It queues new authorization, never invents a receipt.
-		if _, err = s.replaceMeridianSourceInTx(ctx, tx, endpointID, agentID, adminID, identity, currentJSON); err != nil {
+		if _, err = s.replaceGlivelaSourceInTx(ctx, tx, endpointID, agentID, adminID, identity, currentJSON); err != nil {
 			return result, err
 		}
 	} else {

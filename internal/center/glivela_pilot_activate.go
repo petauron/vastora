@@ -9,20 +9,20 @@ import (
 	"time"
 
 	"github.com/petauron/glivela"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
 // ExportGlivelaPilotPlan is for the privileged offline preparation tool on a
 // verified backup. Its result contains credentials and must only be written to
 // a private file, never a log or an audit event. It does not transfer ownership.
-func (s *Store) ExportGlivelaPilotPlan(ctx context.Context, endpointID string) (glivela.XrayPlan, []meridianruntime.Peer, *landing.PeerIdentity, error) {
+func (s *Store) ExportGlivelaPilotPlan(ctx context.Context, endpointID string) (glivela.XrayPlan, []glivelaruntime.Peer, *landing.PeerIdentity, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return glivela.XrayPlan{}, nil, nil, err
 	}
 	defer tx.Rollback()
-	projection, err := s.buildMeridianRuntimeProjection(ctx, tx, endpointID, "", nil)
+	projection, err := s.buildGlivelaRuntimeProjection(ctx, tx, endpointID, "", nil)
 	if err != nil {
 		return glivela.XrayPlan{}, nil, nil, err
 	}
@@ -86,7 +86,7 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 	if !admin || exists {
 		return errors.New("center: administrator and unclaimed entry required")
 	}
-	projection, err := s.buildMeridianRuntimeProjection(ctx, tx, endpointID, "", nil)
+	projection, err := s.buildGlivelaRuntimeProjection(ctx, tx, endpointID, "", nil)
 	if err != nil {
 		return err
 	}
@@ -101,7 +101,7 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 	if statePath == "" {
 		statePath = "/run/glivela-pilot/nodes.json"
 	}
-	if input.Revision != nativePlan.Revision || meridianruntime.VerifyPilotDesired(statePath,
+	if input.Revision != nativePlan.Revision || glivelaruntime.VerifyPilotDesired(statePath,
 		projection.task.ApplicationID, input.CertificateID, input.ConfigSHA256, nativePlan,
 		projection.task.Source, projection.task.Peers, input.ExpectedExits) != nil {
 		return errors.New("center: native pilot differs from retained entry configuration")
@@ -175,20 +175,20 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 			return errors.New("center: pilot requires verified public landing exits")
 		}
 	}
-	if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
+	if err := s.ensureGlivelaSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
 		return err
 	}
 	stamp := now.Format(time.RFC3339Nano)
-	if err := s.observeMeridianUsageInTx(ctx, tx, endpointID, input.Counters, stamp); err != nil {
+	if err := s.observeGlivelaUsageInTx(ctx, tx, endpointID, input.Counters, stamp); err != nil {
 		return err
 	}
-	checkpoint := meridianruntime.PilotCounters{
+	checkpoint := glivelaruntime.PilotCounters{
 		EntryID: projection.task.ApplicationID, ConfigSHA256: input.ConfigSHA256,
 		CertificateID: input.CertificateID, Revision: input.Revision, CutoverAt: now,
 		Totals: input.Counters, Source: projection.task.Source, Peers: projection.task.Peers, ExpectedExits: input.ExpectedExits,
 	}
 	checkpoint.Totals = append(append([]glivela.CounterSnapshot(nil), input.Counters...), retained...)
-	var quota meridianruntime.PilotQuota
+	var quota glivelaruntime.PilotQuota
 	var lastReset, nextReset string
 	if err := tx.QueryRowContext(ctx, `SELECT e.total_bytes,e.used_bytes,e.reset_day,e.last_reset_at,e.next_reset_at,site.timezone
 		FROM meridian_endpoints e JOIN services service ON service.id=e.service_id JOIN sites site ON site.id=service.site_id WHERE e.id=?`, endpointID).Scan(&quota.TotalBytes, &quota.UsedBytes, &quota.ResetDay, &lastReset, &nextReset, &quota.Timezone); err != nil {
@@ -213,7 +213,7 @@ func (s *Store) ActivateGlivelaPilot(ctx context.Context, endpointID, adminID st
 				return err
 			}
 		}
-		verified, err := meridianruntime.ReadPilotQuotaSeed(statePath, checkpoint.EntryID, checkpoint.CertificateID, checkpoint.ConfigSHA256, checkpoint.Revision, quota)
+		verified, err := glivelaruntime.ReadPilotQuotaSeed(statePath, checkpoint.EntryID, checkpoint.CertificateID, checkpoint.ConfigSHA256, checkpoint.Revision, quota)
 		if err != nil {
 			return err
 		}

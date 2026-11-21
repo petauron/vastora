@@ -22,7 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/petauron/glivela"
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"golang.org/x/net/proxy"
 )
 
@@ -58,7 +58,7 @@ func privateLabXrayClient(t *testing.T, source, landingAddress string) string {
 		t.Fatal(err)
 	}
 	ep.PrivateKey = ""
-	clientConfig, err := (meridianruntime.AcceptanceClient{Protocol: glivela.VLESSReality, Reality: &ep, Material: material}).Config(18080)
+	clientConfig, err := (glivelaruntime.AcceptanceClient{Protocol: glivela.VLESSReality, Reality: &ep, Material: material}).Config(18080)
 	if err != nil {
 		t.Fatal(err)
 	}

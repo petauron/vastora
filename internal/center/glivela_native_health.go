@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/petauron/vastora/internal/meridianruntime"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 )
 
 // Recover only an observed native entry's superseded package failure. Native
@@ -38,7 +38,7 @@ func (s *Store) reconcileNativeEntryServiceHealth(ctx context.Context, publicati
  AND EXISTS(SELECT 1 FROM deployments failed JOIN task_executions execution ON execution.task_id=failed.id
    WHERE failed.application_id=a.id AND failed.agent_id=a.node_id AND failed.operation IN ('install','upgrade')
    AND failed.state='failed' AND execution.agent_id=a.node_id AND execution.kind='application.apply' AND execution.state='failed'
-   AND execution.last_error=service.last_error AND execution.updated_at<deployment.created_at)`, publicationID, revision, meridianEntryProtocol).
+   AND execution.last_error=service.last_error AND execution.updated_at<deployment.created_at)`, publicationID, revision, glivelaEntryProtocol).
 		Scan(&applicationID, &agentID, &serviceID, &endpoint, &previousError, &serviceUpdated, &seen, &raw, &taskID, &version, &digest, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -77,7 +77,7 @@ func (s *Store) reconcileNativeEntryServiceHealth(ctx context.Context, publicati
 	if path == "" {
 		path = "/run/glivela-pilot/nodes.json"
 	}
-	evidence, err := meridianruntime.ReadNativeEntryRegistration(path, applicationID, now)
+	evidence, err := glivelaruntime.ReadNativeEntryRegistration(path, applicationID, now)
 	if err != nil {
 		return err
 	}

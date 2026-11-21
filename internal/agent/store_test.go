@@ -117,7 +117,7 @@ func TestAgentSchemaV2MigratesResetJournalForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`DROP TABLE meridian_runtime_state; DROP TABLE landing_controller_state;
+	if _, err := store.db.Exec(`DROP TABLE glivela_runtime_state; DROP TABLE landing_controller_state;
 		DROP TABLE landing_runtime_state;
 		DROP TABLE node_listener_applied_state;
 		DROP TABLE three_x_ui_reset_journal;
@@ -196,7 +196,7 @@ func TestAgentSchemaV8PurgesOnlyUnrestorableLegacyState(t *testing.T) {
 	if _, err := store.db.Exec(`INSERT INTO applied_installations(instance_id,app_key,version,sealed_state,config_hash,applied_at) VALUES(?,?,?,?,?,?)`, task.ID, task.AppKey, task.Manifest.Version, sealed, strings.Repeat("0", 64), store.now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`DROP TABLE meridian_runtime_state; DROP TABLE landing_controller_state;
+	if _, err := store.db.Exec(`DROP TABLE glivela_runtime_state; DROP TABLE landing_controller_state;
 		DROP TABLE landing_runtime_state;
 		DROP TABLE node_listener_applied_state;
 		DROP TABLE agent_install_operations;
@@ -246,7 +246,7 @@ func TestAgentSchemaV10PreservesCompletionForArchival(t *testing.T) {
 	ALTER TABLE control_plane_connection DROP COLUMN ca_certificate_pem;
 	ALTER TABLE agent_install_operations DROP COLUMN ca_certificate_pem;
 	ALTER TABLE agent_install_operations DROP COLUMN previous_ca_certificate_pem;
-	DROP TABLE meridian_runtime_state;
+	DROP TABLE glivela_runtime_state;
 	DROP TABLE landing_controller_state;
 	DROP TABLE landing_runtime_state;
 	DROP TABLE node_listener_applied_state;

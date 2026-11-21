@@ -56,7 +56,7 @@ function mockReadyCenter() {
   vi.spyOn(api, "publications").mockResolvedValue({ publications: [] });
   vi.spyOn(api, "actions").mockResolvedValue({ actions: [] });
   vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
-  vi.spyOn(api, "meridian").mockResolvedValue(emptyAppData(centerStatus).meridian);
+  vi.spyOn(api, "glivela").mockResolvedValue(emptyAppData(centerStatus).glivela);
   return status;
 }
 

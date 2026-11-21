@@ -40,11 +40,11 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	if status != "running" {
 		return ApplicationCommandView{}, errors.New("center: subscription application is not running")
 	}
-	if appKey == meridianAppKey {
+	if appKey == glivelaAppKey {
 		if input.GatewayNodeID != agentID {
 			return ApplicationCommandView{}, errors.New("center: Glivela subscription must use the Center's co-located entry node")
 		}
-		if _, err := s.ensureMeridianSubscriptionService(ctx, input.ApplicationID); err != nil {
+		if _, err := s.ensureGlivelaSubscriptionService(ctx, input.ApplicationID); err != nil {
 			return ApplicationCommandView{}, err
 		}
 		var state, authority string
@@ -71,7 +71,7 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 		}
 	}
 	var serviceID string
-	err = s.db.QueryRowContext(ctx, `SELECT id FROM services WHERE application_id=? AND name=? AND status<>'stopped'`, input.ApplicationID, meridianSubscriptionServiceName).Scan(&serviceID)
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM services WHERE application_id=? AND name=? AND status<>'stopped'`, input.ApplicationID, glivelaSubscriptionServiceName).Scan(&serviceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ApplicationCommandView{}, errors.New("center: Center-owned subscription service is unavailable on this application")
 	}
@@ -99,8 +99,8 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	baseURI := (&url.URL{Scheme: "https", Host: publication.Hostname, Path: "/sub/"}).String()
 	task := SubscriptionCommandTask{Domain: publication.Hostname, BaseURI: baseURI, PublicationID: publication.ID}
 	encoded, _ := json.Marshal(task)
-	if appKey == meridianAppKey {
-		return s.completeMeridianSubscriptionPublication(ctx, input, agentID, task, encoded)
+	if appKey == glivelaAppKey {
+		return s.completeGlivelaSubscriptionPublication(ctx, input, agentID, task, encoded)
 	}
 	token, err := randomToken(18)
 	if err != nil {
@@ -125,7 +125,7 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	return s.ApplicationCommand(ctx, id)
 }
 
-func (s *Store) completeMeridianSubscriptionPublication(ctx context.Context, input SubscriptionCommandInput, agentID string, task SubscriptionCommandTask, encoded []byte) (ApplicationCommandView, error) {
+func (s *Store) completeGlivelaSubscriptionPublication(ctx context.Context, input SubscriptionCommandInput, agentID string, task SubscriptionCommandTask, encoded []byte) (ApplicationCommandView, error) {
 	token, err := randomToken(18)
 	if err != nil {
 		return ApplicationCommandView{}, err
@@ -143,7 +143,7 @@ func (s *Store) completeMeridianSubscriptionPublication(ctx context.Context, inp
 	now := s.now().UTC()
 	stamp := now.Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,result_json,state,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,'succeeded',?,?)`, id, input.ApplicationID, agentID, input.GatewayNodeID, meridianSubscriptionCommandKind, encoded, resultJSON, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,?,?,'succeeded',?,?)`, id, input.ApplicationID, agentID, input.GatewayNodeID, glivelaSubscriptionCommandKind, encoded, resultJSON, stamp, stamp); err != nil {
 		return ApplicationCommandView{}, fmt.Errorf("center: record Glivela subscription publication: %w", err)
 	}
 	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "succeeded", "Glivela public subscription published by Center"); err != nil {

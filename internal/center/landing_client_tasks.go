@@ -16,7 +16,7 @@ var errEntryPrivateIdentityChanged = errors.New("center: entry private identity 
 var errLandingPrivateIdentityChanged = errors.New("center: landing private identity changed")
 
 func (s *Store) queueLandingClientCommand(ctx context.Context, tx *sql.Tx, record landingGrantRecord, phase string) error {
-	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+	if owns, err := glivelaOwnsLegacyLanding(ctx, tx); err != nil {
 		return err
 	} else if owns {
 		return nil
@@ -66,7 +66,7 @@ func (s *Store) queueLandingClientCommand(ctx context.Context, tx *sql.Tx, recor
 // Refill one controller slot when it next asks for work. A restart or a lost
 // response cannot discard the remaining grant phases, which live in SQLite.
 func (s *Store) queueNextLandingClientCommand(ctx context.Context, tx *sql.Tx, nodeID string) error {
-	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+	if owns, err := glivelaOwnsLegacyLanding(ctx, tx); err != nil {
 		return err
 	} else if owns {
 		return nil
@@ -169,7 +169,7 @@ func (s *Store) deleteRevokedLandingGrantTombstones(ctx context.Context, tx *sql
 }
 
 func (s *Store) queueClientLandingRoutes(ctx context.Context, tx *sql.Tx, applicationID string) error {
-	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+	if owns, err := glivelaOwnsLegacyLanding(ctx, tx); err != nil {
 		return err
 	} else if owns {
 		return nil

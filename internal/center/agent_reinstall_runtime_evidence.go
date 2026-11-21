@@ -8,12 +8,12 @@ import (
 	"encoding/json"
 )
 
-// Deployment input alone does not contain Meridian's retained desired state.
+// Deployment input alone does not contain Glivela's retained desired state.
 // Bind it to the review without returning credentials or requiring that a
 // damaged configuration can already compile. Observations and timestamps do
 // not change the review. Keep this separate from package authorization: runtime
 // restoration reserves a new endpoint revision after the image is prepared.
-func reinstallMeridianEvidence(ctx context.Context, tx *sql.Tx, agentID string) (string, error) {
+func reinstallGlivelaEvidence(ctx context.Context, tx *sql.Tx, agentID string) (string, error) {
 	digest := sha256.New()
 	encoder := json.NewEncoder(digest)
 	for _, query := range []string{

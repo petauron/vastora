@@ -82,7 +82,7 @@ func TestIPQualityContainerIsBoundedAndDoesNotMountHost(t *testing.T) {
 	if options.Config.User != "65534:65534" || options.Config.Cmd[0] != "10.0.0.8" || options.Config.Cmd[1] != "-4" || !strings.Contains(options.Config.Image, "@sha256:") {
 		t.Fatal("container identity or address not pinned")
 	}
-	if options.Config.Labels["io.vastora.application"] != "meridian" {
+	if options.Config.Labels["io.vastora.application"] != "glivela" {
 		t.Fatal("IP diagnostics lost Glivela ownership")
 	}
 	ipv6 := ipQualityContainerOptions(ipquality.Task{Address: "2001:db8::8", BindAddress: "2001:db8::8"})

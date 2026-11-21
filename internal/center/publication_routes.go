@@ -50,14 +50,14 @@ func (s *Store) gatewayServiceEndpoint(ctx context.Context, tx *sql.Tx, serviceI
 }
 
 func canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, gatewayID, serviceName string, containerPort int, endpoint string) string {
-	if serviceName == meridianSubscriptionServiceName && endpoint == net.JoinHostPort(dockerruntime.CenterAlias, "8080") {
+	if serviceName == glivelaSubscriptionServiceName && endpoint == net.JoinHostPort(dockerruntime.CenterAlias, "8080") {
 		// The subscription service keeps one durable identity while authority
 		// moves from the legacy controller to Center. Recognize the explicit
 		// Center origin independently of the application key so the gateway route
 		// can switch before the 3x-ui application itself is replaced.
 		return endpoint
 	}
-	if appKey == meridianAppKey {
+	if appKey == glivelaAppKey {
 		return endpoint
 	}
 	if appKey == threeXUIAppKey && runtime == "docker" && containerPort == 2096 {

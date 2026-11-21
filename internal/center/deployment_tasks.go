@@ -16,9 +16,9 @@ import (
 	"github.com/petauron/catalog/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/landing"
-	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
@@ -32,64 +32,64 @@ import (
 )
 
 type AgentTask struct {
-	CurrentRecoveryResume     bool                                 `json:"currentRecoveryResume,omitempty"`
-	NodeSite                  *nodesite.Task                       `json:"nodeSite,omitempty"`
-	SourceReceiptSHA256       string                               `json:"sourceReceiptSha256,omitempty"`
-	NodeSecurity              *nodesecurity.Task                   `json:"nodeSecurity,omitempty"`
-	TailscaleUpdate           *tailscalehost.UpdateTask            `json:"tailscaleUpdate,omitempty"`
-	PackageRecovery           *controlplane.PackageRecovery        `json:"packageRecovery,omitempty"`
-	MeridianAcceptance        *meridianruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
-	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
-	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
-	OSReinstall               *osreinstall.Task                    `json:"osReinstall,omitempty"`
-	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
-	SenulunRestore            *senulun.RestoreCredentials          `json:"pulseRestore,omitempty"`
-	SenulunReporting          *senulun.ReportingTask               `json:"pulseReporting,omitempty"`
-	SenulunRotation           *senulun.RotationTask                `json:"pulseRotation,omitempty"`
-	SenulunInspection         *senulun.InspectionTask              `json:"pulseInspection,omitempty"`
-	SenulunEnrollment         *senulun.EnrollmentTask              `json:"pulseEnrollment,omitempty"`
-	ProtocolCommand           *nodeprotocol.Task                   `json:"protocolCommand,omitempty"`
-	XrayRecovery              *xrayrecovery.Task                   `json:"xrayRecovery,omitempty"`
-	Kind                      string                               `json:"kind"`
-	ID                        string                               `json:"id"`
-	Attempt                   int64                                `json:"attempt"`
-	AppKey                    string                               `json:"appKey"`
-	Manifest                  catalog.AppManifest                  `json:"manifest"`
-	PackageRevision           int                                  `json:"packageRevision"`
-	ManifestSHA256            string                               `json:"manifestSha256"`
-	AuthorizedCapabilities    []string                             `json:"authorizedCapabilities"`
-	Resources                 json.RawMessage                      `json:"resources,omitempty"`
-	HistoricalManifest        json.RawMessage                      `json:"historicalManifest,omitempty"`
-	DormantRuntime            bool                                 `json:"dormantRuntime,omitempty"`
-	PackageMaintenance        *PackageMaintenanceTask              `json:"packageMaintenance,omitempty"`
-	Config                    json.RawMessage                      `json:"config"`
-	Secrets                   json.RawMessage                      `json:"secrets"`
-	Operation                 string                               `json:"operation"`
-	DeleteData                bool                                 `json:"deleteData"`
-	DecommissionCallbackURL   string                               `json:"decommissionCallbackUrl,omitempty"`
-	DecommissionCallbackToken string                               `json:"decommissionCallbackToken,omitempty"`
-	Revision                  int64                                `json:"revision,omitempty"`
-	ApplicationID             string                               `json:"applicationId,omitempty"`
-	ApplicationRole           string                               `json:"applicationRole,omitempty"`
-	ServiceAddress            string                               `json:"serviceAddress,omitempty"`
-	GatewayState              *gateway.DesiredState                `json:"gatewayState,omitempty"`
-	NodeListenerState         *gateway.NodeListenerState           `json:"nodeListenerState,omitempty"`
-	LandingServerState        *landing.ServerState                 `json:"landingServerState,omitempty"`
-	LandingProxyState         *landing.DesiredState                `json:"landingProxyState,omitempty"`
-	GatewayCertificates       []gateway.Certificate                `json:"gatewayCertificates,omitempty"`
-	TunnelState               *TunnelTaskState                     `json:"tunnelState,omitempty"`
-	ApplicationCommand        *RealityCommandTask                  `json:"applicationCommand,omitempty"`
-	SubscriptionCommand       *SubscriptionCommandTask             `json:"subscriptionCommand,omitempty"`
-	ClientCommand             *ThreeXUIClientCommandTask           `json:"clientCommand,omitempty"`
-	NodeCommand               *ThreeXUINodeCommandTask             `json:"nodeCommand,omitempty"`
-	ControllerCommand         *ThreeXUIControllerCommandTask       `json:"controllerCommand,omitempty"`
-	MeridianRuntime           *meridianruntime.Task                `json:"meridianRuntime,omitempty"`
-	MeridianLegacyExport      *meridianruntime.LegacyExportCommand `json:"meridianLegacyExport,omitempty"`
-	MeridianLegacyRetire      *meridianruntime.LegacyRetireTask    `json:"meridianLegacyRetire,omitempty"`
-	RegistryCredential        *AgentRegistryCredential             `json:"registryCredential,omitempty"`
-	Reconcile                 bool                                 `json:"reconcile,omitempty"`
-	RequiredRuntimeGeneration int                                  `json:"requiredRuntimeGeneration,omitempty"`
-	TargetVersion             string                               `json:"targetVersion,omitempty"`
+	CurrentRecoveryResume     bool                                `json:"currentRecoveryResume,omitempty"`
+	NodeSite                  *nodesite.Task                      `json:"nodeSite,omitempty"`
+	SourceReceiptSHA256       string                              `json:"sourceReceiptSha256,omitempty"`
+	NodeSecurity              *nodesecurity.Task                  `json:"nodeSecurity,omitempty"`
+	TailscaleUpdate           *tailscalehost.UpdateTask           `json:"tailscaleUpdate,omitempty"`
+	PackageRecovery           *controlplane.PackageRecovery       `json:"packageRecovery,omitempty"`
+	GlivelaAcceptance         *glivelaruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
+	IPQuality                 *ipquality.Task                     `json:"ipQuality,omitempty"`
+	NodeDiagnostics           *nodediagnostics.Task               `json:"nodeDiagnostics,omitempty"`
+	OSReinstall               *osreinstall.Task                   `json:"osReinstall,omitempty"`
+	Authorization             controlplane.ExecutionAuthorization `json:"-"`
+	SenulunRestore            *senulun.RestoreCredentials         `json:"pulseRestore,omitempty"`
+	SenulunReporting          *senulun.ReportingTask              `json:"pulseReporting,omitempty"`
+	SenulunRotation           *senulun.RotationTask               `json:"pulseRotation,omitempty"`
+	SenulunInspection         *senulun.InspectionTask             `json:"pulseInspection,omitempty"`
+	SenulunEnrollment         *senulun.EnrollmentTask             `json:"pulseEnrollment,omitempty"`
+	ProtocolCommand           *nodeprotocol.Task                  `json:"protocolCommand,omitempty"`
+	XrayRecovery              *xrayrecovery.Task                  `json:"xrayRecovery,omitempty"`
+	Kind                      string                              `json:"kind"`
+	ID                        string                              `json:"id"`
+	Attempt                   int64                               `json:"attempt"`
+	AppKey                    string                              `json:"appKey"`
+	Manifest                  catalog.AppManifest                 `json:"manifest"`
+	PackageRevision           int                                 `json:"packageRevision"`
+	ManifestSHA256            string                              `json:"manifestSha256"`
+	AuthorizedCapabilities    []string                            `json:"authorizedCapabilities"`
+	Resources                 json.RawMessage                     `json:"resources,omitempty"`
+	HistoricalManifest        json.RawMessage                     `json:"historicalManifest,omitempty"`
+	DormantRuntime            bool                                `json:"dormantRuntime,omitempty"`
+	PackageMaintenance        *PackageMaintenanceTask             `json:"packageMaintenance,omitempty"`
+	Config                    json.RawMessage                     `json:"config"`
+	Secrets                   json.RawMessage                     `json:"secrets"`
+	Operation                 string                              `json:"operation"`
+	DeleteData                bool                                `json:"deleteData"`
+	DecommissionCallbackURL   string                              `json:"decommissionCallbackUrl,omitempty"`
+	DecommissionCallbackToken string                              `json:"decommissionCallbackToken,omitempty"`
+	Revision                  int64                               `json:"revision,omitempty"`
+	ApplicationID             string                              `json:"applicationId,omitempty"`
+	ApplicationRole           string                              `json:"applicationRole,omitempty"`
+	ServiceAddress            string                              `json:"serviceAddress,omitempty"`
+	GatewayState              *gateway.DesiredState               `json:"gatewayState,omitempty"`
+	NodeListenerState         *gateway.NodeListenerState          `json:"nodeListenerState,omitempty"`
+	LandingServerState        *landing.ServerState                `json:"landingServerState,omitempty"`
+	LandingProxyState         *landing.DesiredState               `json:"landingProxyState,omitempty"`
+	GatewayCertificates       []gateway.Certificate               `json:"gatewayCertificates,omitempty"`
+	TunnelState               *TunnelTaskState                    `json:"tunnelState,omitempty"`
+	ApplicationCommand        *RealityCommandTask                 `json:"applicationCommand,omitempty"`
+	SubscriptionCommand       *SubscriptionCommandTask            `json:"subscriptionCommand,omitempty"`
+	ClientCommand             *ThreeXUIClientCommandTask          `json:"clientCommand,omitempty"`
+	NodeCommand               *ThreeXUINodeCommandTask            `json:"nodeCommand,omitempty"`
+	ControllerCommand         *ThreeXUIControllerCommandTask      `json:"controllerCommand,omitempty"`
+	GlivelaRuntime            *glivelaruntime.Task                `json:"meridianRuntime,omitempty"`
+	GlivelaLegacyExport       *glivelaruntime.LegacyExportCommand `json:"meridianLegacyExport,omitempty"`
+	GlivelaLegacyRetire       *glivelaruntime.LegacyRetireTask    `json:"meridianLegacyRetire,omitempty"`
+	RegistryCredential        *AgentRegistryCredential            `json:"registryCredential,omitempty"`
+	Reconcile                 bool                                `json:"reconcile,omitempty"`
+	RequiredRuntimeGeneration int                                 `json:"requiredRuntimeGeneration,omitempty"`
+	TargetVersion             string                              `json:"targetVersion,omitempty"`
 }
 
 type AgentRegistryCredential struct {
@@ -756,7 +756,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 		return s.completeApplicationAdoption(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
 	}
 	// Application commands are identified by their persisted task kind, not by
-	// an ID prefix. Meridian commands use opaque IDs and must take the same
+	// an ID prefix. Glivela commands use opaque IDs and must take the same
 	// completion path as older application commands.
 	var applicationCommand bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=?)`, taskID, agentID).Scan(&applicationCommand); err != nil {

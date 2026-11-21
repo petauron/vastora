@@ -184,7 +184,7 @@ func TestRealitySecurityCheckMarksSameHostScope(t *testing.T) {
 	}
 }
 
-func TestRealitySecurityCheckSupportsMeridianEndpoint(t *testing.T) {
+func TestRealitySecurityCheckSupportsGlivelaEndpoint(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	seedRealitySecurityCheckPublication(t, store)
@@ -195,14 +195,14 @@ func TestRealitySecurityCheckSupportsMeridianEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	secretID, err := store.putSecret(ctx, tx, []byte("meridian-test-private-key"), meridianEndpointSecretContext("verification-endpoint"))
+	secretID, err := store.putSecret(ctx, tx, []byte("meridian-test-private-key"), glivelaEndpointSecretContext("verification-endpoint"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET app_key=?,role='' WHERE id='verification-app'`, meridianAppKey); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET app_key=?,role='' WHERE id='verification-app'`, glivelaAppKey); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE services SET app_protocol=? WHERE id='verification-service'`, meridianEntryProtocol); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE services SET app_protocol=? WHERE id='verification-service'`, glivelaEntryProtocol); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)

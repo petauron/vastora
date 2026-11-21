@@ -25,7 +25,7 @@ func runDeployer(arguments []string) error {
 		if flags.NArg() != 0 {
 			return errors.New("unexpected probe arguments")
 		}
-		return agent.RunMeridianEntryProbe(context.Background(), *expected)
+		return agent.RunGlivelaEntryProbe(context.Background(), *expected)
 	}
 	if arguments[0] == "public-entry-probe" {
 		flags := flag.NewFlagSet("deployer public-entry-probe", flag.ContinueOnError)
@@ -73,7 +73,7 @@ func runDeployer(arguments []string) error {
 	}
 	fmt.Printf("Deployment helper listening on %s\n", *socket)
 	server := deployer.NewServer(installer).
-		WithMeridianProber(&deployer.MeridianProbeService{Socket: *dockerSocket, RuntimeImage: *runtimeImage}).
+		WithGlivelaProber(&deployer.GlivelaProbeService{Socket: *dockerSocket, RuntimeImage: *runtimeImage}).
 		WithPublicEntryProber(deployer.NewPublicEntryProbeService(*dockerSocket, *runtimeImage)).
 		WithCenterRemoteAccessManager(deployer.DockerCenterRemoteAccessManager{Socket: *dockerSocket}).
 		WithCenterUpdater(deployer.FileCenterUpdater{InstallDir: *centerInstallDir, RuntimeImage: *runtimeImage})
