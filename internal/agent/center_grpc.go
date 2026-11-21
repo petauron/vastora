@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -140,6 +141,7 @@ func newAgentGRPCConn(ctx context.Context, centerURL, fingerprint, certificate s
 	}
 	options := []grpc.DialOption{
 		grpc.WithNoProxy(),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: time.Minute, Timeout: 20 * time.Second}),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(controlplane.MaxEnvelopeWire), grpc.MaxCallSendMsgSize(controlplane.MaxEnvelopeWire)),
 	}
 	privateDialer, err := tailscalehost.PrivateNetworkDialer(parsed.Hostname())
