@@ -185,7 +185,7 @@ fi
 install -d -m 0755 "$(dirname "$install_dir")"
 staging="$(mktemp -d "${install_dir}.new.XXXXXX")"
 tar -xzf "$archive" -C "$staging"
-for required_file in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compare-semver.awk compose.yaml release.env; do
+for required_file in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh install-backup-service.sh host-backup.py compare-semver.awk compose.yaml release.env; do
   if [ ! -f "$staging/$required_file" ]; then
     echo "The Center release is incomplete: missing $required_file" >&2
     exit 1
@@ -206,6 +206,8 @@ chmod 0755 "$staging/uninstall.sh"
 chmod 0755 "$staging/install-host-cli.sh"
 chmod 0755 "$staging/install-update-service.sh"
 chmod 0755 "$staging/update-center.sh"
+chmod 0755 "$staging/install-backup-service.sh"
+chmod 0755 "$staging/host-backup.py"
 
 if [ "$operation" = "uninstall" ]; then
   "$staging/uninstall.sh" --install-dir "$install_dir"

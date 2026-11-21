@@ -22,6 +22,7 @@ import (
 var Version = "0.1.0-dev"
 
 type Server struct {
+	hostBackups              deployapi.HostBackupManager
 	store                    *Store
 	staticDir                string
 	agentBinariesDir         string
@@ -130,6 +131,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/system/domain", s.requireAuth(false, s.handleSystemDomain))
 	mux.HandleFunc("POST /api/v1/system/domain", s.requireAuth(true, s.handleSwitchSystemDomain))
 	mux.HandleFunc("POST /api/v1/system/domain/aliases/{id}/retire", s.requireAuth(true, s.handleRetireSystemEndpointAliases))
+	mux.HandleFunc("GET /api/v1/host-backup", s.requireAuth(false, s.handleHostBackupStatus))
+	mux.HandleFunc("PUT /api/v1/host-backup", s.requireAuth(true, s.handleConfigureHostBackup))
+	mux.HandleFunc("POST /api/v1/host-backup", s.requireAuth(true, s.handleStartHostBackup))
 	mux.HandleFunc("POST /api/v1/backups", s.requireAuth(true, s.handleCreateBackup))
 	mux.HandleFunc("GET /api/v1/recovery", s.requireAuth(false, s.handleRecoveryReadiness))
 	mux.HandleFunc("GET /api/v1/deployments", s.requireAuth(false, s.handleListDeployments))
