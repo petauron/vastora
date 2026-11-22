@@ -50,6 +50,7 @@ type NodeCapabilities struct {
 	OSReinstallPreflight bool                        `json:"osReinstallPreflight"`
 	OSReinstall          bool                        `json:"osReinstall"`
 	NodeSecurity         bool                        `json:"nodeSecurity"`
+	NodeSwap             bool                        `json:"nodeSwap"`
 	Docker               bool                        `json:"docker"`
 	Gateway              bool                        `json:"gateway"`
 	Tunnel               bool                        `json:"tunnel"`

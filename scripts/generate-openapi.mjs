@@ -868,6 +868,19 @@ for (const route of routes) {
       operation.requestBody = { required: true, content: { "application/json": { schema } } };
     }
   }
+  if (route.handler === "handleNodeSwap" || route.handler === "handleQueueNodeSwap") {
+    const status = route.handler === "handleNodeSwap" ? "200" : "202";
+    operation.summary = route.handler === "handleNodeSwap" ? "Read last node swap and zram evidence" : "Queue a bounded host swap or zram operation";
+    operation.description = "Opt-in fixed-tier zram and disk swap management for Linux systemd KVM hosts (512 MiB / 1 GiB / 2 GiB). Containers, non-systemd hosts, larger memory hosts and pre-existing unmanaged swap configurations remain strictly read-only. Apply and restore require a matching inspected revision; restore checks available memory headroom before disabling swap.";
+    operation.responses[status].headers = noStoreHeaders;
+    operation.responses[status].content["application/json"].schema = schemaForGoType("NodeSwapView");
+    if (route.handler === "handleQueueNodeSwap") {
+      const schema = schemaForGoType("nodeswap.Task");
+      schema.required = ["action"];
+      schema.properties.action.enum = ["inspect", "apply", "restore"];
+      operation.requestBody = { required: true, content: { "application/json": { schema } } };
+    }
+  }
   if (route.handler === "handleListIPQuality") {
     operation.summary = "List IPQuality by exact egress address";
     operation.description = "Returns eligible targets and saved checks with agentId, canonical public address, family and selected exit metadata. Reports are independent for each node and IP.";

@@ -28,6 +28,8 @@ func validateExecutionProjection(ctx context.Context, tx *sql.Tx, id string, suc
 		query = "SELECT state FROM os_reinstall_tasks WHERE id=? AND agent_id=? AND attempt=?"
 	case "node.security":
 		query = `SELECT state FROM node_security_tasks WHERE id=? AND agent_id=? AND attempt=?`
+	case "node.swap":
+		query = `SELECT state FROM node_swap_tasks WHERE id=? AND agent_id=? AND attempt=?`
 	case "node.ip-quality":
 		query = `SELECT state FROM ip_quality_checks WHERE id=? AND agent_id=? AND attempt=?`
 	case "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server":

@@ -678,6 +678,7 @@ func runAgent(arguments []string) error {
 		client.Capabilities.OSReinstallPreflight = !capabilities.LandingOnly && runtime.GOOS == "linux" && os.Geteuid() == 0
 		client.Capabilities.OSReinstall = client.OSReinstaller != nil
 		client.Capabilities.NodeSecurity = runtime.GOOS == "linux" && os.Geteuid() == 0
+		client.Capabilities.NodeSwap = runtime.GOOS == "linux" && os.Geteuid() == 0
 		if capabilities.Docker {
 			client.NodeListener = agent.DockerLayer4Provisioner{Image: *haproxyImage}
 		}

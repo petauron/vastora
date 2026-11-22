@@ -5901,6 +5901,9 @@
                               "nodeSecurity": {
                                 "type": "boolean"
                               },
+                              "nodeSwap": {
+                                "type": "boolean"
+                              },
                               "docker": {
                                 "type": "boolean"
                               },
@@ -6912,6 +6915,426 @@
           }
         },
         "description": "Opt-in UFW public-interface and SSH-only Fail2ban management. Pending application has a five-minute host-side rollback deadline; confirmation additionally requires a new local SSH-session receipt and fresh private/proxy health. Old evidence does not establish current host protection. Unsupported Docker backends and unowned configurations are rejected."
+      }
+    },
+    "/api/v1/agents/{id}/swap": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Read last node swap and zram evidence",
+        "operationId": "nodeSwap_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "state": {
+                              "type": "string"
+                            },
+                            "revision": {
+                              "type": "string"
+                            },
+                            "memoryTotalBytes": {
+                              "type": "integer"
+                            },
+                            "memoryAvailableBytes": {
+                              "type": "integer"
+                            },
+                            "diskFreeBytes": {
+                              "type": "integer"
+                            },
+                            "virtualization": {
+                              "type": "string"
+                            },
+                            "systemd": {
+                              "type": "boolean"
+                            },
+                            "swappiness": {
+                              "type": "integer"
+                            },
+                            "swaps": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "type": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "type": "integer"
+                                  },
+                                  "usedBytes": {
+                                    "type": "integer"
+                                  },
+                                  "priority": {
+                                    "type": "integer"
+                                  }
+                                }
+                              }
+                            },
+                            "zram": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "disksizeBytes": {
+                                      "type": "integer"
+                                    },
+                                    "origDataBytes": {
+                                      "type": "integer"
+                                    },
+                                    "algorithm": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "target": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "tierMiB": {
+                                  "type": "integer"
+                                },
+                                "zramBytes": {
+                                  "type": "integer"
+                                },
+                                "zramAlgorithm": {
+                                  "type": "string"
+                                },
+                                "zramPriority": {
+                                  "type": "integer"
+                                },
+                                "swapfileBytes": {
+                                  "type": "integer"
+                                },
+                                "swapfilePriority": {
+                                  "type": "integer"
+                                },
+                                "swappiness": {
+                                  "type": "integer"
+                                }
+                              }
+                            },
+                            "canApply": {
+                              "type": "boolean"
+                            },
+                            "canRestore": {
+                              "type": "boolean"
+                            },
+                            "reason": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Opt-in fixed-tier zram and disk swap management for Linux systemd KVM hosts (512 MiB / 1 GiB / 2 GiB). Containers, non-systemd hosts, larger memory hosts and pre-existing unmanaged swap configurations remain strictly read-only. Apply and restore require a matching inspected revision; restore checks available memory headroom before disabling swap."
+      },
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Queue a bounded host swap or zram operation",
+        "operationId": "queueNodeSwap_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "state": {
+                              "type": "string"
+                            },
+                            "revision": {
+                              "type": "string"
+                            },
+                            "memoryTotalBytes": {
+                              "type": "integer"
+                            },
+                            "memoryAvailableBytes": {
+                              "type": "integer"
+                            },
+                            "diskFreeBytes": {
+                              "type": "integer"
+                            },
+                            "virtualization": {
+                              "type": "string"
+                            },
+                            "systemd": {
+                              "type": "boolean"
+                            },
+                            "swappiness": {
+                              "type": "integer"
+                            },
+                            "swaps": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "type": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "type": "integer"
+                                  },
+                                  "usedBytes": {
+                                    "type": "integer"
+                                  },
+                                  "priority": {
+                                    "type": "integer"
+                                  }
+                                }
+                              }
+                            },
+                            "zram": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "disksizeBytes": {
+                                      "type": "integer"
+                                    },
+                                    "origDataBytes": {
+                                      "type": "integer"
+                                    },
+                                    "algorithm": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "target": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "tierMiB": {
+                                  "type": "integer"
+                                },
+                                "zramBytes": {
+                                  "type": "integer"
+                                },
+                                "zramAlgorithm": {
+                                  "type": "string"
+                                },
+                                "zramPriority": {
+                                  "type": "integer"
+                                },
+                                "swapfileBytes": {
+                                  "type": "integer"
+                                },
+                                "swapfilePriority": {
+                                  "type": "integer"
+                                },
+                                "swappiness": {
+                                  "type": "integer"
+                                }
+                              }
+                            },
+                            "canApply": {
+                              "type": "boolean"
+                            },
+                            "canRestore": {
+                              "type": "boolean"
+                            },
+                            "reason": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "inspect",
+                      "apply",
+                      "restore"
+                    ]
+                  },
+                  "revision": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Opt-in fixed-tier zram and disk swap management for Linux systemd KVM hosts (512 MiB / 1 GiB / 2 GiB). Containers, non-systemd hosts, larger memory hosts and pre-existing unmanaged swap configurations remain strictly read-only. Apply and restore require a matching inspected revision; restore checks available memory headroom before disabling swap."
       }
     },
     "/api/v1/node-diagnostics": {

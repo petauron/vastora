@@ -20,6 +20,7 @@ import (
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/nodesite"
+	"github.com/petauron/vastora/internal/nodeswap"
 	"github.com/petauron/vastora/internal/osreinstall"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/senulun"
@@ -344,6 +345,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	if err == nil && task.Kind == "agent.decommission" {
 		err = nodesecurity.NewHost().CheckRemoval()
+		if err == nil && store != nil {
+			err = CheckHostSwapRemoval(store.dataDir)
+		}
 	}
 	if err != nil {
 		// Preserve the normal authenticated failure/receipt lifecycle below.
@@ -431,6 +435,16 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				value, securityErr := nodesecurity.NewHost().Execute(ctx, *task.NodeSecurity)
 				store.landingMutationMu.Unlock()
 				result.NodeSecurity, err = &value, securityErr
+			}
+		case nodeswap.Kind:
+			if !c.Capabilities.NodeSwap || task.NodeSwap == nil {
+				err = errors.New("agent: node swap capability is not configured")
+			} else {
+				value, swapErr := store.executeNodeSwap(ctx, task.ID, *task.NodeSwap)
+				if value.Revision != "" {
+					result.NodeSwap = &value
+				}
+				err = swapErr
 			}
 		case ipquality.Kind:
 			checker, ok := c.Executor.(interface {

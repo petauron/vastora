@@ -8,6 +8,7 @@ it("offers only implemented dispositions for unresolved stopped executions", () 
   expect(executionActions({ ...execution, kind: "agent.update" })).toEqual(["confirm-completed", "abandon", "reexecute"]);
   for (const state of ["offered", "running", "helper_running", "succeeded"]) expect(executionActions({ ...execution, state })).toEqual([]);
   expect(executionActions({ ...execution, kind: "legacy.receipt" })).toEqual(["abandon"]);
+  expect(executionActions({ ...execution, kind: "node.swap" })).toEqual(["abandon"]);
   expect(executionActions({ ...execution, kind: "legacy.receipt", state: "failed" })).toEqual([]);
   expect(executionActions({ ...execution, kind: "unsupported" })).toEqual([]);
   expect(executionActions({ ...execution, disposition: "abandon" })).toEqual([]);

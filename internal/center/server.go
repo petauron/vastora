@@ -200,6 +200,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/ip-quality", s.requireAuth(true, s.handleStartIPQuality))
 	mux.HandleFunc("GET /api/v1/agents/{id}/security", s.requireAuth(false, s.handleNodeSecurity))
 	mux.HandleFunc("POST /api/v1/agents/{id}/security", s.requireAuth(true, s.handleQueueNodeSecurity))
+	mux.HandleFunc("GET /api/v1/agents/{id}/swap", s.requireAuth(false, s.handleNodeSwap))
+	mux.HandleFunc("POST /api/v1/agents/{id}/swap", s.requireAuth(true, s.handleQueueNodeSwap))
 	mux.HandleFunc("GET /api/v1/node-diagnostics", s.requireAuth(false, s.handleListNodeDiagnostics))
 	mux.HandleFunc("POST /api/v1/agents/{id}/node-diagnostics/{kind}", s.requireAuth(true, s.handleStartNodeDiagnostic))
 	mux.HandleFunc("POST /api/v1/agents/{id}/os-reinstall/inspect", s.requireAuth(true, s.handleStartOSReinstallInspection))

@@ -16,6 +16,7 @@ import (
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/nodesite"
+	"github.com/petauron/vastora/internal/nodeswap"
 	"github.com/petauron/vastora/internal/osreinstall"
 	"github.com/petauron/vastora/internal/realitytarget"
 	"github.com/petauron/vastora/internal/senulun"
@@ -152,6 +153,7 @@ type Capabilities struct {
 	OSReinstallPreflight bool                        `json:"osReinstallPreflight"`
 	OSReinstall          bool                        `json:"osReinstall"`
 	NodeSecurity         bool                        `json:"nodeSecurity"`
+	NodeSwap             bool                        `json:"nodeSwap"`
 	Docker               bool                        `json:"docker"`
 	Gateway              bool                        `json:"gateway"`
 	Tunnel               bool                        `json:"tunnel"`
@@ -172,6 +174,7 @@ type DeploymentTask struct {
 	NodeSite                  *nodesite.Task                      `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256       string                              `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                  `json:"nodeSecurity,omitempty"`
+	NodeSwap                  *nodeswap.Task                      `json:"nodeSwap,omitempty"`
 	TailscaleUpdate           *tailscalehost.UpdateTask           `json:"tailscaleUpdate,omitempty"`
 	PackageRecovery           *controlplane.PackageRecovery       `json:"packageRecovery,omitempty"`
 	PackageMaintenance        *PackageMaintenanceTask             `json:"packageMaintenance,omitempty"`
@@ -251,6 +254,7 @@ type ApplicationTaskResult struct {
 	SourceReceiptSHA256 string                             `json:"sourceReceiptSha256,omitempty"`
 	SourceResources     json.RawMessage                    `json:"sourceResources,omitempty"`
 	NodeSecurity        *nodesecurity.View                 `json:"nodeSecurity,omitempty"`
+	NodeSwap            *nodeswap.View                     `json:"nodeSwap,omitempty"`
 	PackageMaintenance  *PackageMaintenanceResult          `json:"packageMaintenance,omitempty"`
 	Resources           *InstanceResources                 `json:"resources,omitempty"`
 	GlivelaAcceptance   *glivelaruntime.AcceptanceResult   `json:"meridianAcceptance,omitempty"`

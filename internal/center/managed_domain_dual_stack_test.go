@@ -125,7 +125,7 @@ func TestPublicIngressSchema133PreservesCertificateAndDomain(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := s.dataDir
-	if _, err = s.db.Exec(`ALTER TABLE managed_domains DROP COLUMN secondary_address; ALTER TABLE managed_domains DROP COLUMN secondary_record_id; ALTER TABLE managed_domains DROP COLUMN secondary_expected_address; ALTER TABLE node_sites DROP COLUMN tls_loopback_only; DELETE FROM goose_db_version WHERE version_id=133; PRAGMA user_version=132;`); err != nil {
+	if _, err = s.db.Exec(`DROP TABLE node_swap_tasks; ALTER TABLE managed_domains DROP COLUMN secondary_address; ALTER TABLE managed_domains DROP COLUMN secondary_record_id; ALTER TABLE managed_domains DROP COLUMN secondary_expected_address; ALTER TABLE node_sites DROP COLUMN tls_loopback_only; DELETE FROM goose_db_version WHERE version_id>=133; PRAGMA user_version=132;`); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Close(); err != nil {

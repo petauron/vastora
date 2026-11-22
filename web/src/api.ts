@@ -11,6 +11,7 @@ import type { LandingView } from "./landing-types";
 import type { IPQualityPreferences, IPQualityResponse } from "./ip-quality-types";
 import type { NodeDiagnosticCheck } from "./node-diagnostics-types";
 import type { NodeSecurity, SecurityTask } from "./node-security-types";
+import type { NodeSwap, NodeSwapTask } from "./node-swap-types";
 import type { AgentEnrollmentStatus, NodeProtocols } from "./types";
 import type { GlivelaTraffic, GlivelaAccountCreated, GlivelaAccountInput, GlivelaAccount, GlivelaEndpoint, GlivelaInventory, GlivelaRouteGrant, GlivelaSourceRecovery } from "./glivela-types";
 import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type ExecutionView, type LegacyReceiptView } from "./execution-types";
@@ -109,6 +110,8 @@ export const api = {
   },
 	 nodeSecurity: (id: string, signal?: AbortSignal) => request<NodeSecurity>(`/api/v1/agents/${encodeURIComponent(id)}/security`, { signal }),
 	 configureNodeSecurity: (id: string, input: SecurityTask, signal?: AbortSignal) => request<NodeSecurity>(`/api/v1/agents/${encodeURIComponent(id)}/security`, { method: "POST", body: JSON.stringify(input), signal }),
+  nodeSwap: (id: string, signal?: AbortSignal) => request<NodeSwap>(`/api/v1/agents/${encodeURIComponent(id)}/swap`, { signal }),
+  configureNodeSwap: (id: string, input: NodeSwapTask, signal?: AbortSignal) => request<NodeSwap>(`/api/v1/agents/${encodeURIComponent(id)}/swap`, { method: "POST", body: JSON.stringify(input), signal }),
   ipQuality: (signal?: AbortSignal, preferences?: IPQualityPreferences, compareNodeId?: string, compareAddress?: string) => {
     const params = new URLSearchParams();
     if (preferences) { params.set("required", preferences.requiredServices.join(",")); params.set("region", preferences.targetRegion); }

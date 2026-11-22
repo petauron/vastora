@@ -146,6 +146,8 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 		return `UPDATE node_site_tasks SET state='failed',lease_expires_at='',error='Abandoned; inspect recovered website state',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.security":
 		return `UPDATE node_security_tasks SET state='failed',lease_expires_at='',error='abandoned; inspect host rollback state',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
+	case "node.swap":
+		return `UPDATE node_swap_tasks SET state='failed',lease_expires_at='',error='abandoned; inspect host swap state',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.ip-quality":
 		return `UPDATE ip_quality_checks SET state='failed',lease_expires_at='',error='abandoned',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server":
@@ -189,6 +191,9 @@ func executionRequeueStatement(task AgentTask, agentID, now string) (string, []a
 	}
 	if task.Kind == "node.security" {
 		return "", nil, errors.New("center: inspect the host security checkpoint before issuing a fresh operation")
+	}
+	if task.Kind == "node.swap" {
+		return "", nil, errors.New("center: inspect the host swap state before issuing a fresh operation")
 	}
 	if task.Kind == "application.maintenance" {
 		return "", nil, errors.New("center: uncertain package maintenance cannot be replayed; inspect retained resource and backup evidence")
