@@ -2,9 +2,7 @@ package agent
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"path/filepath"
 	"testing"
 
 	"github.com/petauron/vastora/internal/agentpb"
@@ -35,41 +33,6 @@ func TestLandingOnlyHeartbeatEncodesAbsentTailscaleOwnership(t *testing.T) {
 	}
 	if err := (Client{Capabilities: Capabilities{LandingOnly: true}, TailscaleOwnership: "none"}).Heartbeat(context.Background(), s); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestLandingOnlySchemaMigrationPreservesOrdinaryPurpose(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; ALTER TABLE glivela_runtime_state RENAME TO meridian_runtime_state; PRAGMA user_version=21`); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err = Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != agentSchemaVersion {
-		t.Fatalf("migration: %d %v", version, err)
-	}
-	backups, err := filepath.Glob(filepath.Join(dir, "schema-21-backup-*", "agent.db"))
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("backups: %v %v", backups, err)
-	}
-	b, err := sql.Open("sqlite", backups[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close()
-	if err = b.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 21 {
-		t.Fatalf("backup: %d %v", version, err)
 	}
 }
 

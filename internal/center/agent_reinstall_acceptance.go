@@ -26,7 +26,7 @@ func (s *Store) reinstallAcceptanceTasks(ctx context.Context, tx *sql.Tx, target
 	}
 	var eligible bool
 	var verifierKey []byte
-	err = tx.QueryRowContext(ctx, `SELECT status='active' AND credential_revoked_at='' AND length(x25519_public_key)>0 AND json_extract(capabilities_json,'$.docker')=1 AND json_extract(capabilities_json,'$.meridianAcceptance')=1 AND last_seen_at>=? AND last_seen_at<=?,x25519_public_key FROM agents WHERE id=?`, s.now().Add(-2*time.Minute).UTC().Format(time.RFC3339Nano), s.now().UTC().Format(time.RFC3339Nano), verifier).Scan(&eligible, &verifierKey)
+	err = tx.QueryRowContext(ctx, `SELECT status='active' AND credential_revoked_at='' AND length(x25519_public_key)>0 AND json_extract(capabilities_json,'$.docker')=1 AND json_extract(capabilities_json,'$.glivelaAcceptance')=1 AND last_seen_at>=? AND last_seen_at<=?,x25519_public_key FROM agents WHERE id=?`, s.now().Add(-2*time.Minute).UTC().Format(time.RFC3339Nano), s.now().UTC().Format(time.RFC3339Nano), verifier).Scan(&eligible, &verifierKey)
 	if err != nil || !eligible || verifier == target {
 		return nil, errors.New("center: a separate online verifier is required")
 	}

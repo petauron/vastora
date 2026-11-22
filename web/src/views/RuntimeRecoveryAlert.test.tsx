@@ -62,30 +62,15 @@ it("shows affected applications and repair guidance even while the node is conne
   expect(container.textContent).not.toContain("离线恢复所需镜像不可用");
 });
 
-it.each(["project", "verify", "retire"] as const)("keeps generic application recovery without legacy controls during %s", (state) => {
-  const data = emptyAppData({ version: "test", agentInstallerAvailable: false, agentConnectionMode: "lan", agentConnectUrl: "https://center.example" });
+it("keeps generic application recovery without legacy controls for Glivela instances", () => {
   const agent = { ...agentFixture(), runtimeRecoveryApplications: [{ appKey: "vastora-official/meridian", applicationId: "meridian", reason: "state_incomplete" as const }] };
-  data.applications = [{ id: "meridian", name: "Glivela", nodeId: agent.id, siteId: "site-a", appKey: "vastora-official/meridian", role: "worker", status: "failed", image: "", runtime: "docker", updateAvailable: false, createdAt: "", updatedAt: "" }];
-  data.glivela.cutover.state = state;
-  data.glivela.cutover.subscriptionAuthority = "meridian";
-  data.glivela.endpoints = [{ applicationId: "meridian", nodeId: agent.id, legacyRetired: false } as typeof data.glivela.endpoints[number]];
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  const render = () => act(() => root?.render(<RuntimeRecoveryAlert agent={agent} language="en" onApplications={vi.fn()} />));
-  render();
+  act(() => root?.render(<RuntimeRecoveryAlert agent={agent} language="en" onApplications={vi.fn()} />));
   expect(container.textContent).not.toContain("Explicit config recovery");
   expect(container.textContent).toContain("Application recovery blocked");
   expect(container.textContent).toContain("View apps");
-  data.glivela.endpoints[0].legacyRetired = true;
-  render();
-  expect(container.textContent).not.toContain("Explicit config recovery");
-  data.glivela.endpoints[0].legacyRetired = false;
-  data.glivela.cutover.subscriptionAuthority = "legacy";
-  data.glivela.cutover.subscriptionAuthority = "meridian";
-  data.glivela.cutover.state = "not_required";
-  data.glivela.cutover.state = state;
-  data.applications[0].status = "stopped";
 });
 
 it("keeps landing recovery separate from application repairs and explains the operator boundary", () => {

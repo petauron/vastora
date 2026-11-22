@@ -164,12 +164,6 @@ export function RealityRenameSheet({ data, language, mutate, onClose, service }:
 		setBusy(true);
 		setError("");
 		try {
-			if (application?.appKey === "vastora-official/meridian") {
-				const endpoint = data.glivela.endpoints.find((value) => value.serviceId === service.id);
-				if (!endpoint) throw new Error(copy(language, "Glivela 节点状态不可用。", "The Glivela node state is unavailable."));
-				await mutate(() => api.updateGlivelaEndpointName(endpoint.id, { regionCode, name: name.trim() }), copy(language, `订阅节点已重命名为“${displayName}”。`, `Subscription node renamed to “${displayName}”.`));
-				return;
-			}
 			const next = await execute(() => api.renameRealityCommand(service.id, regionCode, name.trim()), setCommand);
 			if (next?.state === "succeeded") {
 				await mutate(async () => undefined, copy(language, `订阅节点已重命名为“${next.displayName ?? regionDisplayName(regionCode, name)}”。`, `Subscription node renamed to “${next.displayName ?? regionDisplayName(regionCode, name)}”.`));

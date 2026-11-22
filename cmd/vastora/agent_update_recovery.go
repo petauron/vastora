@@ -164,9 +164,9 @@ func checkpointAgentDatabase(ctx context.Context, dataDir string) (int, error) {
 		return 0, fmt.Errorf("agent: Agent database integrity check failed: %w", err)
 	}
 	var schemaVersion int
-	if err := database.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&schemaVersion); err != nil || schemaVersion < 1 {
+	if err := database.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&schemaVersion); err != nil || schemaVersion < agent.MinSupportedSchemaVersion() {
 		if err == nil {
-			err = errors.New("invalid schema version")
+			err = fmt.Errorf("unsupported schema version %d (minimum %d)", schemaVersion, agent.MinSupportedSchemaVersion())
 		}
 		return 0, fmt.Errorf("agent: inspect Agent schema before update: %w", err)
 	}
@@ -201,7 +201,7 @@ func verifyHostUpdateRecovery(ctx context.Context, operation hostUpdateOperation
 	if err != nil {
 		return err
 	}
-	if manifest.TaskID != operation.TaskID || manifest.Attempt != operation.Attempt || manifest.AgentID != operation.AgentID || manifest.SourceVersion != operation.SourceVersion || manifest.TargetVersion != operation.TargetVersion || manifest.TargetSchemaVersion != agent.CurrentSchemaVersion() || manifest.DataDir != dataDir || manifest.SchemaVersion < 1 || manifest.SchemaVersion > manifest.TargetSchemaVersion {
+	if manifest.TaskID != operation.TaskID || manifest.Attempt != operation.Attempt || manifest.AgentID != operation.AgentID || manifest.SourceVersion != operation.SourceVersion || manifest.TargetVersion != operation.TargetVersion || manifest.TargetSchemaVersion != agent.CurrentSchemaVersion() || manifest.DataDir != dataDir || manifest.SchemaVersion < agent.MinSupportedSchemaVersion() || manifest.SchemaVersion > manifest.TargetSchemaVersion {
 		return errors.New("agent: pre-migration recovery point belongs to another update")
 	}
 	candidate, err := hashHostUpdateRecoveryFile(candidatePath)

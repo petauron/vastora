@@ -44,13 +44,13 @@ func TestGlivelaLinkBandwidthQueuesBothPrivatePeers(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Old Agents must not receive the new execution contract during rollout.
-	if _, err := store.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.meridianLinkRevision',0) WHERE id=?`, source.ID); err != nil {
+	if _, err := store.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.glivelaLinkRevision',0) WHERE id=?`, source.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.StartGlivelaLinkBandwidth(ctx, source.ID, egress.ID); err == nil {
 		t.Fatal("old link contract accepted")
 	}
-	if _, err := store.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.meridianLinkRevision',?) WHERE id=?`, nodediagnostics.LinkBandwidthRevision, source.ID); err != nil {
+	if _, err := store.db.Exec(`UPDATE agents SET capabilities_json=json_set(capabilities_json,'$.glivelaLinkRevision',?) WHERE id=?`, nodediagnostics.LinkBandwidthRevision, source.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.StartGlivelaLinkBandwidth(ctx, source.ID, egress.ID); err != nil {

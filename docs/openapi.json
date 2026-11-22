@@ -5856,7 +5856,7 @@
                               "pulseRestore": {
                                 "type": "boolean"
                               },
-                              "meridianAcceptance": {
+                              "glivelaAcceptance": {
                                 "type": "boolean"
                               },
                               "pulseReporting": {
@@ -5883,10 +5883,10 @@
                               "landingEgressIP": {
                                 "type": "boolean"
                               },
-                              "meridianLinkBandwidth": {
+                              "glivelaLinkBandwidth": {
                                 "type": "boolean"
                               },
-                              "meridianLinkRevision": {
+                              "glivelaLinkRevision": {
                                 "type": "integer"
                               },
                               "hostProfile": {

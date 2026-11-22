@@ -18,7 +18,7 @@ afterEach(() => {
 
 function assessment(): IPQualityAssessment {
   return {
-    version: "meridian-v5", status: "partial", min: 75, max: 100, grade: "unknown", ipType: "residential",
+    version: "glivela-v5", status: "partial", min: 75, max: 100, grade: "unknown", ipType: "residential",
     typeCandidates: ["residential"], typeEvidence: [{ source: "IPinfo", value: "ISP" }],
     contributions: [{ id: "ippure", min: 0, max: 25, weight: 25, missing: ["IPPure"] }], missing: ["IPPure"],
     advice: "recheck", reasons: ["incomplete"], requiredFailed: [], requiredUnknown: [],
@@ -71,7 +71,6 @@ it("loads comparisons on demand, separates partial rows, and only selects a form
   const quality = vi.spyOn(api, "ipQuality").mockResolvedValue({ checks: [], targets: [], comparisons: [{
     nodeId: "landing", name: "落地 A", address: "2001:db8::2", family: "ipv6", compatible: false, connectionVerified: false, recommended: false, reason: "connection_unverified", assessment: assessment(), services: [],
   }] });
-  const mutate = vi.spyOn(api, "selectLanding");
   const select = vi.fn();
   const container = document.createElement("div");
   document.body.append(container);
@@ -87,7 +86,7 @@ it("loads comparisons on demand, separates partial rows, and only selects a form
   const choose = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "选择")!;
   await act(async () => choose.click());
   expect(select).toHaveBeenCalledWith("landing");
-  expect(mutate).not.toHaveBeenCalled();
+  expect(quality).toHaveBeenCalledOnce();
 });
 
 it("shows an IPv6 number with its own rule and no excluded providers", async () => {
@@ -95,7 +94,7 @@ it("shows an IPv6 number with its own rule and no excluded providers", async () 
   document.body.append(container);
   root = createRoot(container);
   const ipv6: IPQualityAssessment = {
-    ...assessment(), version: "meridian-ipv6-v2", status: "conservative", score: 71, min: 71, max: 97,
+    ...assessment(), version: "glivela-ipv6-v2", status: "conservative", score: 71, min: 71, max: 97,
     grade: "good", missing: ["IPQS", "AbuseIPDB", "TikTok"], advice: "direct",
     contributions: [{ id: "sources", min: 0, max: 25, weight: 25, missing: ["IPQS", "AbuseIPDB"] }],
   };

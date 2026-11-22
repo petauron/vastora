@@ -1,5 +1,3 @@
-import type { GlivelaInventory } from "./glivela-types";
-
 export type LocalizedText = { en: string; "zh-CN": string };
 
 export type CatalogSource = {
@@ -48,7 +46,6 @@ export type AppData = {
   integrations: Integration[];
   actions: Action[];
   threeXUIControllerMigrations: ThreeXUIControllerMigration[];
-  glivela: GlivelaInventory;
   systemDomain: SystemDomain;
   tailscaleFixedEndpoint?: TailscaleFixedEndpoint;
   centerRemoteAccess: CenterRemoteAccess | null;
@@ -315,7 +312,7 @@ export type AgentView = {
   credentialRevoked: boolean;
   siteId: string;
   roles: string[];
-  capabilities: { tailscaleUpdate?: TailscaleUpdateStatus; landingOnly?: boolean; "meridianAcceptance"?: boolean; executorVersions?: Record<string, number>; runtimeCapabilities?: string[]; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; "meridianLinkBandwidth"?: boolean; hostProfile?: boolean; osReinstallPreflight?: boolean; osReinstall?: boolean; nodeSecurity?: boolean; nodeSwap?: boolean };
+  capabilities: { tailscaleUpdate?: TailscaleUpdateStatus; landingOnly?: boolean; glivelaAcceptance?: boolean; executorVersions?: Record<string, number>; runtimeCapabilities?: string[]; docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean; networkDiagnostics?: boolean; returnRoute?: boolean; bandwidthDiagnostics?: boolean; glivelaLinkBandwidth?: boolean; glivelaLinkRevision?: number; hostProfile?: boolean; osReinstallPreflight?: boolean; osReinstall?: boolean; nodeSecurity?: boolean; nodeSwap?: boolean };
   networkCandidates: NetworkCandidate[];
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,83 +112,74 @@ func TestAgentDatabaseRejectsInvalidLocalKeyWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestAgentLegacyDatabaseBindsOnlyAfterEncryptedStateVerification(t *testing.T) {
-	t.Run("correct-key", func(t *testing.T) {
-		directory := t.TempDir()
-		makeLegacyUnboundAgent(t, directory)
-		store, err := Open(directory)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer store.Close()
-		var count, version int
-		if err := store.db.QueryRow(`SELECT COUNT(*) FROM storage_key_binding WHERE id = 1`).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("binding count = %d, err=%v", count, err)
-		}
-		if err := store.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != agentSchemaVersion {
-			t.Fatalf("schema version = %d, err=%v", version, err)
-		}
-	})
-
-	t.Run("wrong-key", func(t *testing.T) {
-		directory := t.TempDir()
-		makeLegacyUnboundAgent(t, directory)
-		if err := os.WriteFile(filepath.Join(directory, "agent.key"), bytes.Repeat([]byte{0x96}, secret.KeySize), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		databasePath := filepath.Join(directory, "agent.db")
-		before, err := os.ReadFile(databasePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), "verify legacy encrypted state") {
-			t.Fatalf("wrong legacy key error = %v", err)
-		}
-		after, err := os.ReadFile(databasePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(before, after) {
-			t.Fatal("failed legacy open modified the database")
-		}
-	})
-}
-
-func makeLegacyUnboundAgent(t *testing.T, directory string) {
-	t.Helper()
-	store, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
+func TestAgentDatabaseRejectsUnsupportedSchemaAndMissingBindingWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name      string
+		statement string
+		wantError string
+	}{
+		{
+			name:      "pre-baseline-schema",
+			statement: `PRAGMA user_version = 24`,
+			wantError: "predates supported baseline 25",
+		},
+		{
+			name:      "future-schema",
+			statement: `PRAGMA user_version = 27`,
+			wantError: "cannot be upgraded by this release",
+		},
+		{
+			name:      "missing-binding",
+			statement: `DROP TABLE storage_key_binding`,
+			wantError: "database key binding is missing",
+		},
 	}
-	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{
-		InstanceID: "legacy-app", AppKey: "official/legacy", Version: "1.0.0",
-		Config: json.RawMessage(`{"enabled":true}`), Secrets: json.RawMessage(`{"token":"legacy"}`),
-	}); err != nil {
-		_ = store.Close()
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", filepath.Join(directory, "agent.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dropTaskReceiptIndexesForFixture(t, db)
-	if _, err := db.Exec(`DROP TABLE glivela_runtime_state; DROP TABLE landing_controller_state;
-		DROP TABLE landing_runtime_state;
-		DROP TABLE node_listener_applied_state;
-		DROP TABLE storage_key_binding;
-		ALTER TABLE control_plane_connection DROP COLUMN ca_certificate_pem;
-		ALTER TABLE agent_install_operations DROP COLUMN ca_certificate_pem;
-		ALTER TABLE agent_install_operations DROP COLUMN previous_ca_certificate_pem;
-		ALTER TABLE task_receipts DROP COLUMN runtime_generation;
-		ALTER TABLE control_plane_connection DROP COLUMN landing_only;
-		DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version = 10`); err != nil {
-		_ = db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			store, err := Open(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := bytes.Clone(store.key)
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			databasePath := filepath.Join(directory, "agent.db")
+			db, err := sql.Open("sqlite", databasePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(test.statement); err != nil {
+				_ = db.Close()
+				t.Fatal(err)
+			}
+			var busy, logFrames, checkpointedFrames int
+			if err := db.QueryRow(`PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &checkpointedFrames); err != nil {
+				_ = db.Close()
+				t.Fatal(err)
+			}
+			if err := VerifyRecoveryDatabaseKey(context.Background(), db, key); err == nil {
+				_ = db.Close()
+				t.Fatal("recovery verification accepted unsupported database")
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(databasePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("Open error = %v, want substring %q", err, test.wantError)
+			}
+			after, err := os.ReadFile(databasePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("failed open modified the database")
+			}
+		})
 	}
 }

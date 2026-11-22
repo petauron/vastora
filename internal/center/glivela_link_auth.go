@@ -36,7 +36,7 @@ func newGlivelaLinkAuth() (client, server nodediagnostics.LinkBandwidthAuth, err
 	// iperf3 requires SHA256("{username}" + token). This is a digest of a
 	// random one-time token, not a password-storage KDF. Changing it to Argon2
 	// or bcrypt would make the upstream server reject every authenticated test.
-	hash := sha256.Sum256([]byte("{meridian}" + token))
+	hash := sha256.Sum256([]byte("{glivela}" + token))
 	client = nodediagnostics.LinkBandwidthAuth{KeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public})), Password: token}
 	server = nodediagnostics.LinkBandwidthAuth{KeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})), PasswordHash: hex.EncodeToString(hash[:])}
 	return client, server, nil

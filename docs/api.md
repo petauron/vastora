@@ -47,3 +47,14 @@ is explicitly operator-attested; this view does not prove off-host storage or a
 successful complete cluster drill. See [disaster recovery](disaster-recovery.md).
 
 `go test ./internal/center` validates the document with `kin-openapi`, compares its method/path/security set with the Go route registry, and checks representative bootstrap, administrator, Agent, Catalog, publication, update, and integration behavior. `node scripts/generate-openapi.mjs --check` additionally verifies that the generated document is current.
+
+## Canonical Glivela wire contract and v0.1.0 → v0.2.0 transition
+
+Embedded `/api/v1/meridian/*` management routes, Center-owned `NodeEgress` mutations, and legacy `meridian*` live wire fields have been retired in favor of the standalone Glivela control plane and canonical `glivela` contracts (#977, #1371):
+
+- **Node capabilities** (`AgentView.capabilities` and gRPC `Heartbeat` `capabilities`): `glivelaAcceptance`, `glivelaLinkBandwidth`, and `glivelaLinkRevision` (replacing `meridianAcceptance`, `meridianLinkBandwidth`, and `meridianLinkRevision`). The unused `meridianRuntime` heartbeat field is removed.
+- **IP quality assessment versions** (`GET /api/v1/ip-quality`): `glivela-v5` (IPv4) and `glivela-ipv6-v2` (IPv6).
+- **Deployer Unix-socket entry verification**: `POST /v1/glivela/verify` and isolated helper subcommand `vastora deployer glivela-entry-probe --expected-exit <public-ip>` (replacing `POST /v1/meridian/verify` and `deployer meridian-entry-probe`).
+- **Retained signed/audit identifiers**: signed catalog v4 package identifiers (`vastora-official/meridian`, `/api/v1/official-app-ui/meridian/{version}/*`) and persisted SQLite task/receipt kinds (`meridian.runtime.apply`, `meridian.legacy.*`, `meridian.recovery.acceptance`, `meridian.link-bandwidth*`) remain unchanged so signed catalogs and historical execution records stay verifiable.
+
+Because Center decodes gRPC `Heartbeat` payloads with `DisallowUnknownFields()`, a `v0.1.0` Agent sending retired `meridian*` capability fields will be rejected by a `v0.2.0` Center until the Agent binary is updated. Upgrade pre-`v0.1.0` nodes to `v0.1.0` (Agent schema 25) first, then update Center (`center` + `deployer` sharing the new `/v1/glivela/verify` helper contract) and roll out the `v0.2.0` Agent binary via the host installer/systemd package rather than relying on in-band `v0.1.0` gRPC task polling across the wire break. See [database baseline conversion](database-baseline.md).

@@ -25,7 +25,7 @@ func TestGlivelaContainerProbeIsolation(t *testing.T) {
 	if h.Tmpfs["/var/lib/vastora"] == "" || !h.ReadonlyRootfs || h.LogConfig.Type != "none" || len(h.CapDrop) != 1 || h.CapDrop[0] != "ALL" || *h.PidsLimit != 32 || h.Memory != 128<<20 {
 		t.Fatal("probe bounds lost")
 	}
-	if strings.Join(c.Cmd, " ") != "deployer meridian-entry-probe --expected-exit 1.1.1.1" {
+	if strings.Join(c.Cmd, " ") != "deployer glivela-entry-probe --expected-exit 1.1.1.1" {
 		t.Fatal("wrong helper command")
 	}
 }

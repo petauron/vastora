@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APIError, api } from "./api";
-import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
+import { loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import type { CenterStatus } from "./types";
 
 const status: CenterStatus = {
@@ -24,19 +24,18 @@ afterEach(() => {
 });
 
 describe("screen-scoped data loading", () => {
-  it("does not load retired proxy business on a direct nodes visit", async () => {
+  it("loads only node and integration inventories on a direct nodes visit", async () => {
     vi.spyOn(api, "status").mockResolvedValue(status);
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
     vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
     vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
     vi.spyOn(api, "publications").mockResolvedValue({ publications: [] });
-    const glivela = emptyAppData(status).glivela;
-    const loadGlivela = vi.spyOn(api, "glivela").mockResolvedValue(glivela);
+    const deployments = vi.spyOn(api, "deployments");
 
     const result = await loadScreenData("nodes");
 
-    expect(result.glivela).toBeUndefined();
-    expect(loadGlivela).not.toHaveBeenCalled();
+    expect(result.deployments).toBeUndefined();
+    expect(deployments).not.toHaveBeenCalled();
   });
 
   it("loads the persistent desktop and overview summary without deployment history", async () => {
@@ -75,7 +74,6 @@ describe("screen-scoped data loading", () => {
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
 	vi.spyOn(api, "registryCredentials").mockResolvedValue({ credentials: [] });
 	vi.spyOn(api, "threeXUIControllerMigrations").mockResolvedValue({ migrations: [] });
-    vi.spyOn(api, "glivela").mockResolvedValue(emptyAppData(status).glivela);
     const centerRemoteAccess = vi.spyOn(api, "centerRemoteAccess").mockResolvedValue({ available: true, enabled: true, status: "configured" });
     const actions = vi.spyOn(api, "actions");
 
@@ -105,7 +103,6 @@ describe("screen-scoped data loading", () => {
     vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
     vi.spyOn(api, "threeXUIControllerMigrations").mockResolvedValue({ migrations: [] });
-    vi.spyOn(api, "glivela").mockResolvedValue(emptyAppData(status).glivela);
     vi.spyOn(api, "centerRemoteAccess").mockRejectedValue(new APIError("status unavailable", 503));
 
     const result = await loadScreenData("apps");

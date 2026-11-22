@@ -49,9 +49,9 @@ export function AssessmentSummary({ language, assessment, report, checkedAt }: {
   const id = useId();
   if (!assessment) return null;
   const labels: Record<string, [string, string]> = { type: ["IP 类型", "IP type"], sources: ["来源风险", "Provider risk"], ippure: ["IPPure", "IPPure"], unlock: ["实际解锁", "Availability"] };
-  const ipv6 = assessment.version === "meridian-ipv6-v2";
+  const ipv6 = assessment.version === "glivela-ipv6-v2";
   const ruleName = ipv6 ? "Glivela IPv6" : "Glivela IPv4";
-  const ruleVersion = assessment.version.replace(/^meridian-(?:ipv6-)?/, "");
+  const ruleVersion = assessment.version.replace(/^glivela-(?:ipv6-)?/, "");
   const riskSources = ipv6 ? ["IPQS", "AbuseIPDB"] : ["IP2LOCATION", "SCAMALYTICS", "IPQS", "AbuseIPDB"];
   const number = (value: number) => Number(value.toFixed(2));
   return <section aria-label={copy(language, "出口适用评分", "Exit suitability assessment")} className="flex flex-col gap-2">

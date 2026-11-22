@@ -76,7 +76,7 @@ func TestAssessmentIPQSOnlyConservativeScore(t *testing.T) {
 	r.IPPure.RiskScore = &risk
 	r.RecordObservations(assessmentTime)
 	a := assessFixture(r)
-	if a.Version != "meridian-v5" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
+	if a.Version != "glivela-v5" || a.Status != "conservative" || a.Score == nil || *a.Score != 63 || a.Min != 63 || a.Max != 73 || a.Grade != "good" || a.Advice != "direct" || !slices.Equal(a.Missing, []string{"IPQS"}) {
 		t.Fatalf("IPQS-only absence must produce a transparent lower bound: %+v", a)
 	}
 	r.Scores = append(r.Scores, Score{"IPQS", "100"})
@@ -105,7 +105,7 @@ func TestAssessmentIP2LocationHighRiskCannotBeHiddenByScamalytics(t *testing.T) 
 	r.IPPure.RiskScore = &risk
 	r.RecordObservations(assessmentTime)
 	a := assessFixture(r)
-	if a.Version != "meridian-v5" || a.Status != "conservative" || a.Score == nil || *a.Score != 54 || a.Min != 54 || a.Max != 64 || a.Contributions[1].Min != 5 || a.Advice != "compare" || !slices.Equal(a.Missing, []string{"IPQS"}) {
+	if a.Version != "glivela-v5" || a.Status != "conservative" || a.Score == nil || *a.Score != 54 || a.Min != 54 || a.Max != 64 || a.Contributions[1].Min != 5 || a.Advice != "compare" || !slices.Equal(a.Missing, []string{"IPQS"}) {
 		t.Fatalf("high IP2Location risk must affect exit suitability: %+v", a)
 	}
 	for i := range r.Observations {

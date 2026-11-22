@@ -16,8 +16,8 @@ func runDeployer(arguments []string) error {
 	if len(arguments) == 0 {
 		return errors.New("deployer serve or public-entry-probe is required")
 	}
-	if arguments[0] == "meridian-entry-probe" {
-		flags := flag.NewFlagSet("deployer meridian-entry-probe", flag.ContinueOnError)
+	if arguments[0] == "glivela-entry-probe" {
+		flags := flag.NewFlagSet("deployer glivela-entry-probe", flag.ContinueOnError)
 		expected := flags.String("expected-exit", "", "required public egress address")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err

@@ -195,7 +195,7 @@ func TestRetiredProxyAPIsCannotMutateOrServeOldSubscriptions(t *testing.T) {
 	defer s.Close()
 	before := handoverTableHashes(t, s.db)
 	handler := NewServer(s, "", false).Handler()
-	for _, r := range []struct{ method, path string }{{"GET", "/sub/retained-token"}, {"GET", "/api/v1/meridian"}, {"POST", "/api/v1/meridian/accounts"}, {"PUT", "/api/v1/meridian/accounts/example"}, {"GET", "/api/v1/meridian/traffic"}, {"POST", "/api/v1/meridian/endpoints/example/glivela-pilot"}, {"GET", "/api/v1/meridian/landing/latencies/events"}} {
+	for _, r := range []struct{ method, path string }{{"GET", "/sub/retained-token"}, {"GET", "/api/v1/meridian"}, {"POST", "/api/v1/meridian/accounts"}, {"PUT", "/api/v1/meridian/accounts/example"}, {"GET", "/api/v1/meridian/traffic"}, {"POST", "/api/v1/meridian/endpoints/example/glivela-pilot"}, {"GET", "/api/v1/meridian/landing"}, {"PUT", "/api/v1/meridian/landing"}, {"GET", "/api/v1/meridian/landing/latencies/events"}, {"POST", "/api/v1/meridian/link-bandwidth"}, {"GET", "/api/v1/meridian/native-entries"}, {"PUT", "/api/v1/agents/example/egress"}} {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, httptest.NewRequest(r.method, r.path, strings.NewReader("{}")))
 		if w.Code != http.StatusNotFound {
