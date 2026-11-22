@@ -69,7 +69,7 @@ func (s *Store) reinstallLocalExecutionTask(ctx context.Context, tx *sql.Tx, exe
 		return nil, nil
 	}
 	switch task.Kind {
-	case "node.security":
+	case "node.security", "node.swap":
 		return &task, nil
 	case "agent.update", "agent.decommission", "node.ip-quality", "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server", "node.listener.apply", "landing.server.apply", "landing.proxy.apply", "xray.configuration.inspect", "xray.configuration.apply":
 		return &task, nil

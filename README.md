@@ -213,3 +213,6 @@ includes `host-tcp-budget`. This is a per-host operation: inspect, apply the
 tier for actual RAM, or restore the recorded values. It accepts no sysctl name,
 path, command or custom watermarks. Containers and unsupported init systems
 do not start a writer; the managed application's systemd sandbox is unchanged.
+
+Small Linux `systemd` KVM hosts can opt into bounded zram and `/swapfile`
+tiering from node management: [host zram and swap optimization](docs/host-swap.md) (#1389).

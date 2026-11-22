@@ -120,7 +120,7 @@ func TestLandingOnlyPurposePersistsAndRejectsLocalEscalation(t *testing.T) {
 }
 
 func TestLandingOnlyTaskAllowlist(t *testing.T) {
-	for _, kind := range []string{"agent.update", "agent.decommission", "node.security"} {
+	for _, kind := range []string{"agent.update", "agent.decommission", "node.security", "node.swap"} {
 		if !landingOnlyTaskAllowed(kind) {
 			t.Fatalf("required lifecycle task blocked: %s", kind)
 		}

@@ -126,6 +126,7 @@ func (s *Store) readReinstallWork(ctx context.Context, tx *sql.Tx, plan *AgentRe
 		UNION ALL SELECT kind,agent_id,id,state,attempt,target_revision,json_array(bind_address,targets_json,pair_key) FROM node_diagnostic_checks WHERE state IN ('pending','running')
 		UNION ALL SELECT 'node.site.certificate',agent_id,id,state,attempt,revision,json_array(input_json) FROM node_site_tasks WHERE state IN ('pending','running')
 		UNION ALL SELECT 'node.security',agent_id,id,state,attempt,1,json_array(input_json) FROM node_security_tasks WHERE state IN ('pending','running')
+		UNION ALL SELECT 'node.swap',agent_id,id,state,attempt,1,json_array(input_json) FROM node_swap_tasks WHERE state IN ('pending','running')
 	) work WHERE work.agent_id=? OR EXISTS(SELECT 1 FROM application_commands c WHERE c.id=work.id AND c.kind=work.kind AND c.agent_id=work.agent_id AND c.gateway_node_id=?)
 	ORDER BY kind,agent_id,id`, plan.AgentID, plan.AgentID, plan.AgentID, plan.AgentID)
 	if err != nil {

@@ -968,6 +968,7 @@ func expireAgentProcessTaskLeases(ctx context.Context, tx *sql.Tx, agentID strin
 		{`UPDATE landing_server_states SET lease_expires_at = ? WHERE node_id = ? AND status = 'applying'`, "landing service task"},
 		{`UPDATE landing_proxy_states SET lease_expires_at = ? WHERE node_id = ? AND status = 'applying'`, "landing proxy task"},
 		{`UPDATE cloudflare_tunnels SET lease_expires_at = ? WHERE agent_id = ? AND status = 'applying'`, "Tunnel task"},
+		{`UPDATE node_swap_tasks SET lease_expires_at = ? WHERE agent_id = ? AND state = 'running'`, "node swap task"},
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement.query, nowText, agentID); err != nil {

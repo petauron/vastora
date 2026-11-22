@@ -1,6 +1,7 @@
 import { NodeSSHProtection } from "./NodeSSHProtection";
 import { OSReinstallInspection } from "./OSReinstallInspection";
 import { NodeSecurityControls } from "./NodeSecurityControls";
+import { NodeSwapControls } from "./NodeSwapControls";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { CheckCircle2Icon, CircleArrowUpIcon, MapPinIcon, NetworkIcon, PlusIcon, RotateCcwIcon, SearchIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon, UnplugIcon } from "lucide-react";
 import { api } from "../api";
@@ -469,6 +470,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
             {agent?.capabilities.osReinstallPreflight ? <OSReinstallInspection key={`os-reinstall-${agent.id}`} nodeId={agent.id} connected={agent.connected} canReinstall={!!agent.capabilities.osReinstall} language={language} /> : null}
             {agent ? <NodeSSHProtection key={`ssh-${agent.id}`} nodeId={agent.id} connected={agent.connected} applications={data.applications} language={language} /> : null}
             {agent?.capabilities.nodeSecurity ? <NodeSecurityControls key={`security-${agent.id}`} nodeId={agent.id} language={language} /> : null}
+            {agent?.capabilities.nodeSwap ? <NodeSwapControls key={`swap-${agent.id}`} nodeId={agent.id} connected={agent.connected} language={language} /> : null}
             {commandKind && !dependenciesUnavailable ? <Alert><TerminalIcon /><AlertTitle>{copy(language, "在节点运行一次", "Run once on the node")}</AlertTitle><AlertDescription><p>{copy(language, "命令会更新 systemd 配置并重启 Agent，Center 会自动看到新用途。", "The command updates systemd, restarts Agent, and Center detects the new purpose automatically.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{purposeCommand}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={purposeCommand} /></div></AlertDescription></Alert> : null}
             {error ? <FieldError>{error}</FieldError> : null}
           </FieldGroup></div>

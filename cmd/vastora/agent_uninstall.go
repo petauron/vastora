@@ -320,6 +320,9 @@ func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtime
 	if err != nil {
 		return err
 	}
+	if err := agent.CheckHostSwapRemoval(dataDir); err != nil {
+		return err
+	}
 	return uninstallAgentHostWithEnvironment(ctx, deleteData, runtimeCleaned, keepBinary, agentUninstallEnvironment{
 		authorize: authorize,
 		dataDir:   dataDir,

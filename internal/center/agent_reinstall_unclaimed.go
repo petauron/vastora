@@ -16,7 +16,7 @@ type AgentReinstallUnclaimedWork struct {
 
 func reinstallUnclaimedTaskID(kind, id string, revision int64) string {
 	switch kind {
-	case "node.security":
+	case "node.security", "node.swap":
 		return id
 	case "application.apply", "agent.update", "node.ip-quality", "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server", "xray.configuration.inspect", "xray.configuration.apply":
 		return id

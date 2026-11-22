@@ -37,6 +37,8 @@ func (s *Store) releaseClaimedTask(ctx context.Context, agentID string, task Age
 		result, err = tx.ExecContext(ctx, "UPDATE os_reinstall_tasks SET state='pending',attempt=0,lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=1", now, task.ID, agentID)
 	case "node.security":
 		result, err = tx.ExecContext(ctx, `UPDATE node_security_tasks SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
+	case "node.swap":
+		result, err = tx.ExecContext(ctx, `UPDATE node_swap_tasks SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
 	case "node.ip-quality":
 		result, err = tx.ExecContext(ctx, `UPDATE ip_quality_checks SET state='pending',lease_expires_at='',updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=?`, now, task.ID, agentID, task.Attempt)
 	case "node.network-quality", "node.return-route", "node.international-bandwidth", "node.host-profile", "meridian.link-bandwidth", "meridian.link-bandwidth-server":
@@ -113,6 +115,8 @@ func (s *Store) RenewTaskLease(ctx context.Context, agentID, credential, taskID 
 		result, err = s.db.ExecContext(ctx, "UPDATE os_reinstall_tasks SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state IN ('running','backup_ready') AND attempt=? AND lease_expires_at>?", append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case strings.HasPrefix(taskID, "node-security-"):
 		result, err = s.db.ExecContext(ctx, `UPDATE node_security_tasks SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=? AND lease_expires_at>?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	case strings.HasPrefix(taskID, "node-swap-"):
+		result, err = s.db.ExecContext(ctx, `UPDATE node_swap_tasks SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=? AND lease_expires_at>?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case strings.HasPrefix(taskID, "application-maintenance-"):
 		result, err = s.db.ExecContext(ctx, `UPDATE application_maintenance SET lease_expires_at=?,updated_at=? WHERE id=? AND agent_id=? AND state='running' AND attempt=? AND lease_expires_at>?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case strings.HasPrefix(taskID, "application-adopt-"):
@@ -246,6 +250,7 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		{`SELECT id, revision FROM node_site_tasks WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.site.certificate"},
 		{`SELECT id, 1 FROM os_reinstall_tasks WHERE agent_id=? AND state IN ('running','backup_ready') AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.os-reinstall"},
 		{`SELECT id, 1 FROM node_security_tasks WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.security"},
+		{`SELECT id, 1 FROM node_swap_tasks WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.swap"},
 		{`SELECT id, 1 FROM ip_quality_checks WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.ip-quality"},
 		{`SELECT id, target_revision FROM node_diagnostic_checks WHERE agent_id=? AND kind='node.network-quality' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.network-quality"},
 		{`SELECT id, target_revision FROM node_diagnostic_checks WHERE agent_id=? AND kind='node.return-route' AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, "node.return-route"},
@@ -317,6 +322,9 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE node_security_tasks SET state='failed',lease_expires_at='',error='interrupted; inspect host security checkpoint',updated_at=? WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE node_swap_tasks SET state='failed',lease_expires_at='',error='interrupted; inspect host swap state',updated_at=? WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE xray_configuration_recoveries SET state='failed',lease_expires_at='',error='interrupted',updated_at=? WHERE agent_id=? AND state='running' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {

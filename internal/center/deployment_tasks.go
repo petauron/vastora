@@ -23,6 +23,7 @@ import (
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/nodesite"
+	"github.com/petauron/vastora/internal/nodeswap"
 	"github.com/petauron/vastora/internal/osreinstall"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
@@ -36,6 +37,7 @@ type AgentTask struct {
 	NodeSite                  *nodesite.Task                      `json:"nodeSite,omitempty"`
 	SourceReceiptSHA256       string                              `json:"sourceReceiptSha256,omitempty"`
 	NodeSecurity              *nodesecurity.Task                  `json:"nodeSecurity,omitempty"`
+	NodeSwap                  *nodeswap.Task                      `json:"nodeSwap,omitempty"`
 	TailscaleUpdate           *tailscalehost.UpdateTask           `json:"tailscaleUpdate,omitempty"`
 	PackageRecovery           *controlplane.PackageRecovery       `json:"packageRecovery,omitempty"`
 	GlivelaAcceptance         *glivelaruntime.AcceptanceTask      `json:"meridianAcceptance,omitempty"`
@@ -138,7 +140,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			return err
 		}
 		nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && (controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities) || controlplane.NativeWebsiteConfigureAllowed(task.AppKey, task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities))
-		if landingOnly && !nativeLifecycle && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind && task.Kind != nodesite.Kind && task.Kind != tailscalehost.UpdateKind {
+		if landingOnly && !nativeLifecycle && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind && task.Kind != nodeswap.Kind && task.Kind != nodesite.Kind && task.Kind != tailscalehost.UpdateKind {
 			return errors.New("center: task is not authorized for a landing-only node")
 		}
 		return commitAuthorized(tx, task)
@@ -442,6 +444,16 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 							return nil, err
 						}
 						return securityTask, nil
+					}
+					swapTask, swapErr := s.claimNodeSwap(ctx, tx, agentID)
+					if swapErr != nil {
+						return nil, swapErr
+					}
+					if swapTask != nil {
+						if err := commitTask(tx, swapTask); err != nil {
+							return nil, err
+						}
+						return swapTask, nil
 					}
 					diagnostic, diagnosticErr := s.claimNodeDiagnostic(ctx, tx, agentID)
 					if diagnosticErr != nil {
@@ -792,6 +804,12 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 			return errInvalidReconciliationDisposition
 		}
 		return s.completeNodeSecurity(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
+	}
+	if strings.HasPrefix(taskID, nodeswap.TaskPrefix) {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeNodeSwap(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
 	}
 	if strings.HasPrefix(taskID, "node-diagnostic-") {
 		if reconciliationRequired {
