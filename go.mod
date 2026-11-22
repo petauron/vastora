@@ -12,7 +12,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/libdns/cloudflare v0.2.2
 	github.com/miekg/dns v1.1.73
-	github.com/moby/moby/api v1.56.1
+	github.com/moby/moby/api v1.57.0
 	github.com/moby/moby/client v0.6.2
 	github.com/petauron/catalog v0.4.1-0.20261106034937-53f84d1b4969
 	github.com/petauron/glivela v0.1.0-alpha.24.0.20261018115648-011a0efc9777
