@@ -7,13 +7,11 @@ import type { ReinstallCurrentMaterial, ReinstallCurrentVerification } from "./t
 import type { ReinstallClientCheck, ReinstallClientCheckInput } from "./reinstall-acceptance-types";
 import type { Action, AgentReinstallLandingSource, AgentReinstallDNS, AgentReinstallDNSInput, AgentReinstallAccess, AgentReinstallEntryCheck, AgentReinstallListener, AgentReinstallRuntime, AgentReinstallApplicationInput, AgentReinstallPreparation, AgentEnrollment, AgentReinstallPlan, AgentReinstallInput, AgentReinstallNetworkInput, AgentReinstallNetworkApproval, AgentReinstallLocalWorkInput, AgentReinstallLocalDisposition, AgentReinstallMonitorInput, AgentReinstallMonitorInspection, AgentReinstallMonitorRotation, AgentReinstallMonitorReporting, AgentReinstallMonitorRestore, AgentUpdate, AgentView, ApplicationCommand, ApplicationCommandKind, ApplicationCredentialRotation, ApplicationCredentials, AppView, Application, AssistantConversation, AssistantExecution, AssistantProvider, AssistantProposal, AssistantRun, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, AgentUpdatesStatus, AgentUpdatePushInput, AgentUpdatePushResult, CreatePublicationInput, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, RealitySecurityCheck, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
-import type { LandingView } from "./landing-types";
 import type { IPQualityPreferences, IPQualityResponse } from "./ip-quality-types";
 import type { NodeDiagnosticCheck } from "./node-diagnostics-types";
 import type { NodeSecurity, SecurityTask } from "./node-security-types";
 import type { NodeSwap, NodeSwapTask } from "./node-swap-types";
 import type { AgentEnrollmentStatus, NodeProtocols } from "./types";
-import type { GlivelaTraffic, GlivelaAccountCreated, GlivelaAccountInput, GlivelaAccount, GlivelaEndpoint, GlivelaInventory, GlivelaRouteGrant, GlivelaSourceRecovery } from "./glivela-types";
 import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type ExecutionView, type LegacyReceiptView } from "./execution-types";
 
 export class APIError extends Error {
@@ -127,7 +125,6 @@ export const api = {
   recheckOSReinstall: (id: string) => request<{ retired: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/os-reinstall/recheck`, { method: "POST", body: "{}" }),
   startOSReinstall: (id: string, input: { inspectionId: string; confirmDisk: string; username: string; sshPort: number; confirmErase: boolean }) => request<OSReinstallTask>(`/api/v1/agents/${encodeURIComponent(id)}/os-reinstall`, { method: "POST", body: JSON.stringify(input) }),
   checkNodeDiagnostic: (id: string, kind: NodeDiagnosticCheck["kind"], signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/node-diagnostics/${encodeURIComponent(kind)}`, { method: "POST", body: "{}", signal }),
-  checkGlivelaLinkBandwidth: (sourceNodeId: string, landingNodeId: string, signal?: AbortSignal) => request<{ queued: boolean }>("/api/v1/meridian/link-bandwidth", { method: "POST", body: JSON.stringify({ sourceNodeId, landingNodeId }), signal }),
   executions: (before = 0, signal?: AbortSignal, filter: "all" | "attention" | "running" = "all") => request<ExecutionPage>(`/api/v1/executions?filter=${filter}${before ? `&before=${before}` : ""}`, { signal }),
   taskExecution: (taskId: string, signal?: AbortSignal) => request<ExecutionView>(`/api/v1/tasks/${encodeURIComponent(taskId)}/execution`, { signal }),
   executionClaimControl: (signal?: AbortSignal) => request<ExecutionClaimControl>("/api/v1/execution-claim-control", { signal }),
@@ -143,11 +140,6 @@ export const api = {
       : input.action === "confirm-completed" ? "confirm-completed" : "abandon";
     return request(`/api/v1/executions/${encodeURIComponent(id)}/${endpoint}`, { method: "POST", body: JSON.stringify(input) });
   },
-  landing: (signal?: AbortSignal) => request<LandingView>("/api/v1/meridian/landing", { signal }),
-  setLandingEgress: (nodeId: string, revision: number, egressIp: string, signal?: AbortSignal) => request<LandingView>(`/api/v1/meridian/landing/${encodeURIComponent(nodeId)}/egress`, { method: "PUT", body: JSON.stringify({ revision, egressIp }), signal }),
-  selectLanding: (nodeIds: string[], revision: number, landingRegionCodes: Record<string, string>, signal?: AbortSignal, landingNameSuffixes?: Record<string, string>) => request<LandingView>("/api/v1/meridian/landing", {
-    method: "PUT", body: JSON.stringify({ nodeIds, revision, landingRegionCodes, landingNameSuffixes }), signal
-  }),
   setupStatus: (signal?: AbortSignal) => request<SetupStatus>("/api/v1/setup/status", { signal }),
   setupAdmin: (username: string, password: string) =>
     request<{ administratorConfigured: boolean }>("/api/v1/setup/admin", {
@@ -231,21 +223,7 @@ export const api = {
 	removeOfflineAgent: (agentId: string, confirmation: string) => request<{ removing: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}/remove`, { method: "POST", body: JSON.stringify({ confirmation }) }),
 	deleteAgent: (agentId: string) => request<{ deleted: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "DELETE", body: "{}" }),
 	applications: (signal?: AbortSignal) => inventory<"applications", Application>("/api/v1/applications", "applications", signal),
-	glivelaTraffic: (signal?: AbortSignal) => request<GlivelaTraffic>("/api/v1/meridian/traffic", { signal }),
-	glivela: (signal?: AbortSignal) => request<GlivelaInventory>("/api/v1/meridian", { signal }),
-	startGlivelaCutover: () => request<GlivelaInventory["cutover"]>("/api/v1/meridian/cutover", { method: "POST", body: "{}" }),
-	createGlivelaEndpoint: (input: { applicationId: string; verificationId: string; targetIp: string; advertiseHost?: string; targetHost: string; serverName: string; fingerprint?: string; regionCode: string; name: string }) => request<GlivelaEndpoint>("/api/v1/meridian/endpoints", { method: "POST", body: JSON.stringify(input) }),
-	updateGlivelaEndpointName: (id: string, input: { regionCode: string; name: string }) => request<GlivelaEndpoint>(`/api/v1/meridian/endpoints/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }),
 	adoptApplication: (id: string, backupsConfirmed: boolean) => request<{ taskId: string }>(`/api/v1/applications/${encodeURIComponent(id)}/adopt`, { method: "POST", body: JSON.stringify({ backupsConfirmed }) }),
-	recoverGlivelaEndpoint: (id: string) => request<{ queued: boolean }>(`/api/v1/meridian/endpoints/${encodeURIComponent(id)}/recover`, { method: "POST", body: JSON.stringify({ confirmCenterAuthority: true, executionStopped: true }) }),
-  registerGlivelaNativeEntry: (input: {applicationId: string; name: string; regionCode: string}) => request<{endpointId: string; state: string}>("/api/v1/meridian/native-entries", {method: "POST", body: JSON.stringify(input)}),
-	activateGlivelaPilot: (id: string, evidence: Record<string, unknown>) => request<{ state: string }>(`/api/v1/meridian/endpoints/${encodeURIComponent(id)}/glivela-pilot`, { method: "POST", body: JSON.stringify(evidence) }),
-	glivelaSourceRecovery: (id: string) => request<GlivelaSourceRecovery>(`/api/v1/meridian/endpoints/${encodeURIComponent(id)}/source-recovery`),
-	recoverGlivelaSource: (id: string, evidence: GlivelaSourceRecovery) => request<{ queued: boolean }>(`/api/v1/meridian/endpoints/${encodeURIComponent(id)}/source-recovery`, { method: "POST", body: JSON.stringify({ previousFingerprint: evidence.previousFingerprint, currentFingerprint: evidence.currentFingerprint, endpointRevision: evidence.endpointRevision, confirmReplacement: true, executionStopped: true }) }),
-	createGlivelaAccount: (input: GlivelaAccountInput) => request<GlivelaAccountCreated>("/api/v1/meridian/accounts", { method: "POST", body: JSON.stringify(input) }),
-	updateGlivelaAccount: (id: string, input: Required<GlivelaAccountInput>) => request<GlivelaAccount>(`/api/v1/meridian/accounts/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }),
-	createGlivelaRoute: (input: { accountId: string; endpointId: string; egressNodeId: string; ipv4EgressNodeId?: string; hideNative: boolean }) => request<GlivelaRouteGrant>("/api/v1/meridian/routes", { method: "POST", body: JSON.stringify(input) }),
-	revokeGlivelaRoute: (id: string) => request<{ accepted: boolean }>(`/api/v1/meridian/routes/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" }),
 	revealApplicationCredentials: (applicationId: string, currentPassword: string) => request<ApplicationCredentials>(`/api/v1/applications/${encodeURIComponent(applicationId)}/credentials/reveal`, { method: "POST", body: JSON.stringify({ currentPassword }) }),
 	rotateApplicationCredentials: (applicationId: string, target: "management" | "client", currentPassword: string, operationKey: string) => request<ApplicationCredentialRotation>(`/api/v1/applications/${encodeURIComponent(applicationId)}/credentials/rotate`, { method: "POST", headers: { "Idempotency-Key": operationKey }, body: JSON.stringify({ target, currentPassword, confirm: true }) }),
 	applicationCredentialRotation: (applicationId: string, rotationId: string, signal?: AbortSignal) => request<ApplicationCredentialRotation>(`/api/v1/applications/${encodeURIComponent(applicationId)}/credentials/rotations/${encodeURIComponent(rotationId)}`, { signal }),

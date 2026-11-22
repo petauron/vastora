@@ -41,29 +41,18 @@ func TestHostUpdateRetainsCandidateAfterActivationCanMigrateSchema(t *testing.T)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// Reconstruct the schema-15 fixture by removing the tables and indexes
-	// introduced by schemas 16 through 25. Starting the candidate runs the Agent migration,
-	// rather than only rewriting the user_version number.
-	const sourceSchema = 15
-	if agent.CurrentSchemaVersion() != 25 {
-		t.Fatal("update this fixture to preserve the complete historical schema-15 shape")
+	// Reconstruct the Vastora v0.1.0 baseline (schema 25) fixture so starting the
+	// candidate promotes the Agent schema baseline to 26 while retaining the
+	// pre-migration recovery point at schema 25.
+	const sourceSchema = 25
+	if agent.MinSupportedSchemaVersion() != sourceSchema || agent.CurrentSchemaVersion() != 26 {
+		t.Fatal("update this fixture to match the supported Agent schema baseline")
 	}
 	database, err := sql.Open("sqlite", filepath.Join(dataDir, "agent.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`DROP INDEX task_receipts_pending_completion;
-		DROP INDEX task_receipts_unresolved_application;
-		DROP INDEX task_receipts_expiry;
-		DROP TABLE shared_caddy_sites;
-		DROP TABLE node_site_journal;
-		DROP TABLE glivela_runtime_state;
-		DROP TABLE xray_worker_state;
-		DROP TABLE landing_controller_state;
-		DROP TABLE landing_runtime_state;
-		DROP TABLE node_listener_applied_state;
-		ALTER TABLE control_plane_connection DROP COLUMN landing_only;
-		PRAGMA user_version = 15;`); err != nil {
+	if _, err := database.Exec(`PRAGMA user_version = 25;`); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.Close(); err != nil {
@@ -71,7 +60,7 @@ func TestHostUpdateRetainsCandidateAfterActivationCanMigrateSchema(t *testing.T)
 	}
 	operation := hostUpdateOperation{
 		Version: 1, TaskID: "agent-update-schema", Attempt: 1,
-		SourceVersion: "0.1.0-alpha.1", TargetVersion: "0.1.0-alpha.2",
+		SourceVersion: "0.1.0", TargetVersion: "0.2.0",
 		DataDir: dataDir, Executable: executable,
 		AgentID: "node", CenterURL: "https://center.example.test", Credential: "synthetic-credential",
 	}

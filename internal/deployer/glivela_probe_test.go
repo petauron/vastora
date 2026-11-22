@@ -14,9 +14,14 @@ import (
 func TestGlivelaVerifierUnavailableFailsClosed(t *testing.T) {
 	server := NewServer(nil)
 	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/meridian/verify", strings.NewReader(`{}`)))
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/glivela/verify", strings.NewReader(`{}`)))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unavailable verifier status=%d", response.Code)
+	}
+	retired := httptest.NewRecorder()
+	server.Handler().ServeHTTP(retired, httptest.NewRequest(http.MethodPost, "/v1/meridian/verify", strings.NewReader(`{}`)))
+	if retired.Code != http.StatusNotFound {
+		t.Fatalf("retired meridian verify route status=%d", retired.Code)
 	}
 }
 

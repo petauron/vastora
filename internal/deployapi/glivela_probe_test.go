@@ -22,7 +22,7 @@ func TestGlivelaProbeRequiresExplicitHelperAcknowledgement(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.Path != "/v1/meridian/verify" || r.Header.Get("Content-Type") != "application/json" {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1/glivela/verify" || r.Header.Get("Content-Type") != "application/json" {
 					t.Error("unexpected proxy verification transport")
 				}
 				w.WriteHeader(test.code)

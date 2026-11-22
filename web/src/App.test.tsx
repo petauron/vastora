@@ -5,7 +5,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { APIError, api } from "./api";
-import { emptyAppData } from "./app-data";
 import { ThemeProvider } from "./components/theme";
 import type { CenterUpdateStatus, Site } from "./types";
 
@@ -56,7 +55,6 @@ function mockReadyCenter() {
   vi.spyOn(api, "publications").mockResolvedValue({ publications: [] });
   vi.spyOn(api, "actions").mockResolvedValue({ actions: [] });
   vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
-  vi.spyOn(api, "glivela").mockResolvedValue(emptyAppData(centerStatus).glivela);
   return status;
 }
 

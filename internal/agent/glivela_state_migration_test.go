@@ -7,12 +7,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/petauron/vastora/internal/secret"
 )
 
-func TestGlivelaRuntimeJournalMigration(t *testing.T) {
+func TestGlivelaBaselineUpgradeBackupRestoreAndLegacyRejection(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	store, err := Open(dir)
@@ -22,6 +23,10 @@ func TestGlivelaRuntimeJournalMigration(t *testing.T) {
 	if store.glivelaConfigDir != filepath.Join(dir, "glivela") {
 		t.Fatal("fresh installation must use the Glivela configuration directory")
 	}
+	var version int
+	if err := store.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != agentSchemaVersion {
+		t.Fatalf("fresh schema version = %d, err=%v", version, err)
+	}
 	state := glivelaLandingFixture()
 	if err := store.saveGlivelaRuntimeState(ctx, state); err != nil {
 		t.Fatal(err)
@@ -30,21 +35,14 @@ func TestGlivelaRuntimeJournalMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := secret.Seal(store.key, raw, []byte(legacyRuntimeStateAAD))
+	retiredLegacyCiphertext, err := secret.Seal(store.key, raw, []byte("agent-meridian-runtime"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`UPDATE glivela_runtime_state SET sealed_state=? WHERE id=1`, legacy); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.db.Exec(`ALTER TABLE glivela_runtime_state RENAME TO meridian_runtime_state; PRAGMA user_version=24`); err != nil {
+	if _, err := store.db.Exec(`PRAGMA user_version = 25`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	legacyDir := filepath.Join(dir, "meridian")
-	if err := os.Mkdir(legacyDir, 0700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -54,8 +52,11 @@ func TestGlivelaRuntimeJournalMigration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if store.glivelaConfigDir != legacyDir {
-			t.Fatal("upgrade changed the existing Docker bind path")
+		if store.glivelaConfigDir != filepath.Join(dir, "glivela") {
+			t.Fatal("upgraded installation must use the canonical Glivela configuration directory")
+		}
+		if err := store.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != agentSchemaVersion {
+			t.Fatalf("promoted schema version = %d, err=%v", version, err)
 		}
 		var sealed []byte
 		if err := store.db.QueryRow(`SELECT sealed_state FROM glivela_runtime_state WHERE id=1`).Scan(&sealed); err != nil {
@@ -63,10 +64,10 @@ func TestGlivelaRuntimeJournalMigration(t *testing.T) {
 		}
 		reopened, err := secret.Open(store.key, sealed, []byte(glivelaRuntimeStateAAD))
 		if err != nil || !bytes.Equal(reopened, raw) {
-			t.Fatal("migration changed the runtime journal")
+			t.Fatal("baseline promotion altered the runtime journal")
 		}
 		if migrated != nil && !bytes.Equal(migrated, sealed) {
-			t.Fatal("restart rewrote the migrated journal")
+			t.Fatal("restart rewrote the runtime journal")
 		}
 		migrated = sealed
 		if err := VerifyRecoveryDatabaseKey(ctx, store.db, store.key); err != nil {
@@ -82,12 +83,15 @@ func TestGlivelaRuntimeJournalMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	backupPath := filepath.Join(dir, "schema-24-backup-glivela", "agent.db")
+	backupPath := filepath.Join(dir, "schema-25-backup-baseline", "agent.db")
 	backup, err := sql.Open("sqlite", "file:"+backupPath+"?mode=ro")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer backup.Close()
+	if err := backup.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != minSupportedAgentSchemaVersion {
+		t.Fatalf("backup schema version = %d, err=%v", version, err)
+	}
 	if err := VerifyRecoveryDatabaseKey(ctx, backup, store.key); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +105,7 @@ func TestGlivelaRuntimeJournalMigration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(restoredDir, name), content, 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(restoredDir, name), content, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -116,7 +120,7 @@ func TestGlivelaRuntimeJournalMigration(t *testing.T) {
 	}
 	restoredRaw, err := json.Marshal(restoredState)
 	if err != nil || !bytes.Equal(restoredRaw, raw) {
-		t.Fatal("restored backup changed the Glivela runtime journal")
+		t.Fatal("restored baseline backup changed the Glivela runtime journal")
 	}
 
 	damaged := bytes.Clone(migrated)
@@ -125,7 +129,7 @@ func TestGlivelaRuntimeJournalMigration(t *testing.T) {
 		name       string
 		ciphertext []byte
 	}{
-		{name: "old context", ciphertext: legacy},
+		{name: "retired meridian context", ciphertext: retiredLegacyCiphertext},
 		{name: "damaged current ciphertext", ciphertext: damaged},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -133,11 +137,21 @@ func TestGlivelaRuntimeJournalMigration(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := store.loadGlivelaRuntimeState(ctx); err == nil {
-				t.Fatal("upgraded Agent accepted invalid runtime state")
+				t.Fatal("Agent accepted invalid runtime state")
 			}
 			if err := VerifyRecoveryDatabaseKey(ctx, store.db, store.key); err == nil {
 				t.Fatal("backup validation accepted invalid runtime state")
 			}
 		})
 	}
+
+	t.Run("obsolete meridian directory rejected", func(t *testing.T) {
+		legacyMountDir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(legacyMountDir, "meridian"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Open(legacyMountDir); err == nil || !strings.Contains(err.Error(), "obsolete meridian configuration directory") {
+			t.Fatalf("Open accepted obsolete meridian directory: %v", err)
+		}
+	})
 }

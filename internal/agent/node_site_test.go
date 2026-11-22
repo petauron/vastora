@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"database/sql"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -222,50 +221,6 @@ func TestNodeSiteDeliveredPairRejectsWrongIdentity(t *testing.T) {
 	defer s.Close()
 	if _, err = s.nodeSiteHost(context.Background(), task); err == nil {
 		t.Fatal("uninstalled application accepted")
-	}
-}
-
-func TestNodeSiteAgentMigrationPreservesExistingState(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyBefore, err := os.ReadFile(filepath.Join(dir, "agent.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.db.Exec(`DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; ALTER TABLE glivela_runtime_state RENAME TO meridian_runtime_state; PRAGMA user_version=22;`); err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-	s, err = Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != agentSchemaVersion {
-		t.Fatal("migration version", version, err)
-	}
-	keyAfter, _ := os.ReadFile(filepath.Join(dir, "agent.key"))
-	if !bytes.Equal(keyBefore, keyAfter) {
-		t.Fatal("migration changed Agent encryption key")
-	}
-	backups, _ := filepath.Glob(filepath.Join(dir, "schema-22-backup-*", "agent.db"))
-	if len(backups) != 1 {
-		t.Fatalf("expected one consistent recovery point, got %d", len(backups))
-	}
-	b, err := sql.Open("sqlite", backups[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close()
-	if err = b.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 22 {
-		t.Fatal("backup is not pre-migration", err)
-	}
-	if err = VerifyRecoveryDatabaseKey(context.Background(), b, keyBefore); err != nil {
-		t.Fatal("backup key binding", err)
 	}
 }
 

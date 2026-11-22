@@ -109,30 +109,3 @@ func TestLandingRuntimePersistsEncryptedAndRejectsRevisionRewrite(t *testing.T) 
 		t.Fatal("accepted a corrupted checkpoint")
 	}
 }
-
-func TestAgentSchemaV16AddsLandingStateForward(t *testing.T) {
-	directory := t.TempDir()
-	store, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dropTaskReceiptIndexesForFixture(t, store.db)
-	if _, err := store.db.Exec(`ALTER TABLE control_plane_connection DROP COLUMN landing_only; DROP TABLE glivela_runtime_state; DROP TABLE landing_controller_state; DROP TABLE landing_runtime_state; DROP TABLE shared_caddy_sites; DROP TABLE node_site_journal; PRAGMA user_version = 16`); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	store, err = Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	var version, rows int
-	if err := store.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != agentSchemaVersion {
-		t.Fatal("landing forward migration did not advance schema")
-	}
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM landing_runtime_state`).Scan(&rows); err != nil || rows != 0 {
-		t.Fatal("migration fabricated an applied landing configuration")
-	}
-}

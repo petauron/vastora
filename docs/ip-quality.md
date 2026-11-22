@@ -58,7 +58,7 @@ normal Activity workflow. Nothing automatically retries or starts a check.
 
 ## Glivela exit suitability v5
 
-`meridian-v5` is a product selection policy, **not** an industry standard,
+`glivela-v5` (and `glivela-ipv6-v2` for IPv6) is a product selection policy, **not** an industry standard,
 fraud probability, or network-performance measurement. NodeQuality/IPQuality
 supply evidence, not this formula. The score is 1–100, higher is better.
 

@@ -31,7 +31,7 @@ const glivelaIperfDeadlineScript = `timeout -s KILL 235 /bin/sh -c "$1" glivela-
 const glivelaIperfServerScript = `set -eu
 umask 077
 printf '%s' "$GLIVELA_IPERF_KEY" >/tmp/key.pem
-printf 'meridian,%s\n' "$GLIVELA_IPERF_HASH" >/tmp/users.csv
+printf 'glivela,%s\n' "$GLIVELA_IPERF_HASH" >/tmp/users.csv
 unset GLIVELA_IPERF_KEY GLIVELA_IPERF_HASH
 for run in 1 2; do
   timeout -s KILL 115 iperf3 -s -1 --idle-timeout 105 --server-max-duration 12 --rsa-private-key-path /tmp/key.pem --authorized-users-path /tmp/users.csv -4 -B "$1" -p "$2" >/dev/null
@@ -45,7 +45,7 @@ for direction in upload download; do
   attempt=0
   while :; do
     if [ "$direction" = download ]; then reverse=-R; else reverse=; fi
-    if iperf3 -c "$1" -p "$2" -4 -B "$3" --connect-timeout 3000 --username meridian --rsa-public-key-path /tmp/key.pem -J -i 0 -t 10 $reverse >/tmp/sample.json 2>/tmp/sample.err; then break; fi
+    if iperf3 -c "$1" -p "$2" -4 -B "$3" --connect-timeout 3000 --username glivela --rsa-public-key-path /tmp/key.pem -J -i 0 -t 10 $reverse >/tmp/sample.json 2>/tmp/sample.err; then break; fi
     if ! grep -qi 'unable to connect to server' /tmp/sample.err /tmp/sample.json; then exit 1; fi
     attempt=$((attempt + 1))
     if [ "$attempt" -ge 60 ]; then exit 1; fi

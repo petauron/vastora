@@ -37,7 +37,7 @@ func (e ApplicationExecutor) VerifyGlivelaClientInContainer(ctx context.Context,
 func glivelaContainerProbeOptions(name, clientID, image, expectedExit string) client.ContainerCreateOptions {
 	pids := int64(32)
 	return client.ContainerCreateOptions{Name: name,
-		Config:     &container.Config{Image: image, User: "65532:65532", Cmd: []string{"deployer", "meridian-entry-probe", "--expected-exit", expectedExit}, Labels: map[string]string{acceptanceOwnerLabel: name}},
+		Config:     &container.Config{Image: image, User: "65532:65532", Cmd: []string{"deployer", "glivela-entry-probe", "--expected-exit", expectedExit}, Labels: map[string]string{acceptanceOwnerLabel: name}},
 		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode("container:" + clientID), ReadonlyRootfs: true, Tmpfs: map[string]string{"/var/lib/vastora": "rw,noexec,nosuid,size=1m"}, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"}, LogConfig: container.LogConfig{Type: "none"}, Resources: container.Resources{Memory: 128 << 20, MemorySwap: 128 << 20, NanoCPUs: 1000000000, PidsLimit: &pids}},
 	}
 }

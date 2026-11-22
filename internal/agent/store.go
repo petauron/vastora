@@ -114,7 +114,16 @@ type Connection struct {
 	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = glivelaRuntimeSchemaVersion
+const (
+	minSupportedAgentSchemaVersion = 25
+	agentSchemaVersion             = 26
+)
+
+// MinSupportedSchemaVersion is the oldest released Agent database schema
+// (Vastora v0.1.0) that this executable can upgrade or validate for recovery.
+func MinSupportedSchemaVersion() int {
+	return minSupportedAgentSchemaVersion
+}
 
 // CurrentSchemaVersion is the highest Agent database schema this executable
 // can open. The persistent host updater records it before a candidate can

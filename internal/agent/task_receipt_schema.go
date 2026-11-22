@@ -1,14 +1,7 @@
 package agent
 
-import (
-	"database/sql"
-	"fmt"
-	"os"
-	"path/filepath"
-)
-
-// Released schema 19 migration. The outbox implementation has been removed;
-// these historical indexes remain part of the forward-only upgrade sequence.
+// Partial indexes covering pending completions, unresolved application work,
+// and acknowledged/update receipt cleanup in the baseline Agent schema.
 const taskReceiptIndexesSQL = `
 	CREATE INDEX task_receipts_pending_completion ON task_receipts(updated_at, task_id)
 		WHERE state IN ('completed', 'reconciliation_required');
@@ -17,24 +10,3 @@ const taskReceiptIndexesSQL = `
 	CREATE INDEX task_receipts_expiry ON task_receipts(updated_at, task_id)
 		WHERE state = 'acknowledged' OR (task_kind = 'agent.update' AND state = 'processing');
 `
-
-func migrateTaskReceiptIndexesV19(db *sql.DB, dataDir string) error {
-	// Snapshot committed WAL data before changing the schema. This is a one-off
-	// upgrade cost, not periodic receipt maintenance. Keep the backup on failure.
-	backupDir, err := os.MkdirTemp(dataDir, "schema-18-backup-")
-	if err != nil {
-		return fmt.Errorf("create backup directory: %w", err)
-	}
-	if _, err := db.Exec(`VACUUM INTO ?`, filepath.Join(backupDir, "agent.db")); err != nil {
-		return fmt.Errorf("back up database: %w", err)
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(taskReceiptIndexesSQL + `PRAGMA user_version = 19;`); err != nil {
-		return err
-	}
-	return tx.Commit()
-}

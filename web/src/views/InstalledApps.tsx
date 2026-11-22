@@ -3,7 +3,6 @@ import type { AppWorkspaceProps } from "@/app-workspaces/types";
 import { DefaultInstalledAppWorkspace } from "./DefaultInstalledAppWorkspace";
 import { SenlunWorkspace } from "./SenlunWorkspace";
 import { IPQualityProvider } from "./IPQuality";
-import { LandingProvider } from "./LandingControls";
 import { threeXUIAppKey } from "./installed-apps-model";
 
 export function InstalledApps(props: Omit<AppWorkspaceProps, "showSite">) {
@@ -12,5 +11,5 @@ export function InstalledApps(props: Omit<AppWorkspaceProps, "showSite">) {
   const legacy = group.appKey === threeXUIAppKey;
   if (group.appKey === "vastora-official/meridian") return <OfficialAppWorkspaceHost {...props} showSite={showSite} />;
   if (group.appKey === "vastora-official/senlun") return <SenlunWorkspace {...props} showSite={showSite} />;
-  return <IPQualityProvider enabled={legacy} agents={props.data.agents}><LandingProvider enabled={legacy} agents={props.data.agents}><DefaultInstalledAppWorkspace {...props} showSite={showSite} /></LandingProvider></IPQualityProvider>;
+  return <IPQualityProvider enabled={legacy} agents={props.data.agents}><DefaultInstalledAppWorkspace {...props} showSite={showSite} /></IPQualityProvider>;
 }

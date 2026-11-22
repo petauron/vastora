@@ -35,7 +35,7 @@ type NodeCapabilities struct {
 	RuntimeCapabilities  []string                    `json:"runtimeCapabilities,omitempty"`
 	NativeEgress         bool                        `json:"nativeEgress"`
 	SenulunRestore       bool                        `json:"pulseRestore"`
-	GlivelaAcceptance    bool                        `json:"meridianAcceptance"`
+	GlivelaAcceptance    bool                        `json:"glivelaAcceptance"`
 	SenulunReporting     bool                        `json:"pulseReporting"`
 	SenulunRotation      bool                        `json:"pulseRotation"`
 	SenulunInspection    bool                        `json:"pulseInspection"`
@@ -44,8 +44,8 @@ type NodeCapabilities struct {
 	ReturnRoute          bool                        `json:"returnRoute"`
 	BandwidthDiagnostics bool                        `json:"bandwidthDiagnostics"`
 	LandingEgressIP      bool                        `json:"landingEgressIP"`
-	GlivelaLinkBandwidth bool                        `json:"meridianLinkBandwidth"`
-	GlivelaLinkRevision  int                         `json:"meridianLinkRevision"`
+	GlivelaLinkBandwidth bool                        `json:"glivelaLinkBandwidth"`
+	GlivelaLinkRevision  int                         `json:"glivelaLinkRevision"`
 	HostProfile          bool                        `json:"hostProfile"`
 	OSReinstallPreflight bool                        `json:"osReinstallPreflight"`
 	OSReinstall          bool                        `json:"osReinstall"`

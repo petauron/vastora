@@ -9,7 +9,6 @@ import (
 
 	"github.com/petauron/vastora/internal/agentpb"
 	"github.com/petauron/vastora/internal/controlplane"
-	"github.com/petauron/vastora/internal/glivelaruntime"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/tailscalehost"
@@ -30,7 +29,6 @@ type grpcHeartbeat struct {
 	PublicEgress                 *networking.PublicEgress           `json:"publicEgress"`
 	ApplicationEndpoints         []ApplicationEndpointObservation   `json:"applicationEndpoints"`
 	ApplicationEndpointsObserved bool                               `json:"applicationEndpointsObserved"`
-	GlivelaRuntime               *glivelaruntime.Result             `json:"meridianRuntime"`
 	GatewayHealthy               bool                               `json:"gatewayHealthy"`
 	RuntimeRecovery              string                             `json:"runtimeRecovery"`
 	RuntimeRecoveryApplications  []controlplane.RecoveryApplication `json:"runtimeRecoveryApplications"`
@@ -67,7 +65,7 @@ func (s *agentGRPCService) Heartbeat(ctx context.Context, input *agentpb.AgentDo
 		PrivateNetworkPeer: value.PrivateNetworkPeer, LandingEgressAddresses: value.LandingEgressAddresses, LandingClientRuntime: value.LandingClientRuntime,
 		LandingHealth: value.LandingHealth, PublicKey: value.PublicKey, Version: value.Version, AppliedInstallations: value.AppliedInstallations,
 		Roles: value.Roles, Capabilities: value.Capabilities, NetworkCandidates: value.NetworkCandidates, PublicEgress: value.PublicEgress,
-		ApplicationEndpoints: value.ApplicationEndpoints, ApplicationEndpointsObserved: value.ApplicationEndpointsObserved, GlivelaRuntime: value.GlivelaRuntime,
+		ApplicationEndpoints: value.ApplicationEndpoints, ApplicationEndpointsObserved: value.ApplicationEndpointsObserved,
 		GatewayHealthy: value.GatewayHealthy, RuntimeRecovery: value.RuntimeRecovery, RuntimeRecoveryApplications: value.RuntimeRecoveryApplications,
 		GatewayRevision: value.GatewayRevision, GatewayConfigHash: value.GatewayConfigHash, NodeListenerHealthy: value.NodeListenerHealthy,
 		NodeListenerRevision: value.NodeListenerRevision, NodeListenerConfigHash: value.NodeListenerConfigHash,

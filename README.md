@@ -131,13 +131,15 @@ in-place update in Settings. The first release with this capability may still
 be installed by running the same command again; later updates preserve the
 configuration and use the built-in updater.
 
-Center uses schema **123** as the compact alpha baseline. New installations
-create the current schema directly. A completed schema-122 database is backed
-up, checked, and converted in place by replacing only its migration journal;
-business tables and encrypted values are not copied or rewritten. Historical
-migrations 4–122 are no longer shipped. See [database baseline conversion](docs/database-baseline.md)
-for older databases and recovery. Later changes remain forward-only; integrity
-and foreign-key failures prevent startup.
+Center uses schema **123** as its compact baseline, and Agent uses schema **26**
+with **`Vastora v0.1.0` (schema 25)** as the oldest supported Agent upgrade and
+backup-restore baseline. New installations create the current schemas directly.
+Pre-baseline migrations (`4–122` on Center, `1–24` on Agent), legacy
+`meridian_runtime_state` readers, and `<dataDir>/meridian` mount fallbacks are
+no longer shipped. See [database baseline conversion](docs/database-baseline.md)
+and [Center API v1](docs/api.md) for the `v0.1.0 → v0.2.0` transition and
+recovery rules. Later changes remain forward-only; integrity and foreign-key
+failures prevent startup.
 
 ## Security model
 

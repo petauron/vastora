@@ -25,7 +25,7 @@ func (client *Client) VerifyGlivelaEntry(ctx context.Context, input GlivelaProbe
 	if err != nil {
 		return errors.New("center: encode proxy verification request")
 	}
-	body, err := client.request(ctx, http.MethodPost, "/v1/meridian/verify", payload)
+	body, err := client.request(ctx, http.MethodPost, "/v1/glivela/verify", payload)
 	if err != nil {
 		return err
 	}

@@ -15,27 +15,30 @@ const agentDatabaseKeyBindingComponent = "agent"
 // VerifyRecoveryDatabaseKey proves that a recovery database can be decrypted
 // with its companion key, without initializing or migrating the database.
 func VerifyRecoveryDatabaseKey(ctx context.Context, db *sql.DB, key []byte) error {
-	if _, err := inspectAgentDatabaseKeyBinding(ctx, db, key); err != nil {
+	if err := inspectAgentDatabaseKeyBinding(ctx, db, key); err != nil {
 		return err
 	}
 	return verifyAgentEncryptedState(ctx, db, key)
 }
 
-func inspectAgentDatabaseKeyBinding(ctx context.Context, db *sql.DB, key []byte) (bool, error) {
+func inspectAgentDatabaseKeyBinding(ctx context.Context, db *sql.DB, key []byte) error {
 	exists, err := agentTableHasColumns(ctx, db, "storage_key_binding", "id", "sealed")
-	if err != nil || !exists {
-		return false, err
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("agent: database key binding is missing")
 	}
 	var sealed []byte
 	if err := db.QueryRowContext(ctx, `SELECT sealed FROM storage_key_binding WHERE id = 1`).Scan(&sealed); errors.Is(err, sql.ErrNoRows) {
-		return false, errors.New("agent: database key binding is missing")
+		return errors.New("agent: database key binding is missing")
 	} else if err != nil {
-		return false, fmt.Errorf("agent: read database key binding: %w", err)
+		return fmt.Errorf("agent: read database key binding: %w", err)
 	}
 	if err := secret.VerifyDatabaseKeyBinding(key, sealed, agentDatabaseKeyBindingComponent); err != nil {
-		return false, fmt.Errorf("agent: verify database key binding: %w", err)
+		return fmt.Errorf("agent: verify database key binding: %w", err)
 	}
-	return true, nil
+	return nil
 }
 
 func (s *Store) initializeDatabaseKeyBinding(ctx context.Context) error {
@@ -46,82 +49,69 @@ func (s *Store) initializeDatabaseKeyBinding(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO storage_key_binding(id, sealed) VALUES(1, ?) ON CONFLICT(id) DO NOTHING`, sealed); err != nil {
 		return fmt.Errorf("agent: save database key binding: %w", err)
 	}
-	bound, err := inspectAgentDatabaseKeyBinding(ctx, s.db, s.key)
-	if err != nil {
-		return err
-	}
-	if !bound {
-		return errors.New("agent: database key binding was not initialized")
-	}
-	return nil
+	return inspectAgentDatabaseKeyBinding(ctx, s.db, s.key)
 }
 
 func verifyAgentEncryptedState(ctx context.Context, db *sql.DB, key []byte) error {
-	if exists, err := agentTableHasColumns(ctx, db, "shared_caddy_sites", "application_id", "sealed_state"); err != nil {
-		return err
-	} else if exists {
-		if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT application_id,sealed_state FROM shared_caddy_sites`, func(id string) []byte { return []byte("shared-caddy-site:" + id) }, "shared website"); err != nil {
-			return err
-		}
-	}
-	if exists, err := agentTableHasColumns(ctx, db, "node_site_journal", "application_id", "sealed_state"); err != nil {
-		return err
-	} else if exists {
-		if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT application_id,sealed_state FROM node_site_journal`, func(id string) []byte { return []byte("node-site-journal:" + id) }, "node site journal"); err != nil {
-			return err
-		}
-	}
-
 	var version int
 	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	runtimeTable, glivelaAAD := "glivela_runtime_state", glivelaRuntimeStateAAD
-	if version < glivelaRuntimeSchemaVersion {
-		runtimeTable, glivelaAAD = "meridian_runtime_state", legacyRuntimeStateAAD
+	if version < minSupportedAgentSchemaVersion || version > agentSchemaVersion {
+		return fmt.Errorf("agent: database schema version %d is outside supported baseline %d..%d", version, minSupportedAgentSchemaVersion, agentSchemaVersion)
 	}
-	for _, journal := range []struct{ table, aad string }{{"landing_runtime_state", "agent-landing-runtime"}, {"landing_controller_state", "agent-landing-controller"}, {runtimeTable, glivelaAAD}, {"xray_worker_state", "agent-xray-worker"}} {
+	if exists, err := agentTableHasColumns(ctx, db, "shared_caddy_sites", "application_id", "sealed_state"); err != nil {
+		return err
+	} else if !exists {
+		return errors.New("agent: shared website journal does not match the database schema")
+	} else if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT application_id,sealed_state FROM shared_caddy_sites`, func(id string) []byte { return []byte("shared-caddy-site:" + id) }, "shared website"); err != nil {
+		return err
+	}
+	if exists, err := agentTableHasColumns(ctx, db, "node_site_journal", "application_id", "sealed_state"); err != nil {
+		return err
+	} else if !exists {
+		return errors.New("agent: node site journal does not match the database schema")
+	} else if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT application_id,sealed_state FROM node_site_journal`, func(id string) []byte { return []byte("node-site-journal:" + id) }, "node site journal"); err != nil {
+		return err
+	}
+	for _, journal := range []struct{ table, aad string }{
+		{"landing_runtime_state", "agent-landing-runtime"},
+		{"landing_controller_state", "agent-landing-controller"},
+		{"glivela_runtime_state", glivelaRuntimeStateAAD},
+		{"xray_worker_state", "agent-xray-worker"},
+	} {
 		if exists, err := agentTableHasColumns(ctx, db, journal.table, "id", "sealed_state"); err != nil {
 			return err
 		} else if !exists {
-			if journal.table == runtimeTable && version >= 21 {
-				return errors.New("agent: runtime journal does not match the database schema")
-			}
+			return errors.New("agent: runtime journal does not match the database schema")
 		} else if err := verifyAgentCiphertextRows(ctx, db, key, "SELECT CAST(id AS TEXT), sealed_state FROM "+journal.table, func(string) []byte { return []byte(journal.aad) }, "landing journal"); err != nil {
 			return err
 		}
 	}
 	if exists, err := agentTableHasColumns(ctx, db, "applied_installations", "instance_id", "sealed_state"); err != nil {
 		return err
-	} else if exists {
-		if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT instance_id, sealed_state FROM applied_installations`, func(id string) []byte { return applicationStateContext(id) }, "applied application"); err != nil {
-			return err
-		}
-	} else if exists, err := agentTableHasColumns(ctx, db, "applied_installations", "instance_id", "sealed_secrets"); err != nil {
+	} else if !exists {
+		return errors.New("agent: applied installations table does not match the database schema")
+	} else if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT instance_id, sealed_state FROM applied_installations`, func(id string) []byte { return applicationStateContext(id) }, "applied application"); err != nil {
 		return err
-	} else if exists {
-		if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT instance_id, sealed_secrets FROM applied_installations`, func(id string) []byte { return []byte("agent-instance:" + id) }, "legacy applied application"); err != nil {
-			return err
-		}
 	}
-
-	if exists, err := agentTableHasColumns(ctx, db, "control_plane_connection", "agent_id", "sealed_credential"); err != nil {
+	if exists, err := agentTableHasColumns(ctx, db, "control_plane_connection", "agent_id", "sealed_credential", "sealed_private_key"); err != nil {
 		return err
-	} else if exists {
+	} else if !exists {
+		return errors.New("agent: control-plane connection table does not match the database schema")
+	} else {
 		if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT agent_id, sealed_credential FROM control_plane_connection`, func(id string) []byte { return []byte("agent-control-plane:" + id) }, "control-plane credential"); err != nil {
 			return err
 		}
-	}
-	if exists, err := agentTableHasColumns(ctx, db, "control_plane_connection", "agent_id", "sealed_private_key"); err != nil {
-		return err
-	} else if exists {
 		if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT agent_id, sealed_private_key FROM control_plane_connection WHERE length(sealed_private_key) > 0`, func(id string) []byte { return []byte("agent-control-plane-key:" + id) }, "control-plane private key"); err != nil {
 			return err
 		}
 	}
 	if exists, err := agentTableHasColumns(ctx, db, "agent_install_operations", "operation_id", "sealed_token", "sealed_private_key"); err != nil {
 		return err
-	} else if exists {
+	} else if !exists {
+		return errors.New("agent: install operations table does not match the database schema")
+	} else {
 		if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT operation_id, sealed_token FROM agent_install_operations`, func(id string) []byte { return []byte("agent-install-token:" + id) }, "installation token"); err != nil {
 			return err
 		}
@@ -131,14 +121,16 @@ func verifyAgentEncryptedState(ctx context.Context, db *sql.DB, key []byte) erro
 	}
 	if exists, err := agentTableHasColumns(ctx, db, "task_receipts", "task_id", "sealed_completion"); err != nil {
 		return err
-	} else if exists {
-		if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT task_id, sealed_completion FROM task_receipts WHERE sealed_completion IS NOT NULL`, legacyTaskCompletionContext, "task completion"); err != nil {
-			return err
-		}
+	} else if !exists {
+		return errors.New("agent: task receipts table does not match the database schema")
+	} else if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT task_id, sealed_completion FROM task_receipts WHERE sealed_completion IS NOT NULL`, legacyTaskCompletionContext, "task completion"); err != nil {
+		return err
 	}
 	if exists, err := agentTableHasColumns(ctx, db, "gateway_applied_state", "sealed_certificates"); err != nil {
 		return err
-	} else if exists {
+	} else if !exists {
+		return errors.New("agent: gateway applied state table does not match the database schema")
+	} else {
 		var sealed []byte
 		err := db.QueryRowContext(ctx, `SELECT sealed_certificates FROM gateway_applied_state WHERE id = 1`).Scan(&sealed)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {

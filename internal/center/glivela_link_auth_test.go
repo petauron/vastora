@@ -29,7 +29,7 @@ func TestGlivelaLinkAuthIsSeparateEncryptedAndTaskBound(t *testing.T) {
 	if err != nil || !pub.(*rsa.PublicKey).Equal(&private.PublicKey) {
 		t.Fatal("invalid iperf RSA pair")
 	}
-	hash := sha256.Sum256([]byte("{meridian}" + client.Password))
+	hash := sha256.Sum256([]byte("{glivela}" + client.Password))
 	if server.PasswordHash != hex.EncodeToString(hash[:]) || server.Password != "" || client.PasswordHash != "" {
 		t.Fatal("iperf credentials crossed roles")
 	}
@@ -69,7 +69,7 @@ func TestGlivelaLinkAuthUsesIndependent256BitProtocolTokens(t *testing.T) {
 			t.Fatal("independent probes reused a credential")
 		}
 		seen[client.Password] = true
-		hash := sha256.Sum256([]byte("{meridian}" + client.Password))
+		hash := sha256.Sum256([]byte("{glivela}" + client.Password))
 		if server.PasswordHash != hex.EncodeToString(hash[:]) || server.Password != "" || client.PasswordHash != "" {
 			t.Fatal("fixed-entropy credentials no longer match the iperf3 wire format")
 		}

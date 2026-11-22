@@ -25,7 +25,7 @@ func TestAgentReinstallAcceptanceRejectsUnreviewedExitAndStaleAuthority(t *testi
 		t.Fatal(err)
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err = s.db.Exec(`UPDATE agents SET capabilities_json='{"docker":true,"meridianAcceptance":true}',last_seen_at=? WHERE id=?`, now, verifier.ID); err != nil {
+	if _, err = s.db.Exec(`UPDATE agents SET capabilities_json='{"docker":true,"glivelaAcceptance":true}',last_seen_at=? WHERE id=?`, now, verifier.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.db.Exec(`UPDATE agents SET public_egress_address='1.1.1.1',public_egress_bind_address='1.1.1.1',public_egress_mode='direct',public_egress_observed_at=? WHERE id=?`, now, node.ID); err != nil {
@@ -76,7 +76,7 @@ func TestRetiredAgentReinstallAcceptanceCannotProjectOrReleaseRecovery(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`UPDATE agents SET capabilities_json='{"docker":true,"meridianAcceptance":true}',last_seen_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), verifier.ID); err != nil {
+	if _, err := s.db.Exec(`UPDATE agents SET capabilities_json='{"docker":true,"glivelaAcceptance":true}',last_seen_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), verifier.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RegisterExecutionSession(ctx, verifier.ID, verifier.Credential, "monitor-registration-evidence-session", controlplane.ExecutionProtocol); err != nil {

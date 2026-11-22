@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-const AssessmentVersion = "meridian-v5"
-const IPv6AssessmentVersion = "meridian-ipv6-v2"
+const AssessmentVersion = "glivela-v5"
+const IPv6AssessmentVersion = "glivela-ipv6-v2"
 const EvidenceMaxAge = 24 * time.Hour
 
 type Preferences struct {
