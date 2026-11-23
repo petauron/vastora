@@ -316,6 +316,7 @@ export type AgentView = {
   networkCandidates: NetworkCandidate[];
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;
+  networkRecoveryProfile?: NetworkProfile;
   gatewayHealthy: boolean;
   runtimeRecovery?: "pending" | "reconciliation" | "landing" | "application" | "gateway" | "listener";
   runtimeRecoveryApplications?: Array<{

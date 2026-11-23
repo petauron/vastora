@@ -86,6 +86,7 @@ type AgentView struct {
 	NetworkCandidates           []networking.Candidate             `json:"networkCandidates"`
 	PublicEgress                *networking.PublicEgress           `json:"publicEgress,omitempty"`
 	NetworkProfile              *networking.Profile                `json:"networkProfile,omitempty"`
+	NetworkRecoveryProfile      *networking.Profile                `json:"networkRecoveryProfile,omitempty"`
 	GatewayHealthy              bool                               `json:"gatewayHealthy"`
 	RuntimeRecovery             string                             `json:"runtimeRecovery,omitempty"`
 	RuntimeRecoveryApplications []controlplane.RecoveryApplication `json:"runtimeRecoveryApplications,omitempty"`
@@ -1409,8 +1410,25 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 			agents[index].NetworkProfile = &profile
 		}
 	}
+	if err := profileRows.Err(); err != nil {
+		profileRows.Close()
+		return nil, err
+	}
 	if err := profileRows.Close(); err != nil {
 		return nil, err
+	}
+	for index := range agents {
+		agent := &agents[index]
+		if agent.NetworkProfile != nil || !agent.Connected || agent.Reinstall != nil || agent.Removal != nil {
+			continue
+		}
+		profile, err := recoverableNetworkProfile(ctx, s.db, agent.ID)
+		if err != nil {
+			return nil, err
+		}
+		if profile != nil && profile.DirectPublic {
+			agent.NetworkRecoveryProfile = profile
+		}
 	}
 	return agents, nil
 }

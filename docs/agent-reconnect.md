@@ -133,3 +133,19 @@ The focused regressions cover a real Center enrollment/task/result/reconnect
 sequence, late execution calls, preserved uncertainty, transaction rollback and
 forward migration. They do not simulate a complete host reinstall or claim that
 private networking and proxy traffic have recovered.
+
+## Public address change on the same node
+
+Restore the node's operating-system network first so the existing Agent can
+report its current addresses. In **Nodes → Confirm network**, review the
+preserved private selections and explicitly enable the detected public
+mapping. This uses the original Agent and publication identities.
+
+If **Tasks and activity** shows an older gateway revision awaiting review,
+inspect the node and current revision. Once the previous execution has
+stopped and a newer revision is queued, **Abandon task** records the review
+and retains the old evidence. The Agent can then claim the replacement.
+
+For manual DNS, update the existing record to the confirmed public address.
+Follow the publication's verification status and test the real client path
+before considering the migration complete.

@@ -48,9 +48,9 @@ func publicationsAfterNetworkRecovery(ctx context.Context, tx *sql.Tx, now time.
 
 // Only a profile confirmed for this exact Agent identity is eligible for
 // automatic recovery. It remains absent from the active table while invalid.
-func recoverableNetworkProfile(ctx context.Context, tx *sql.Tx, agentID string) (*networking.Profile, error) {
+func recoverableNetworkProfile(ctx context.Context, queryer networkQueryer, agentID string) (*networking.Profile, error) {
 	var encoded []byte
-	err := tx.QueryRowContext(ctx, `SELECT r.profile_json FROM agent_network_profile_recovery r
+	err := queryer.QueryRowContext(ctx, `SELECT r.profile_json FROM agent_network_profile_recovery r
 		JOIN agents a ON a.id = r.agent_id AND a.x25519_public_key = r.public_key
 		WHERE r.agent_id = ? AND a.status = 'active'`, agentID).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {

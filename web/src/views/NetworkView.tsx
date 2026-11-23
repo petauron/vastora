@@ -153,6 +153,10 @@ function networkKindLabel(language: Language, kind: NetworkKind) {
 
 function suggestedProfile(agent: AgentView): NetworkProfile {
   if (agent.networkProfile) return agent.networkProfile;
+  if (agent.networkRecoveryProfile) {
+    const { serviceAddress, lanAddress, headscaleAddress, enabledKinds } = agent.networkRecoveryProfile;
+    return { serviceAddress, lanAddress, headscaleAddress, enabledKinds: enabledKinds.filter((kind) => kind !== "public"), directPublic: false };
+  }
   const lan = agent.networkCandidates.find((candidate) => candidate.kind === "lan")?.address ?? "";
   const headscale = agent.networkCandidates.find((candidate) => candidate.kind === "headscale")?.address ?? "";
   return { serviceAddress: headscale || lan || "127.0.0.1", lanAddress: lan, headscaleAddress: headscale, publicAddress: "", enabledKinds: [lan ? "lan" : null, headscale ? "headscale" : null].filter(Boolean) as NetworkKind[], directPublic: false };
@@ -195,7 +199,7 @@ function NetworkProfileSheet({ agent, language, onClose, onSave }: { agent: Agen
       <SheetContent className="sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>{copy(language, `确认 ${agent?.name ?? ""} 的网络`, `Confirm ${agent?.name ?? ""} network`)}</SheetTitle>
-          <SheetDescription>{agent?.networkProfile ? copy(language, "当前配置可以直接保存，也可以展开高级设置修改地址。", "Save the current setup or open advanced settings to change addresses.") : copy(language, "Agent 已自动发现地址，建议直接使用下面的安全配置。", "The Agent discovered its addresses. The setup below is the recommended safe choice.")}</SheetDescription>
+          <SheetDescription>{agent?.networkRecoveryProfile ? copy(language, "上次确认的公网配置已失效。请核对新公网地址并确认，原有私网选择已带入。", "The previous public mapping is no longer active. Review and confirm the new public address. Your private settings have been carried over.") : agent?.networkProfile ? copy(language, "当前配置可以直接保存，也可以展开高级设置修改地址。", "Save the current setup or open advanced settings to change addresses.") : copy(language, "Agent 已自动发现地址，建议直接使用下面的安全配置。", "The Agent discovered its addresses. The setup below is the recommended safe choice.")}</SheetDescription>
         </SheetHeader>
         <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
           <div className="flex-1 overflow-y-auto px-4">
