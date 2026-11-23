@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/petauron/vastora/compare/v0.2.0...v0.2.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **center:** unblock public address recovery on existing nodes ([#1405](https://github.com/petauron/vastora/issues/1405)) ([5128f1b](https://github.com/petauron/vastora/commit/5128f1beb3972a5cb45c646b4e56a773f4eeebd0)), closes [#1404](https://github.com/petauron/vastora/issues/1404)
+
 ## [0.2.0](https://github.com/petauron/vastora/compare/v0.1.0...v0.2.0) (2026-11-22)
 
 
