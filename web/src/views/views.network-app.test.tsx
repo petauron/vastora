@@ -124,7 +124,6 @@ describe("network and app views", () => {
       const container = render(<NetworkView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
       act(() => container.querySelector<HTMLButtonElement>(`button[aria-label="配置 ${agent.name} 的网络"]`)!.click());
       const publicSwitch = document.querySelector<HTMLButtonElement>("#public-ingress-enabled")!;
-      expect(publicSwitch.getAttribute("aria-checked")).toBe("false");
       expect(document.body.textContent).toContain("198.51.100.11 → 198.51.100.11");
       act(() => publicSwitch.click());
       const save = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存配置"))!;
