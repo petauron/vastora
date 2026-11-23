@@ -34,5 +34,5 @@ Those older descriptions are retained for historical context.
 - Regression coverage includes startup proof lifetime, quota/revocation/disable behavior, subscription snapshots, forward migration and preservation of revocation state.
 
 Self-review completed for changed execution, receipt, publication and migration
-paths. Existing CI workflows and dependencies are unchanged. No CT116 or
+paths. Existing CI workflows and dependencies are unchanged. No lab guest or
 production execution, push, merge or deployment was performed.

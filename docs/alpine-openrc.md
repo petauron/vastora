@@ -120,7 +120,7 @@ Headscale enrollment. No production private-network identity is copied.
 LXC shares the PVE host kernel. Guest reboot proves OpenRC and runtime-directory
 recovery, not a separate Alpine kernel, host swap behavior or a VPS reinstall.
 Other host administration operations that require systemd/apt remain outside this
-MVP. BreadCloud and other production hosts are unchanged.
+MVP. Existing production hosts are unchanged.
 
 ## Existing systemd v2 installations
 

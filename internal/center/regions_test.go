@@ -38,17 +38,17 @@ func TestRealityBaseNameUnderstandsOldAndCurrentPrefixes(t *testing.T) {
 }
 
 func TestHongKongRealityNamesUseShortPrefix(t *testing.T) {
-	code, name, displayName, err := composeRealityDisplayName("hk", "| VMISS DC2")
+	code, name, displayName, err := composeRealityDisplayName("hk", "| Provider B Edge")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code != "HK" || name != "VMISS DC2" || displayName != "🇭🇰 香港｜VMISS DC2" {
+	if code != "HK" || name != "Provider B Edge" || displayName != "🇭🇰 香港｜Provider B Edge" {
 		t.Fatalf("composed name = code %q, name %q, display %q", code, name, displayName)
 	}
-	if !validRegionPrefixedRealityName(code, displayName) || validRegionPrefixedRealityName(code, "🇭🇰 中国香港特别行政区| VMISS DC2") {
+	if !validRegionPrefixedRealityName(code, displayName) || validRegionPrefixedRealityName(code, "🇭🇰 中国香港特别行政区| Provider B Edge") {
 		t.Fatal("only the short Hong Kong prefix should be generated and accepted")
 	}
-	for _, stored := range []string{"🇭🇰 中国香港特别行政区| VMISS DC2", "🇭🇰 香港| VMISS DC2", displayName} {
+	for _, stored := range []string{"🇭🇰 中国香港特别行政区| Provider B Edge", "🇭🇰 香港| Provider B Edge", displayName} {
 		base := realityBaseName(stored, code)
 		_, _, reconciled, err := composeRealityDisplayName(code, base)
 		if err != nil || base != name || reconciled != displayName {
