@@ -103,6 +103,43 @@ describe("network and app views", () => {
     expect(confirm).toHaveBeenCalledWith("agent", expect.objectContaining({ publicAddress: "198.51.100.27", publicBindAddress: "192.168.1.2", publicMode: "nat", directPublic: true, enabledKinds: expect.arrayContaining(["public"]) }));
   });
 
+  it("confirms a replacement public address while preserving the retained private profile", async () => {
+    const data = dashboard();
+    const agent = data.agents[0];
+    const observedAt = "2026-08-18T00:00:00Z";
+    agent.networkProfile = undefined;
+    agent.networkRecoveryProfile = {
+      serviceAddress: "100.64.0.63", headscaleAddress: "100.64.0.63",
+      publicAddress: "203.0.113.19", publicBindAddress: "203.0.113.19", publicMode: "direct",
+      enabledKinds: ["headscale", "public"], directPublic: true
+    };
+    agent.networkCandidates = [
+      { address: "100.64.0.63", interface: "tailscale0", kind: "headscale", observedAt },
+      { address: "192.168.1.70", interface: "eth0", kind: "lan", observedAt },
+      { address: "198.51.100.11", interface: "eth0", kind: "public", observedAt }
+    ];
+    agent.publicEgress = { address: "198.51.100.11", bindAddress: "198.51.100.11", mode: "direct", observedAt };
+    const confirm = vi.spyOn(api, "confirmNetworkProfile").mockResolvedValue(agent.networkRecoveryProfile);
+    try {
+      const container = render(<NetworkView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+      act(() => container.querySelector<HTMLButtonElement>(`button[aria-label="配置 ${agent.name} 的网络"]`)!.click());
+      const publicSwitch = document.querySelector<HTMLButtonElement>("#public-ingress-enabled")!;
+      expect(publicSwitch.getAttribute("aria-checked")).toBe("false");
+      expect(document.body.textContent).toContain("198.51.100.11 → 198.51.100.11");
+      act(() => publicSwitch.click());
+      const save = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存配置"))!;
+      await act(async () => { save.click(); });
+      expect(confirm).toHaveBeenCalledWith(agent.id, {
+        serviceAddress: "100.64.0.63", lanAddress: undefined, headscaleAddress: "100.64.0.63",
+        enabledKinds: ["headscale", "public"], directPublic: true,
+        publicAddress: "198.51.100.11", publicBindAddress: "198.51.100.11", publicMode: "direct",
+        publicVerifiedAt: observedAt
+      });
+    } finally {
+      confirm.mockRestore();
+    }
+  });
+
   it("keeps the public switch disabled until the Agent reports an egress mapping", () => {
     const data = dashboard();
     const container = render(<NetworkView data={data} language="zh-CN" mutate={async () => undefined} />);

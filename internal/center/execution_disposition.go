@@ -90,16 +90,25 @@ func (s *Store) disposeTaskExecution(ctx context.Context, executionID, adminID s
 		return err
 	}
 	if changed != 1 {
-		// An application may have been removed while its execution evidence was
-		// retained. Explicit abandonment can retire that orphaned execution,
-		// but must never re-create the command or affect a changed attempt.
-		missingCommand := false
-		if changed == 0 && input.Action == "abandon" && kind == "application.command" {
-			if err := tx.QueryRowContext(ctx, `SELECT NOT EXISTS(SELECT 1 FROM application_commands WHERE id=?)`, taskID).Scan(&missingCommand); err != nil {
+		// A retained execution may outlive its business record. Archive it
+		// only after operator verification and without touching its replacement.
+		canArchive := false
+		if changed == 0 && input.Action == "abandon" {
+			switch kind {
+			case "application.command":
+				err = tx.QueryRowContext(ctx, `SELECT NOT EXISTS(SELECT 1 FROM application_commands WHERE id=?)`, taskID).Scan(&canArchive)
+			case "gateway.routes.apply":
+				if task.Revision > 0 && task.ID == gatewayRouteTaskID(agentID, task.Revision) {
+					err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+						SELECT 1 FROM gateway_states WHERE gateway_node_id=? AND desired_revision>?
+					)`, agentID, task.Revision).Scan(&canArchive)
+				}
+			}
+			if err != nil {
 				return err
 			}
 		}
-		if !missingCommand {
+		if !canArchive {
 			return errors.New("center: task changed; verify its current state")
 		}
 	}

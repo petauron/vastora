@@ -6021,6 +6021,58 @@
                               }
                             ]
                           },
+                          "networkRecoveryProfile": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serviceAddress": {
+                                    "type": "string"
+                                  },
+                                  "lanAddress": {
+                                    "type": "string"
+                                  },
+                                  "headscaleAddress": {
+                                    "type": "string"
+                                  },
+                                  "publicAddress": {
+                                    "type": "string"
+                                  },
+                                  "publicBindAddress": {
+                                    "type": "string"
+                                  },
+                                  "publicMode": {
+                                    "type": "string"
+                                  },
+                                  "enabledKinds": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "directPublic": {
+                                    "type": "boolean"
+                                  },
+                                  "publicVerifiedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "confirmedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "candidateObservedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "gatewayHealthy": {
                             "type": "boolean"
                           },
