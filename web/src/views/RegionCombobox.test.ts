@@ -3,21 +3,21 @@ import { regionBaseName, regionDisplayName } from "./RegionCombobox";
 
 describe("subscription region names", () => {
   it("uses the short Hong Kong prefix without changing the node name", () => {
-    expect(regionDisplayName(" hk ", " | VMISS DC2 ")).toBe("🇭🇰 香港｜VMISS DC2");
+    expect(regionDisplayName(" hk ", " | Provider B Edge ")).toBe("🇭🇰 香港｜Provider B Edge");
   });
 
-  it.each(["🇭🇰 中国香港特别行政区| VMISS DC2", "🇭🇰 香港| VMISS DC2", "🇭🇰 香港｜VMISS DC2"])(
+  it.each(["🇭🇰 中国香港特别行政区| Provider B Edge", "🇭🇰 香港| Provider B Edge", "🇭🇰 香港｜Provider B Edge"])(
     "keeps the node name when editing %s",
     (displayName) => {
       const name = regionBaseName(displayName, "HK");
-      expect(name).toBe("VMISS DC2");
-      expect(regionDisplayName("HK", name)).toBe("🇭🇰 香港｜VMISS DC2");
+      expect(name).toBe("Provider B Edge");
+      expect(regionDisplayName("HK", name)).toBe("🇭🇰 香港｜Provider B Edge");
     },
   );
 
   it("does not change another region or an unprefixed node name", () => {
     expect(regionDisplayName("US", "Provider A Premium")).toBe("🇺🇸 美国｜Provider A Premium");
-    expect(regionBaseName("VMISS DC2", "HK")).toBe("VMISS DC2");
+    expect(regionBaseName("Provider B Edge", "HK")).toBe("Provider B Edge");
   });
 
   it.each([

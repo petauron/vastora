@@ -124,7 +124,7 @@ retained successful business records do not prove they exist on the replacement.
 The pinned Headscale 0.29.3 [control API](https://github.com/juanfont/headscale/blob/v0.29.3/proto/headscale/v1/headscale.proto)
 does not provide an atomic node-identity replacement or explicit per-node IP
 assignment operation. Deleting and reenrolling relies on allocator behavior and
-cannot guarantee address preservation. The [upstream request](https://github.com/juanfont/headscale/issues/3133)
+cannot guarantee address preservation. The [upstream request](https://redirect.github.com/juanfont/headscale/issues/3133)
 for manual address assignment remains separate. Recovery must report unavailable
 address preservation and require explicit migration, rather than edit Headscale's
 database or silently accept a new address.
