@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -340,6 +341,9 @@ func TestAgentReinstallRuntimeSealingRejectsTaskSubstitution(t *testing.T) {
 
 func TestReinstallHeartbeatUpdatesNetworkWithoutRenewingRetiredProxyEvidence(t *testing.T) {
 	s, node, _ := reinstallRuntimeNetworkFixture(t, true)
+	var clock atomic.Int64
+	clock.Store(s.now().UTC().UnixNano())
+	s.now = func() time.Time { return time.Unix(0, clock.Load()).UTC() }
 	ctx := context.Background()
 	var key []byte
 	if err := s.db.QueryRow(`SELECT x25519_public_key FROM agents WHERE id=?`, node.ID).Scan(&key); err != nil {
@@ -359,7 +363,7 @@ func TestReinstallHeartbeatUpdatesNetworkWithoutRenewingRetiredProxyEvidence(t *
 		t.Fatalf("management heartbeat blocked by retired runtime data: %v", err)
 	}
 	now := s.now().UTC().Add(time.Minute)
-	s.now = func() time.Time { return now }
+	clock.Store(now.UnixNano())
 	heartbeat.Startup = false
 	heartbeat.PublicEgress = &networking.PublicEgress{Address: "198.51.100.8", BindAddress: "10.0.0.8", Mode: networking.PublicModeNAT, ObservedAt: now}
 	if err := s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {

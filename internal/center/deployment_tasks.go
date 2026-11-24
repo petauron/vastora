@@ -183,17 +183,13 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	} else if blocked {
 		return nil, errExecutionBlocked
 	}
-	var authorized int
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
 		return nil, err
 	} else if paused {
 		return nil, errExecutionBlocked
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id=? AND status='active' AND credential_revoked_at='' AND credential_hash=?`, agentID, tokenHash(credential)).Scan(&authorized); err != nil {
+	if err := authenticateAgentInQuery(ctx, tx, agentID, credential); err != nil {
 		return nil, err
-	}
-	if authorized != 1 {
-		return nil, errors.New("center: invalid Agent credential")
 	}
 	var tailscalePending bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tailscale_update_tasks WHERE agent_id=? AND state='awaiting_decision')`, agentID).Scan(&tailscalePending); err != nil {

@@ -120,7 +120,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-go-cached
       - name: Cache Staticcheck analysis
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/staticcheck
           key: staticcheck-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum', 'Makefile') }}-${{ github.sha }}
@@ -144,7 +144,7 @@ jobs:
       - uses: ./.github/actions/setup-go-cached
       - name: Cache native landing build output
         id: dante
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/dante-bundle
           key: dante-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deploy/landing/Dockerfile', 'scripts/build-landing-dante.sh', 'scripts/install-landing-build-deps.sh') }}

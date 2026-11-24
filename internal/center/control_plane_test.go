@@ -180,6 +180,7 @@ func TestRevocationInterruptsLongPollAndRejectsAcknowledgement(t *testing.T) {
 		_, pollErr := store.WaitAndClaimNextTask(context.Background(), credential.ID, credential.Credential, 30*time.Second)
 		result <- pollErr
 	}()
+	waitForChangeWaiter(t, &store.taskChanges, "agent:"+credential.ID)
 	if err := store.RevokeAgentCredential(context.Background(), credential.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +189,7 @@ func TestRevocationInterruptsLongPollAndRejectsAcknowledgement(t *testing.T) {
 		if pollErr == nil || !strings.Contains(pollErr.Error(), "authentication failed") {
 			t.Fatalf("revoked long poll error = %v", pollErr)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("credential revocation did not interrupt the active long poll")
 	}
 	if err := store.CompleteTask(context.Background(), credential.ID, credential.Credential, "missing-task", 1, true, "", nil, 0); err == nil || !strings.Contains(err.Error(), "authentication failed") {

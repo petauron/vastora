@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,6 +83,9 @@ func testOSReinstallReceipt(t *testing.T, expired bool) {
 	ctx := context.Background()
 	store := openOrchestrationStore(t)
 	defer store.Close()
+	var clock atomic.Int64
+	clock.Store(store.now().UTC().UnixNano())
+	store.now = func() time.Time { return time.Unix(0, clock.Load()).UTC() }
 	if _, err := store.db.Exec(`INSERT INTO admins(id,username,password_hash,created_at) VALUES('reinstall-admin','reinstall-admin','test-hash','')`); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +244,7 @@ func testOSReinstallReceipt(t *testing.T, expired bool) {
 	}
 	if expired {
 		later := store.now().Add(time.Hour)
-		store.now = func() time.Time { return later }
+		clock.Store(later.UnixNano())
 		if err = store.executionClaimAllowed(ctx, node.ID, session); err == nil {
 			t.Fatal("expired install was allowed to claim more work")
 		}
