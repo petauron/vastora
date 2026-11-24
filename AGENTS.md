@@ -31,9 +31,13 @@
   config/manifest. Use Conventional Commits, including the final squash title;
   do not hide a releasable fix under a `ci:` or `chore:` title. Do not manually
   bump versions, move tags, or add a second tag-triggered release path.
-- Required checks must represent real checks on the exact version PR head SHA.
-  Metadata validation is a separate check, not a substitute for CI or CodeQL;
-  never manufacture successful required-check results.
+- Required checks must represent real checks on the exact version PR head SHA;
+  never manufacture successful required-check results. Content-verified
+  version-only Release Please PRs (modifying only `.release-please-manifest.json`,
+  `CHANGELOG.md`, and `version.txt` without changing the alpha/non-alpha race
+  policy) may run the scoped metadata, privacy, and secret-scan CI lane, while
+  any extra file, invalid metadata, or alpha-to-non-alpha graduation fails closed
+  to the full CI suite.
 - Publish only from an immutable, checked commit on protected `main`. Use the
   Release Please output SHA/tag throughout checkout, build, provenance and
   publication; fail closed on identity/version mismatches or failed checks.

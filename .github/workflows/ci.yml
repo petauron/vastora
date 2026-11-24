@@ -3,8 +3,6 @@ name: CI
 on:
   workflow_dispatch:
   pull_request:
-  schedule:
-    - cron: "41 3 * * 1"
 
 permissions:
   contents: read
@@ -42,7 +40,7 @@ jobs:
 
   composite-runtime:
     name: Composite target-side runtime
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.integration == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.integration == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -79,27 +77,28 @@ jobs:
         run: make privacy-check
 
   go-tests:
-    name: Go tests (${{ matrix.shard }}/4)
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    name: Go tests (${{ matrix.shard }}/6)
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-go-cached
       - name: Run complete Go suite with version-based race policy
         env:
           SHARD: ${{ matrix.shard }}
-          SHARDS: 4
+          SHARDS: 6
+          WORKERS: 4
         run: sh scripts/run-ci-go-tests.sh
 
   go-packages:
     name: Go tests (other packages)
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -113,7 +112,7 @@ jobs:
 
   go-quality:
     name: Go quality and security
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -134,7 +133,7 @@ jobs:
 
   integration:
     name: Host and network integration
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.integration == 'true' || needs.changes.outputs.full == 'true'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.integration == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -208,7 +207,7 @@ jobs:
 
   go-build:
     name: Go cross-compile
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -219,7 +218,7 @@ jobs:
         run: make agent-binaries
 
   web:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -236,7 +235,7 @@ jobs:
         run: make web-security-check
 
   deployment:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -249,7 +248,7 @@ jobs:
         run: scripts/check-runtime-image-platforms.sh
 
   security:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && needs.changes.outputs.security == 'true')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.security == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -267,8 +266,8 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          # PRs scan their new commits. Scheduled/manual checks scan the exact
-          # checked commit; historic commits do not need rescanning on every PR.
+          # PRs scan their new commits. Manual checks scan the exact checked
+          # commit; historic commits do not need rescanning on every PR.
           log_opts="-1 $HEAD_SHA"
           if [ -n "$BASE_SHA" ]; then log_opts="$BASE_SHA..$HEAD_SHA"; fi
           go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --log-opts="$log_opts" .
@@ -290,13 +289,21 @@ jobs:
 
   gate:
     name: CI / gate
-    if: always()
+    if: always() && !cancelled()
     needs: [changes, composite-runtime, privacy, go-tests, go-packages, go-quality, integration, go-build, web, deployment, security, release-metadata]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every applicable CI job
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          GO_SELECTED: ${{ needs.changes.outputs.go }}
+          WEB_SELECTED: ${{ needs.changes.outputs.web }}
+          DEPLOYMENT_SELECTED: ${{ needs.changes.outputs.deployment }}
+          SECURITY_SELECTED: ${{ needs.changes.outputs.security }}
+          INTEGRATION_SELECTED: ${{ needs.changes.outputs.integration }}
+          RELEASE_METADATA_SELECTED: ${{ needs.changes.outputs.release_metadata }}
+          FULL_SELECTED: ${{ needs.changes.outputs.full }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           COMPOSITE_RESULT: ${{ needs.composite-runtime.result }}
           PRIVACY_RESULT: ${{ needs.privacy.result }}
@@ -310,9 +317,53 @@ jobs:
           RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
         run: |
-          for result in "$CHANGES_RESULT" "$COMPOSITE_RESULT" "$PRIVACY_RESULT" "$GO_TEST_RESULT" "$GO_PACKAGES_RESULT" "$GO_QUALITY_RESULT" "$GO_BUILD_RESULT" "$WEB_RESULT" "$DEPLOYMENT_RESULT" "$SECURITY_RESULT" "$RELEASE_METADATA_RESULT" "$INTEGRATION_RESULT"; do
-            case "$result" in
-              success|skipped) ;;
-              *) echo "Required CI job did not succeed: $result" >&2; exit 1 ;;
-            esac
-          done
+          require_result() {
+            name="$1"
+            actual="$2"
+            expected="$3"
+            if [ "$actual" != "$expected" ]; then
+              echo "CI job $name expected $expected, got ${actual:-<empty>}" >&2
+              exit 1
+            fi
+          }
+
+          expect_selected() {
+            if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+              printf 'success\n'
+            elif [ "$EVENT_NAME" = "pull_request" ] && { [ "$1" = "true" ] || [ "$FULL_SELECTED" = "true" ]; }; then
+              printf 'success\n'
+            else
+              printf 'skipped\n'
+            fi
+          }
+
+          require_result "changes" "$CHANGES_RESULT" "success"
+          require_result "privacy" "$PRIVACY_RESULT" "success"
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            for flag in "$GO_SELECTED" "$WEB_SELECTED" "$DEPLOYMENT_SELECTED" "$SECURITY_SELECTED" "$INTEGRATION_SELECTED" "$RELEASE_METADATA_SELECTED" "$FULL_SELECTED"; do
+              case "$flag" in
+                true|false) ;;
+                *) echo "Unexpected classifier output flag: ${flag:-<empty>}" >&2; exit 1 ;;
+              esac
+            done
+          elif [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "Unexpected CI event: ${EVENT_NAME:-<empty>}" >&2
+            exit 1
+          fi
+
+          require_result "composite-runtime" "$COMPOSITE_RESULT" "$(expect_selected "$INTEGRATION_SELECTED")"
+          require_result "go-tests" "$GO_TEST_RESULT" "$(expect_selected "$GO_SELECTED")"
+          require_result "go-packages" "$GO_PACKAGES_RESULT" "$(expect_selected "$GO_SELECTED")"
+          require_result "go-quality" "$GO_QUALITY_RESULT" "$(expect_selected "$GO_SELECTED")"
+          require_result "integration" "$INTEGRATION_RESULT" "$(expect_selected "$INTEGRATION_SELECTED")"
+          require_result "go-build" "$GO_BUILD_RESULT" "$(expect_selected "$GO_SELECTED")"
+          require_result "web" "$WEB_RESULT" "$(expect_selected "$WEB_SELECTED")"
+          require_result "deployment" "$DEPLOYMENT_RESULT" "$(expect_selected "$DEPLOYMENT_SELECTED")"
+          require_result "security" "$SECURITY_RESULT" "$(expect_selected "$SECURITY_SELECTED")"
+
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$RELEASE_METADATA_SELECTED" = "true" ]; then
+            require_result "release-metadata" "$RELEASE_METADATA_RESULT" "success"
+          else
+            require_result "release-metadata" "$RELEASE_METADATA_RESULT" "skipped"
+          fi

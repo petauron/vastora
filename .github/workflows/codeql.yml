@@ -41,9 +41,8 @@ jobs:
 
   analyze-go:
     name: Analyze (go)
-    # Code-scanning protection compares every main configuration against PRs.
-    # Skipping a language leaves the PR without a required security baseline.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' || needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true')
+    # Path-scoped on PRs; push to main, manual dispatch and weekly schedule run all languages.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -57,7 +56,7 @@ jobs:
 
   analyze-javascript:
     name: Analyze (javascript-typescript)
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' || needs.changes.outputs.javascript == 'true' || needs.changes.outputs.full == 'true')
+    if: github.event_name != 'pull_request' || needs.changes.outputs.javascript == 'true' || needs.changes.outputs.full == 'true'
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -71,7 +70,7 @@ jobs:
 
   gate:
     name: CodeQL / gate
-    if: always()
+    if: always() && !cancelled()
     needs: [changes, analyze-go, analyze-javascript]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -80,13 +79,42 @@ jobs:
     steps:
       - name: Require every applicable CodeQL job
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          GO_SELECTED: ${{ needs.changes.outputs.go }}
+          JAVASCRIPT_SELECTED: ${{ needs.changes.outputs.javascript }}
+          FULL_SELECTED: ${{ needs.changes.outputs.full }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           GO_RESULT: ${{ needs.analyze-go.result }}
           JAVASCRIPT_RESULT: ${{ needs.analyze-javascript.result }}
         run: |
-          for result in "$CHANGES_RESULT" "$GO_RESULT" "$JAVASCRIPT_RESULT"; do
-            case "$result" in
-              success|skipped) ;;
-              *) echo "Required CodeQL job did not succeed: $result" >&2; exit 1 ;;
-            esac
-          done
+          require_result() {
+            name="$1"
+            actual="$2"
+            expected="$3"
+            if [ "$actual" != "$expected" ]; then
+              echo "CodeQL job $name expected $expected, got ${actual:-<empty>}" >&2
+              exit 1
+            fi
+          }
+
+          expect_selected() {
+            if [ "$EVENT_NAME" != "pull_request" ]; then
+              printf 'success\n'
+            elif [ "$1" = "true" ] || [ "$FULL_SELECTED" = "true" ]; then
+              printf 'success\n'
+            else
+              printf 'skipped\n'
+            fi
+          }
+
+          require_result "changes" "$CHANGES_RESULT" "success"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            for flag in "$GO_SELECTED" "$JAVASCRIPT_SELECTED" "$FULL_SELECTED"; do
+              case "$flag" in
+                true|false) ;;
+                *) echo "Unexpected CodeQL classifier output flag: ${flag:-<empty>}" >&2; exit 1 ;;
+              esac
+            done
+          fi
+          require_result "analyze-go" "$GO_RESULT" "$(expect_selected "$GO_SELECTED")"
+          require_result "analyze-javascript" "$JAVASCRIPT_RESULT" "$(expect_selected "$JAVASCRIPT_SELECTED")"

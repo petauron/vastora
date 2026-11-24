@@ -57,4 +57,39 @@ if "$script_dir/validate-release-metadata.sh" "$base_sha" "$temporary_dir" >/dev
   exit 1
 fi
 
+# Commit-to-commit mode validates HEAD_REF independently of the working tree.
+printf '%s\n' '0.1.0-alpha.16' > "$temporary_dir/version.txt"
+printf '%s\n' '{".":"0.1.0-alpha.16"}' > "$temporary_dir/.release-please-manifest.json"
+printf '%s\n' '# Changelog' '## [0.1.0-alpha.16](https://example.invalid)' '## [0.1.0-alpha.15](https://example.invalid)' > "$temporary_dir/CHANGELOG.md"
+git -C "$temporary_dir" add -- .release-please-manifest.json CHANGELOG.md version.txt
+git -C "$temporary_dir" commit -qm release-16
+head_sha="$(git -C "$temporary_dir" rev-parse HEAD)"
+git -C "$temporary_dir" checkout -q "$base_sha"
+"$script_dir/validate-release-metadata.sh" "$base_sha" "$temporary_dir" "$head_sha" >/dev/null
+
+git -C "$temporary_dir" checkout -qb symlink-test "$head_sha"
+rm "$temporary_dir/version.txt"
+ln -s CHANGELOG.md "$temporary_dir/version.txt"
+if "$script_dir/validate-release-metadata.sh" "$base_sha" "$temporary_dir" >/dev/null 2>&1; then
+  echo "Release metadata validator accepted a working-tree symlinked version.txt." >&2
+  exit 1
+fi
+git -C "$temporary_dir" add -- version.txt
+git -C "$temporary_dir" commit -qm symlink-version
+symlink_sha="$(git -C "$temporary_dir" rev-parse HEAD)"
+if "$script_dir/validate-release-metadata.sh" "$base_sha" "$temporary_dir" "$symlink_sha" >/dev/null 2>&1; then
+  echo "Release metadata validator accepted a symlinked version.txt." >&2
+  exit 1
+fi
+
+git -C "$temporary_dir" checkout -qb exec-mode-test "$head_sha"
+chmod +x "$temporary_dir/version.txt"
+git -C "$temporary_dir" add -- version.txt
+git -C "$temporary_dir" commit -qm exec-version
+exec_sha="$(git -C "$temporary_dir" rev-parse HEAD)"
+if "$script_dir/validate-release-metadata.sh" "$base_sha" "$temporary_dir" "$exec_sha" >/dev/null 2>&1; then
+  echo "Release metadata validator accepted an executable version.txt." >&2
+  exit 1
+fi
+
 echo "Release metadata validator test passed"
