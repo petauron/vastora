@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.2](https://github.com/petauron/vastora/compare/v0.2.1...v0.2.2) (2026-11-25)
+
+
+### Bug Fixes
+
+* **center:** standardize claim auth recheck, fix test clock/long-poll races, and upgrade actions/cache to v6 ([#1411](https://github.com/petauron/vastora/issues/1411)) ([7440939](https://github.com/petauron/vastora/commit/7440939ad57dad885b6b0b9ce1543afb6ce27bf4))
+* **deps:** bump the actions group across 1 directory with 5 updates ([#1409](https://github.com/petauron/vastora/issues/1409)) ([51e5fa2](https://github.com/petauron/vastora/commit/51e5fa2e52855185db01ce75e8448807ed7f75f5))
+* **deps:** consolidate pending Go and web Dependabot updates ([#1415](https://github.com/petauron/vastora/issues/1415)) ([8d1ee58](https://github.com/petauron/vastora/commit/8d1ee58602ad152047d7feb6a07281f4d9e3547c))
+
 ## [0.2.1](https://github.com/petauron/vastora/compare/v0.2.0...v0.2.1) (2026-11-23)
 
 
