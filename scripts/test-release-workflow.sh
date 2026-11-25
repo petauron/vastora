@@ -65,7 +65,7 @@ require_in "$release_pr_job" '    needs: [prepare, publish]'
 require_in "$release_pr_job" "    if: always() && needs.prepare.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')"
 require_in "$release_pr_job" '      contents: read'
 require_in "$release_pr_job" '        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0'
-require_in "$release_pr_job" '          app-id: ${{ vars.RELEASE_APP_ID }}'
+require_in "$release_pr_job" '          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}'
 require_in "$release_pr_job" '          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}'
 require_in "$release_pr_job" '          permission-contents: write'
 require_in "$release_pr_job" '          permission-pull-requests: write'

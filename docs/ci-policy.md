@@ -48,7 +48,7 @@ Program releases, signed catalog publication and production upgrades stay separa
 
 The `release-pr` job mints a short-lived, repository-scoped installation token
 from the minimal-permission organization GitHub App (`petauron-nova`, limited to
-`contents: write` and `pull-requests: write`) using `vars.RELEASE_APP_ID` and
+`contents: write` and `pull-requests: write`) using `vars.RELEASE_APP_CLIENT_ID` and
 `secrets.RELEASE_APP_PRIVATE_KEY`. Because the version PR is created and updated
 by this scoped app rather than `GITHUB_TOKEN`, GitHub automatically runs the
 normal `pull_request` `CI` and `CodeQL` workflows (including code-scanning PR
