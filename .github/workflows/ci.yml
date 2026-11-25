@@ -150,7 +150,7 @@ jobs:
           key: dante-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deploy/landing/Dockerfile', 'scripts/build-landing-dante.sh', 'scripts/install-landing-build-deps.sh') }}
       - name: Set up native landing artifact builder
         if: steps.dante.outputs.cache-hit != 'true'
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.0.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build native landing artifact on cache miss
         if: steps.dante.outputs.cache-hit != 'true'
         run: docker buildx build --file deploy/landing/Dockerfile --platform linux/amd64 --output "type=local,dest=$RUNNER_TEMP/dante-bundle" .
@@ -243,7 +243,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: make deployment-check
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.0.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Require x64 and ARM64 runtime images
         run: scripts/check-runtime-image-platforms.sh
 
