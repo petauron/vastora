@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/petauron/vastora/compare/v0.2.2...v0.2.3) (2026-11-25)
+
+
+### Bug Fixes
+
+* **web:** hide routine Center update sha256 pills and polish modal separation ([#1418](https://github.com/petauron/vastora/issues/1418)) ([23e2292](https://github.com/petauron/vastora/commit/23e2292fc2d279d41e793d4b0871cf169dd3bc88)), closes [#1417](https://github.com/petauron/vastora/issues/1417)
+
 ## [0.2.2](https://github.com/petauron/vastora/compare/v0.2.1...v0.2.2) (2026-11-25)
 
 
