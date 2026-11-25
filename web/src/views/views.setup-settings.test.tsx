@@ -964,4 +964,36 @@ describe("network and app views", () => {
     expect(check).toHaveBeenCalledWith(true);
     expect(onStatusChange).toHaveBeenCalledWith(refreshed);
   });
+
+  it("hides inline image sha256 badges during normal Center updates", () => {
+    const status = {
+      ...dashboard().centerUpdate,
+      currentVersion: "0.2.1",
+      currentImageDigest: "cb40ae4beda4c3eb1629110bc3b75d93eefd543f9889c739796b48950e0719d2",
+      latestVersion: "0.2.2",
+      latestImageDigest: "3148cb611a4f9999999999999999999999999999999999999999999999999999",
+      updateAvailable: true,
+      imageMismatch: false,
+    };
+    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
+    expect(container.textContent).toContain("0.2.1");
+    expect(container.textContent).toContain("0.2.2");
+    expect(container.textContent).not.toContain("sha256:");
+    expect(container.querySelector('span[title="sha256:cb40ae4beda4c3eb1629110bc3b75d93eefd543f9889c739796b48950e0719d2"]')).not.toBeNull();
+  });
+
+  it("shows short image sha256 badges when Center detects an image mismatch", () => {
+    const status = {
+      ...dashboard().centerUpdate,
+      currentVersion: "0.2.1",
+      currentImageDigest: "cb40ae4beda4c3eb1629110bc3b75d93eefd543f9889c739796b48950e0719d2",
+      latestVersion: "0.2.1",
+      latestImageDigest: "3148cb611a4f9999999999999999999999999999999999999999999999999999",
+      updateAvailable: true,
+      imageMismatch: true,
+    };
+    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
+    expect(container.textContent).toContain("sha256:cb40ae4beda4");
+    expect(container.textContent).toContain("sha256:3148cb611a4f");
+  });
 });
