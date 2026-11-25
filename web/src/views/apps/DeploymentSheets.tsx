@@ -66,12 +66,13 @@ export type DeploymentEditor = {
   initialError?: string;
 } | null;
 
-function capabilityLabel(capability: string, language: Language) {
+export function capabilityLabel(capability: string, language: Language) {
   const labels: Record<string, [string, string]> = {
     root: ["以 root 用户运行", "Run as root"],
+    "native-services": ["管理宿主机原生服务", "Manage native host services"],
     "host-network": ["使用宿主机网络", "Use host networking"],
-  "host-tcp-budget": ["按内存档位应用或恢复主机 TCP 总预算", "Apply or restore the host TCP memory budget"],
-  "shared-caddy": ["使用共享网站与网关服务", "Use the shared website and gateway service"],
+    "host-tcp-budget": ["按内存档位应用或恢复主机 TCP 总预算", "Apply or restore the host TCP memory budget"],
+    "shared-caddy": ["使用共享网站与网关服务", "Use the shared website and gateway service"],
     "host-path": ["挂载声明的宿主机路径", "Mount declared host paths"],
     devices: ["访问声明的宿主机设备", "Access declared host devices"],
   };

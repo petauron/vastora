@@ -9,15 +9,18 @@ import { copy } from "./shared";
 
 // Senlun serves and owns its dashboard. Center only shows installation state,
 // access publication, and a link to the dashboard's authenticated origin.
-export function SenlunWorkspace({ group, data, language, onManage, onUpgrade }: AppWorkspaceProps) {
+export function SenlunWorkspace({ group, data, language, onManage, onUpgrade, submittingUpgradeID, activeTasksControl }: AppWorkspaceProps) {
   const instance = group.instances[0];
   const name = group.app ? localized(group.app, language, "name") : instance.application.name;
   const accessURL = senulunDashboardURL(data);
 
   return <Card aria-label={name} data-app-workspace="vastora-official/senlun">
-    <CardHeader className="flex flex-row items-center justify-between gap-3">
+    <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
       <CardTitle>{name}</CardTitle>
-      <ApplicationStatus instance={instance} language={language} onUpgrade={onUpgrade} />
+      <div className="flex flex-wrap items-center gap-2">
+        {activeTasksControl}
+        <ApplicationStatus instance={instance} language={language} onUpgrade={onUpgrade} submittingUpgradeID={submittingUpgradeID} />
+      </div>
     </CardHeader>
     <CardContent className="flex flex-wrap items-center gap-3">
       {accessURL ? <Button nativeButton={false} render={<a href={accessURL} rel="noreferrer" target="_blank" />}>

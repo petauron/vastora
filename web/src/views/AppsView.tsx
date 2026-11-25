@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppWindowIcon, KeyRoundIcon } from "lucide-react";
-import { api } from "../api";
+import { api, isAPIError } from "../api";
 import type { AppData, Mutate } from "../App";
 import type { AgentView, AppView, Application, Deployment, Service, ThreeXUIRole } from "../types";
 import type { Language } from "../translations";
@@ -10,7 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Sheet } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { ThreeXUIClientsSheet } from "./ThreeXUIClientsSheet";
 import { ThreeXUIControllerMigrationSheet } from "./ThreeXUIControllerMigrationSheet";
@@ -20,8 +20,9 @@ import { RealityRemoveDialog } from "./RealityRemoveDialog";
 import { clearSecretOperation, deploymentSecretScope, readSecretOperation, secretOperation } from "../secret-delivery";
 import { InstalledApps } from "./InstalledApps";
 import { ApplicationStore } from "./ApplicationStore";
-import { installedAppGroups } from "./installed-apps-model";
+import { installedAppGroups, type InstalledAppInstance } from "./installed-apps-model";
 import { ApplicationCredentialsSheet, InstalledAppDetails } from "./apps/ApplicationDetails";
+import { BatchUpgradeSheet, createBatchUpgradeRequest, type BatchUpgradeOutcome, type BatchUpgradeRequest, type BatchUpgradeTarget } from "./apps/BatchUpgradeSheet";
 import { DeploymentSheet, PublicationSheet, type DeploymentEditor } from "./apps/DeploymentSheets";
 import { RealityRenameSheet, SubscriptionSheet, UninstallSheet } from "./apps/SubscriptionSheets";
 import { OfficialAppManagerHost } from "@/app-workspaces/OfficialAppWorkspaceHost";
@@ -48,15 +49,23 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
 	const [appManagerApplication, setAppManagerApplication] = useState<Application | null>(null);
 	const [managedApplicationID, setManagedApplicationID] = useState<string | null>(null);
 	const [recoveryTask, setRecoveryTask] = useState<Deployment | null>(null);
+	const [batchUpgrade, setBatchUpgrade] = useState<BatchUpgradeRequest | null>(null);
+	const [tasksSheetOpen, setTasksSheetOpen] = useState(false);
   const catalogByKey = useMemo(() => new Map(data.apps.map((app) => [app.key, app])), [data.apps]);
   const installedGroups = useMemo(() => installedAppGroups({
     applications: data.applications, apps: data.apps, agents: data.agents, sites: data.sites,
     services: data.services, publications: data.publications, deployments: data.deployments,
     threeXUIControllerMigrations: data.threeXUIControllerMigrations,
   }), [data.applications, data.apps, data.agents, data.sites, data.services, data.publications, data.deployments, data.threeXUIControllerMigrations]);
+  const installedInstancesByID = useMemo(
+    () => new Map(installedGroups.flatMap((group) => group.instances).map((instance) => [instance.application.id, instance])),
+    [installedGroups],
+  );
   const selectedGroup = workspaceKey && isDaylightAppKey(workspaceKey) ? daylightInstalledGroup(installedGroups) : installedGroups.find((group) => group.appKey === workspaceKey);
-  const managedInstance = installedGroups.flatMap((group) => group.instances).find((instance) => instance.application.id === managedApplicationID);
+  const managedInstance = managedApplicationID ? installedInstancesByID.get(managedApplicationID) : undefined;
   const recentOperations = latestOperations(data.deployments).filter((deployment) => deployment.state === "pending" || deployment.state === "running" || deployment.reconciliationRequired);
+  const recoveryOperations = recentOperations.filter((deployment) => deployment.reconciliationRequired);
+  const inProgressOperations = recentOperations.filter((deployment) => !deployment.reconciliationRequired);
   const trafficApplication = trafficService ? data.applications.find((application) => application.id === trafficService.applicationId) : undefined;
   const trafficController = data.applications.find((application) => application.id === trafficApplication?.controllerApplicationId && application.role === "master" && application.status === "running");
 
@@ -94,6 +103,65 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
       upgradeRequests.current.delete(application.id);
       setSubmittingUpgrade((current) => current === application.id ? null : current);
     }
+  };
+  const openBatchUpgrade = (title: string, instances: InstalledAppInstance[]) => {
+    setUpgradeError("");
+    setBatchUpgrade(createBatchUpgradeRequest(title, instances, data));
+  };
+  const submitBatchUpgrade = async (
+    targets: BatchUpgradeTarget[],
+    approvedCapabilities: string[],
+    onProgress: (done: number, total: number) => void,
+  ): Promise<BatchUpgradeOutcome> => {
+    let queued = 0;
+    const failed: BatchUpgradeOutcome["failed"] = [];
+    for (let index = 0; index < targets.length; index++) {
+      const target = targets[index];
+      const required = target.app.app.runtime?.requiredCapabilities ?? [];
+      const authorizedCapabilities = required.length
+        ? required.filter((capability) => approvedCapabilities.includes(capability))
+        : [];
+      const scope = deploymentSecretScope(target.agent.id, target.app.key, "upgrade");
+      const operationKey = target.app.key === "vastora-official/senlun" ? secretOperation(scope) : undefined;
+      try {
+        const result = await api.createDeployment(
+          target.agent.id,
+          target.app.key,
+          {},
+          "upgrade",
+          false,
+          undefined,
+          undefined,
+          operationKey,
+          authorizedCapabilities,
+          { packageRevision: target.app.app.packageRevision ?? 0, manifestSha256: target.app.manifestSha256 ?? "" },
+        );
+        if (result?.oneTimeCredentials && operationKey) {
+          setCredentials({ ...result.oneTimeCredentials, deploymentId: result.id, operationKey, scope });
+        } else if (operationKey) {
+          clearSecretOperation(scope);
+        }
+        queued++;
+      } catch (error) {
+        if (isAPIError(error) && error.status === 401) {
+          await mutate(async () => { throw error; }, undefined, { reportError: false }).catch(() => undefined);
+          return { queued, failed };
+        }
+        failed.push({
+          applicationId: target.instance.application.id,
+          name: target.label,
+          error: userError(language, error),
+        });
+      }
+      onProgress(index + 1, targets.length);
+    }
+    if (queued > 0) {
+      const summary = failed.length === 0
+        ? copy(language, `已提交 ${queued} 台更新任务。`, `Queued updates for ${queued} host(s).`)
+        : undefined;
+      await mutate(async () => undefined, summary, { reportError: false });
+    }
+    return { queued, failed };
   };
   const openChange = (application: Application, operation: "upgrade" | "configure") => {
     const app = catalogByKey.get(application.appKey);
@@ -156,23 +224,60 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
 		}
 	};
 
+  const activeTasksControl = inProgressOperations.length > 0 ? (
+    <Button
+      aria-label={copy(language, `查看 ${inProgressOperations.length} 个进行中的任务`, `View ${inProgressOperations.length} active tasks`)}
+      className="h-9 shrink-0 tabular-nums"
+      onClick={() => setTasksSheetOpen(true)}
+      size="sm"
+      variant="outline"
+    >
+      <Spinner aria-hidden="true" className="motion-reduce:animate-none" data-icon="inline-start" />
+      {copy(language, `进行中 · ${inProgressOperations.length}`, `Active · ${inProgressOperations.length}`)}
+    </Button>
+  ) : null;
+
   return (
     <section className="apps-workspace flex min-w-0 flex-col gap-5" data-mode={workspaceKey ? "workspace" : "store"}>
-      {submittingUpgrade ? <p role="status" className="flex items-center gap-2 text-sm"><Spinner />{copy(language, "正在提交更新…", "Submitting update…")}</p> : null}
-      {upgradeError ? <Alert variant="destructive" role="alert"><AlertTitle>{copy(language, "更新请求需要检查", "Check the update request")}</AlertTitle><AlertDescription>{upgradeError}</AlertDescription></Alert> : null}
+      {upgradeError ? <Alert variant="destructive" role="alert"><AlertTitle className="flex items-start justify-between gap-3"><span>{copy(language, "更新请求需要检查", "Check the update request")}</span><Button aria-label={copy(language, "关闭错误提示", "Dismiss error")} onClick={() => setUpgradeError("")} size="xs" variant="ghost">{copy(language, "关闭", "Dismiss")}</Button></AlertTitle><AlertDescription>{upgradeError}</AlertDescription></Alert> : null}
 
       {credentials ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "请保存 Vastora Proxy 管理账号", "Save the Vastora Proxy administrator account")}</AlertTitle><AlertDescription><p>{copy(language, "确认保存前可在断线或刷新后重新领取；确认后 Center 会永久关闭再次显示。", "Until you acknowledge it, the same browser can recover these credentials after a disconnect or refresh. Acknowledgement permanently disables disclosure.")}</p><dl className="mt-3 grid gap-2 rounded-lg bg-muted p-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "账号", "Username")}</dt><dd className="mt-1 flex items-center gap-2 font-mono">{credentials.username}<CopyButton language={language} value={credentials.username || ""} /></dd></div><div><dt className="text-muted-foreground">{copy(language, "密码", "Password")}</dt><dd className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.password}<CopyButton language={language} value={credentials.password || ""} /></dd></div></dl><Button className="mt-3" disabled={credentialAckBusy} onClick={() => void acknowledgeCredentials()} size="sm" variant="outline">{credentialAckBusy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "我已保存并关闭再次显示", "Saved — disable further disclosure")}</Button></AlertDescription></Alert> : null}
 
-      {recentOperations.length ? <details className="rounded-xl border bg-muted/25 p-3" open={recentOperations.some((operation) => operation.reconciliationRequired)}><summary className="cursor-pointer text-sm font-medium">{copy(language, `进行中的任务 · ${recentOperations.length}`, `Active tasks · ${recentOperations.length}`)}</summary><div aria-live="polite" className="mt-3 flex flex-col gap-3">{recentOperations.map((deployment) => {
+      {recoveryOperations.length ? <details className="rounded-xl border bg-muted/25 p-3" open><summary className="cursor-pointer text-sm font-medium">{copy(language, `需要核对并恢复 · ${recoveryOperations.length}`, `Recovery required · ${recoveryOperations.length}`)}</summary><div aria-live="polite" className="mt-3 flex flex-col gap-3">{recoveryOperations.map((deployment) => {
         const app = catalogByKey.get(deployment.appKey); const agent = data.agents.find((value) => value.id === deployment.agentId);
-        return <Card key={deployment.id} size="sm"><CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center"><StateBadge language={language} value={deployment.reconciliationRequired ? "recovery" : deployment.state} /><div className="min-w-0 flex-1"><p className="font-medium">{operationLabel(language, deployment.operation)} · {app ? localized(app, language, "name") : deployment.appKey}</p><p className="mt-1 text-xs text-muted-foreground">{agent?.name ?? deployment.agentId}</p>{deployment.reconciliationRequired ? <p className="mt-2 text-sm text-muted-foreground">{copy(language, "应用结果尚未确认，当前变更已锁定。先核对执行记录与实际资源，再决定是否重新执行；打开核对不会重试任务。", "The app outcome is unconfirmed and changes are locked. Review the execution and actual resources before deciding whether to execute again; opening review does not retry the task.")}</p> : null}{deployment.error ? <div className="mt-2"><TechnicalError error={deployment.error} language={language} /></div> : null}</div>{deployment.reconciliationRequired ? <Button onClick={() => setRecoveryTask(deployment)} size="sm" variant="outline">{copy(language, "核对并恢复", "Review and recover")}</Button> : null}</CardContent></Card>;
+        return <Card key={deployment.id} size="sm"><CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center"><StateBadge language={language} value="recovery" /><div className="min-w-0 flex-1"><p className="font-medium">{operationLabel(language, deployment.operation)} · {app ? localized(app, language, "name") : deployment.appKey}</p><p className="mt-1 text-xs text-muted-foreground">{agent?.name ?? deployment.agentId}</p><p className="mt-2 text-sm text-muted-foreground">{copy(language, "应用结果尚未确认，当前变更已锁定。先核对执行记录与实际资源，再决定是否重新执行；打开核对不会重试任务。", "The app outcome is unconfirmed and changes are locked. Review the execution and actual resources before deciding whether to execute again; opening review does not retry the task.")}</p>{deployment.error ? <div className="mt-2"><TechnicalError error={deployment.error} language={language} /></div> : null}</div><Button onClick={() => setRecoveryTask(deployment)} size="sm" variant="outline">{copy(language, "核对并恢复", "Review and recover")}</Button></CardContent></Card>;
       })}</div></details> : null}
 
       {recoveryTask ? <TaskRecoverySheet key={recoveryTask.id} taskId={recoveryTask.id} agentId={recoveryTask.agentId} name={data.agents.find((agent) => agent.id === recoveryTask.agentId)?.name ?? recoveryTask.agentId} language={language} onClose={() => setRecoveryTask(null)} onSaved={() => { setRecoveryTask(null); void mutate(async () => undefined, copy(language, "任务处置已记录。", "Task disposition recorded.")); }} /> : null}
 
-      {workspaceKey ? selectedGroup ? <InstalledApps key={selectedGroup.id} group={selectedGroup} data={data} language={language} mutate={mutate} managerApplication={appManagerApplication?.appKey === "vastora-official/meridian" ? appManagerApplication : null} onManagerClose={() => setAppManagerApplication(null)} onClients={(application) => { if (application.appKey === "vastora-official/meridian") setAppManagerApplication(application); else setClientsApplication(application); }} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onReality={setRealityApplication} />
+      {workspaceKey ? selectedGroup ? <InstalledApps key={selectedGroup.id} group={selectedGroup} data={data} language={language} mutate={mutate} activeTasksControl={activeTasksControl} submittingUpgradeID={submittingUpgrade} managerApplication={appManagerApplication?.appKey === "vastora-official/meridian" ? appManagerApplication : null} onManagerClose={() => setAppManagerApplication(null)} onClients={(application) => { if (application.appKey === "vastora-official/meridian") setAppManagerApplication(application); else setClientsApplication(application); }} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onBatchUpgrade={openBatchUpgrade} onReality={setRealityApplication} />
         : <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "此应用尚未安装或已移除", "This app is not installed")}</EmptyTitle><EmptyDescription>{copy(language, "在应用商店查看当前可用的应用。", "Visit the App Store to see available apps.")}</EmptyDescription><Button onClick={onStore}>{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty>
-        : <ApplicationStore data={data} groups={installedGroups} language={language} onInstall={(app) => setDeploymentEditor({ app, operation: "install" })} onOpen={onOpenApp} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onSettings={onSettings} />}
+        : <ApplicationStore data={data} groups={installedGroups} language={language} activeTasksControl={activeTasksControl} submittingUpgradeID={submittingUpgrade} onInstall={(app) => setDeploymentEditor({ app, operation: "install" })} onOpen={onOpenApp} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onBatchUpgrade={openBatchUpgrade} onSettings={onSettings} />}
+
+      <Sheet onOpenChange={setTasksSheetOpen} open={tasksSheetOpen}>
+        <SheetContent className="sm:max-w-lg">
+          <SheetHeader>
+            <SheetTitle>{copy(language, `进行中的任务 · ${inProgressOperations.length}`, `Active tasks · ${inProgressOperations.length}`)}</SheetTitle>
+            <SheetDescription>{copy(language, "节点执行完成后会自动更新状态，关闭此窗口不影响任务继续执行。", "Status updates automatically as hosts finish. Closing this dialog does not interrupt running tasks.")}</SheetDescription>
+          </SheetHeader>
+          <div aria-live="polite" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4">
+            {inProgressOperations.length > 0 ? inProgressOperations.map((deployment) => {
+              const app = catalogByKey.get(deployment.appKey);
+              const agent = data.agents.find((value) => value.id === deployment.agentId);
+              return <Card key={deployment.id} size="sm"><CardContent className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center"><StateBadge language={language} value={deployment.state} /><div className="min-w-0 flex-1"><p className="font-medium">{operationLabel(language, deployment.operation)} · {app ? localized(app, language, "name") : deployment.appKey}</p><p className="mt-0.5 text-xs text-muted-foreground">{agent?.name ?? deployment.agentId}</p>{deployment.error ? <div className="mt-2"><TechnicalError error={deployment.error} language={language} /></div> : null}</div></CardContent></Card>;
+            }) : <p className="py-6 text-center text-sm text-muted-foreground">{copy(language, "当前没有进行中的任务。", "All active tasks have finished.")}</p>}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <BatchUpgradeSheet
+        data={data}
+        instancesByID={installedInstancesByID}
+        language={language}
+        onClose={() => setBatchUpgrade(null)}
+        onSubmit={submitBatchUpgrade}
+        request={batchUpgrade}
+      />
 
       <Sheet onOpenChange={(open) => { if (!open) setManagedApplicationID(null); }} open={Boolean(managedInstance)}>
         {managedInstance ? <InstalledAppDetails

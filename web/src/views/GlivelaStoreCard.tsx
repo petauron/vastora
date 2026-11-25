@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CircleArrowUpIcon } from "lucide-react";
 import type { AppData, Application, AppView } from "@/types";
 import type { Language } from "@/translations";
 import { AppIcon } from "@/components/desktop/AppIcon";
@@ -9,6 +10,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { AppStoreTile } from "./AppStore";
 import { AppIdentityBadge } from "./AppIdentity";
 import { AppInstallationSummary } from "./apps/AppInstallationSummary";
+import { planBatchUpgrade } from "./apps/BatchUpgradeSheet";
 import { ApplicationStatus } from "./apps/InstalledApplicationPrimitives";
 import { eligibleAppNodes, installBlocker, localized } from "./appAccess";
 import type { InstalledAppGroup, InstalledAppInstance } from "./installed-apps-model";
@@ -38,7 +40,7 @@ export function glivelaMatches(query: string, data: AppData, groups: InstalledAp
   ].some((value) => value.toLocaleLowerCase().includes(query));
 }
 
-export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, onManage, onUpgrade }: {
+export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, onManage, onUpgrade, onBatchUpgrade, submittingUpgradeID }: {
   data: AppData;
   groups: InstalledAppGroup[];
   language: Language;
@@ -46,6 +48,8 @@ export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, on
   onOpen: (key: string) => void;
   onManage: (application: Application) => void;
   onUpgrade: (application: Application) => void;
+  onBatchUpgrade?: (title: string, instances: InstalledAppInstance[]) => void;
+  submittingUpgradeID?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [nodePackageKey, setNodePackageKey] = useState<string>(nodeCapabilities[0].key);
@@ -80,7 +84,7 @@ export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, on
         {multiple ? <p className="text-sm">{capabilityLabel}</p> : null}
         <p className="mt-1 text-xs text-muted-foreground">v{instance.application.installedVersion}{showHost ? ` · ${instance.siteName}` : ""}</p>
       </div>
-      <ApplicationStatus instance={instance} language={language} onUpgrade={(application) => { setOpen(false); onUpgrade(application); }} />
+      <ApplicationStatus instance={instance} language={language} submittingUpgradeID={submittingUpgradeID} onUpgrade={(application) => { setOpen(false); onUpgrade(application); }} />
       <Button aria-label={copy(language, `管理${label}：${name}${multiple ? ` · ${capabilityLabel}` : ""}`, `Manage ${label}: ${name}${multiple ? ` · ${capabilityLabel}` : ""}`)} onClick={() => { setOpen(false); onManage(instance.application); }} variant="outline" size="sm">{copy(language, "管理", "Manage")}</Button>
     </div>;
   };
@@ -103,6 +107,9 @@ export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, on
         {parts.map((part) => {
           const label = copy(language, part.zh, part.en);
           const group = part.group;
+          const partBatch = part.id === "node" && group && onBatchUpgrade && group.instances.length > 1
+            ? planBatchUpgrade(`Glivela ${label}`, group.instances, data, language)
+            : null;
           const app = data.apps.find((value) => value.key === part.appKey && isGlivelaCatalogApp(value));
           const canInstall = Boolean(app && !catalogInstallBlocked(app) && eligibleAppNodes(data, app.key).length);
           const blocker = app && !canInstall
@@ -116,7 +123,10 @@ export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, on
               {part.id === "controller" && controller ? <Button onClick={openController} size="sm" variant="outline">{copy(language, "打开 Glivela", "Open Glivela")}</Button> : null}
             </div>
             {group ? <>
-              <AppInstallationSummary group={group} language={language} byNode />
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <AppInstallationSummary group={group} language={language} byNode />
+                {partBatch && partBatch.eligible.length > 0 ? <Button onClick={() => { setOpen(false); onBatchUpgrade?.(`Glivela ${label}`, group.instances); }} size="sm"><CircleArrowUpIcon aria-hidden="true" data-icon="inline-start" />{copy(language, `全部更新 (${partBatch.eligible.length})`, `Update all (${partBatch.eligible.length})`)}</Button> : null}
+              </div>
               <div className="divide-y rounded-xl border">
                 {part.id === "controller"
                   ? group.instances.map((instance) => instanceRow(instance, label, true, false))
