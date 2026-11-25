@@ -315,8 +315,8 @@ describe("batch application upgrades and stable task UI", () => {
 
     act(() => document.getElementById("batch-target-g-entry")?.click());
     expect(submit()?.disabled).toBe(true);
-    expect(document.getElementById("batch-capability-native-services")?.getAttribute("aria-checked")).toBe("false");
-    expect(document.getElementById("batch-capability-host-tcp-budget")?.getAttribute("aria-checked")).toBe("false");
+    expect((document.getElementById("batch-capability-native-services") as HTMLInputElement | null)?.checked).toBe(false);
+    expect((document.getElementById("batch-capability-host-tcp-budget") as HTMLInputElement | null)?.checked).toBe(false);
   });
 
   it("keeps routine active tasks in the compact Sheet trigger while leaving reconciliation recovery inline", () => {
