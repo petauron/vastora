@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/petauron/vastora/compare/v0.2.3...v0.3.0) (2026-11-25)
+
+
+### Features
+
+* **web:** support batch app upgrades and stabilize task layout ([#1421](https://github.com/petauron/vastora/issues/1421)) ([5bc198a](https://github.com/petauron/vastora/commit/5bc198ada019624d2f999187e632167de26b8de2))
+
 ## [0.2.3](https://github.com/petauron/vastora/compare/v0.2.2...v0.2.3) (2026-11-25)
 
 
