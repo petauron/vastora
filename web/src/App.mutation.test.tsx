@@ -15,7 +15,7 @@ vi.mock("./views/HomeView", async () => {
     return <form aria-label="Workspace account" onSubmit={async (event) => {
       event.preventDefault();
       try {
-        await mutate(async () => { operation.calls++; throw operation.error; }, undefined, { reportError: false });
+        await mutate(async () => { operation.calls++; if (operation.error !== undefined) throw operation.error; }, operation.error === undefined ? "Account saved." : undefined, { reportError: false });
       } catch { setError("Save failed; draft retained"); }
     }}>
       <input aria-label="Account draft" value={draft} onChange={(event) => setDraft(event.target.value)} />
@@ -103,5 +103,12 @@ describe("independently bundled app mutation errors", () => {
     expect(container.querySelector("form")).toBe(form);
     expect(form.textContent).toContain("Save failed; draft retained");
     expect(container.textContent).toContain("Connection to Center was interrupted");
+  });
+
+  it("renders transient action notices in a floating overlay outside window flow", async () => {
+    const { container } = await save(undefined);
+    const notice = container.querySelector('[data-slot="floating-notice"]');
+    expect(notice?.textContent).toContain("Account saved.");
+    expect(container.querySelector(".desktop-window-content")?.contains(notice)).toBe(false);
   });
 });

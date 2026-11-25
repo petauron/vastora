@@ -10,16 +10,17 @@ import { operationLabel } from "../appAccess";
 import { catalogInstallBlocked, copy, StateBadge } from "../shared";
 import { publicationNeedsAttention, serviceNeedsAttention, threeXUIAppKey, type InstalledAppInstance } from "../installed-apps-model";
 
-export function ApplicationUpdate({ instance, language, onUpgrade }: { instance: InstalledAppInstance; language: Language; onUpgrade: (application: Application) => void }) {
+export function ApplicationUpdate({ instance, language, onUpgrade, submitting = false }: { instance: InstalledAppInstance; language: Language; onUpgrade: (application: Application) => void; submitting?: boolean }) {
   const { application, app, agent, activeChange } = instance;
   const reapply = isDaylightAppKey(application.appKey) && application.status === "failed" && application.adoptionState === "ready" && !application.updateAvailable;
   if ((!application.updateAvailable && !reapply) || activeChange) return null;
   const legacy = application.appKey === threeXUIAppKey && application.role === "master" && Boolean(application.controllerApplicationId) && application.id !== application.controllerApplicationId;
-  const disabled = !agent?.connected || legacy || catalogInstallBlocked(app) || ["pending", "deploying"].includes(application.status);
+  const disabled = submitting || !agent?.connected || legacy || catalogInstallBlocked(app) || ["pending", "deploying"].includes(application.status);
   const adoptionRequired = application.adoptionState === "pending" || application.adoptionState === "blocked";
   const name = agent?.name ?? application.nodeId;
   return <Button aria-label={copy(language, `${reapply ? "重新应用" : "更新"} ${name} 的应用`, `${reapply ? "Reapply" : "Update"} application on ${name}`)} className="max-md:min-h-11" disabled={disabled} onClick={() => onUpgrade(application)} size="sm" variant="outline" title={copy(language, `${reapply ? "重新应用" : "更新到"} v${application.availableVersion || application.installedVersion}`, `${reapply ? "Reapply" : "Update to"} v${application.availableVersion || application.installedVersion}`)}>
-    {reapply ? copy(language, "重新应用", "Reapply") : adoptionRequired ? copy(language, "处理更新", "Resolve update") : application.status === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "更新", "Update")}
+    {submitting ? <Spinner aria-hidden="true" data-icon="inline-start" className="motion-reduce:animate-none" /> : null}
+    {submitting ? copy(language, "更新中…", "Updating…") : reapply ? copy(language, "重新应用", "Reapply") : adoptionRequired ? copy(language, "处理更新", "Resolve update") : application.status === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "更新", "Update")}
   </Button>;
 }
 
@@ -36,17 +37,17 @@ export function ApplicationPrimaryStatus({ instance, language }: { instance: Ins
     : <StateBadge language={language} value={application.status} />;
 }
 
-export function ApplicationStatus({ instance, language, onUpgrade }: { instance: InstalledAppInstance; language: Language; onUpgrade: (application: Application) => void }) {
+export function ApplicationStatus({ instance, language, onUpgrade, showUpdate = true, submittingUpgradeID }: { instance: InstalledAppInstance; language: Language; onUpgrade: (application: Application) => void; showUpdate?: boolean; submittingUpgradeID?: string | null }) {
   const { application, activeChange, agent } = instance;
   const syncing = application.role === "worker" && (application.nodeSyncStatus === "pending" || application.nodeSyncStatus === "applying");
   const syncFailed = application.role === "worker" && (!instance.controller || !["ready", "pending", "applying"].includes(application.nodeSyncStatus ?? ""));
 
-  return <div className="flex flex-col items-start gap-1.5">
+  return <div className="flex min-h-8 flex-wrap items-center gap-2">
     <ApplicationPrimaryStatus instance={instance} language={language} />
     {!activeChange && syncing ? <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" />{copy(language, "正在接入订阅主机", "Connecting to controller")}</span> : null}
     {!activeChange && syncFailed ? <span className="text-xs text-destructive">{copy(language, "尚未接入订阅主机", "Controller not connected")}</span> : null}
     {agent && !agent.connected ? <span className="text-xs text-destructive">{copy(language, "节点离线", "Node offline")}</span> : null}
-    <ApplicationUpdate instance={instance} language={language} onUpgrade={onUpgrade} />
+    {showUpdate ? <ApplicationUpdate instance={instance} language={language} onUpgrade={onUpgrade} submitting={submittingUpgradeID === application.id} /> : null}
   </div>;
 }
 

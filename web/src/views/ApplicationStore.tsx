@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ArrowUpCircleIcon, ArrowUpRightIcon, DownloadIcon, Grid2X2Icon, SearchIcon, Settings2Icon } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { ArrowUpCircleIcon, ArrowUpRightIcon, CircleArrowUpIcon, DownloadIcon, Grid2X2Icon, SearchIcon, Settings2Icon } from "lucide-react";
 import type { AppData, Application, AppView } from "@/types";
 import type { Language } from "@/translations";
 import { Button } from "@/components/ui/button";
@@ -8,10 +8,11 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { AppIcon } from "@/components/desktop/AppIcon";
 import { AppStore, AppStoreCard, AppStoreTile } from "./AppStore";
 import { AppInstallationSummary } from "./apps/AppInstallationSummary";
+import { planBatchUpgrade } from "./apps/BatchUpgradeSheet";
 import { ApplicationStatus } from "./apps/InstalledApplicationPrimitives";
 import { eligibleAppNodes, installBlocker, localized } from "./appAccess";
 import { catalogInstallBlocked, copy } from "./shared";
-import type { InstalledAppGroup } from "./installed-apps-model";
+import type { InstalledAppGroup, InstalledAppInstance } from "./installed-apps-model";
 import { applicationLaunchURL, isBackgroundApplication } from "./applicationLaunch";
 import { GlivelaStoreCard, glivelaAppKeys, glivelaMatches, isGlivelaCatalogApp } from "./GlivelaStoreCard";
 
@@ -19,7 +20,7 @@ import { DaylightStoreCard, daylightMatches } from "./DaylightStoreCard";
 import { isDaylightAppKey, isDaylightCatalogApp } from "./daylight";
 
 type Section = "installed" | "all" | "updates";
-export function ApplicationStore({ data, groups, language, onInstall, onOpen, onManage, onUpgrade, onSettings }: {
+export function ApplicationStore({ data, groups, language, onInstall, onOpen, onManage, onUpgrade, onBatchUpgrade, submittingUpgradeID, activeTasksControl, onSettings }: {
   data: AppData;
   groups: InstalledAppGroup[];
   language: Language;
@@ -27,6 +28,9 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
   onOpen: (key: string) => void;
   onManage: (application: Application) => void;
   onUpgrade: (application: Application) => void;
+  onBatchUpgrade?: (title: string, instances: InstalledAppInstance[]) => void;
+  submittingUpgradeID?: string | null;
+  activeTasksControl?: ReactNode;
   onSettings: () => void;
 }) {
   const [section, setSection] = useState<Section>(() => groups.length ? "installed" : "all");
@@ -50,14 +54,17 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
   const shownCount = (section === "all" ? matchingCatalog.length : shown.length) + Number(showGlivela) + Number(showDaylight);
   const managedGroup = groups.find((group) => group.id === managedGroupKey);
   const managedApp = managedGroup?.app;
+  const managedBatch = managedGroup && onBatchUpgrade && managedGroup.instances.length > 1
+    ? planBatchUpgrade(name(managedGroup), managedGroup.instances, data, language)
+    : null;
   const canInstallMore = managedApp && !catalogInstallBlocked(managedApp) && eligibleAppNodes(data, managedApp.key).length > 0;
   const sections = [
     { id: "installed" as const, icon: DownloadIcon, label: copy(language, "已安装", "Installed"), count: otherGroups.length + Number(glivelaGroups.length > 0) + Number(daylightGroups.length > 0) },
     { id: "all" as const, icon: Grid2X2Icon, label: copy(language, "所有应用", "All apps"), count: otherCatalog.length + Number(glivelaCatalog.length > 0) + Number(daylightCatalog.length > 0) },
     { id: "updates" as const, icon: ArrowUpCircleIcon, label: copy(language, "可更新", "Updates"), count: updates.length + Number(glivelaHasUpdates) + Number(daylightHasUpdates) },
   ];
-  const glivelaCard = showGlivela ? <GlivelaStoreCard data={data} groups={glivelaGroups} language={language} onInstall={onInstall} onOpen={onOpen} onManage={onManage} onUpgrade={onUpgrade} /> : null;
-  const daylightCard = showDaylight ? <DaylightStoreCard data={data} groups={daylightGroups} language={language} onInstall={onInstall} onOpen={onOpen} onManage={onManage} onUpgrade={onUpgrade} /> : null;
+  const glivelaCard = showGlivela ? <GlivelaStoreCard data={data} groups={glivelaGroups} language={language} onInstall={onInstall} onOpen={onOpen} onManage={onManage} onUpgrade={onUpgrade} onBatchUpgrade={onBatchUpgrade} submittingUpgradeID={submittingUpgradeID} /> : null;
+  const daylightCard = showDaylight ? <DaylightStoreCard data={data} groups={daylightGroups} language={language} onInstall={onInstall} onOpen={onOpen} onManage={onManage} onUpgrade={onUpgrade} onBatchUpgrade={onBatchUpgrade} submittingUpgradeID={submittingUpgradeID} /> : null;
   const actions = (group: InstalledAppGroup, compact = false) => {
     const url = applicationLaunchURL(data, group.appKey);
     const background = isBackgroundApplication(group.app);
@@ -77,7 +84,10 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
     <div className="store-content">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div><h1 className="text-xl font-semibold tracking-tight">{sections.find((item) => item.id === section)!.label}</h1><p className="mt-1 text-xs text-muted-foreground" role="status">{copy(language, `${shownCount} 个应用`, `${shownCount} applications`)}</p></div>
-        <InputGroup className="h-10 w-full sm:w-64"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={copy(language, "搜索应用商店", "Search App Store")} placeholder={copy(language, "搜索应用…", "Search apps…")} type="search" value={query} onChange={(event) => setQuery(event.target.value)} /></InputGroup>
+        <div className="flex flex-wrap items-center gap-2">
+          {activeTasksControl}
+          <InputGroup className="h-10 w-full sm:w-64"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={copy(language, "搜索应用商店", "Search App Store")} placeholder={copy(language, "搜索应用…", "Search apps…")} type="search" value={query} onChange={(event) => setQuery(event.target.value)} /></InputGroup>
+        </div>
       </header>
       {section === "all" ? <AppStore data={data} language={language} onInstall={onInstall} query={search} hideApp={(app) => isGlivelaCatalogApp(app) || isDaylightCatalogApp(app)} extraCard={<>{glivelaCard}{daylightCard}</>} renderInstalledStatus={(key) => { const group = groups.find((value) => value.appKey === key); return group ? <AppInstallationSummary group={group} language={language} compact /> : null; }} renderInstalledDetailActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group) : null; }} renderInstalledSummary={(key) => { const group = groups.find((value) => value.appKey === key); return group ? <AppInstallationSummary group={group} language={language} /> : null; }} renderInstalledActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group, true) : null; }} /> : <div className="store-app-grid">{glivelaCard}{daylightCard}{shown.map((group) => group.app
         ? <AppStoreCard key={group.id} app={group.app} language={language} installedCount={group.instances.length} status={<AppInstallationSummary group={group} language={language} compact />} detailActions={actions(group)} summary={<AppInstallationSummary group={group} language={language} />} canInstall={false} blocker="" onInstall={onInstall} actions={actions(group, true)} />
@@ -86,7 +96,11 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
     </div>
     <Sheet open={Boolean(managedGroup)} onOpenChange={(open) => { if (!open) setManagedGroupKey(null); }}><SheetContent className="sm:max-w-xl">
       {managedGroup ? <><SheetHeader><SheetTitle className="flex items-center gap-3"><AppIcon appKey={managedGroup.appKey} className="size-11" />{name(managedGroup)}</SheetTitle><SheetDescription>{copy(language, `已安装到 ${managedGroup.instances.length} 台主机，选择安装以配置、更新或卸载。`, `Installed on ${managedGroup.instances.length} hosts. Select an installation to configure, update, or uninstall.`)}</SheetDescription></SheetHeader><div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
-        <AppInstallationSummary group={managedGroup} language={language} /><div className="divide-y rounded-xl border">{managedGroup.instances.map((instance) => <div className="flex flex-wrap items-center gap-3 p-4" key={instance.application.id}><div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{instance.agent?.name ?? instance.application.nodeId}</p><p className="mt-1 text-xs text-muted-foreground">v{instance.application.installedVersion} · {instance.siteName}</p></div><ApplicationStatus instance={instance} language={language} onUpgrade={(application) => { setManagedGroupKey(null); onUpgrade(application); }} /><Button onClick={() => { setManagedGroupKey(null); onManage(instance.application); }} variant="outline" size="sm">{copy(language, "管理", "Manage")}</Button></div>)}</div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <AppInstallationSummary group={managedGroup} language={language} />
+          {managedBatch && managedBatch.eligible.length > 0 ? <Button onClick={() => { setManagedGroupKey(null); onBatchUpgrade?.(name(managedGroup), managedGroup.instances); }} size="sm"><CircleArrowUpIcon aria-hidden="true" data-icon="inline-start" />{copy(language, `全部更新 (${managedBatch.eligible.length})`, `Update all (${managedBatch.eligible.length})`)}</Button> : null}
+        </div>
+        <div className="divide-y rounded-xl border">{managedGroup.instances.map((instance) => <div className="flex flex-wrap items-center gap-3 p-4" key={instance.application.id}><div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{instance.agent?.name ?? instance.application.nodeId}</p><p className="mt-1 text-xs text-muted-foreground">v{instance.application.installedVersion} · {instance.siteName}</p></div><ApplicationStatus instance={instance} language={language} submittingUpgradeID={submittingUpgradeID} onUpgrade={(application) => { setManagedGroupKey(null); onUpgrade(application); }} /><Button onClick={() => { setManagedGroupKey(null); onManage(instance.application); }} variant="outline" size="sm">{copy(language, "管理", "Manage")}</Button></div>)}</div>
         {managedApp ? <div className="flex flex-col gap-2"><Button disabled={!canInstallMore} onClick={() => { setManagedGroupKey(null); onInstall(managedApp); }} variant="outline">{copy(language, "安装到其他主机", "Install on another host")}</Button>{!canInstallMore ? <p className="text-xs text-muted-foreground">{catalogInstallBlocked(managedApp) ? copy(language, "请先在控制面板刷新应用目录。", "Refresh the app catalog in Control Panel first.") : installBlocker(data, managedApp.key, language)}</p> : null}</div> : null}
       </div></> : null}
     </SheetContent></Sheet>
