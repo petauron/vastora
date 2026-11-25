@@ -258,14 +258,33 @@ func (s *Store) startNodeDiagnostic(ctx context.Context, agentID, kind string, r
 }
 
 func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
+	var agentVersion string
+	if err := tx.QueryRowContext(ctx, `SELECT version FROM agents WHERE id=?`, agentID).Scan(&agentVersion); err != nil {
+		return nil, err
+	}
+	allowKind := func(kind string) int {
+		if agentVersionCompatibleForTaskKind(agentVersion, kind) {
+			return 1
+		}
+		return 0
+	}
+	allowNetwork := allowKind(nodediagnostics.NetworkKind)
+	allowReturnRoute := allowKind(nodediagnostics.ReturnRouteKind)
+	allowBandwidth := allowKind(nodediagnostics.BandwidthKind)
+	allowHostProfile := allowKind(nodediagnostics.HostProfileKind)
+	allowLinkBandwidth := allowKind(nodediagnostics.LinkBandwidthKind)
+	allowLinkServer := allowKind(nodediagnostics.LinkServerKind)
+	if allowNetwork+allowReturnRoute+allowBandwidth+allowHostProfile+allowLinkBandwidth+allowLinkServer == 0 {
+		return nil, nil
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE node_diagnostic_checks SET state='failed',error='expired' WHERE agent_id=? AND kind IN ('meridian.link-bandwidth','meridian.link-bandwidth-server') AND state='pending' AND attempt=0 AND created_at<?`, agentID, s.now().Add(-4*time.Minute).UTC().Format(time.RFC3339Nano)); err != nil {
 		return nil, err
 	}
 	var id, kind, bindAddress, targetsJSON string
 	var attempt, revision int64
 	err := tx.QueryRowContext(ctx, `SELECT q.id,q.kind,q.bind_address,q.targets_json,q.attempt,q.target_revision FROM node_diagnostic_checks q JOIN agents a ON a.id=q.agent_id
- WHERE q.agent_id=? AND q.state='pending' AND ((q.kind='node.network-quality' AND json_extract(a.capabilities_json,'$.networkDiagnostics')=1) OR (q.kind='node.return-route' AND json_extract(a.capabilities_json,'$.returnRoute')=1) OR (q.kind='node.international-bandwidth' AND json_extract(a.capabilities_json,'$.bandwidthDiagnostics')=1) OR (q.kind='node.host-profile' AND json_extract(a.capabilities_json,'$.hostProfile')=1 AND (q.targets_json='[]' OR (q.targets_json='["os-reinstall-inspect-v1"]' AND json_extract(a.capabilities_json,'$.osReinstallPreflight')=1))) OR (q.kind IN ('meridian.link-bandwidth','meridian.link-bandwidth-server') AND json_extract(a.capabilities_json,'$.glivelaLinkBandwidth')=1 AND json_extract(a.capabilities_json,'$.glivelaLinkRevision')=2))
- ORDER BY q.created_at,q.kind LIMIT 1`, agentID).Scan(&id, &kind, &bindAddress, &targetsJSON, &attempt, &revision)
+ WHERE q.agent_id=? AND q.state='pending' AND ((?=1 AND q.kind='node.network-quality' AND json_extract(a.capabilities_json,'$.networkDiagnostics')=1) OR (?=1 AND q.kind='node.return-route' AND json_extract(a.capabilities_json,'$.returnRoute')=1) OR (?=1 AND q.kind='node.international-bandwidth' AND json_extract(a.capabilities_json,'$.bandwidthDiagnostics')=1) OR (?=1 AND q.kind='node.host-profile' AND json_extract(a.capabilities_json,'$.hostProfile')=1 AND (q.targets_json='[]' OR (q.targets_json='["os-reinstall-inspect-v1"]' AND json_extract(a.capabilities_json,'$.osReinstallPreflight')=1))) OR ((?=1 AND q.kind='meridian.link-bandwidth' OR ?=1 AND q.kind='meridian.link-bandwidth-server') AND json_extract(a.capabilities_json,'$.glivelaLinkBandwidth')=1 AND json_extract(a.capabilities_json,'$.glivelaLinkRevision')=2))
+ ORDER BY q.created_at,q.kind LIMIT 1`, agentID, allowNetwork, allowReturnRoute, allowBandwidth, allowHostProfile, allowLinkBandwidth, allowLinkServer).Scan(&id, &kind, &bindAddress, &targetsJSON, &attempt, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

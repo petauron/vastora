@@ -136,8 +136,18 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			return commitAuthorized(tx, nil)
 		}
 		var landingOnly bool
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json, '$.landingOnly'), 0) FROM agents WHERE id = ?`, agentID).Scan(&landingOnly); err != nil {
+		var currentVersion string
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(capabilities_json, '$.landingOnly'), 0), version FROM agents WHERE id = ?`, agentID).Scan(&landingOnly, &currentVersion); err != nil {
 			return err
+		}
+		if !agentVersionCompatibleForTask(currentVersion, task) {
+			allowed, err := s.reviewedPackageRetryAllowed(ctx, tx, agentID, currentVersion, *task)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return errors.New("center: Agent version does not meet task compatibility requirement")
+			}
 		}
 		nativeLifecycle := task.Kind == "application.apply" && task.Manifest.Runtime != nil && (controlplane.NativeLifecycleAllowed(task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities) || controlplane.NativeWebsiteConfigureAllowed(task.AppKey, task.Manifest.Runtime.Kind, task.Manifest.Runtime.Version, task.Operation, task.AuthorizedCapabilities))
 		if landingOnly && !nativeLifecycle && task.Kind != "landing.server.apply" && task.Kind != "agent.update" && task.Kind != "agent.decommission" && task.Kind != nodesecurity.Kind && task.Kind != nodeswap.Kind && task.Kind != nodesite.Kind && task.Kind != tailscalehost.UpdateKind {
@@ -189,6 +199,9 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, errExecutionBlocked
 	}
 	if err := authenticateAgentInQuery(ctx, tx, agentID, credential); err != nil {
+		return nil, err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation, version FROM agents WHERE id = ?`, agentID).Scan(&agentRuntimeGeneration, &agentVersion); err != nil {
 		return nil, err
 	}
 	var tailscalePending bool
@@ -264,65 +277,69 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			return updateTask, nil
 		}
 	}
-	// A newly restarted Center can expose migrated desired state before its
-	// rollout loop has queued Agent updates. Do not let an older Agent claim
-	// work produced by the newer Center during that window. Once the rollout
-	// queues an update, the update remains the first claim above.
-	if agentVersionBehindTarget(agentVersion, Version) {
-		// An exact reviewed retry retains its original package contract. Blocking
-		// it on the current Center version deadlocks with the update policy,
-		// which correctly requires runtime recovery to finish first.
-		if agentVersionBehindTarget(agentVersion, "0.1.0-alpha.292") {
-			return nil, nil
+	// Ordinary tasks are gated by each task kind's declared Agent version
+	// compatibility contract (and per-task capability/runtime checks), so
+	// compatible Agents continue running work across Center-only releases
+	// while incompatible Agents stay fenced until upgraded.
+	if agentVersionCompatibleForTaskKind(agentVersion, "application.adopt") {
+		adoptionTask, adoptionErr := s.claimApplicationAdoption(ctx, tx, agentID, requiredTaskID)
+		if adoptionErr != nil {
+			return nil, adoptionErr
 		}
+		if adoptionTask != nil {
+			if err := commitTask(tx, adoptionTask); err != nil {
+				return nil, err
+			}
+			return adoptionTask, nil
+		}
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, "application.maintenance") {
+		maintenanceTask, maintenanceErr := s.claimApplicationMaintenance(ctx, tx, agentID, requiredTaskID)
+		if maintenanceErr != nil {
+			return nil, maintenanceErr
+		}
+		if maintenanceTask != nil {
+			if err := commitTask(tx, maintenanceTask); err != nil {
+				return nil, err
+			}
+			return maintenanceTask, nil
+		}
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, "application.apply") {
 		pending, err := readPendingApplicationDeployment(ctx, tx, agentID, requiredTaskID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
+		if err == nil {
+			return s.claimApplicationDeployment(ctx, tx, agentID, agentRuntimeGeneration, pending, commitTask)
 		}
-		if err != nil {
-			return nil, err
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("center: read pending task: %w", err)
 		}
-		reviewed := pending.task
-		reviewed.Kind = "application.apply"
-		reviewed.Attempt = pending.attempt + 1
-		if err := json.Unmarshal(pending.manifest, &reviewed.Manifest); err != nil {
-			return nil, err
+	} else if agentVersionCompatible(agentVersion, minCompatibleAgentVersion) {
+		// An exact operator-reviewed retry retains its original package
+		// contract. Allowing it to finish prevents a deadlock with
+		// agent.update, which requires runtime recovery to clear first.
+		pending, err := readPendingApplicationDeployment(ctx, tx, agentID, requiredTaskID)
+		if err == nil {
+			reviewed := pending.task
+			reviewed.Kind = "application.apply"
+			reviewed.Attempt = pending.attempt + 1
+			if err := json.Unmarshal(pending.manifest, &reviewed.Manifest); err != nil {
+				return nil, err
+			}
+			allowed, err := s.reviewedPackageRetryAllowed(ctx, tx, agentID, agentVersion, reviewed)
+			if err != nil {
+				return nil, err
+			}
+			if allowed {
+				return s.claimApplicationDeployment(ctx, tx, agentID, agentRuntimeGeneration, pending, commitTask)
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("center: read pending task: %w", err)
 		}
-		if err := s.attachPackageRecovery(ctx, tx, agentID, &reviewed); err != nil {
-			return nil, err
-		}
-		if reviewed.PackageRecovery == nil || reviewed.PackageRecovery.ReceiptSHA256 != "" {
-			return nil, nil
-		}
-		return s.claimApplicationDeployment(ctx, tx, agentID, agentRuntimeGeneration, pending, commitTask)
 	}
-	adoptionTask, adoptionErr := s.claimApplicationAdoption(ctx, tx, agentID, requiredTaskID)
-	if adoptionErr != nil {
-		return nil, adoptionErr
+	if requiredTaskID != "" {
+		return nil, nil
 	}
-	if adoptionTask != nil {
-		if err := commitTask(tx, adoptionTask); err != nil {
-			return nil, err
-		}
-		return adoptionTask, nil
-	}
-	maintenanceTask, maintenanceErr := s.claimApplicationMaintenance(ctx, tx, agentID, requiredTaskID)
-	if maintenanceErr != nil {
-		return nil, maintenanceErr
-	}
-	if maintenanceTask != nil {
-		if err := commitTask(tx, maintenanceTask); err != nil {
-			return nil, err
-		}
-		return maintenanceTask, nil
-	}
-	pending, err := readPendingApplicationDeployment(ctx, tx, agentID, requiredTaskID)
-	if errors.Is(err, sql.ErrNoRows) {
-		var task AgentTask
-		var attempt int64
-		if requiredTaskID != "" {
-			return nil, nil
-		}
+	if agentVersionCompatibleForTaskKind(agentVersion, "application.command") {
 		commandTask, commandErr := s.claimApplicationCommand(ctx, tx, agentID)
 		if errors.Is(commandErr, errApplicationCommandDiscarded) {
 			if err := commitTask(tx, nil); err != nil {
@@ -339,6 +356,8 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			}
 			return commandTask, nil
 		}
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, "landing.server.apply") {
 		landingTask, landingErr := s.claimLandingServerTask(ctx, tx, agentID)
 		if landingErr != nil {
 			return nil, landingErr
@@ -349,6 +368,8 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			}
 			return landingTask, nil
 		}
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, "landing.proxy.apply") {
 		proxyTask, proxyErr := s.claimLandingProxyTask(ctx, tx, agentID)
 		if proxyErr != nil {
 			return nil, proxyErr
@@ -359,6 +380,8 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			}
 			return proxyTask, nil
 		}
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, "node.listener.apply") {
 		listenerTask, listenerErr := s.claimNodeListenerTask(ctx, tx, agentID)
 		if listenerErr != nil {
 			return nil, listenerErr
@@ -369,12 +392,14 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			}
 			return listenerTask, nil
 		}
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, "gateway.component.apply") {
 		var desiredStatus string
-		var generation int64
-		err = tx.QueryRowContext(ctx, `SELECT desired_status, generation, attempt FROM gateway_components
+		var generation, attempt int64
+		err := tx.QueryRowContext(ctx, `SELECT desired_status, generation, attempt FROM gateway_components
 			WHERE gateway_node_id = ? AND generation > applied_generation AND status = 'pending'`, agentID).Scan(&desiredStatus, &generation, &attempt)
 		if err == nil {
-			task = AgentTask{Kind: "gateway.component.apply", ID: gatewayComponentTaskID(agentID, generation), Attempt: attempt + 1, Operation: desiredStatus, Revision: generation}
+			task := AgentTask{Kind: "gateway.component.apply", ID: gatewayComponentTaskID(agentID, generation), Attempt: attempt + 1, Operation: desiredStatus, Revision: generation}
 			now := s.now().UTC()
 			claimed, err := tx.ExecContext(ctx, `UPDATE gateway_components SET status = 'applying', attempt = attempt + 1, lease_expires_at = ?, updated_at = ? WHERE gateway_node_id = ? AND generation = ? AND attempt = ? AND status = 'pending'`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, generation, attempt)
 			if err != nil {
@@ -394,127 +419,140 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("center: read gateway component state: %w", err)
 		}
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, "gateway.routes.apply") {
 		var desiredJSON []byte
-		var revision int64
-		err = tx.QueryRowContext(ctx, `SELECT s.desired_revision, s.desired_json, s.attempt FROM gateway_states s
+		var revision, attempt int64
+		err := tx.QueryRowContext(ctx, `SELECT s.desired_revision, s.desired_json, s.attempt FROM gateway_states s
 			JOIN gateway_components c ON c.gateway_node_id = s.gateway_node_id
 			WHERE s.gateway_node_id = ? AND c.desired_status = 'running' AND c.status = 'ready'
 			AND s.desired_revision > s.applied_revision AND s.status = 'pending'`, agentID).Scan(&revision, &desiredJSON, &attempt)
-		if errors.Is(err, sql.ErrNoRows) {
-			tunnelTask, tunnelErr := s.claimTunnelTask(ctx, tx, agentID)
-			if tunnelErr != nil {
-				return nil, fmt.Errorf("center: read Tunnel desired state: %w", tunnelErr)
+		if err == nil {
+			var state gateway.DesiredState
+			if json.Unmarshal(desiredJSON, &state) != nil || state.Validate() != nil || state.Revision != revision {
+				return nil, errors.New("center: invalid stored gateway desired state")
 			}
-			if tunnelTask == nil {
-				decommissionTask, decommissionErr := s.claimAgentDecommission(ctx, tx, agentID)
-				if decommissionErr != nil {
-					return nil, decommissionErr
-				}
-				if decommissionTask == nil {
-					updateTask, updateErr := s.claimTailscaleUpdate(ctx, tx, agentID)
-					if updateErr != nil {
-						return nil, updateErr
-					}
-					if updateTask != nil {
-						if err := commitTask(tx, updateTask); err != nil {
-							return nil, err
-						}
-						return updateTask, nil
-					}
-					siteTask, siteErr := s.claimNodeSite(ctx, tx, agentID)
-					if siteErr != nil {
-						return nil, siteErr
-					}
-					if siteTask != nil {
-						if err := commitTask(tx, siteTask); err != nil {
-							return nil, err
-						}
-						return siteTask, nil
-					}
-					securityTask, securityErr := s.claimNodeSecurity(ctx, tx, agentID)
-					if securityErr != nil {
-						return nil, securityErr
-					}
-					if securityTask != nil {
-						if err := commitTask(tx, securityTask); err != nil {
-							return nil, err
-						}
-						return securityTask, nil
-					}
-					swapTask, swapErr := s.claimNodeSwap(ctx, tx, agentID)
-					if swapErr != nil {
-						return nil, swapErr
-					}
-					if swapTask != nil {
-						if err := commitTask(tx, swapTask); err != nil {
-							return nil, err
-						}
-						return swapTask, nil
-					}
-					diagnostic, diagnosticErr := s.claimNodeDiagnostic(ctx, tx, agentID)
-					if diagnosticErr != nil {
-						return nil, diagnosticErr
-					}
-					if diagnostic != nil {
-						if err := commitTask(tx, diagnostic); err != nil {
-							return nil, err
-						}
-						return diagnostic, nil
-					}
-					check, err := s.claimIPQuality(ctx, tx, agentID)
-					if err != nil || check == nil {
-						return nil, err
-					}
-					if err := commitTask(tx, check); err != nil {
-						return nil, err
-					}
-					return check, nil
-				}
-				if err := commitTask(tx, decommissionTask); err != nil {
-					return nil, err
-				}
-				return decommissionTask, nil
+			certificates, err := s.gatewayCertificates(ctx, tx, agentID, state)
+			if err != nil {
+				return nil, err
 			}
+			task := AgentTask{Kind: "gateway.routes.apply", ID: gatewayRouteTaskID(agentID, revision), Attempt: attempt + 1, Revision: revision, GatewayState: &state, GatewayCertificates: certificates}
+			now := s.now().UTC()
+			claimed, err := tx.ExecContext(ctx, `UPDATE gateway_states SET status = 'applying', attempt = attempt + 1, lease_expires_at = ?, updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ? AND attempt = ? AND status = 'pending'`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, revision, attempt)
+			if err != nil {
+				return nil, fmt.Errorf("center: claim gateway desired state: %w", err)
+			}
+			if changed, _ := claimed.RowsAffected(); changed != 1 {
+				return nil, errors.New("center: gateway desired state changed while claiming")
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE routes SET status = 'applying', updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ?`, s.now().UTC().Format(time.RFC3339Nano), agentID, revision); err != nil {
+				return nil, err
+			}
+			if err := s.recordTaskEvent(ctx, tx, task.ID, agentID, task.Kind, revision, "claimed", fmt.Sprintf("attempt %d", attempt+1)); err != nil {
+				return nil, err
+			}
+			if err := commitTask(tx, &task); err != nil {
+				return nil, err
+			}
+			return &task, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("center: read gateway desired state: %w", err)
+		}
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, "tunnel.state.apply") {
+		tunnelTask, tunnelErr := s.claimTunnelTask(ctx, tx, agentID)
+		if tunnelErr != nil {
+			return nil, fmt.Errorf("center: read Tunnel desired state: %w", tunnelErr)
+		}
+		if tunnelTask != nil {
 			if err := commitTask(tx, tunnelTask); err != nil {
 				return nil, err
 			}
 			return tunnelTask, nil
 		}
-		if err != nil {
-			return nil, fmt.Errorf("center: read gateway desired state: %w", err)
-		}
-		var state gateway.DesiredState
-		if json.Unmarshal(desiredJSON, &state) != nil || state.Validate() != nil || state.Revision != revision {
-			return nil, errors.New("center: invalid stored gateway desired state")
-		}
-		certificates, err := s.gatewayCertificates(ctx, tx, agentID, state)
-		if err != nil {
-			return nil, err
-		}
-		task = AgentTask{Kind: "gateway.routes.apply", ID: gatewayRouteTaskID(agentID, revision), Attempt: attempt + 1, Revision: revision, GatewayState: &state, GatewayCertificates: certificates}
-		now := s.now().UTC()
-		claimed, err := tx.ExecContext(ctx, `UPDATE gateway_states SET status = 'applying', attempt = attempt + 1, lease_expires_at = ?, updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ? AND attempt = ? AND status = 'pending'`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, revision, attempt)
-		if err != nil {
-			return nil, fmt.Errorf("center: claim gateway desired state: %w", err)
-		}
-		if changed, _ := claimed.RowsAffected(); changed != 1 {
-			return nil, errors.New("center: gateway desired state changed while claiming")
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE routes SET status = 'applying', updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ?`, s.now().UTC().Format(time.RFC3339Nano), agentID, revision); err != nil {
-			return nil, err
-		}
-		if err := s.recordTaskEvent(ctx, tx, task.ID, agentID, task.Kind, revision, "claimed", fmt.Sprintf("attempt %d", attempt+1)); err != nil {
-			return nil, err
-		}
-		if err := commitTask(tx, &task); err != nil {
-			return nil, err
-		}
-		return &task, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("center: read pending task: %w", err)
+	if agentVersionCompatibleForTaskKind(agentVersion, "agent.decommission") {
+		decommissionTask, decommissionErr := s.claimAgentDecommission(ctx, tx, agentID)
+		if decommissionErr != nil {
+			return nil, decommissionErr
+		}
+		if decommissionTask != nil {
+			if err := commitTask(tx, decommissionTask); err != nil {
+				return nil, err
+			}
+			return decommissionTask, nil
+		}
 	}
-	return s.claimApplicationDeployment(ctx, tx, agentID, agentRuntimeGeneration, pending, commitTask)
+	if agentVersionCompatibleForTaskKind(agentVersion, tailscalehost.UpdateKind) {
+		updateTask, updateErr := s.claimTailscaleUpdate(ctx, tx, agentID)
+		if updateErr != nil {
+			return nil, updateErr
+		}
+		if updateTask != nil {
+			if err := commitTask(tx, updateTask); err != nil {
+				return nil, err
+			}
+			return updateTask, nil
+		}
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, nodesite.Kind) {
+		siteTask, siteErr := s.claimNodeSite(ctx, tx, agentID)
+		if siteErr != nil {
+			return nil, siteErr
+		}
+		if siteTask != nil {
+			if err := commitTask(tx, siteTask); err != nil {
+				return nil, err
+			}
+			return siteTask, nil
+		}
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, nodesecurity.Kind) {
+		securityTask, securityErr := s.claimNodeSecurity(ctx, tx, agentID)
+		if securityErr != nil {
+			return nil, securityErr
+		}
+		if securityTask != nil {
+			if err := commitTask(tx, securityTask); err != nil {
+				return nil, err
+			}
+			return securityTask, nil
+		}
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, nodeswap.Kind) {
+		swapTask, swapErr := s.claimNodeSwap(ctx, tx, agentID)
+		if swapErr != nil {
+			return nil, swapErr
+		}
+		if swapTask != nil {
+			if err := commitTask(tx, swapTask); err != nil {
+				return nil, err
+			}
+			return swapTask, nil
+		}
+	}
+	diagnostic, diagnosticErr := s.claimNodeDiagnostic(ctx, tx, agentID)
+	if diagnosticErr != nil {
+		return nil, diagnosticErr
+	}
+	if diagnostic != nil {
+		if err := commitTask(tx, diagnostic); err != nil {
+			return nil, err
+		}
+		return diagnostic, nil
+	}
+	if agentVersionCompatibleForTaskKind(agentVersion, ipquality.Kind) {
+		check, err := s.claimIPQuality(ctx, tx, agentID)
+		if err != nil || check == nil {
+			return nil, err
+		}
+		if err := commitTask(tx, check); err != nil {
+			return nil, err
+		}
+		return check, nil
+	}
+	return nil, nil
 }
 
 type pendingApplicationDeployment struct {
