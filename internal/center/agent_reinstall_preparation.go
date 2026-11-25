@@ -295,7 +295,7 @@ func (s *Store) claimAgentReinstallTask(ctx context.Context, agentID, credential
 	if err != nil {
 		return nil, errExecutionAuthorization
 	}
-	if agentVersionBehindTarget(version, Version) {
+	if !agentVersionCompatibleForTaskKind(version, "application.apply") {
 		return nil, errExecutionBlocked
 	}
 	if blocked, err := unresolvedExecutionBlocksAgentWork(ctx, tx, agentID, version); err != nil {
