@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/petauron/vastora/compare/v0.3.0...v0.3.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **center:** gate task claims by per-task Agent compatibility instead of Center version ([#1424](https://github.com/petauron/vastora/issues/1424)) ([6627d52](https://github.com/petauron/vastora/commit/6627d52d32336f9741ed9ca35d314d9b2ec2d232))
+
 ## [0.3.0](https://github.com/petauron/vastora/compare/v0.2.3...v0.3.0) (2026-11-25)
 
 
