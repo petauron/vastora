@@ -83,3 +83,18 @@ func TestRolledBackTaskEventDoesNotNotifyWaiters(t *testing.T) {
 		store.taskChanges.unsubscribe("task:rollback-test-task", waiter)
 	}
 }
+
+func waitForChangeWaiter(t *testing.T, notifier *changeNotifier, key string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		notifier.mu.Lock()
+		waiting := len(notifier.waiters[key]) > 0
+		notifier.mu.Unlock()
+		if waiting {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("long-poll waiter for %q did not register in time", key)
+}

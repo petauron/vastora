@@ -514,7 +514,7 @@ func TestTaskLongPollWakesWhenADeploymentIsQueued(t *testing.T) {
 		}
 		result <- task
 	}()
-	time.Sleep(50 * time.Millisecond)
+	waitForChangeWaiter(t, &store.taskChanges, "agent:"+node.ID)
 	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`), AuthorizedCapabilities: testCapabilityGrant("root")})
 	if err != nil {
 		t.Fatal(err)
@@ -526,7 +526,7 @@ func TestTaskLongPollWakesWhenADeploymentIsQueued(t *testing.T) {
 		if task == nil || task.ID != deployment.ID || task.Kind != "application.apply" || task.AppKey != cpaAppKey {
 			t.Fatalf("unexpected long-polled task: %#v", task)
 		}
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(3 * time.Second):
 		t.Fatal("queued deployment did not wake the Agent long poll")
 	}
 }

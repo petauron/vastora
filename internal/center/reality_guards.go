@@ -97,6 +97,9 @@ func (s *Store) queueRealityGuardListenerIsolation(ctx context.Context) error {
 	if err := rows.Close(); err != nil {
 		return err
 	}
+	if len(listenerNodes) == 0 {
+		return nil
+	}
 	now := s.now().UTC()
 	for _, nodeID := range listenerNodes {
 		if err := s.queueNodeListenerState(ctx, tx, nodeID, now); err != nil {
