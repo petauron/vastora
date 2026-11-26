@@ -36,6 +36,17 @@ function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   )
 }
 
+function subscribeDocumentLang(onStoreChange: () => void) {
+  if (typeof document === "undefined" || typeof MutationObserver === "undefined") return () => {}
+  const observer = new MutationObserver(onStoreChange)
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] })
+  return () => observer.disconnect()
+}
+
+function readDocumentLang() {
+  return typeof document === "undefined" ? "en" : document.documentElement.lang || "en"
+}
+
 function SheetContent({
   className,
   children,
@@ -48,11 +59,8 @@ function SheetContent({
   showCloseButton?: boolean
   closeLabel?: string
 }) {
-  const resolvedCloseLabel =
-    closeLabel ??
-    (typeof document !== "undefined" && document.documentElement.lang.toLowerCase().startsWith("zh")
-      ? "关闭"
-      : "Close")
+  const documentLang = React.useSyncExternalStore(subscribeDocumentLang, readDocumentLang, () => "en")
+  const resolvedCloseLabel = closeLabel ?? (documentLang.toLowerCase().startsWith("zh") ? "关闭" : "Close")
   return (
     <SheetPortal>
       <SheetOverlay />

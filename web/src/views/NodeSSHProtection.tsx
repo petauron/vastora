@@ -12,11 +12,6 @@ import { copy, formatDate } from "./shared";
 
 type Result = { controller: string; name: string; runtimes: SSHProtectionInventory["runtimes"]; failed: boolean };
 
-function formatReportTime(language: Language, value?: string) {
-  if (!value) return "—";
-  return Number.isFinite(Date.parse(value)) ? formatDate(language, value) : value;
-}
-
 export function NodeSSHProtection({ nodeId, connected, applications, language }: { nodeId: string; connected: boolean; applications: Application[]; language: Language }) {
   const [refresh, setRefresh] = useState(0);
   const [results, setResults] = useState<Result[] | null>(null);
@@ -56,7 +51,7 @@ export function NodeSSHProtection({ nodeId, connected, applications, language }:
         {result.failed ? <p className="text-xs text-muted-foreground">{copy(language, "读取失败，保护状态未知，请刷新重试。", "Read failed; protection status is unknown. Refresh to retry.")}</p> : result.runtimes.length === 0 ? <p className="text-xs text-muted-foreground">{copy(language, "未找到此主机对应的运行节点，无法确认策略。", "No mapped runtime was found for this host; policy is unknown.")}</p> : result.runtimes.map(runtime => <div key={runtime.id} className="space-y-1 text-xs">
           <div className="flex flex-wrap items-center gap-2"><Badge variant="secondary">{runtime.role === "entry" ? copy(language, "入口", "Entry") : copy(language, "落地", "Landing")}</Badge><code className="break-all rounded bg-muted px-1.5 py-0.5 text-[11px]">{runtime.id}</code></div>
           <p className="leading-5">{typeof runtime.publicSSHConfigured !== "boolean" ? copy(language, "控制端未提供保护状态，请升级后重试。", "The controller did not provide protection status. Upgrade and retry.") : !runtime.publicSSHConfigured ? copy(language, "未配置完整宿主公网地址；代理出口 TCP 22 按默认策略阻断。", "Complete host public addresses are not configured; proxy egress TCP 22 is blocked by default policy.") : connected && runtime.runtimeReady === true ? copy(language, "保护地址已配置，控制端报告当前修订已应用；SSH 可用性仍需单独验证。", "Protection addresses are configured and the controller reports the current revision applied; SSH connectivity requires separate verification.") : copy(language, "保护地址已配置，但节点离线、修订待应用或上报已过期，当前生效状态未知。", "Protection addresses are configured, but the node is offline, pending application or its report is stale; current protection is unknown.")}</p>
-          <FieldDescription>{copy(language, "修订", "Revision")}: {runtime.revision || "—"} · {copy(language, "最后上报", "Last report")}: {formatReportTime(language, runtime.reportedAt)}</FieldDescription>
+          <FieldDescription>{copy(language, "修订", "Revision")}: {runtime.revision || "—"} · {copy(language, "最后上报", "Last report")}: {formatDate(language, runtime.reportedAt)}</FieldDescription>
         </div>)}
       </div>)}
     </div>

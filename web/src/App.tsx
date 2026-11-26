@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CircleAlertIcon, CircleCheckIcon, LogOutIcon, RefreshCwIcon } from "lucide-react";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { CredentialPage } from "./views/CredentialPage";
@@ -70,6 +70,7 @@ export function App() {
 
   const setLanguage = (next: Language) => {
     window.localStorage.setItem("vastora.language", next);
+    document.documentElement.lang = next;
     setLanguageState(next);
   };
 
@@ -118,6 +119,7 @@ export function App() {
 
   const handleLoadError = useCallback((error: unknown) => {
     if (error instanceof APIError && error.status === 401) {
+      setNotice(null);
       setPhase("login");
     }
   }, []);
@@ -205,7 +207,7 @@ export function App() {
       screenLoadController.current?.abort();
     };
   }, [initialize]);
-  useEffect(() => { document.documentElement.lang = language; }, [language]);
+  useLayoutEffect(() => { document.documentElement.lang = language; }, [language]);
   useEffect(() => {
     const onPopState = () => {
       const target = screenFromPath();
@@ -245,7 +247,10 @@ export function App() {
     const poll = async () => {
       if (document.visibilityState === "visible") {
         try { await loadScreen(screen); } catch (error) {
-          if (error instanceof APIError && error.status === 401 && !cancelled) setPhase("login");
+          if (error instanceof APIError && error.status === 401 && !cancelled) {
+            setNotice(null);
+            setPhase("login");
+          }
         }
       }
       if (!cancelled) timer = window.setTimeout(() => void poll(), interval);
@@ -269,6 +274,7 @@ export function App() {
       await operation();
     } catch (error) {
       if (isAPIError(error) && error.status === 401) {
+        setNotice(null);
         setPhase("login");
         return;
       }
@@ -284,6 +290,7 @@ export function App() {
       await loadScreen(activeScreen.current);
     } catch (error) {
       if (error instanceof APIError && error.status === 401) {
+        setNotice(null);
         setPhase("login");
       } else {
         const refreshMessage = copy(language, "操作已完成，但页面状态刷新失败；系统会自动重试。", "The operation completed, but the page could not refresh; it will retry automatically.");
@@ -340,7 +347,7 @@ export function App() {
       }
     }}
   /></Suspense>;
-  if (phase === "login") return <CredentialPage language={language} loginProtection={setupStatus?.loginProtection} mode="login" onLanguage={setLanguage} onSubmit={async (username, password, turnstileToken) => { await api.login(username, password, turnstileToken); const setup = await api.setupStatus(); setSetupStatus(setup); if (!setup.onboardingComplete) { setPhase("setup-wizard"); return; } const target = screenFromPath(); activeScreen.current = target; await loadScreen(target); setScreen(target); setWorkspaceKey(workspaceFromURL()); setWindows(openWindow(emptyWindows(), target, workspaceFromURL())); setPhase("ready"); }} />;
+  if (phase === "login") return <CredentialPage language={language} loginProtection={setupStatus?.loginProtection} mode="login" onLanguage={setLanguage} onSubmit={async (username, password, turnstileToken) => { await api.login(username, password, turnstileToken); setNotice(null); const setup = await api.setupStatus(); setSetupStatus(setup); if (!setup.onboardingComplete) { setPhase("setup-wizard"); return; } const target = screenFromPath(); activeScreen.current = target; await loadScreen(target); setScreen(target); setWorkspaceKey(workspaceFromURL()); setWindows(openWindow(emptyWindows(), target, workspaceFromURL())); setPhase("ready"); }} />;
   if (!data) return <StartupState language={language} desktop={screen === "home"} />;
 
   const appName = (key: string) => { const app = data.apps.find((value) => value.key === key); return app ? localized(app, language, "name") : data.applications.find((value) => value.appKey === key)?.name ?? copy(language, "应用", "Application"); };
@@ -379,7 +386,7 @@ export function App() {
               {loadedScreens.has(windowScreen) && windowScreen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(windowScreen) && windowScreen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} onNavigate={navigate} /> : null}
               {loadedScreens.has(windowScreen) && windowScreen === "assistant" ? <AssistantView language={language} onOpenSettings={() => openSettingsSection("assistant")} /> : null}
-              {loadedScreens.has(windowScreen) && windowScreen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setWindows(emptyWindows()); setPhase("login"); }} onNavigate={navigate} onRefresh={refreshSettings} /> : null}
+              {loadedScreens.has(windowScreen) && windowScreen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setNotice(null); setData(null); setLoadedScreens(new Set()); setWindows(emptyWindows()); setPhase("login"); }} onNavigate={navigate} onRefresh={refreshSettings} /> : null}
             </Suspense>
           </div>
         );

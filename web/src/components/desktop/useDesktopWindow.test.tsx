@@ -93,6 +93,8 @@ describe("application window interaction", () => {
     expect(rect().slice(2)).toEqual([1080, 720]);
     render("activity");
     expect(rect().slice(2)).toEqual([1080, 760]);
+    render("assistant");
+    expect(rect().slice(2)).toEqual([1080, 760]);
     render("overview");
     expect(rect().slice(2)).toEqual([1340, 880]);
   });

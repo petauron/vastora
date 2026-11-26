@@ -66,13 +66,25 @@ describe("landing-only node enrollment", () => {
     expect(securitySpy).not.toHaveBeenCalled();
     expect(swapSpy).not.toHaveBeenCalled();
     expect(inspectSpy).not.toHaveBeenCalled();
-    expect(document.querySelector('[data-slot="sheet-footer"]')?.textContent).toContain("保存信息");
+    const visibleFooter = () => [...document.querySelectorAll<HTMLElement>('[data-slot="sheet-footer"]')].find((el) => !el.closest("[hidden]"));
+    expect(visibleFooter()?.textContent).toContain("保存信息");
 
     await act(async () => { tabs[1]?.click(); await Promise.resolve(); });
     expect(securitySpy).toHaveBeenCalledOnce();
     expect(document.body.textContent).toContain("公网安全基线");
     expect(document.body.textContent).toContain("SSH 保护策略");
-    expect(document.querySelector('[data-slot="sheet-footer"]')?.textContent).not.toContain("保存信息");
+    expect(visibleFooter()?.textContent).not.toContain("保存信息");
+
+    // Draft inputs in Security survive switching back to General and returning, without refetching.
+    const ifaceInput = document.querySelector<HTMLInputElement>('input[placeholder="eth0"]')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(ifaceInput, "enp1s0");
+      ifaceInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { tabs[0]?.click(); await Promise.resolve(); });
+    await act(async () => { tabs[1]?.click(); await Promise.resolve(); });
+    expect(securitySpy).toHaveBeenCalledOnce();
+    expect(document.querySelector<HTMLInputElement>('input[placeholder="eth0"]')?.value).toBe("enp1s0");
 
     await act(async () => { tabs[2]?.click(); await Promise.resolve(); });
     expect(swapSpy).toHaveBeenCalledOnce();
@@ -80,18 +92,67 @@ describe("landing-only node enrollment", () => {
     expect(taskSpy).toHaveBeenCalledOnce();
     expect(document.body.textContent).toContain("主机 Zram 与 Swap 优化");
     expect(document.body.textContent).toContain("系统重装");
+
+    // Closing while on a visited secondary tab and reopening the same node resets to General without Render-1 refetches.
+    await act(async () => {
+      [...(visibleFooter()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent === "关闭")?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(`[aria-label="管理 ${data.agents[0].name}"]`)?.click();
+      await Promise.resolve();
+    });
+    const reopenedTabs = [...document.querySelectorAll<HTMLElement>('[role="tab"]')];
+    expect(reopenedTabs[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(visibleFooter()?.textContent).toContain("保存信息");
+    expect(securitySpy).toHaveBeenCalledOnce();
+    expect(swapSpy).toHaveBeenCalledOnce();
+    expect(inspectSpy).toHaveBeenCalledOnce();
+    expect(taskSpy).toHaveBeenCalledOnce();
+
+    // Visiting secondary tabs, returning to General, and cancelling danger mode does not remount hidden secondary tabs.
+    await act(async () => { reopenedTabs[1]?.click(); await Promise.resolve(); });
+    await act(async () => { reopenedTabs[2]?.click(); await Promise.resolve(); });
+    expect(securitySpy).toHaveBeenCalledTimes(2);
+    expect(swapSpy).toHaveBeenCalledTimes(2);
+    expect(inspectSpy).toHaveBeenCalledTimes(2);
+    expect(taskSpy).toHaveBeenCalledTimes(2);
+    await act(async () => { reopenedTabs[0]?.click(); await Promise.resolve(); });
+    act(() => [...(visibleFooter()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.includes("停用节点"))?.click());
+    expect(document.querySelector("#disable-node-confirmation")).not.toBeNull();
+    await act(async () => {
+      [...document.querySelectorAll<HTMLButtonElement>('[data-slot="sheet-footer"] button')].find((button) => button.textContent === "取消")?.click();
+      await Promise.resolve();
+    });
+    expect(securitySpy).toHaveBeenCalledTimes(2);
+    expect(swapSpy).toHaveBeenCalledTimes(2);
+    expect(inspectSpy).toHaveBeenCalledTimes(2);
+    expect(taskSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("opens location management directly from the Nodes page header", () => {
+  it("opens location management directly from the Nodes page header and returns focus after editing", async () => {
     const data = dashboard();
     const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
-    const manageLocations = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("管理位置"));
+    const manageLocations = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("管理位置"))!;
     expect(manageLocations).toBeDefined();
-    act(() => manageLocations?.click());
+    act(() => {
+      manageLocations.focus();
+      manageLocations.click();
+    });
     expect(document.body.textContent).toContain("位置管理");
     expect(document.body.textContent).toContain(data.sites[0].name);
     const newLocation = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("新建位置"));
-    act(() => newLocation?.click());
-    expect(document.querySelector("#site-name")).not.toBeNull();
+    await act(async () => {
+      newLocation?.click();
+      await Promise.resolve();
+    });
+    const siteNameInput = document.querySelector<HTMLInputElement>("#site-name");
+    expect(siteNameInput).not.toBeNull();
+    expect(document.activeElement).toBe(siteNameInput);
+    await act(async () => {
+      [...document.querySelectorAll<HTMLButtonElement>('[data-slot="sheet-footer"] button')].find((button) => button.textContent === "取消")?.click();
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(manageLocations);
   });
 });

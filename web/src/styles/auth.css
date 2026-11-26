@@ -81,12 +81,12 @@
   .auth-shell { --auth-glass: #343e51; --auth-edge: #c7ceda; }
   .auth-avatar { background: #626b80; }
   .auth-toolbar [data-slot="button"] { background: #343e51; }
-  .setup-card { background: var(--card); backdrop-filter: none; }
+  :is(.setup-card, .dark .setup-card) { background: var(--card); backdrop-filter: none; }
 }
 @media (forced-colors: active) {
   .auth-shell { background: Canvas; color: CanvasText; }
   .auth-shell::before, .auth-shell::after { display: none; }
   .auth-avatar, .auth-toolbar [data-slot="button"], .auth-content [data-slot="input"], .auth-content .auth-submit { background: Canvas; color: CanvasText; border: 1px solid ButtonText; }
-  .setup-card { background: Canvas; color: CanvasText; border: 1px solid ButtonText; box-shadow: none; backdrop-filter: none; }
+  :is(.setup-card, .dark .setup-card) { background: Canvas; color: CanvasText; border: 1px solid ButtonText; box-shadow: none; backdrop-filter: none; }
   .auth-heading p, .auth-content [data-slot="field-label"], .auth-content [data-slot="field-description"], .auth-content .auth-password-toggle { color: CanvasText; }
 }

@@ -16,6 +16,7 @@ import { StateBadge, copy, userError } from "./shared";
 
 export function ManagedDomainSettings({ applications, agents, language }: { applications: Application[]; agents: AgentView[]; language: Language }) {
   const [appId, setAppId] = useState("");
+  const [selectedDomainId, setSelectedDomainId] = useState<string | null>(null);
   const [key, setKey] = useState("ingress");
   const [prefix, setPrefix] = useState("");
   const [hostname, setHostname] = useState("");
@@ -39,10 +40,10 @@ export function ManagedDomainSettings({ applications, agents, language }: { appl
     return () => abort.abort();
   }, [appId, language]);
   const chooseApplication = (id: string) => {
-    setMigrateFamily(false); setAppId(id); setDomains([]); setHostname(""); setAddress(""); setSecondaryAddress(""); setPreviousAddress(""); setKey("ingress"); setPrefix(""); setError(""); setMessage(""); setLoading(true);
+    setMigrateFamily(false); setAppId(id); setSelectedDomainId(null); setDomains([]); setHostname(""); setAddress(""); setSecondaryAddress(""); setPreviousAddress(""); setKey("ingress"); setPrefix(""); setError(""); setMessage(""); setLoading(true);
   };
   const chooseDomain = (domain: ManagedDomain) => {
-    setMigrateFamily(false); setKey(domain.key); setPrefix(domain.prefix ?? ""); setHostname(domain.hostname); setAddress(domain.address); setSecondaryAddress(domain.secondaryAddress ?? ""); setPreviousAddress(""); setError(""); setMessage("");
+    setMigrateFamily(false); setSelectedDomainId(domain.id); setKey(domain.key); setPrefix(domain.prefix ?? ""); setHostname(domain.hostname); setAddress(domain.address); setSecondaryAddress(domain.secondaryAddress ?? ""); setPreviousAddress(""); setError(""); setMessage("");
   };
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError(""); setMessage("");
@@ -63,8 +64,8 @@ export function ManagedDomainSettings({ applications, agents, language }: { appl
       <Field><FieldLabel htmlFor="managed-domain-app">{copy(language, "应用与主机", "Application and host")}</FieldLabel><SelectControl id="managed-domain-app" disabled={busy} value={appId} onValueChange={chooseApplication} placeholder={copy(language, "选择正在运行的应用", "Choose a running application")} options={applications.filter(app => app.status === "running").map(app => ({ value: app.id, label: `${agents.find(node => node.id === app.nodeId)?.name ?? app.nodeId} · ${app.name}` }))} /></Field>
       {appId && loading ? <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status"><Spinner />{copy(language, "正在读取域名…", "Loading domains…")}</p> : null}
       {appId && domains.length > 0 ? <div className="flex flex-col gap-2">{domains.map(domain => {
-        const selected = domain.key === key;
-        return <button type="button" disabled={busy} key={domain.id} onClick={() => chooseDomain(domain)} className={`flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-left text-xs transition-colors hover:bg-muted/50 ${selected ? "border-primary bg-primary/5" : "bg-card"}`}>
+        const selected = selectedDomainId === domain.id && domain.key === key;
+        return <button type="button" aria-pressed={selected} disabled={busy} key={domain.id} onClick={() => chooseDomain(domain)} className={`flex min-h-11 w-full flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-left text-xs transition-colors hover:bg-muted/50 disabled:pointer-events-none disabled:opacity-50 sm:min-h-0 pointer-coarse:min-h-11 ${selected ? "border-primary bg-primary/5" : "bg-card"}`}>
           <span className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             <Badge variant="outline">{domain.key}</Badge>
             <span className="truncate font-medium text-foreground">{domain.hostname}</span>
@@ -77,7 +78,7 @@ export function ManagedDomainSettings({ applications, agents, language }: { appl
     {appId ? <form className="flex flex-col gap-(--card-spacing)" onSubmit={event => void submit(event)}>
       <CardContent>
         <FieldGroup>
-          <Field><FieldLabel htmlFor="managed-domain-key">{copy(language, "用途标识", "Purpose key")}</FieldLabel><Input id="managed-domain-key" value={key} onChange={e => { setKey(e.target.value); setMigrateFamily(false); }} required disabled={busy || loading} pattern="[a-z][a-z0-9_.:-]{0,63}" /><FieldDescription>{copy(language, "同一应用和用途始终复用同一个域名，例如 ingress 或 site。", "The same application and purpose always reuse one domain, for example ingress or site.")}</FieldDescription></Field>
+          <Field><FieldLabel htmlFor="managed-domain-key">{copy(language, "用途标识", "Purpose key")}</FieldLabel><Input id="managed-domain-key" value={key} onChange={e => { setKey(e.target.value); setSelectedDomainId(null); setMigrateFamily(false); }} required disabled={busy || loading} pattern="[a-z][a-z0-9_.:-]{0,63}" /><FieldDescription>{copy(language, "同一应用和用途始终复用同一个域名，例如 ingress 或 site。", "The same application and purpose always reuse one domain, for example ingress or site.")}</FieldDescription></Field>
           <Field><FieldLabel htmlFor="managed-domain-prefix">{copy(language, "地区前缀（可选）", "Region prefix (optional)")}</FieldLabel><Input id="managed-domain-prefix" value={prefix} onChange={e => { setPrefix(e.target.value); setMigrateFamily(false); }} disabled={busy || loading} pattern="[a-z]{2,8}" placeholder="us / hk / jp / sg" /><FieldDescription>{copy(language, "接入域名留空；独立网站填写地区，分配后保持不变。", "Leave empty for ingress; use a region for a website. The allocated name remains stable.")}</FieldDescription></Field>
           <Field><FieldLabel htmlFor="managed-domain-host">{copy(language, "复用原域名（可选）", "Original domain (optional)")}</FieldLabel><Input id="managed-domain-host" value={hostname} onChange={e => { setHostname(e.target.value); setMigrateFamily(false); }} disabled={busy || loading} /><FieldDescription>{copy(language, "留空时优先复用本应用原有随机域名；没有时自动分配。", "When empty, prefer this application's retained random domain; otherwise allocate a new one.")}</FieldDescription></Field>
           <Field><FieldLabel htmlFor="managed-domain-address">{copy(language, "公网接入 IP", "Public ingress IP")}</FieldLabel><Input id="managed-domain-address" value={address} onChange={e => { setAddress(e.target.value); setMigrateFamily(false); }} required disabled={busy || loading} /><FieldDescription>{copy(language, "必须是本机已确认的地址；IPv6 接入保留 AAAA。", "Must be a confirmed address of this host; IPv6 ingress retains AAAA.")}</FieldDescription></Field>

@@ -134,4 +134,29 @@ describe("independently bundled app mutation errors", () => {
     await act(async () => hostsButton.click());
     expect(container.querySelector('[data-slot="floating-notice"]')).toBeNull();
   });
+
+  it("clears unread error notices when a 401 expires the session and stays clear after sign-in", async () => {
+    operation.reportError = true;
+    const { container } = await save(new WorkspaceAPIError(500));
+    expect(container.querySelector('[data-slot="floating-notice"]')?.textContent).toContain("The operation did not complete.");
+
+    vi.mocked(api.agents).mockRejectedValueOnce(new APIError("Authentication required", 401, "authentication_required"));
+    const hostsButton = container.querySelector<HTMLButtonElement>('.desktop-dock button[aria-label="Hosts"]')!;
+    await act(async () => hostsButton.click());
+    await vi.waitFor(() => expect(container.querySelector("#username")).not.toBeNull());
+
+    vi.spyOn(api, "login").mockResolvedValueOnce({ authenticated: true });
+    const username = container.querySelector<HTMLInputElement>("#username")!;
+    const password = container.querySelector<HTMLInputElement>("#password")!;
+    const loginForm = container.querySelector<HTMLFormElement>("form")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(username, "admin");
+      username.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(password, "secret-password");
+      password.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => loginForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await vi.waitFor(() => expect(container.querySelector(".desktop-window-content")).not.toBeNull());
+    expect(container.querySelector('[data-slot="floating-notice"]')).toBeNull();
+  });
 });

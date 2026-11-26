@@ -41,6 +41,7 @@ type NodesViewProps = { data: AppData; language: Language; mutate: Mutate; onAdd
 export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNavigate, startAdding = false }: NodesViewProps) {
   const [adding, setAdding] = useState(false);
   const [managingSites, setManagingSites] = useState(false);
+  const manageLocationsButtonRef = useRef<HTMLButtonElement>(null);
   const [editing, setEditing] = useState<AgentView | null>(null);
   const [stoppingAccessID, setStoppingAccessID] = useState<string | null>(null);
   const [removingID, setRemovingID] = useState<string | null>(null);
@@ -89,7 +90,7 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
     <PageHeading
       title={copy(language, "节点", "Nodes")}
       description={copy(language, "管理运行应用的设备", "Manage devices that run apps")}
-      action={<div className="flex flex-wrap items-center gap-2"><Button onClick={() => setManagingSites(true)} variant="outline"><MapPinIcon data-icon="inline-start" />{copy(language, "管理位置", "Manage locations")}</Button><Button disabled={data.nodeAuxiliaryDataUnavailable} onClick={() => setAdding(true)}><PlusIcon data-icon="inline-start" />{copy(language, "添加节点", "Add node")}</Button></div>}
+      action={<div className="flex flex-wrap items-center gap-2"><Button onClick={() => setManagingSites(true)} ref={manageLocationsButtonRef} variant="outline"><MapPinIcon data-icon="inline-start" />{copy(language, "管理位置", "Manage locations")}</Button><Button disabled={data.nodeAuxiliaryDataUnavailable} onClick={() => setAdding(true)}><PlusIcon data-icon="inline-start" />{copy(language, "添加节点", "Add node")}</Button></div>}
     />
     {data.nodeAuxiliaryDataUnavailable ? <Alert><AlertTitle>{copy(language, "节点辅助数据暂不可用", "Node auxiliary data is unavailable")}</AlertTitle><AlertDescription>{copy(language, "节点在线状态仍会刷新。辅助配置可能是旧数据；添加节点、修改用途和依赖清单的恢复操作暂不可用，系统会自动重试读取。", "Node connectivity still refreshes. Auxiliary settings may be stale; adding nodes, changing purpose and inventory-dependent recovery are unavailable until an automatic refresh succeeds.")}</AlertDescription></Alert> : null}
     {data.agents.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><ServerIcon /></EmptyMedia><EmptyTitle>{copy(language, "添加第一台节点", "Add your first node")}</EmptyTitle><EmptyDescription>{copy(language, "当前 Center 主机或另一台受支持的 Linux 设备都可以作为节点；复制一条命令即可按需安装 Docker 和 Agent。", "The current Center host or another supported Linux device can be a node. Copy one command to install Docker when needed and then install Agent.")}</EmptyDescription><Button className="mt-3" disabled={data.nodeAuxiliaryDataUnavailable} onClick={() => setAdding(true)}><PlusIcon data-icon="inline-start" />{copy(language, "开始添加", "Get started")}</Button></EmptyHeader></Empty> : <div className="flex min-w-0 flex-col gap-4">
@@ -122,7 +123,7 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
       </div>
     </div>}
     <AddNodeSheet data={data} language={language} onClose={() => { setAdding(false); onAddFirstNodeHandled?.(); }} onJoined={() => { setAdding(false); onAddFirstNodeHandled?.(); onNavigate("network"); }} open={adding} />
-    <LocationsSheet data={data} language={language} mutate={mutate} onClose={() => setManagingSites(false)} open={managingSites} />
+    <LocationsSheet data={data} language={language} mutate={mutate} onClose={() => setManagingSites(false)} open={managingSites} returnFocusTo={manageLocationsButtonRef} />
     <NodeSettingsSheet agent={currentEditing} data={data} language={language} mutate={mutate} onNavigate={onNavigate} onClose={() => setEditing(null)} onStopAccess={() => { if (currentEditing) { setStoppingAccessID(currentEditing.id); setEditing(null); } }} />
     {stoppingAccessAgent ? <StopNodeAccessSheet agent={stoppingAccessAgent} key={stoppingAccessAgent.id} language={language} mutate={mutate} onClose={() => setStoppingAccessID(null)} /> : null}
     {removingAgent ? <RemoveNodeDialog agent={removingAgent} key={removingAgent.id} language={language} mutate={mutate} onClose={() => setRemovingID(null)} /> : null}
@@ -187,7 +188,7 @@ function NodeTableRow({ agent, data, language, onApplications, onConfigure, onNe
       <TableCell className="hidden py-2 md:table-cell"><NodeStatus agent={agent} language={language} /></TableCell>
       <TableCell className="hidden py-2 md:table-cell"><div className="flex flex-wrap items-center gap-1.5">{agent.capabilities.landingOnly ? <Badge variant="secondary">{copy(language, "仅落地", "Landing only")}</Badge> : null}{selectedGateway ? <Badge variant="secondary">{copy(language, "网关", "Gateway")}</Badge> : null}{agent.appliedInstallations > 0 ? <Badge variant="secondary">{copy(language, `${agent.appliedInstallations} 个应用`, `${agent.appliedInstallations} app${agent.appliedInstallations === 1 ? "" : "s"}`)}</Badge> : null}{!agent.capabilities.landingOnly && !selectedGateway && agent.appliedInstallations === 0 ? <span className="text-muted-foreground">—</span> : null}</div></TableCell>
       <TableCell className="hidden py-2 md:table-cell"><span className="block truncate text-xs tabular-nums" title={agent.version}>{agent.version || "—"}</span><span className="text-xs text-muted-foreground">{architecture}</span></TableCell>
-      <TableCell className="w-[1%] whitespace-nowrap py-2 pr-4"><div className="flex flex-nowrap items-center justify-end gap-1">
+      <TableCell className="w-[1%] whitespace-nowrap py-2 pr-4"><div className="flex flex-nowrap items-center justify-end gap-1 md:flex-wrap">
         {needsNetworkConfirmation ? <Button aria-label={copy(language, `确认 ${agent.name} 的网络`, `Confirm network for ${agent.name}`)} onClick={onNetwork} size="icon-sm" title={copy(language, "确认网络", "Confirm network")} variant="ghost"><NetworkIcon aria-hidden="true" /></Button> : null}
         {!agent.removal && (!agent.connected || agent.reinstall) ? <Button aria-label={agent.reinstall ? copy(language, `查看 ${agent.name} 的恢复进度`, `View recovery for ${agent.name}`) : copy(language, `重新接入 ${agent.name}`, `Reconnect ${agent.name}`)} onClick={onReconnect} size="icon-sm" title={agent.reinstall ? copy(language, "恢复进度", "Recovery progress") : copy(language, "重新接入", "Reconnect")} variant="ghost"><RotateCcwIcon aria-hidden="true" /></Button> : null}
         {!agent.removal && agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除", "Delete")}</Button> : null}
@@ -371,9 +372,16 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
   );
 }
 
+type NodeSettingsTab = "general" | "security" | "maintenance";
+const defaultVisitedTabs = new Set<NodeSettingsTab>(["general"]);
+
 function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAccess, onNavigate }: { agent: AgentView | null; data: AppData; language: Language; mutate: Mutate; onClose: () => void; onStopAccess: () => void; onNavigate: (screen: Screen) => void }) {
   const navigating = useRef(false);
-  const [tab, setTab] = useState<"general" | "security" | "maintenance">("general");
+  const [tabState, setTabState] = useState<{ agentId: string | null; tab: NodeSettingsTab; visited: Set<NodeSettingsTab> }>({
+    agentId: null,
+    tab: "general",
+    visited: defaultVisitedTabs,
+  });
   const [name, setName] = useState("");
   const [siteID, setSiteID] = useState("");
   const [gateway, setGateway] = useState(false);
@@ -389,11 +397,31 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
   const canStopAccess = agent?.status === "active" && !agent.credentialRevoked;
   const dependenciesUnavailable = Boolean(data.desktopDataUnavailable || data.nodeAuxiliaryDataUnavailable);
   const hasMaintenance = Boolean(agent?.capabilities.nodeSwap || agent?.capabilities.osReinstallPreflight);
-  const activeTab = tab === "maintenance" && !hasMaintenance ? "general" : tab;
-  useEffect(() => {
+  const scopedTabState = agent && tabState.agentId === agent.id ? tabState : null;
+  const rawTab = scopedTabState?.tab ?? "general";
+  const activeTab = rawTab === "maintenance" && !hasMaintenance ? "general" : rawTab;
+  const visitedTabs = scopedTabState?.visited ?? defaultVisitedTabs;
+  const selectTab = (value: unknown) => {
     if (!agent) return;
+    const next = value as NodeSettingsTab;
+    setTabState((current) => {
+      const baseVisited = current.agentId === agent.id ? current.visited : defaultVisitedTabs;
+      const visited = baseVisited.has(next) ? baseVisited : new Set(baseVisited).add(next);
+      return { agentId: agent.id, tab: next, visited };
+    });
+  };
+  useEffect(() => {
+    if (!agent) {
+      setTabState({ agentId: null, tab: "general", visited: defaultVisitedTabs });
+      setCommandKind(null);
+      setError("");
+      setDanger(false);
+      setConfirmation("");
+      setRecoveringUpdateID(null);
+      return;
+    }
     navigating.current = false;
-    setTab("general");
+    setTabState({ agentId: agent.id, tab: "general", visited: defaultVisitedTabs });
     setName(agent.name);
     setSiteID(agent.siteId);
     setGateway(agent.capabilities.gateway);
@@ -460,26 +488,31 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
     {canStopAccess ? <Button disabled={busy} onClick={onStopAccess} type="button" variant="outline"><UnplugIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "停止接入", "Stop access")}</Button> : null}
     <Button disabled={busy} onClick={() => setDanger(true)} type="button" variant="destructive"><Trash2Icon data-icon="inline-start" />{copy(language, "停用节点", "Disable node")}</Button>
   </div>;
+  const tabDescription = activeTab === "security"
+    ? copy(language, "管理节点的公网安全基线与 Glivela 代理出口 SSH 地址保护策略。", "Manage this node's public security baseline and Glivela proxy egress SSH protection policy.")
+    : activeTab === "maintenance"
+      ? copy(language, "按需检测与管理主机的 Zram/Swap 优化和系统重装。", "Inspect and manage host zram/swap optimization and OS reinstall on demand.")
+      : copy(language, "修改节点名称、位置、用途或安全更新 Agent；底部“保存信息”仅应用于名称和位置。", "Change this node's name, location, purpose, or update its Agent. Save details applies to name and location.");
   return (
     <Sheet onOpenChange={(next) => { if (!next && !recoveringUpdateID) onClose(); }} open={Boolean(agent)}>
       <SheetContent className="sm:max-w-xl" finalFocus={() => !navigating.current}>
         <SheetHeader>
           <SheetTitle>{copy(language, `管理 ${agent?.name ?? ""}`, `Manage ${agent?.name ?? ""}`)}</SheetTitle>
-          <SheetDescription>{deleting ? copy(language, "从 Center 移除这个已停用的节点。", "Remove this disabled node from Center.") : danger ? copy(language, "停用会立即拒绝此 Agent 的后续连接。", "Disabling immediately rejects future connections from this Agent.") : copy(language, "按分区管理节点常规信息、安全基线与系统维护；底部“保存信息”仅应用于名称和位置。", "Manage node details, security baseline, and system maintenance by section. Save details applies to name and location.")}</SheetDescription>
+          <SheetDescription>{deleting ? copy(language, "从 Center 移除这个已停用的节点。", "Remove this disabled node from Center.") : danger ? copy(language, "停用会立即拒绝此 Agent 的后续连接。", "Disabling immediately rejects future connections from this Agent.") : tabDescription}</SheetDescription>
         </SheetHeader>
         {danger ? <SheetBody>
           <Alert variant="destructive"><Trash2Icon /><AlertTitle>{deleting ? copy(language, "确认删除节点", "Confirm node deletion") : copy(language, "确认停用节点", "Confirm node disable")}</AlertTitle><AlertDescription>{deleting ? copy(language, "删除后无法撤销，服务器上的程序和数据不会被删除。仍被应用或入口使用的节点不能删除。", "Deletion cannot be undone. Programs and data on the server are not deleted. Nodes still used by apps or access points cannot be deleted.") : copy(language, "Center 会撤销管理权限，但不会远程删除节点上的二进制或数据。", "Center revokes management access but does not remotely delete the binary or local data.")}</AlertDescription></Alert>
           <Field><FieldLabel htmlFor="disable-node-confirmation">{copy(language, `输入“${agent?.name ?? ""}”确认`, `Type “${agent?.name ?? ""}” to confirm`)}</FieldLabel><Input autoFocus id="disable-node-confirmation" onChange={(event) => setConfirmation(event.target.value)} value={confirmation} /></Field>
           {error ? <FieldError>{error}</FieldError> : null}
-        </SheetBody> : <Tabs className="flex min-h-0 flex-1 flex-col gap-0" onValueChange={(value) => setTab(value as "general" | "security" | "maintenance")} value={activeTab}>
+        </SheetBody> : <Tabs className="flex min-h-0 flex-1 flex-col gap-0" onValueChange={selectTab} value={activeTab}>
           <div className="shrink-0 border-b px-5 py-2.5">
             <TabsList aria-label={copy(language, "节点管理分区", "Node management sections")}>
-              <TabsTrigger value="general">{copy(language, "常规", "General")}{detailsDirty ? <span aria-hidden="true" className="ml-0.5 size-1.5 rounded-full bg-primary" /> : null}</TabsTrigger>
+              <TabsTrigger value="general">{copy(language, "常规", "General")}{detailsDirty ? <><span aria-hidden="true" className="ml-0.5 size-1.5 rounded-full bg-primary" /><span className="sr-only">{copy(language, "（有未保存修改）", " (unsaved changes)")}</span></> : null}</TabsTrigger>
               <TabsTrigger value="security">{copy(language, "安全", "Security")}</TabsTrigger>
               {hasMaintenance ? <TabsTrigger value="maintenance">{copy(language, "系统与重装", "System & reinstall")}</TabsTrigger> : null}
             </TabsList>
           </div>
-          <TabsContent className="flex min-h-0 flex-1 flex-col overflow-hidden [&[hidden]]:hidden" value="general">
+          <TabsContent className="flex min-h-0 flex-1 flex-col overflow-hidden [&[hidden]]:hidden" keepMounted value="general">
             <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
               <SheetBody><FieldGroup>
                 {dependenciesUnavailable ? <FieldDescription role="status">{copy(language, "辅助数据暂不可用，不能确认服务依赖。用途修改和相关恢复操作暂不可用；仍可修改名称和位置。", "Auxiliary data is unavailable, so service dependencies cannot be verified. Purpose changes and related recovery are unavailable; name and location can still be edited.")}</FieldDescription> : null}
@@ -501,22 +534,26 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
               <SheetFooter className="flex-wrap justify-between">{dangerActions}<div className="ml-auto flex flex-wrap justify-end gap-2"><Button onClick={onClose} type="button" variant="outline">{copy(language, "关闭", "Close")}</Button><Button disabled={busy || !name || !detailsDirty} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "保存信息", "Save details")}</Button></div></SheetFooter>
             </form>
           </TabsContent>
-          <TabsContent className="flex min-h-0 flex-1 flex-col overflow-hidden [&[hidden]]:hidden" value="security">
-            <SheetBody>
-              {agent?.capabilities.nodeSecurity ? <NodeSecurityControls key={`security-${agent.id}`} nodeId={agent.id} language={language} /> : null}
-              {agent ? <NodeSSHProtection key={`ssh-${agent.id}`} nodeId={agent.id} connected={agent.connected} applications={data.applications} language={language} /> : null}
-            </SheetBody>
-            <SheetFooter className="flex-wrap justify-between">{dangerActions}<div className="ml-auto flex flex-wrap justify-end gap-2"><Button onClick={onClose} type="button" variant="outline">{copy(language, "关闭", "Close")}</Button></div></SheetFooter>
+          <TabsContent className="flex min-h-0 flex-1 flex-col overflow-hidden [&[hidden]]:hidden" keepMounted value="security">
+            {visitedTabs.has("security") ? <>
+              <SheetBody>
+                {agent?.capabilities.nodeSecurity ? <NodeSecurityControls key={`security-${agent.id}`} nodeId={agent.id} language={language} /> : null}
+                {agent ? <NodeSSHProtection key={`ssh-${agent.id}`} nodeId={agent.id} connected={agent.connected} applications={data.applications} language={language} /> : null}
+              </SheetBody>
+              <SheetFooter className="flex-wrap justify-between">{dangerActions}<div className="ml-auto flex flex-wrap justify-end gap-2"><Button onClick={onClose} type="button" variant="outline">{copy(language, "关闭", "Close")}</Button></div></SheetFooter>
+            </> : null}
           </TabsContent>
-          {hasMaintenance ? <TabsContent className="flex min-h-0 flex-1 flex-col overflow-hidden [&[hidden]]:hidden" value="maintenance">
-            <SheetBody>
-              {agent?.capabilities.nodeSwap ? <NodeSwapControls key={`swap-${agent.id}`} nodeId={agent.id} connected={agent.connected} language={language} /> : null}
-              {agent?.capabilities.osReinstallPreflight ? <OSReinstallInspection key={`os-reinstall-${agent.id}`} nodeId={agent.id} connected={agent.connected} canReinstall={!!agent.capabilities.osReinstall} language={language} /> : null}
-            </SheetBody>
-            <SheetFooter className="flex-wrap justify-between">{dangerActions}<div className="ml-auto flex flex-wrap justify-end gap-2"><Button onClick={onClose} type="button" variant="outline">{copy(language, "关闭", "Close")}</Button></div></SheetFooter>
+          {hasMaintenance ? <TabsContent className="flex min-h-0 flex-1 flex-col overflow-hidden [&[hidden]]:hidden" keepMounted value="maintenance">
+            {visitedTabs.has("maintenance") ? <>
+              <SheetBody>
+                {agent?.capabilities.nodeSwap ? <NodeSwapControls key={`swap-${agent.id}`} nodeId={agent.id} connected={agent.connected} language={language} /> : null}
+                {agent?.capabilities.osReinstallPreflight ? <OSReinstallInspection key={`os-reinstall-${agent.id}`} nodeId={agent.id} connected={agent.connected} canReinstall={!!agent.capabilities.osReinstall} language={language} /> : null}
+              </SheetBody>
+              <SheetFooter className="flex-wrap justify-between">{dangerActions}<div className="ml-auto flex flex-wrap justify-end gap-2"><Button onClick={onClose} type="button" variant="outline">{copy(language, "关闭", "Close")}</Button></div></SheetFooter>
+            </> : null}
           </TabsContent> : null}
         </Tabs>}
-        {danger ? <SheetFooter><Button disabled={busy} onClick={() => { if (deleting) onClose(); else { setDanger(false); setError(""); } }} variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !agent || confirmation.trim() !== agent.name.trim()} onClick={() => void disable()} variant="destructive">{busy ? <Spinner data-icon="inline-start" /> : null}{deleting ? copy(language, "删除节点", "Delete node") : copy(language, "停用节点", "Disable node")}</Button></SheetFooter> : null}
+        {danger ? <SheetFooter><Button disabled={busy} onClick={() => { if (deleting) onClose(); else { setDanger(false); setError(""); setTabState((current) => current.agentId === agent?.id ? { ...current, visited: new Set<NodeSettingsTab>(["general", activeTab]) } : current); } }} variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !agent || confirmation.trim() !== agent.name.trim()} onClick={() => void disable()} variant="destructive">{busy ? <Spinner data-icon="inline-start" /> : null}{deleting ? copy(language, "删除节点", "Delete node") : copy(language, "停用节点", "Disable node")}</Button></SheetFooter> : null}
       </SheetContent>
       {agent && recoveringUpdateID ? <AgentUpdateRecoveryDialog agent={agent} failedUpdateId={recoveringUpdateID} key={recoveringUpdateID} language={language} mutate={mutate} onClose={() => setRecoveringUpdateID(null)} targetVersion={data.status.version} /> : null}
     </Sheet>

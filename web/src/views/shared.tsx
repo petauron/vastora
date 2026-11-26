@@ -234,5 +234,7 @@ export function HighPrivilegeBadge({ language }: { language: Language }) {
 
 export function formatDate(language: Language, value?: string) {
   if (!value) return "—";
-  return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return value;
+  return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(parsed));
 }
