@@ -9,7 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { SelectControl } from "@/components/SelectControl";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 
@@ -141,7 +141,7 @@ export function ThreeXUIControllerMigrationSheet({ application, data, language, 
           ? copy(language, "把旧 Site 的独立订阅主机替换为全局控制面下的 Xray 节点。", "Replace the old Site-specific controller with an Xray node managed by the global control plane.")
           : copy(language, "把全局面板、客户端和订阅迁移到任意地区已接入的 Xray 节点。", "Move the global panel, clients, and subscription to a connected Xray node in any region.")}</SheetDescription>
       </SheetHeader>
-      {migration ? <div aria-live="polite" className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
+      {migration ? <SheetBody aria-live="polite">
         <Alert variant={migration.state === "failed" || cleanupBlocked || conversionBlocked || syncBlocked ? "destructive" : "default"}>
           {migration.state === "ready" ? <CheckCircle2Icon /> : migration.state === "failed" || cleanupBlocked || conversionBlocked || syncBlocked ? <ShieldAlertIcon /> : <Spinner />}
           <AlertTitle>{migration.state === "ready"
@@ -163,8 +163,8 @@ export function ThreeXUIControllerMigrationSheet({ application, data, language, 
         })}</ol>
         {migration.backup?.updatedAt ? <p className="text-xs text-muted-foreground">{copy(language, `恢复点：${new Date(migration.backup.updatedAt).toLocaleString()}`, `Restore point: ${new Date(migration.backup.updatedAt).toLocaleString()}`)}</p> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
-      </div> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
-        <div className="flex-1 overflow-y-auto px-4"><FieldGroup>
+      </SheetBody> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
+        <SheetBody><FieldGroup>
           <Alert><ArrowRightLeftIcon /><AlertTitle>{consolidating ? copy(language, "Alpha 直接转换", "Direct Alpha conversion") : copy(language, "现有入口配置会保留", "Existing access settings are preserved")}</AlertTitle><AlertDescription>{consolidating
             ? copy(language, "Vastora 会先保存可恢复备份，再直接把这台旧订阅主机转为节点。", "Vastora saves a recoverable backup, then directly converts this legacy controller into a node.")
             : copy(language, "Vastora 会迁移管理域名、订阅域名、客户端和已有入站；迁移期间会有短暂中断。", "Vastora moves the management domain, subscription domain, clients, and existing inbounds. A brief interruption is expected.")}</AlertDescription></Alert>
@@ -180,7 +180,7 @@ export function ThreeXUIControllerMigrationSheet({ application, data, language, 
           <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="three-x-ui-migration-confirm">{copy(language, consolidating ? "确认转换" : "确认迁移", consolidating ? "Confirm conversion" : "Confirm migration")}</FieldLabel><FieldDescription>{copy(language, "开始后不要在 3x-ui 中修改配置，直到操作完成。", "Do not change 3x-ui configuration until the operation completes.")}</FieldDescription></div><Switch checked={confirmed} id="three-x-ui-migration-confirm" onCheckedChange={setConfirmed} /></Field>
           {candidates.length === 0 ? <FieldError>{copy(language, consolidating ? "全局订阅主机尚未在线。" : "还没有在线且已接入的 Xray 节点可作为新主机。", consolidating ? "The global subscription controller is not online yet." : "No online, connected Xray node is available as the new host.")}</FieldError> : null}
           {error ? <FieldError role="alert">{error}</FieldError> : null}
-        </FieldGroup></div>
+        </FieldGroup></SheetBody>
         <SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !targetID || !confirmed || !sourceOnline && (consolidating || !allowStale)} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <ArrowRightLeftIcon data-icon="inline-start" />}{copy(language, consolidating ? "开始转换" : "开始迁移", consolidating ? "Convert" : "Start migration")}</Button></SheetFooter>
       </form>}
       {migration ? <SheetFooter>
@@ -188,7 +188,7 @@ export function ThreeXUIControllerMigrationSheet({ application, data, language, 
         {conversionBlocked ? <Button disabled={busy} onClick={() => void retryCleanup()} variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{copy(language, "重试 Xray 节点替换", "Retry Xray node replacement")}</Button> : null}
         {syncBlocked && migration.failedWorkerApplicationId ? <Button disabled={busy} onClick={() => void retrySync()} variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{copy(language, "重试失败节点接入", "Retry failed node attachment")}</Button> : null}
         {migration.state === "failed" ? <Button onClick={() => { setMigration(null); setConfirmed(false); setError(""); }} variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重新开始", "Start again")}</Button> : null}
-        <Button onClick={onClose}>{copy(language, migration.state === "ready" ? "完成" : "关闭", migration.state === "ready" ? "Done" : "Close")}</Button>
+        <Button onClick={onClose} variant={migration.state === "ready" ? "default" : "outline"}>{copy(language, migration.state === "ready" ? "完成" : "关闭", migration.state === "ready" ? "Done" : "Close")}</Button>
       </SheetFooter> : null}
     </SheetContent>
   </Sheet>;

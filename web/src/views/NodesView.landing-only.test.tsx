@@ -37,4 +37,15 @@ describe("landing-only node enrollment", () => {
     expect(document.querySelector("#new-node-tunnel")).toBeNull();
     expect(document.body.textContent).toContain("不会卸载已有 Docker");
   });
+
+  it("renders node settings with SheetBody and a destructive footer action", () => {
+    const data = dashboard();
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+    act(() => container.querySelector<HTMLButtonElement>(`[aria-label="管理 ${data.agents[0].name}"]`)?.click());
+    expect(document.querySelector('[data-slot="sheet-body"]')).not.toBeNull();
+    const footer = document.querySelector<HTMLElement>('[data-slot="sheet-footer"]');
+    const disableButton = [...(footer?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.includes("停用节点"));
+    expect(disableButton?.getAttribute("data-variant")).toBe("destructive");
+    expect(disableButton?.getAttribute("data-size")).toBe("default");
+  });
 });

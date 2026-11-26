@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { SelectControl } from "@/components/SelectControl";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 
 type RegionMatch = "idle" | "matching" | "matched" | "manual" | "unavailable";
@@ -260,7 +260,7 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
         <SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 Xray、节点直连 443 和 DNS。", "Vastora is configuring Xray, node-direct port 443, and DNS on the node.") : copy(language, "填写节点名称和套餐，再选择当前节点可用的连接目标。", "Enter the node name and plan, then select an available connection target.")}</SheetDescription>
       </SheetHeader>
       {command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} onAcknowledge={() => void acknowledgeShareURI()} onReveal={() => void reveal()} onRetry={() => { if (command.reconciliationRequired) { void resumeReconciliation(); return; } baseline.current = draft; setCommand(null); setVerification(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} onCheckTargets={(recommend) => void checkTargets(recommend)} onSelectTarget={selectTarget} regionMatch={regionMatch} siteTimezone={siteTimezone} targetPublicAddress={targetAgent?.networkProfile?.publicAddress} verification={verification} />}
-      {command ? <SheetFooter><Button onClick={requestClose}>{copy(language, shareURI ? "完成" : "关闭", shareURI ? "Done" : "Close")}</Button></SheetFooter> : null}
+      {command ? <SheetFooter><Button onClick={requestClose} variant={shareURI ? "default" : "outline"}>{copy(language, shareURI ? "完成" : "关闭", shareURI ? "Done" : "Close")}</Button></SheetFooter> : null}
     </SheetContent>
   </Sheet>;
 }
@@ -286,7 +286,7 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
   verification: ApplicationCommand | null;
 }) {
   return <form className="flex min-h-0 flex-1 flex-col" onSubmit={onSubmit}>
-    <div className="flex-1 overflow-y-auto px-4">
+    <SheetBody>
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor="reality-name">{copy(language, "节点名称", "Node name")}</FieldLabel>
@@ -347,7 +347,7 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
         {regionMatch === "unavailable" && !draft.regionCode ? <FieldError>{copy(language, "地区自动识别失败，请在高级设置中选择地区。", "Automatic region detection failed. Select a region in Advanced settings.")}</FieldError> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
       </FieldGroup>
-    </div>
+    </SheetBody>
     <SheetFooter><Button onClick={onCancel} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !draft.regionCode || !draft.name.trim() || collectInitialClient && !draft.clientName.trim() || !draft.targetHost.trim() || !draft.serverName.trim() || !draft.targetIp || verification?.state !== "succeeded" || !targetPublicAddress} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <ShieldCheckIcon data-icon="inline-start" />}{copy(language, "创建节点", "Create node")}</Button></SheetFooter>
   </form>;
 }
@@ -355,7 +355,7 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
 function RealityResult({ busy, command, displayName, dnsProvider, error, gateway, language, onAcknowledge, onReveal, onRetry, shareURI }: { busy: boolean; command: ApplicationCommand; displayName: string; dnsProvider: "manual" | "cloudflare"; error: string; gateway?: AgentView; language: Language; onAcknowledge: () => void; onReveal: () => void; onRetry: () => void; shareURI: string }) {
 	const publicationWarning = command.state === "succeeded" && Boolean(command.error);
 	const recoveryRequired = command.state === "failed" && Boolean(command.reconciliationRequired);
-  return <div aria-live="polite" className="flex flex-1 flex-col gap-4 px-4">
+  return <SheetBody aria-live="polite">
     <Alert>
       {command.state === "pending" || command.state === "running" ? <Spinner /> : <RadioTowerIcon />}
 			<AlertTitle>{recoveryRequired ? copy(language, "需要继续恢复", "Recovery needs to continue") : publicationWarning ? copy(language, "REALITY 已创建，公网入口待处理", "REALITY was created; public access needs attention") : command.state === "succeeded" ? copy(language, "REALITY 已创建", "REALITY is ready") : command.state === "failed" ? copy(language, "创建失败", "Creation failed") : copy(language, "正在自动配置…", "Configuring automatically…")}</AlertTitle>
@@ -369,7 +369,7 @@ function RealityResult({ busy, command, displayName, dnsProvider, error, gateway
 		{command.state === "failed" ? <Button className="w-fit" disabled={busy} onClick={onRetry} size="sm" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{recoveryRequired ? copy(language, "继续恢复", "Continue recovery") : copy(language, "修改后重试", "Edit and retry")}</Button> : null}
     {error ? <FieldError role="alert">{error}</FieldError> : null}
     {dnsProvider === "manual" && gateway?.networkProfile?.publicAddress ? <Alert><Globe2Icon /><AlertTitle>{copy(language, "还需添加一条 DNS 记录", "One DNS record is still needed")}</AlertTitle><AlertDescription><code className="break-all">A {command.hostname} → {gateway.networkProfile.publicAddress}</code></AlertDescription></Alert> : null}
-  </div>;
+  </SheetBody>;
 }
 
 function RealityASNNotice({ result, language }: { result: ApplicationCommand; language: Language }) {

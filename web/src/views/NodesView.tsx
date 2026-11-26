@@ -18,7 +18,7 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/c
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { SelectControl } from "@/components/SelectControl";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -316,6 +316,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
       if (requestGeneration.current === current) { submitting.current = false; setBusy(false); }
     }
   };
+  const auxiliaryUnavailableError = data.nodeAuxiliaryDataUnavailable ? <FieldError role="alert">{copy(language, "辅助配置暂不可用，请待状态刷新后再生成接入命令。", "Auxiliary configuration is unavailable. Wait for a successful refresh before generating a join command.")}</FieldError> : null;
   return (
     <Sheet onOpenChange={(next) => { if (!next) close(); }} open={open}>
       <SheetContent className="sm:max-w-xl">
@@ -323,17 +324,18 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
           <SheetTitle>{copy(language, "添加节点", "Add node")}</SheetTitle>
           <SheetDescription>{enrollment ? copy(language, "在要作为节点的 Linux 设备运行一次下面的命令；它可以就是当前 Center 主机。", "Run the command once on the Linux device that will become the node. It can be this Center host.") : copy(language, "填写名称和位置即可。当前 Center 主机也可以同时作为应用节点。", "Enter a name and location. This Center host can also serve as an app node.")}</SheetDescription>
         </SheetHeader>
-        {data.nodeAuxiliaryDataUnavailable ? <FieldError role="alert">{copy(language, "辅助配置暂不可用，请待状态刷新后再生成接入命令。", "Auxiliary configuration is unavailable. Wait for a successful refresh before generating a join command.")}</FieldError> : null}
-        {enrollment ? <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4">
+        {enrollment ? <SheetBody className="gap-5">
+          {auxiliaryUnavailableError}
           <Alert><TerminalIcon /><AlertTitle>{copy(language, "在目标设备运行一次", "Run once on the target device")}</AlertTitle><AlertDescription>{data.status.agentInstallerAvailable ? <><p>{copy(language, "支持 Debian 12/13 或 Ubuntu 22.04/24.04/26.04（x64/ARM64），需要 systemd 和 curl。", "Supports Debian 12/13 or Ubuntu 22.04/24.04/26.04 (x64/ARM64) with systemd and curl.")}</p><p>{copy(language, landingOnly ? "脚本只安装 Agent 和 Tailscale；原生 systemd 应用需在备份和权限审核后另行安装，不安装或启动 Docker。" : useHeadscale ? "脚本会按需安装 Docker 和 Tailscale、加入安全私网并安装 Agent。" : "脚本会先检查 Docker，缺少时自动安装，再安装 Agent。", landingOnly ? "Installs Agent and Tailscale only. Native systemd apps require a separate reviewed installation after backup. Docker is never installed or started." : useHeadscale ? "The script installs Docker and Tailscale when needed, joins the secure private network, and installs Agent." : "The script checks Docker first, installs it when missing, and then installs Agent.")}</p></> : copy(language, "当前 Center 没有内置 Agent 文件，请先把 vastora 放到 /usr/local/bin/vastora。", "This Center does not include Agent binaries. Put vastora at /usr/local/bin/vastora first.")}</AlertDescription></Alert>
           <div className="relative"><code className="block max-h-56 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div>
           <div aria-live="polite" className="flex items-start gap-3 rounded-xl border p-4">{joinedAgent ? <CheckCircle2Icon className="mt-0.5 text-success" /> : enrollmentStatus?.state !== "expired" && enrollmentStatus?.state !== "unavailable" ? <Spinner className="mt-0.5" /> : null}<div><p className="text-sm font-medium">{joinedAgent ? copy(language, `${joinedAgent.name} 已上线`, `${joinedAgent.name} is online`) : enrollmentStatus?.state === "expired" ? copy(language, "接入命令已过期", "Join command expired") : enrollmentStatus?.state === "unavailable" ? copy(language, "本次接入记录不可用", "Enrollment record unavailable") : copy(language, "正在等待本次节点上线…", "Waiting for this enrolled node to come online…")}</p><p className="mt-1 text-xs text-muted-foreground">{joinedAgent ? copy(language, "下一步确认 Agent 自动发现的网络地址。", "Next, confirm the network addresses discovered by the Agent.") : enrollmentStatus?.state === "enrolled" ? copy(language, "本次注册已完成，等待该节点的实时心跳；其他同名节点不会作为成功依据。", "Registration completed; waiting for this node’s live heartbeat, not another node with the same name.") : enrollmentStatus?.state === "unavailable" ? copy(language, "请先核对节点列表中的实际设备，不会自动重新注册。", "Inspect the actual device in the node list. Registration will not retry automatically.") : copy(language, `命令将在 ${formatDate(language, enrollment.expiresAt)} 失效。`, `The command expires at ${formatDate(language, enrollment.expiresAt)}.`)}</p></div></div>
           {statusError ? <FieldError role="alert">{statusError}</FieldError> : null}
           <Alert><CheckCircle2Icon /><AlertTitle>{copy(language, "凭据仅显示这一次", "Credential is shown only once")}</AlertTitle><AlertDescription>{copy(language, "令牌十分钟后失效且只能使用一次。关闭后如未执行，请重新生成。", "The token expires in ten minutes and works only once. Generate a new one if you close before running it.")}</AlertDescription></Alert>
-        </div> : (
+        </SheetBody> : (
           <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
-            <div className="flex-1 overflow-y-auto px-4">
+            <SheetBody>
               <FieldGroup>
+                {auxiliaryUnavailableError}
                 <Field data-disabled={!headscaleReady} orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="new-node-landing-only">{copy(language, "仅落地节点（不安装 Docker）", "Landing-only node (no Docker)")}</FieldLabel><FieldDescription>{copy(language, headscaleReady ? "允许审核授权的原生 systemd 应用；不支持 Docker 应用、网关或 Tunnel。不会卸载已有 Docker。" : "请先配置 Headscale 安全私网，再接入仅落地节点。", headscaleReady ? "Permits reviewed native systemd apps only, without Docker apps, gateways or tunnels. Existing Docker is not removed." : "Configure the Headscale private network before adding a landing-only node.")}</FieldDescription></div><Switch checked={landingOnly} disabled={!headscaleReady} id="new-node-landing-only" onCheckedChange={setLandingOnly} /></Field>
                 {firstPrivateNode ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "先让当前 Center 主机加入私网", "Join this Center host first")}</AlertTitle><AlertDescription>{copy(language, "请在安装 Center 的这台服务器运行生成的命令。完成网络确认后，其他节点就能通过私网地址连接。", "Run the generated command on the server hosting Center. After confirming its network, other nodes can connect through the private address.")}</AlertDescription></Alert> : null}
                 <Field><FieldLabel htmlFor="new-node-name">{copy(language, "节点名称", "Node name")}</FieldLabel><Input autoFocus id="new-node-name" maxLength={128} onChange={(event) => setName(event.target.value)} placeholder={copy(language, "例如：新加坡服务器", "For example: Singapore server")} required value={name} /><FieldDescription>{copy(language, "使用容易识别设备或位置的名称。", "Use a name that identifies the device or location.")}</FieldDescription></Field>
@@ -351,7 +353,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
                 </details>
                 {error ? <FieldError role="alert">{error}</FieldError> : null}
               </FieldGroup>
-            </div>
+            </SheetBody>
             <SheetFooter><Button onClick={close} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || data.nodeAuxiliaryDataUnavailable || !name || !siteID || !centerURL || (landingOnly && !headscaleReady)} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "生成接入命令", "Generate join command")}</Button></SheetFooter>
           </form>
         )}
@@ -448,12 +450,12 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
           <SheetTitle>{copy(language, `管理 ${agent?.name ?? ""}`, `Manage ${agent?.name ?? ""}`)}</SheetTitle>
           <SheetDescription>{deleting ? copy(language, "从 Center 移除这个已停用的节点。", "Remove this disabled node from Center.") : danger ? copy(language, "停用会立即拒绝此 Agent 的后续连接。", "Disabling immediately rejects future connections from this Agent.") : copy(language, "修改名称、位置或节点用途；支持的 Agent 可以由 Center 安全更新。", "Change its name, location, or purpose. Supported Agents can update securely through Center.")}</SheetDescription>
         </SheetHeader>
-        {danger ? <div className="flex flex-1 flex-col gap-4 px-4">
+        {danger ? <SheetBody>
           <Alert variant="destructive"><Trash2Icon /><AlertTitle>{deleting ? copy(language, "确认删除节点", "Confirm node deletion") : copy(language, "确认停用节点", "Confirm node disable")}</AlertTitle><AlertDescription>{deleting ? copy(language, "删除后无法撤销，服务器上的程序和数据不会被删除。仍被应用或入口使用的节点不能删除。", "Deletion cannot be undone. Programs and data on the server are not deleted. Nodes still used by apps or access points cannot be deleted.") : copy(language, "Center 会撤销管理权限，但不会远程删除节点上的二进制或数据。", "Center revokes management access but does not remotely delete the binary or local data.")}</AlertDescription></Alert>
           <Field><FieldLabel htmlFor="disable-node-confirmation">{copy(language, `输入“${agent?.name ?? ""}”确认`, `Type “${agent?.name ?? ""}” to confirm`)}</FieldLabel><Input autoFocus id="disable-node-confirmation" onChange={(event) => setConfirmation(event.target.value)} value={confirmation} /></Field>
           {error ? <FieldError>{error}</FieldError> : null}
-        </div> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
-          <div className="flex-1 overflow-y-auto px-4"><FieldGroup>
+        </SheetBody> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
+          <SheetBody><FieldGroup>
             {dependenciesUnavailable ? <FieldDescription role="status">{copy(language, "辅助数据暂不可用，不能确认服务依赖。用途修改和相关恢复操作暂不可用；仍可修改名称和位置。", "Auxiliary data is unavailable, so service dependencies cannot be verified. Purpose changes and related recovery are unavailable; name and location can still be edited.")}</FieldDescription> : null}
             {agent?.credentialRevoked ? <Alert><UnplugIcon aria-hidden="true" /><AlertTitle>{copy(language, "已停止接入", "Access stopped")}</AlertTitle><AlertDescription>{copy(language, "旧 Agent 无法再连接 Center，应用和数据仍保留。需要恢复管理时，请使用“重新接入”。", "The old Agent cannot connect to Center. Apps and data are kept. Use Reconnect to restore management.")}</AlertDescription></Alert> : null}
             <Field><FieldLabel htmlFor="node-name">{copy(language, "名称", "Name")}</FieldLabel><Input id="node-name" maxLength={128} onChange={(event) => setName(event.target.value)} required value={name} /></Field>
@@ -473,8 +475,8 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
             {agent?.capabilities.nodeSwap ? <NodeSwapControls key={`swap-${agent.id}`} nodeId={agent.id} connected={agent.connected} language={language} /> : null}
             {commandKind && !dependenciesUnavailable ? <Alert><TerminalIcon /><AlertTitle>{copy(language, "在节点运行一次", "Run once on the node")}</AlertTitle><AlertDescription><p>{copy(language, "命令会更新 systemd 配置并重启 Agent，Center 会自动看到新用途。", "The command updates systemd, restarts Agent, and Center detects the new purpose automatically.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{purposeCommand}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={purposeCommand} /></div></AlertDescription></Alert> : null}
             {error ? <FieldError>{error}</FieldError> : null}
-          </FieldGroup></div>
-          <SheetFooter className="flex-wrap justify-between"><div className="flex gap-2">{canStopAccess ? <Button disabled={busy} onClick={onStopAccess} type="button" variant="outline"><UnplugIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "停止接入", "Stop access")}</Button> : null}<Button disabled={busy} onClick={() => setDanger(true)} type="button" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "停用节点", "Disable node")}</Button></div><div className="flex gap-2"><Button onClick={onClose} type="button" variant="outline">{copy(language, "关闭", "Close")}</Button><Button disabled={busy || !name || name === agent?.name && siteID === agent?.siteId} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "保存信息", "Save details")}</Button></div></SheetFooter>
+          </FieldGroup></SheetBody>
+          <SheetFooter className="flex-wrap justify-between"><div className="flex flex-wrap gap-2">{canStopAccess ? <Button disabled={busy} onClick={onStopAccess} type="button" variant="outline"><UnplugIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "停止接入", "Stop access")}</Button> : null}<Button disabled={busy} onClick={() => setDanger(true)} type="button" variant="destructive"><Trash2Icon data-icon="inline-start" />{copy(language, "停用节点", "Disable node")}</Button></div><div className="ml-auto flex flex-wrap justify-end gap-2"><Button onClick={onClose} type="button" variant="outline">{copy(language, "关闭", "Close")}</Button><Button disabled={busy || !name || name === agent?.name && siteID === agent?.siteId} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "保存信息", "Save details")}</Button></div></SheetFooter>
         </form>}
         {danger ? <SheetFooter><Button disabled={busy} onClick={() => { if (deleting) onClose(); else { setDanger(false); setError(""); } }} variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !agent || confirmation.trim() !== agent.name.trim()} onClick={() => void disable()} variant="destructive">{busy ? <Spinner data-icon="inline-start" /> : null}{deleting ? copy(language, "删除节点", "Delete node") : copy(language, "停用节点", "Disable node")}</Button></SheetFooter> : null}
       </SheetContent>

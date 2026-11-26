@@ -6,7 +6,7 @@ import { ExecutionDetail } from "./ExecutionSettings";
 import { copy, userError } from "./shared";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 
 // Read the exact latest attempt; opening recovery never queues a mutation.
@@ -32,7 +32,7 @@ export function TaskRecoverySheet({ taskId, agentId, name, language, onClose, on
   if (execution) return <ExecutionDetail key={execution.id} execution={execution} name={name} language={language} onClose={onClose} onSaved={onSaved} />;
   return <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}><SheetContent>
     <SheetHeader><SheetTitle>{copy(language, "核对应用任务", "Review app task")}</SheetTitle><SheetDescription>{name}</SheetDescription></SheetHeader>
-    {error ? <FieldError className="px-4" role="alert">{error}</FieldError> : <p className="flex items-center gap-2 px-4" role="status"><Spinner />{copy(language, "正在读取最新执行记录", "Loading the latest execution")}</p>}
+    <SheetBody>{error ? <FieldError role="alert">{error}</FieldError> : <p className="flex items-center gap-2" role="status"><Spinner />{copy(language, "正在读取最新执行记录", "Loading the latest execution")}</p>}</SheetBody>
     <SheetFooter><Button variant="outline" onClick={onClose}>{copy(language, "返回", "Back")}</Button></SheetFooter>
   </SheetContent></Sheet>;
 }

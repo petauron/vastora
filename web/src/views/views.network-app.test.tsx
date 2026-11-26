@@ -514,15 +514,20 @@ describe("network and app views", () => {
     const footer = document.querySelector<HTMLElement>('[data-slot="sheet-footer"]');
     const actions = footer?.querySelector<HTMLElement>('[role="group"]');
     const version = footer?.querySelector<HTMLElement>('[data-slot="badge"]');
+    expect(document.querySelector('[data-slot="sheet-body"]')).not.toBeNull();
+    expect(footer?.classList.contains("border-t")).toBe(false);
     expect(version?.textContent).toBe(language === "zh-CN" ? "版本已是最新" : "Version up to date");
     expect(actions?.contains(version!)).toBe(false);
     expect(version?.parentElement).toBe(actions?.parentElement);
     expect(version?.parentElement?.classList.contains("items-center")).toBe(true);
+    expect(version?.parentElement?.classList.contains("w-full")).toBe(true);
     expect(actions?.classList.contains("items-center")).toBe(true);
     expect(actions?.classList.contains("flex-wrap")).toBe(true);
     expect(actions?.getAttribute("aria-label")).toBe(language === "zh-CN" ? "应用操作" : "Application actions");
     const buttons = [...(actions?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
     expect(buttons.map((button) => button.textContent)).toEqual(language === "zh-CN" ? ["迁移订阅主机", "修改配置", "卸载"] : ["Move subscription host", "Change settings", "Uninstall"]);
+    expect(buttons.every((button) => button.getAttribute("data-size") === "default")).toBe(true);
+    expect(buttons.at(-1)?.getAttribute("data-variant")).toBe("destructive");
     expect(buttons.at(-1)?.disabled).toBe(true);
   });
 

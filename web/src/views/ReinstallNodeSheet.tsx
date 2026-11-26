@@ -10,7 +10,7 @@ import { CopyButton, copy, formatDate, userError } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ReinstallNetworkReview } from "./ReinstallNetworkReview";
 import { ReinstallApplicationReview } from "./ReinstallApplicationReview";
 import { ReinstallMonitorReview } from "./ReinstallMonitorReview";
@@ -326,7 +326,7 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
         <SheetTitle>{copy(language, `重装恢复 ${agent.name}`, `Recover ${agent.name}`)}</SheetTitle>
         <SheetDescription>{copy(language, "保留节点和业务归属，核对恢复要求后接替机器身份。", "Keep the node and business ownership. Review recovery requirements before replacing the machine identity.")}</SheetDescription>
       </SheetHeader>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4">
+      <SheetBody>
         {busy ? <p role="status" className="flex items-center gap-2 text-sm"><Spinner />{copy(language, "正在处理…", "Working…")}</p> : null}
         {error ? <Alert variant="destructive"><AlertTitle>{copy(language, "操作未完成", "Action incomplete")}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
         {plan ? <>
@@ -361,8 +361,8 @@ export function ReinstallNodeSheet({ agent, installerAvailable, language, onClos
           {command ? <><p className="text-sm">{copy(language, "在重装后的原服务器执行一次", "Run once on the reinstalled original server")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div><p className="text-xs text-muted-foreground">{copy(language, `命令有效期至 ${formatDate(language, enrollment!.expiresAt)}`, `Command valid until ${formatDate(language, enrollment!.expiresAt)}`)}</p></> : null}
           {joined ? <>{plan.applications.some((app) => app.preparation) ? <ReinstallClientAcceptance plan={plan} language={language} revision={revision} /> : null}<ReinstallRemaining plan={plan} language={language} /></> : null}
         </> : null}
-      </div>
-      <SheetFooter className="flex-row flex-wrap justify-end gap-2">
+      </SheetBody>
+      <SheetFooter>
         <Button disabled={busy} onClick={refresh} variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "刷新状态", "Refresh status")}</Button>
         {joined ? <Button disabled={busy} onClick={() => void completeRecovery()}>{copy(language, "校验并完成恢复", "Verify and complete recovery")}</Button> : null}
         <Button onClick={onClose} variant="outline">{copy(language, "关闭", "Close")}</Button>

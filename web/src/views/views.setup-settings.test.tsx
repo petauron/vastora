@@ -862,6 +862,29 @@ describe("network and app views", () => {
     act(() => update?.click());
     expect(document.body.textContent).toContain("预计短暂断开连接");
     expect(document.body.textContent).toContain("开始更新");
+    const sheetContent = document.querySelector<HTMLElement>('[data-slot="sheet-content"]');
+    expect(sheetContent?.classList.contains("sm:max-w-md")).toBe(true);
+    expect(sheetContent?.classList.contains("max-w-[460px]")).toBe(false);
+    expect(sheetContent?.querySelector('[data-slot="sheet-body"]')).not.toBeNull();
+  });
+
+  it("renders catalog source card actions at standard sm size without desktop min-h-11", () => {
+    const data = dashboard();
+    data.sources = [{
+      id: "community",
+      displayName: "Community",
+      url: "https://catalog.example.com/index.json",
+      publicKey: "test-key",
+      customCASet: false,
+      bearerTokenSet: false,
+      enabled: true,
+      status: "healthy",
+      refreshIntervalSeconds: 3600,
+    }];
+    const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('#settings-catalog [data-slot="card-footer"] button')];
+    expect(buttons.map((button) => button.textContent)).toEqual(["编辑", "停用", "删除", "刷新"]);
+    expect(buttons.every((button) => button.getAttribute("data-size") === "sm" && !button.classList.contains("min-h-11"))).toBe(true);
   });
 
   it("keeps execution history out of the MVP settings page", () => {

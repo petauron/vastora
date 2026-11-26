@@ -111,9 +111,19 @@ describe("app store cards", () => {
     expect(container.querySelector("h3")?.textContent).toBe("Senlun 监控主机");
     expect(container.textContent).toContain("已安装到 1 个节点");
     expect(container.textContent).not.toContain("v0.1.0-alpha.2");
-    expect(container.querySelector<HTMLButtonElement>(installSelector)?.disabled).toBe(false);
-    expect(container.querySelector(installSelector)?.getAttribute("aria-label")).toBe("安装 Senlun 监控主机");
+    const tileInstall = container.querySelector<HTMLButtonElement>(installSelector);
+    expect(tileInstall?.disabled).toBe(false);
+    expect(tileInstall?.getAttribute("aria-label")).toBe("安装 Senlun 监控主机");
+    expect(tileInstall?.getAttribute("data-size")).toBe("sm");
+    expect(tileInstall?.getAttribute("data-variant")).toBe("secondary");
     await inspectDetails(value, "zh-CN", 1, (details) => {
+      const sheetBody = details.querySelector<HTMLElement>('[data-slot="sheet-body"]');
+      expect(sheetBody).not.toBeNull();
+      expect(sheetBody?.classList.contains("pt-4")).toBe(true);
+      expect(sheetBody?.classList.contains("pb-5")).toBe(true);
+      const footerInstall = details.querySelector('[data-slot="sheet-footer"]')?.querySelector<HTMLButtonElement>(installSelector);
+      expect(footerInstall?.getAttribute("data-size")).toBe("default");
+      expect(footerInstall?.getAttribute("data-variant")).toBe("default");
       expect(details.textContent).toContain(value.app.description["zh-CN"]);
       expect(details.textContent).toContain("v0.1.0-alpha.2 · r1");
       expect(details.textContent).toContain("容器应用");

@@ -84,3 +84,27 @@ it("cancels pending reads when leaving settings", async () => {
   act(() => root.unmount());
   expect(signal.aborted).toBe(true);
 });
+
+it("uses standard button sizes without hardcoded desktop min-h-11 overrides", async () => {
+  vi.spyOn(api, "executions").mockResolvedValue({ executions: [execution], nextCursor: 10 });
+  await mount();
+  const refresh = button("Refresh latest");
+  const older = button("Older records");
+  expect(refresh.getAttribute("data-size")).toBe("sm");
+  expect(older.getAttribute("data-size")).toBe("sm");
+  expect(refresh.classList.contains("min-h-11")).toBe(false);
+  expect(older.classList.contains("min-h-11")).toBe(false);
+
+  const row = [...document.querySelectorAll("button")].find((value) => value.textContent?.includes("Test node"))!;
+  expect(row.classList.contains("min-h-11")).toBe(false);
+  await act(async () => row.click());
+  const sheetBody = document.querySelector<HTMLElement>('[data-slot="sheet-body"]');
+  expect(sheetBody).not.toBeNull();
+  expect(sheetBody?.classList.contains("pt-4")).toBe(true);
+  expect(sheetBody?.classList.contains("pb-5")).toBe(true);
+  const sheetButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-slot="sheet-content"] [data-slot="button"]')];
+  expect(sheetButtons.length).toBeGreaterThan(0);
+  expect(sheetButtons.every((item) => !item.classList.contains("min-h-11"))).toBe(true);
+  const footerBack = document.querySelector<HTMLButtonElement>('[data-slot="sheet-footer"] button');
+  expect(footerBack?.getAttribute("data-size")).toBe("default");
+});

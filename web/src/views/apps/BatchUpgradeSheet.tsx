@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 
 export type BatchUpgradeTarget = {
@@ -320,7 +320,7 @@ export function BatchUpgradeSheet({
           </SheetDescription>
         </SheetHeader>
         <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
+          <SheetBody>
             {catalogMessage ? (
               <Alert id="batch-upgrade-catalog-error" role="status">
                 <AlertTitle>{copy(language, "暂不能继续", "Cannot continue yet")}</AlertTitle>
@@ -429,8 +429,8 @@ export function BatchUpgradeSheet({
             ) : null}
 
             {error ? <FieldError role="alert">{error}</FieldError> : null}
-          </div>
-          <SheetFooter className="flex-row justify-end gap-2">
+          </SheetBody>
+          <SheetFooter>
             <Button disabled={busy} onClick={onClose} type="button" variant="outline">
               {result ? copy(language, "关闭", "Close") : copy(language, "取消", "Cancel")}
             </Button>

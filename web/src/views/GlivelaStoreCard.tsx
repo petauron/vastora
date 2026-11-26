@@ -6,7 +6,7 @@ import { AppIcon } from "@/components/desktop/AppIcon";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { SelectControl } from "@/components/SelectControl";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { AppStoreTile } from "./AppStore";
 import { AppIdentityBadge } from "./AppIdentity";
 import { AppInstallationSummary } from "./apps/AppInstallationSummary";
@@ -103,7 +103,7 @@ export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, on
         <SheetTitle className="flex items-center gap-3"><AppIcon appKey={controllerKey} className="size-11" />Glivela{officialApp ? <AppIdentityBadge app={officialApp} language={language} /> : null}</SheetTitle>
         <SheetDescription>{copy(language, "管理控制端和节点端。节点功能在各主机配置中管理。", "Manage controllers and nodes. Configure node capabilities on each host.")}</SheetDescription>
       </SheetHeader>
-      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4">
+      <SheetBody className="gap-5">
         {parts.map((part) => {
           const label = copy(language, part.zh, part.en);
           const group = part.group;
@@ -153,7 +153,7 @@ export function GlivelaStoreCard({ data, groups, language, onInstall, onOpen, on
             </div> : null}
           </section>;
         })}
-      </div>
+      </SheetBody>
     </SheetContent></Sheet>
   </>;
 }

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { SelectControl } from "@/components/SelectControl";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 
@@ -81,7 +81,7 @@ export function CenterRemoteAccessSheet({ access, cloudflare, language, open, on
         <SheetDescription>{copy(language, "通过 Cloudflare Tunnel 发布专用 HTTPS 登录地址，并选择入口保护方式。", "Publish a dedicated HTTPS sign-in address through Cloudflare Tunnel and choose its protection mode.")}</SheetDescription>
       </SheetHeader>
       <form className="flex min-h-0 min-w-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
-        <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4">
+        <SheetBody className="min-w-0 overflow-x-hidden">
           <FieldSet disabled={busy}><FieldGroup>
             <Field orientation="horizontal">
               <FieldLabel htmlFor="center-remote-access-enabled"><span>{copy(language, "启用远程备用入口", "Enable remote fallback")}</span><span className="text-xs font-normal text-muted-foreground">{copy(language, "默认关闭；安全私网仍是首选路径", "Off by default; the secure private network remains preferred")}</span></FieldLabel>
@@ -115,7 +115,7 @@ export function CenterRemoteAccessSheet({ access, cloudflare, language, open, on
             {access.status === "failed" && access.lastError ? <Alert variant="destructive"><AlertTitle>{copy(language, "上次配置没有完成", "The previous configuration did not finish")}</AlertTitle><AlertDescription className="break-words">{access.lastError}</AlertDescription></Alert> : null}
             {error ? <FieldError role="alert">{error}</FieldError> : null}
           </FieldGroup></FieldSet>
-        </div>
+        </SheetBody>
         <SheetFooter>
           {cloudflareRequired ? <p className="text-xs leading-5 text-muted-foreground" id="center-remote-access-save-help" role="status">{copy(language, "请先在上方重新连接 Cloudflare 并授予所需权限。", "Reconnect Cloudflare above and grant the required permission first.")}</p> : null}
           <Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button>

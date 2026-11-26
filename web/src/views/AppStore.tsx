@@ -5,7 +5,7 @@ import type { Language } from "../translations";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { eligibleAppNodes, installBlocker, isInstalledApplication, localized } from "./appAccess";
 import { AppHostAccessNote, AppIdentityBadge, isOfficialProduct } from "./AppIdentity";
 import { catalogInstallBlocked, copy } from "./shared";
@@ -85,16 +85,16 @@ export function AppStoreCard({ app, language, installedCount, canInstall: nodeAv
     ? app.installBlockedReason || copy(language, "请先在控制面板刷新应用目录，再安装或升级。已安装应用不受影响。", "Refresh the app catalog in Control Panel before installing or upgrading. Installed apps are unaffected.")
     : nodeBlocker;
   const officialCatalog = app.sourceId === "vastora-official" && app.key === `vastora-official/${app.app.id}`;
-  const installAction = <Button aria-label={copy(language, `安装 ${name}`, `Install ${name}`)} aria-describedby={blocker ? `${id}-blocker` : undefined} disabled={!canInstall} onClick={() => { setDetailsOpen(false); onInstall(app); }} size="sm" variant="secondary"><PackagePlusIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "安装", "Install")}</Button>;
+  const installAction = (size: "sm" | "default", variant: "secondary" | "default" = "secondary") => <Button aria-label={copy(language, `安装 ${name}`, `Install ${name}`)} aria-describedby={blocker ? `${id}-blocker` : undefined} disabled={!canInstall} onClick={() => { setDetailsOpen(false); onInstall(app); }} size={size} variant={variant}><PackagePlusIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "安装", "Install")}</Button>;
   const installation = installedCount ? copy(language, `已安装到 ${installedCount} 个节点`, `Installed on ${installedCount} node(s)`) : copy(language, "尚未安装", "Not installed");
   return <>
-    <AppStoreTile appKey={app.key} name={name} language={language} onDetails={() => setDetailsOpen(true)} action={actions ?? installAction} meta={<>
+    <AppStoreTile appKey={app.key} name={name} language={language} onDetails={() => setDetailsOpen(true)} action={actions ?? installAction("sm")} meta={<>
       {!officialCatalog ? <span aria-label={copy(language, "目录来源", "Catalog source")} title={app.sourceId}>{app.sourceId} · </span> : null}
       {!actions && blocker ? <span id={`${id}-blocker`} title={blocker}>{blocker}</span> : status ?? <span>{installedCount ? installation : localized(app, language, "description")}</span>}
     </>} />
     <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}><SheetContent className="sm:max-w-xl">
       <SheetHeader><SheetTitle className="flex items-center gap-3"><AppIcon appKey={app.key} className="size-12" />{name}<AppIdentityBadge app={app} language={language} /></SheetTitle><SheetDescription>{localized(app, language, "description")}</SheetDescription></SheetHeader>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 pb-5">
+      <SheetBody>
         {summary}
         <dl className="mac-settings-group">
           <div className="mac-settings-row"><dt>{copy(language, "目录版本", "Catalog version")}</dt><dd>v{app.app.version} · r{app.app.packageRevision ?? 0}</dd></div>
@@ -105,8 +105,8 @@ export function AppStoreCard({ app, language, installedCount, canInstall: nodeAv
         {isBackgroundApplication(app) ? <p className="text-xs text-muted-foreground">{copy(language, "后台服务 · 在应用商店管理", "Background service · manage in App Store")}</p> : null}
         {app.app.hostAccess && !isOfficialProduct(app) ? <AppHostAccessNote app={app} language={language} /> : null}
         {blocker ? <p className="text-sm text-muted-foreground">{blocker}</p> : null}
-      </div>
-      <SheetFooter><div className="flex flex-wrap gap-2" onClick={(event) => { if ((event.target as HTMLElement).closest("button:not(:disabled), a")) setDetailsOpen(false); }}>{detailActions ?? actions ?? installAction}</div></SheetFooter>
+      </SheetBody>
+      <SheetFooter><div className="flex flex-wrap gap-2" onClick={(event) => { if ((event.target as HTMLElement).closest("button:not(:disabled), a")) setDetailsOpen(false); }}>{detailActions ?? actions ?? installAction("default", "default")}</div></SheetFooter>
     </SheetContent></Sheet>
   </>;
 }

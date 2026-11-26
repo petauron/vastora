@@ -7,7 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { SelectControl } from "@/components/SelectControl";
@@ -122,7 +122,7 @@ function DomainSwitchSheet({ domain, language, onClose, onNavigate, open }: { do
   return <Sheet onOpenChange={(next) => { if (!next) resetAndClose(); }} open={open}>
     <SheetContent className="sm:max-w-xl">
       <SheetHeader><SheetTitle>{copy(language, "切换 Vastora 域名", "Switch Vastora domain")}</SheetTitle><SheetDescription>{copy(language, "一次迁移 Center、Headscale 和默认应用域名空间。", "Move Center, Headscale, and the default app namespace together.")}</SheetDescription></SheetHeader>
-      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4">
+      <SheetBody className="gap-5">
         {blocked ? <Alert><CircleAlertIcon aria-hidden="true" /><AlertTitle>{copy(language, "当前暂时无法切换", "Domain switching is currently unavailable")}</AlertTitle><AlertDescription><p>{domainSwitchBlockReason(domain, language)}</p>{domain.activePublications > 0 ? <Button className="mt-3" onClick={() => { resetAndClose(); onNavigate?.("apps"); }} size="sm" type="button" variant="outline">{copy(language, "管理访问入口", "Manage access points")}</Button> : null}</AlertDescription></Alert> : <>
         <Alert><ShieldAlertIcon aria-hidden="true" /><AlertTitle>{copy(language, "旧地址不会立即失效", "Previous addresses remain available")}</AlertTitle><AlertDescription>{copy(language, "Vastora 会先创建数据库快照，再启用新域名。在线节点会在下一次心跳验证新地址后自动切换；离线节点仍可通过旧地址恢复。应用访问入口需在切换后重新创建。", "Vastora creates a database snapshot before enabling the new domain. Online nodes verify and switch to the new address on their next heartbeat; offline nodes can still recover through the previous address. Recreate app access points after the switch.")}</AlertDescription></Alert>
         <div className="rounded-2xl border bg-background p-4 shadow-xs sm:p-5">
@@ -137,7 +137,7 @@ function DomainSwitchSheet({ domain, language, onClose, onNavigate, open }: { do
         {zone ? <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="confirm-domain-switch">{copy(language, "确认迁移全部系统域名", "Confirm the system-domain migration")}</FieldLabel><FieldDescription>{copy(language, "新建入口将使用新域名空间；旧应用入口不会自动复制。", "New access points use the new namespace; old app access points are not copied automatically.")}</FieldDescription></div><Switch checked={confirmed} disabled={busy} id="confirm-domain-switch" onCheckedChange={setConfirmed} /></Field> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
         </>}
-      </div>
+      </SheetBody>
       <SheetFooter><Button disabled={busy} onClick={resetAndClose} type="button" variant="outline">{copy(language, blocked ? "关闭" : "取消", blocked ? "Close" : "Cancel")}</Button>{!blocked ? <Button disabled={busy || !zone || !confirmed} onClick={() => void submit()} type="button">{busy ? <Spinner data-icon="inline-start" /> : <ArrowRightIcon data-icon="inline-start" />}{copy(language, "切换域名", "Switch domain")}</Button> : null}</SheetFooter>
     </SheetContent>
   </Sheet>;
