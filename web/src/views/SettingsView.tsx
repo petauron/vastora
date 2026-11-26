@@ -104,7 +104,7 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
       </section>
       <section className="mac-settings-panel" id="settings-domains" hidden={section !== "domains"} aria-label={copy(language, "域名与访问", "Domains & Access")}>
         <PageHeading title={copy(language, "域名与访问", "Domains & Access")} />
-        <SystemDomainSettings domain={data.systemDomain} language={language} />
+        <SystemDomainSettings domain={data.systemDomain} language={language} onNavigate={onNavigate} />
         {section === "domains" ? <ManagedDomainSettings applications={data.applications} agents={data.agents} language={language} /> : null}
       </section>
       <section className="mac-settings-panel" id="settings-catalog" hidden={section !== "catalog"} aria-label={copy(language, "应用目录", "App Catalogs")}>

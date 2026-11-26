@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppWindowIcon, KeyRoundIcon } from "lucide-react";
 import { api, isAPIError } from "../api";
-import type { AppData, Mutate } from "../App";
+import type { AppData, Mutate, Screen } from "../App";
 import type { AgentView, AppView, Application, Deployment, Service, ThreeXUIRole } from "../types";
 import type { Language } from "../translations";
 import { latestOperations, localized, operationLabel, packageNodeBlocker } from "./appAccess";
@@ -31,7 +31,7 @@ import { TaskRecoverySheet } from "./TaskRecoverySheet";
 
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
 
-export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onStore, onSettings, active = true }: { data: AppData; language: Language; mutate: Mutate; active?: boolean; workspaceKey: string | null; onOpenApp: (key: string) => void; onStore: () => void; onSettings: () => void }) {
+export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onOpenApp, onStore, onSettings, active = true }: { data: AppData; language: Language; mutate: Mutate; active?: boolean; workspaceKey: string | null; onNavigate?: (screen: Screen) => void; onOpenApp: (key: string) => void; onStore: () => void; onSettings: () => void }) {
   const [deploymentEditor, setDeploymentEditor] = useState<DeploymentEditor>(null);
   const [publicationService, setPublicationService] = useState<Service | null>(null);
   const [uninstallApplication, setUninstallApplication] = useState<Application | null>(null);
@@ -313,7 +313,7 @@ export function AppsView({ data, language, mutate, workspaceKey, onOpenApp, onSt
 		<RealitySheet application={realityApplication} data={data} language={language} onClose={() => setRealityApplication(null)} siteTimezone={realityApplication ? data.sites.find((site) => site.id === realityApplication.siteId)?.timezone : undefined} />
 		<RealityRenameSheet data={data} language={language} mutate={mutate} onClose={() => setRealityRenameService(null)} service={realityRenameService} />
       {realityRemoveService ? <RealityRemoveDialog key={realityRemoveService.id} service={realityRemoveService} language={language} mutate={mutate} onClose={() => setRealityRemoveService(null)} /> : null}
-      <ThreeXUIInboundTrafficSheet controller={trafficController ?? null} language={language} onClose={() => setTrafficService(null)} service={trafficService} siteTimezone={trafficService ? data.sites.find((site) => site.id === trafficService.siteId)?.timezone : undefined} />
+      <ThreeXUIInboundTrafficSheet controller={trafficController ?? null} language={language} onClose={() => setTrafficService(null)} onNavigate={onNavigate} service={trafficService} siteTimezone={trafficService ? data.sites.find((site) => site.id === trafficService.siteId)?.timezone : undefined} />
       <SubscriptionSheet application={subscriptionApplication} data={data} language={language} mutate={mutate} onClose={() => setSubscriptionApplication(null)} />
 	      <ThreeXUIClientsSheet advancedURL={clientsApplication ? data.deployments.find((value) => value.applicationId === clientsApplication.id && value.state === "succeeded" && value.operation !== "uninstall")?.accessUrl : undefined} application={clientsApplication} language={language} onClose={() => setClientsApplication(null)} siteTimezone={clientsApplication ? data.sites.find((site) => site.id === clientsApplication.siteId)?.timezone : undefined} />
 	      <ApplicationCredentialsSheet application={credentialApplication} language={language} onClose={() => setCredentialApplication(null)} />

@@ -290,7 +290,7 @@ function ClientNodePicker({ busy, inbounds, language, onChange, selected }: { bu
       {inbounds.map((inbound) => {
         const checked = selected.includes(inbound.id);
         return <button aria-checked={checked} className={`flex min-h-14 items-center gap-3 rounded-xl border p-3 text-left transition-colors ${checked ? "border-primary bg-primary/5" : "bg-card hover:bg-accent"}`} disabled={busy} key={inbound.id} onClick={() => toggle(inbound.id)} role="checkbox" type="button">
-          <span className={`flex size-9 shrink-0 items-center justify-center rounded-full ${checked ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{checked ? <CheckIcon className="size-4" /> : <ServerIcon className="size-4" />}</span>
+          <span className={`flex size-9 shrink-0 items-center justify-center rounded-full ${checked ? "bg-primary-control text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{checked ? <CheckIcon className="size-4" /> : <ServerIcon className="size-4" />}</span>
 			<span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{inbound.displayName || inbound.nodeName || inbound.name}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{inbound.connectHostname || inbound.name}</span></span>
         </button>;
       })}

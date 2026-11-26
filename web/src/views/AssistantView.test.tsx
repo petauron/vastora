@@ -22,12 +22,12 @@ afterEach(() => {
   QuietEventSource.instances = [];
 });
 
-async function renderAssistant() {
+async function renderAssistant(onOpenSettings?: () => void) {
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
   await act(async () => {
-    root?.render(<ThemeProvider><AssistantView language="zh-CN" /></ThemeProvider>);
+    root?.render(<ThemeProvider><AssistantView language="zh-CN" onOpenSettings={onOpenSettings} /></ThemeProvider>);
     await Promise.resolve();
   });
   return container;
@@ -514,4 +514,37 @@ it("does not submit key-repeat Enter events", async () => {
   expect(send).not.toHaveBeenCalled();
   await act(async () => { keyboard(input, "keydown", { repeat: false }); });
   expect(send).toHaveBeenCalledExactlyOnceWith(conversation.id, "不要因长按回车重复发送");
+});
+
+it("renders proposal permission details after the approval card header", async () => {
+  const conversation = conversationFixture("A");
+  const proposal = proposalFixture(conversation.id);
+  proposal.summary.permissionDetails = ["host-network: bind TCP 443", "root: install systemd unit"];
+  conversation.proposals = [proposal];
+  mockConversations([conversation]);
+
+  const container = await renderAssistant();
+  await vi.waitFor(() => expect(container.textContent).toContain("变更审批"));
+  const card = [...container.querySelectorAll<HTMLElement>('[data-slot="card"]')].find((item) => item.textContent?.includes("变更审批"));
+  const header = card?.querySelector<HTMLElement>('[data-slot="card-header"]');
+  const detail = [...(card?.querySelectorAll<HTMLElement>("p") ?? [])].find((item) => item.textContent === "host-network: bind TCP 443");
+  expect(header).not.toBeNull();
+  expect(detail).toBeDefined();
+  expect(Boolean(header!.compareDocumentPosition(detail!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+});
+
+it("uses SPA navigation for the assistant settings link on plain left-click", async () => {
+  vi.stubGlobal("EventSource", QuietEventSource);
+  vi.spyOn(api, "assistantProvider").mockResolvedValue({ apiUrl: "", model: "", apiKeySet: false, allowPrivate: false, status: "disabled" });
+  vi.spyOn(api, "assistantConversations").mockResolvedValue({ conversations: [] });
+  const onOpenSettings = vi.fn();
+
+  const container = await renderAssistant(onOpenSettings);
+  await vi.waitFor(() => expect(container.textContent).toContain("先连接 AI 服务，再使用助手"));
+  const link = container.querySelector<HTMLAnchorElement>('a[href="/settings#assistant"]');
+  expect(link).not.toBeNull();
+  const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+  act(() => { link!.dispatchEvent(event); });
+  expect(event.defaultPrevented).toBe(true);
+  expect(onOpenSettings).toHaveBeenCalledOnce();
 });

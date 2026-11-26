@@ -2,10 +2,12 @@
 
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { ApplicationCommand } from "../types";
+import type { ApplicationCommand, Service } from "../types";
 import { APIError, api } from "../api";
 import { NodesView } from "./NodesView";
 import { SetupWizard } from "./SetupWizard";
+import { ThreeXUIControllerMigrationSheet } from "./ThreeXUIControllerMigrationSheet";
+import { RealityRenameSheet, SubscriptionSheet } from "./apps/SubscriptionSheets";
 import { commandSecretScope, secretOperation } from "../secret-delivery";
 
 import { TestAppsView as AppsView, dashboard, rerender, resetRender, mockCommandEvent, openAppDetails, openRealityCreation, realityDashboard, render, renderAppDetails } from "./views.test-support";
@@ -818,14 +820,49 @@ describe("network and app views", () => {
     const data = realityDashboard();
     data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
     vi.spyOn(api, "createThreeXUIClientCommand").mockResolvedValue({ id: "traffic-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", totalBytes: 200 * 1024 ** 3, usedBytes: 200 * 1024 ** 3, resetDay: 23, nextResetAt: "2026-08-23T00:00:00Z", planStatus: "failed", planError: "Agent did not confirm the inbound reset" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
-    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const onNavigate = vi.fn();
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={onNavigate} />);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("节点套餐"))?.click();
       await Promise.resolve();
     });
     expect(document.body.textContent).toContain("节点月度重置失败");
     expect(document.body.textContent).toContain("Agent did not confirm the inbound reset");
-    expect(document.querySelector<HTMLAnchorElement>('a[href="/activity"]')?.textContent).toContain("前往活动查看详情");
+    const link = document.querySelector<HTMLAnchorElement>('a[href="/activity"]');
+    expect(link?.textContent).toContain("前往活动查看详情");
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+    act(() => { link!.dispatchEvent(click); });
+    expect(click.defaultPrevented).toBe(true);
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("activity");
+  });
+
+  it("omits empty trailing sheet footers in form mode", async () => {
+    vi.spyOn(api, "nodeProtocols").mockResolvedValue({ vless: true, hy2: false, state: "succeeded" });
+    const data = realityDashboard();
+    const service: Service = { id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国节点", regionCode: "US", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
+    data.services = [
+      service,
+      { id: "sub-service", applicationId: "three-x-ui", siteId: "site", name: "subscription", protocol: "http", containerPort: 2096, hostPort: 2096, endpoint: "10.0.0.10:2096", source: "catalog", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" },
+    ];
+    const mutate = async () => undefined;
+
+    render(<SubscriptionSheet application={data.applications[0]} data={data} language="zh-CN" mutate={mutate} onClose={() => undefined} />);
+    const subscriptionFooters = [...document.querySelectorAll('[data-slot="sheet-footer"]')];
+    expect(subscriptionFooters).toHaveLength(1);
+    expect(subscriptionFooters[0].textContent?.trim()).not.toBe("");
+
+    resetRender();
+    render(<RealityRenameSheet data={data} language="zh-CN" mutate={mutate} onClose={() => undefined} service={service} />);
+    await act(async () => { await Promise.resolve(); });
+    const renameFooters = [...document.querySelectorAll('[data-slot="sheet-footer"]')];
+    expect(renameFooters).toHaveLength(1);
+    expect(renameFooters[0].textContent?.trim()).not.toBe("");
+
+    resetRender();
+    render(<ThreeXUIControllerMigrationSheet application={data.applications[0]} data={data} language="zh-CN" mutate={mutate} onClose={() => undefined} />);
+    const migrationFooters = [...document.querySelectorAll('[data-slot="sheet-footer"]')];
+    expect(migrationFooters).toHaveLength(1);
+    expect(migrationFooters[0].textContent?.trim()).not.toBe("");
   });
 
 		it("starts first-run onboarding with a real location and the browser timezone", () => {

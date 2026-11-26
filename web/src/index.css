@@ -28,6 +28,8 @@
     --color-ring: var(--ring);
     --color-success-foreground: var(--success-foreground);
     --color-success: var(--success);
+    --color-warning-foreground: var(--warning-foreground);
+    --color-warning: var(--warning);
     --color-latency-fast: var(--latency-fast);
     --color-quality-excellent: var(--quality-excellent);
     --color-quality-premium: var(--quality-premium);
@@ -44,6 +46,7 @@
     --color-secondary-foreground: var(--secondary-foreground);
     --color-secondary: var(--secondary);
     --color-primary-foreground: var(--primary-foreground);
+    --color-primary-control: var(--primary-control);
     --color-primary: var(--primary);
     --color-popover-foreground: var(--popover-foreground);
     --color-popover: var(--popover);
@@ -88,6 +91,8 @@
     --chart-5: #5c6ed4;
     --radius: 0.625rem;
     --success: #248a3d;
+    --warning: #9a5b00;
+    --warning-foreground: #ffffff;
     --latency-fast: #248a3d;
     --quality-excellent: #248a3d;
     --quality-premium: #147b88;
@@ -123,6 +128,7 @@
     --popover: #303033;
     --popover-foreground: #f5f5f7;
     --primary: #409cff;
+    --primary-control: #006be6;
     --primary-foreground: #ffffff;
     --secondary: #3b3b3f;
     --secondary-foreground: #f5f5f7;
@@ -144,6 +150,8 @@
     --sidebar-accent: #454549;
     --sidebar-accent-foreground: #f5f5f7;
     --success: #5bd787;
+    --warning: #ffc260;
+    --warning-foreground: #291c05;
     --latency-fast: #5bd787;
     --quality-excellent: #5bd787;
     --quality-premium: #66d4d9;
@@ -549,5 +557,5 @@
 }
 
 .desktop-drag-preview { position: fixed; z-index: 100; transform: translate(-50%, -50%); pointer-events: none; opacity: .85; filter: drop-shadow(0 8px 12px #17283840); }
-.desktop-drag-preview > .desktop-drag-count { position: absolute; right: -4px; top: -4px; min-width: 22px; height: 22px; padding-inline: 5px; border-radius: 11px; background: var(--primary); color: #fff; text-align: center; font-size: 12px; line-height: 22px; }
+.desktop-drag-preview > .desktop-drag-count { position: absolute; right: -4px; top: -4px; min-width: 22px; height: 22px; padding-inline: 5px; border-radius: 11px; background: var(--primary-control); color: #fff; text-align: center; font-size: 12px; line-height: 22px; }
 .desktop-home:has([data-dragging="true"]), .desktop-home:has([data-dragging="true"]) .desktop-shortcut { cursor: grabbing; }
