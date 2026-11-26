@@ -130,7 +130,7 @@ export function App() {
     }
     setWorkspaceKey(selectedApp);
     focusAfterNavigation.current = focusContent;
-    setNotice(null);
+    setNotice((current) => (current?.error ? current : null));
     activeScreen.current = target;
     setScreen(target);
     void loadScreen(target).catch(handleLoadError);

@@ -6,7 +6,7 @@ import { App, type Mutate } from "./App";
 import { api, APIError } from "./api";
 import { ThemeProvider } from "./components/theme";
 
-const operation = vi.hoisted(() => ({ error: undefined as unknown, calls: 0 }));
+const operation = vi.hoisted(() => ({ error: undefined as unknown, calls: 0, reportError: false }));
 vi.mock("./views/HomeView", async () => {
   const { useState } = await import("react");
   return { HomeView: ({ mutate }: { mutate: Mutate }) => {
@@ -15,7 +15,7 @@ vi.mock("./views/HomeView", async () => {
     return <form aria-label="Workspace account" onSubmit={async (event) => {
       event.preventDefault();
       try {
-        await mutate(async () => { operation.calls++; if (operation.error !== undefined) throw operation.error; }, operation.error === undefined ? "Account saved." : undefined, { reportError: false });
+        await mutate(async () => { operation.calls++; if (operation.error !== undefined) throw operation.error; }, operation.error === undefined ? "Account saved." : undefined, { reportError: operation.reportError });
       } catch { setError("Save failed; draft retained"); }
     }}>
       <input aria-label="Account draft" value={draft} onChange={(event) => setDraft(event.target.value)} />
@@ -37,6 +37,7 @@ let root: Root | undefined;
 
 beforeEach(() => {
   operation.calls = 0;
+  operation.reportError = false;
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })) });
   window.localStorage.setItem("vastora.language", "en");
@@ -110,5 +111,27 @@ describe("independently bundled app mutation errors", () => {
     const notice = container.querySelector('[data-slot="floating-notice"]');
     expect(notice?.textContent).toContain("Account saved.");
     expect(container.querySelector(".desktop-window-content")?.contains(notice)).toBe(false);
+  });
+
+  it("retains unread error notices across window switches and clears non-error notices", async () => {
+    operation.reportError = true;
+    const { container } = await save(new WorkspaceAPIError(500));
+    expect(container.querySelector('[data-slot="floating-notice"]')?.textContent).toContain("The operation did not complete.");
+
+    const hostsButton = container.querySelector<HTMLButtonElement>('.desktop-dock button[aria-label="Hosts"]')!;
+    await act(async () => hostsButton.click());
+    expect(container.querySelector<HTMLElement>('[data-window-id="nodes"]')?.dataset.active).toBe("true");
+    expect(container.querySelector('[data-slot="floating-notice"]')?.textContent).toContain("The operation did not complete.");
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss notice"]')?.click());
+    expect(container.querySelector('[data-slot="floating-notice"]')).toBeNull();
+  });
+
+  it("clears transient success notices when switching windows", async () => {
+    const { container } = await save(undefined);
+    expect(container.querySelector('[data-slot="floating-notice"]')?.textContent).toContain("Account saved.");
+    const hostsButton = container.querySelector<HTMLButtonElement>('.desktop-dock button[aria-label="Hosts"]')!;
+    await act(async () => hostsButton.click());
+    expect(container.querySelector('[data-slot="floating-notice"]')).toBeNull();
   });
 });

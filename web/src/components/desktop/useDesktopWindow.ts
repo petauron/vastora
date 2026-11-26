@@ -15,9 +15,16 @@ export function fitWindow(rect: WindowRect, viewport: Viewport): WindowRect {
   const height = clamp(rect.height, Math.min(360, bounds.height), bounds.height);
   return { width, height, x: clamp(rect.x, bounds.x, bounds.x + bounds.width - width), y: clamp(rect.y, bounds.y, bounds.y + bounds.height - height) };
 }
+function initialSize(key: string): { width: number; height: number } {
+  if (key === "app:vastora-official/senlun") return { width: 760, height: 440 };
+  if (key === "settings") return { width: 1080, height: 720 };
+  if (key === "activity" || key === "assistant") return { width: 1080, height: 760 };
+  return { width: 1340, height: 880 };
+}
 function initialRect(key: string, viewport: Viewport, launchIndex: number): WindowRect {
-  const width = Math.min(key === "settings" ? 1080 : 1340, viewport.width - 80);
-  const height = Math.min(key === "settings" ? 720 : 880, viewport.height - 180);
+  const target = initialSize(key);
+  const width = Math.min(target.width, viewport.width - 80);
+  const height = Math.min(target.height, viewport.height - 180);
   return fitWindow({ x: (viewport.width - width) / 2 + (launchIndex % 5) * 28, y: 74 + (launchIndex % 5) * 28, width, height }, viewport);
 }
 export function resizeWindow(rect: WindowRect, edge: ResizeEdge, dx: number, dy: number, viewport: Viewport): WindowRect {

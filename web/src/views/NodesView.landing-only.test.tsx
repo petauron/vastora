@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { api } from "../api";
 import { NodesView } from "./NodesView";
 import { dashboard, render } from "./views.test-support";
 
@@ -47,5 +48,50 @@ describe("landing-only node enrollment", () => {
     const disableButton = [...(footer?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.includes("停用节点"));
     expect(disableButton?.getAttribute("data-variant")).toBe("destructive");
     expect(disableButton?.getAttribute("data-size")).toBe("default");
+  });
+
+  it("partitions node settings into tabs, defers secondary subsystem fetches, and scopes save to General", async () => {
+    const data = dashboard();
+    data.agents[0].capabilities = { ...data.agents[0].capabilities, nodeSecurity: true, nodeSwap: true, osReinstallPreflight: true };
+    const securitySpy = vi.spyOn(api, "nodeSecurity").mockResolvedValue({ id: "", state: "unconfigured" });
+    const swapSpy = vi.spyOn(api, "nodeSwap").mockResolvedValue({ id: "", state: "unconfigured" });
+    const inspectSpy = vi.spyOn(api, "osReinstallInspection").mockResolvedValue({ check: null });
+    const taskSpy = vi.spyOn(api, "osReinstallTask").mockResolvedValue({ task: null });
+
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+    act(() => container.querySelector<HTMLButtonElement>(`[aria-label="管理 ${data.agents[0].name}"]`)?.click());
+
+    const tabs = [...document.querySelectorAll<HTMLElement>('[role="tab"]')];
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["常规", "安全", "系统与重装"]);
+    expect(securitySpy).not.toHaveBeenCalled();
+    expect(swapSpy).not.toHaveBeenCalled();
+    expect(inspectSpy).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-slot="sheet-footer"]')?.textContent).toContain("保存信息");
+
+    await act(async () => { tabs[1]?.click(); await Promise.resolve(); });
+    expect(securitySpy).toHaveBeenCalledOnce();
+    expect(document.body.textContent).toContain("公网安全基线");
+    expect(document.body.textContent).toContain("SSH 保护策略");
+    expect(document.querySelector('[data-slot="sheet-footer"]')?.textContent).not.toContain("保存信息");
+
+    await act(async () => { tabs[2]?.click(); await Promise.resolve(); });
+    expect(swapSpy).toHaveBeenCalledOnce();
+    expect(inspectSpy).toHaveBeenCalledOnce();
+    expect(taskSpy).toHaveBeenCalledOnce();
+    expect(document.body.textContent).toContain("主机 Zram 与 Swap 优化");
+    expect(document.body.textContent).toContain("系统重装");
+  });
+
+  it("opens location management directly from the Nodes page header", () => {
+    const data = dashboard();
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+    const manageLocations = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("管理位置"));
+    expect(manageLocations).toBeDefined();
+    act(() => manageLocations?.click());
+    expect(document.body.textContent).toContain("位置管理");
+    expect(document.body.textContent).toContain(data.sites[0].name);
+    const newLocation = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("新建位置"));
+    act(() => newLocation?.click());
+    expect(document.querySelector("#site-name")).not.toBeNull();
   });
 });

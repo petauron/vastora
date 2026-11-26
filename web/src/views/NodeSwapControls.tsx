@@ -1,11 +1,13 @@
 import { useEffect, useId, useState } from "react";
+import { RefreshCwIcon } from "lucide-react";
 import { api } from "../api";
 import type { Language } from "../translations";
 import type { NodeSwap, NodeSwapTask, SwapTargetPolicy } from "../node-swap-types";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
-import { copy, userError } from "./shared";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Spinner } from "@/components/ui/spinner";
+import { StateBadge, copy, userError } from "./shared";
 
 const formatMiB = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MiB`;
 
@@ -80,6 +82,7 @@ export function NodeSwapControls({ nodeId, connected, language }: { nodeId: stri
   };
 
   const state = result?.state ?? "unconfigured";
+  const badgeState = state === "applied" ? "applied" : state === "eligible" ? "ready" : state === "action_required" ? "action_required" : state === "read_only" ? "disabled" : "unconfigured";
   const labels: Record<string, string> = {
     unconfigured: copy(language, "尚未检测", "Not inspected"),
     eligible: copy(language, "符合条件，可启用受管优化", "Eligible for managed optimization"),
@@ -90,32 +93,47 @@ export function NodeSwapControls({ nodeId, connected, language }: { nodeId: stri
 
   if (!view) {
     return (
-      <FieldSet>
-        <FieldLegend>{copy(language, "主机 Zram 与 Swap 优化", "Host zram & swap optimization")}</FieldLegend>
-        {error ? <FieldError role="alert">{error}</FieldError> : <FieldDescription role="status">{copy(language, "正在读取…", "Loading…")}</FieldDescription>}
-        <Button type="button" variant="outline" onClick={() => { void api.nodeSwap(nodeId).then(setView).catch((cause) => setError(userError(language, cause))); }}>
-          {copy(language, "重试读取状态", "Retry reading status")}
-        </Button>
-      </FieldSet>
+      <section className="rounded-xl border p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">{copy(language, "主机 Zram 与 Swap 优化", "Host zram & swap optimization")}</p>
+            {error ? <FieldError className="mt-2" role="alert">{error}</FieldError> : <FieldDescription className="mt-1" role="status">{copy(language, "正在读取…", "Loading…")}</FieldDescription>}
+          </div>
+          <Button type="button" size="sm" variant="outline" onClick={() => { void api.nodeSwap(nodeId).then(setView).catch((cause) => setError(userError(language, cause))); }}>
+            <RefreshCwIcon data-icon="inline-start" />{copy(language, "重试读取状态", "Retry reading status")}
+          </Button>
+        </div>
+      </section>
     );
   }
 
   return (
-    <FieldSet>
-      <FieldLegend>{copy(language, "主机 Zram 与 Swap 优化", "Host zram & swap optimization")}</FieldLegend>
-      <FieldDescription>
-        {copy(
-          language,
-          "按 512 MiB / 1 GiB / 2 GiB 固定档位收敛 systemd KVM 主机的 zram 与 /swapfile；容器、大内存或已有非受管 Swap 的节点严格保持只读，不覆盖现有配置。",
-          "Converges systemd KVM hosts onto fixed 512 MiB / 1 GiB / 2 GiB zram and /swapfile tiers. Containers, larger hosts and pre-existing unmanaged swap remain strictly read-only.",
-        )}
-      </FieldDescription>
-      <FieldDescription role="status">
+    <section className="flex flex-col gap-4 rounded-xl border p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-medium">{copy(language, "主机 Zram 与 Swap 优化", "Host zram & swap optimization")}</p>
+            <StateBadge language={language} value={active ? "applying" : badgeState} />
+          </div>
+          <FieldDescription className="mt-1">
+            {copy(
+              language,
+              "按 512 MiB / 1 GiB / 2 GiB 固定档位收敛 systemd KVM 主机的 zram 与 /swapfile；容器、大内存或已有非受管 Swap 的节点严格保持只读，不覆盖现有配置。",
+              "Converges systemd KVM hosts onto fixed 512 MiB / 1 GiB / 2 GiB zram and /swapfile tiers. Containers, larger hosts and pre-existing unmanaged swap remain strictly read-only.",
+            )}
+          </FieldDescription>
+        </div>
+        <Button type="button" size="sm" variant="outline" disabled={!connected || active} onClick={() => void queue("inspect")}>
+          {active ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
+          {copy(language, "读取节点实际状态", "Inspect actual host state")}
+        </Button>
+      </div>
+      <p className="text-xs font-medium" role="status">
         {active ? copy(language, "正在等待节点执行…", "Waiting for the node…") : (labels[state] ?? state)}
-      </FieldDescription>
+      </p>
 
       {result ? (
-        <div className="rounded-lg border p-3 text-xs leading-5">
+        <div className="rounded-lg border bg-muted/20 p-3 text-xs leading-5">
           <p>
             {copy(
               language,
@@ -151,9 +169,11 @@ export function NodeSwapControls({ nodeId, connected, language }: { nodeId: stri
               {copy(language, "确认在此 KVM 节点启用固定档位受管 zram / swap 配置", "Confirm applying fixed-tier managed zram / swap on this KVM host")}
             </FieldLabel>
           </Field>
-          <Button type="button" disabled={!connected || active || !confirmed} onClick={() => void queue("apply")}>
-            {copy(language, "应用固定档位优化", "Apply fixed-tier optimization")}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" disabled={!connected || active || !confirmed} onClick={() => void queue("apply")}>
+              {copy(language, "应用固定档位优化", "Apply fixed-tier optimization")}
+            </Button>
+          </div>
         </FieldGroup>
       ) : null}
 
@@ -165,17 +185,16 @@ export function NodeSwapControls({ nodeId, connected, language }: { nodeId: stri
               {copy(language, "确认核验内存余量并恢复应用前状态", "Confirm checking memory headroom and restoring pre-apply state")}
             </FieldLabel>
           </Field>
-          <Button type="button" variant="outline" disabled={!connected || active || !confirmed} onClick={() => void queue("restore")}>
-            {copy(language, "恢复应用前状态", "Restore pre-apply state")}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" variant="outline" disabled={!connected || active || !confirmed} onClick={() => void queue("restore")}>
+              {copy(language, "恢复应用前状态", "Restore pre-apply state")}
+            </Button>
+          </div>
         </FieldGroup>
       ) : null}
 
-      <Button type="button" variant="ghost" disabled={!connected || active} onClick={() => void queue("inspect")}>
-        {copy(language, "读取节点实际状态", "Inspect actual host state")}
-      </Button>
       {view.error ? <FieldError>{view.error}</FieldError> : null}
       {error ? <FieldError role="alert">{error}</FieldError> : null}
-    </FieldSet>
+    </section>
   );
 }

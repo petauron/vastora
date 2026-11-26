@@ -235,7 +235,7 @@ export function BatchUpgradeSheet({
       || (current.manifestSha256 ?? "") !== snap.manifestSha256;
   });
   const catalogMessage = catalogBlocked
-    ? copy(language, "请先在设置中刷新应用目录，再安装或升级。已安装应用不受影响。", "Refresh the app catalog in Settings before installing or upgrading. Installed apps are unaffected.")
+    ? copy(language, "请先在控制面板刷新应用目录，再安装或升级。已安装应用不受影响。", "Refresh the app catalog in Control Panel before installing or upgrading. Installed apps are unaffected.")
     : catalogChanged
       ? copy(language, "目录中的版本已更新，请关闭并重新打开此窗口，确认新版本后继续。", "The catalog version changed. Reopen this window to review the new version before continuing.")
       : "";

@@ -41,11 +41,18 @@ function SheetContent({
   children,
   side = "right",
   showCloseButton = true,
+  closeLabel,
   ...props
 }: SheetPrimitive.Popup.Props & {
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
+  closeLabel?: string
 }) {
+  const resolvedCloseLabel =
+    closeLabel ??
+    (typeof document !== "undefined" && document.documentElement.lang.toLowerCase().startsWith("zh")
+      ? "关闭"
+      : "Close")
   return (
     <SheetPortal>
       <SheetOverlay />
@@ -75,7 +82,7 @@ function SheetContent({
           >
             <XIcon
             />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{resolvedCloseLabel}</span>
           </SheetPrimitive.Close>
         )}
       </SheetPrimitive.Popup>

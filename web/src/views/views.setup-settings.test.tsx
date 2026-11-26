@@ -11,6 +11,9 @@ import { SetupWizard } from "./SetupWizard";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { CenterUpdateCard } from "./CenterUpdateCard";
 import { AgentUpdateCard } from "./AgentUpdateCard";
+import { HostBackupCard } from "./HostBackupCard";
+import { TailscaleUpdateCard } from "./TailscaleUpdateCard";
+import { AppIcon } from "@/components/desktop/AppIcon";
 import type { AgentUpdatesStatus, AgentUpdateRollout, AgentUpdateTarget } from "../types";
 import { StateBadge, userError } from "./shared";
 
@@ -1069,5 +1072,54 @@ describe("network and app views", () => {
     const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
     expect(container.textContent).toContain("sha256:cb40ae4beda4");
     expect(container.textContent).toContain("sha256:3148cb611a4f");
+    expect(container.querySelector('[data-slot="card-header"] [data-slot="badge"]')?.textContent).toBe("镜像待修复");
+  });
+
+  it("shares the AuthShell visual header and high-contrast card container in SetupWizard", () => {
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
+    expect(container.querySelector(".auth-shell")).not.toBeNull();
+    expect(container.querySelector(".auth-brand .desktop-brand-mark")).not.toBeNull();
+    expect(container.querySelector(".setup-card .setup-progress-bar")).not.toBeNull();
+  });
+
+  it("places HostBackupCard actions in CardFooter and keeps Cancel before Start backup", async () => {
+    vi.spyOn(api, "hostBackup").mockResolvedValue({
+      available: true,
+      passwordSet: true,
+      settings: { enabled: true, directory: "/var/backups/vastora", timeUTC: "03:00", intervalDays: 1, keepLast: 7 },
+      execution: { state: "idle", message: "" },
+      coverage: { containers: ["vastora-center"], units: [], sources: ["/var/lib/vastora"] },
+      snapshots: [],
+    });
+    const container = render(<HostBackupCard language="zh-CN" />);
+    await act(async () => { await Promise.resolve(); });
+    const footerButtons = [...container.querySelectorAll<HTMLButtonElement>('[data-slot="card-footer"] button')];
+    expect(footerButtons.map((button) => button.textContent)).toEqual(["刷新状态", "立即备份", "保存设置"]);
+    act(() => footerButtons[1]?.click());
+    const confirmButtons = [...container.querySelectorAll<HTMLButtonElement>('[data-slot="card-content"] button')];
+    expect(confirmButtons.map((button) => button.textContent)).toEqual(["取消", "开始备份"]);
+  });
+
+  it("places TailscaleUpdateCard check action in CardFooter and shows an empty state", () => {
+    const container = render(<TailscaleUpdateCard agents={[]} language="zh-CN" onRefresh={async () => undefined} />);
+    expect(container.textContent).toContain("当前没有由 Vastora 管理的 Tailscale 节点");
+    const footerButtons = [...container.querySelectorAll<HTMLButtonElement>('[data-slot="card-footer"] button')];
+    expect(footerButtons.map((button) => button.textContent)).toEqual(["检查更新"]);
+  });
+
+  it("maps Daylight and Glivela runtime app keys to dedicated visual icons", () => {
+    const cases: Array<[string, string]> = [
+      ["vastora-official/daylight", "web-gateway"],
+      ["vastora-official/daylight-https", "web-gateway"],
+      ["vastora-official/glivela-entry", "glivela"],
+      ["vastora-official/glivela-node", "glivela"],
+      ["vastora-official/glivela-dual", "glivela"],
+    ];
+    for (const [appKey, expectedIcon] of cases) {
+      resetRender();
+      const container = render(<AppIcon appKey={appKey} />);
+      expect(container.querySelector('[data-icon]')?.getAttribute("data-icon")).toBe(expectedIcon);
+    }
   });
 });

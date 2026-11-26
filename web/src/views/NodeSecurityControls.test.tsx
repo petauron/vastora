@@ -34,6 +34,8 @@ it("requires new SSH and business verification before confirmation", async () =>
   const container = await render({ id: "apply", state: "succeeded", result });
   expect(container.textContent).toContain("security-verify-ssh");
   expect(container.textContent).toContain("原 SSH 会话仍连通不算验证");
+  expect(container.querySelector('code.bg-muted')).not.toBeNull();
+  expect(container.querySelector('button[aria-label="复制命令"]')).not.toBeNull();
   const confirm = findButton(container, "确认此修订"); expect(confirm.disabled).toBe(true);
   await act(async () => { container.querySelector<HTMLElement>('[role="checkbox"]')?.click(); });
   expect(confirm.disabled).toBe(false);

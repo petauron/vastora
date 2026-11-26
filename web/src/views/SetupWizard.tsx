@@ -1,11 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { CheckIcon, ChevronDownIcon, Globe2Icon, HouseIcon, LanguagesIcon, MapPinIcon, NetworkIcon, RouterIcon, Settings2Icon, ShieldCheckIcon, type LucideIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, Globe2Icon, HouseIcon, MapPinIcon, NetworkIcon, RouterIcon, Settings2Icon, ShieldCheckIcon, type LucideIcon } from "lucide-react";
 import { api } from "../api";
 import type { AgentConnectionMode, CloudflareZone, InitialSetupInput, NetworkCandidate } from "../types";
 import type { Language } from "../translations";
 import { browserTimezone, validCenterURL, vastoraDomainDefaults } from "../lib/network";
 import { centerRemoteAccessHostname, standardHTTPSHostnameInZone } from "../lib/center-remote-access";
-import { Brand, copy, TechnicalError } from "./shared";
+import { copy, TechnicalError } from "./shared";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -163,12 +163,21 @@ export function SetupWizard(props: SetupWizardProps) {
   };
   const selected = connectionOptions.find((option) => option.mode === mode)!;
 
-  return <main className="min-h-svh bg-muted/25 p-4 sm:p-6 md:p-8"><div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
-    <div className="flex items-center justify-between"><Brand /><div className="flex items-center gap-1"><ThemeToggle language={language} /><Button aria-label={copy(language, "切换语言", "Change language")} onClick={() => onLanguage(language === "zh-CN" ? "en" : "zh-CN")} size="icon" variant="ghost"><LanguagesIcon /></Button></div></div>
-    <SetupProgress language={language} step={step} />
-    <Card>
-      {step === 1 ? <LocationStep language={language} name={name} timezone={timezone} domainSuffix={domainSuffix} onName={setName} onTimezone={setTimezone} onDomainSuffix={setDomainSuffix} onSubmit={nextLocation} /> : null}
-      {step === 2 ? <form onSubmit={nextNetwork}><CardHeader><CardTitle>{copy(language, "你准备在哪里使用 Vastora？", "Where will you use Vastora?")}</CardTitle><CardDescription>{copy(language, "选择最符合你的情况，具体网络设置可以稍后调整。", "Choose what best matches your situation. Network details can be changed later.")}</CardDescription></CardHeader><CardContent><FieldGroup>
+  return <div className="auth-shell">
+    <header className="auth-header">
+      <div className="auth-brand"><span className="desktop-brand-mark" aria-hidden="true"><i /><i /><i /><i /></span><span>Vastora</span></div>
+      <nav className="auth-toolbar" aria-label={copy(language, "初始化设置", "Setup preferences")}>
+        <ThemeToggle language={language} />
+        <Button aria-label={copy(language, "切换语言", "Change language")} title={copy(language, "切换语言", "Change language")} onClick={() => onLanguage(language === "zh-CN" ? "en" : "zh-CN")} size="icon" type="button" variant="ghost"><Globe2Icon aria-hidden="true" /></Button>
+      </nav>
+    </header>
+    <main className="setup-main"><div className="setup-container">
+      <Card className="setup-card pt-0">
+        <div className="setup-progress-bar">
+          <SetupProgress language={language} step={step} />
+        </div>
+        {step === 1 ? <LocationStep language={language} name={name} timezone={timezone} domainSuffix={domainSuffix} onName={setName} onTimezone={setTimezone} onDomainSuffix={setDomainSuffix} onSubmit={nextLocation} /> : null}
+        {step === 2 ? <form className="flex flex-col gap-(--card-spacing)" onSubmit={nextNetwork}><CardHeader><CardTitle>{copy(language, "你准备在哪里使用 Vastora？", "Where will you use Vastora?")}</CardTitle><CardDescription>{copy(language, "选择最符合你的情况，具体网络设置可以稍后调整。", "Choose what best matches your situation. Network details can be changed later.")}</CardDescription></CardHeader><CardContent><FieldGroup>
 		{!suggestedAgentConnectUrl ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "当前是临时访问地址", "You are using a temporary access address")}</AlertTitle><AlertDescription>{copy(language, "请继续选择使用方式。安全私网模式会让 Center 只在 Headscale 网络内开放。", "Choose how you will use Vastora. Secure private mode exposes Center only inside the Headscale network.")}</AlertDescription></Alert> : null}
         <ConnectionMode language={language} mode={mode} onMode={setMode} />
 		{mode === "headscale" && headscaleMode === "builtin" && props.publicNetworkHelperAvailable === false ? <Alert><Globe2Icon /><AlertTitle>{copy(language, "公网检测服务未配置", "Public network helper is not configured")}</AlertTitle><AlertDescription>{copy(language, "内置 Headscale 在修改 DNS 或安装服务前必须验证公网 80/443。请为 Center 配置公网检测服务。", "Bundled Headscale must verify public ports 80/443 before changing DNS or installing services. Configure a public network helper for Center.")}</AlertDescription></Alert> : null}
@@ -178,13 +187,14 @@ export function SetupWizard(props: SetupWizardProps) {
         {verifyingPublicEntry ? <Alert aria-live="polite"><Spinner /><AlertTitle>{copy(language, "正在检测公网入口", "Checking the public entry")}</AlertTitle><AlertDescription>{copy(language, "Vastora 正在临时监听本机 80 和 443，并从公网验证流量能否到达；检测完成后会立即释放端口。", "Vastora is temporarily listening on local ports 80 and 443 and checking them from outside. The ports are released immediately after the check.")}</AlertDescription></Alert> : null}
         {submitError ? <div role="alert"><TechnicalError error={submitError} language={language} /></div> : error ? <FieldError role="alert">{error}</FieldError> : null}
       </FieldGroup></CardContent><CardFooter className="justify-between"><Button disabled={verifyingPublicEntry} onClick={() => { setError(""); setSubmitError(null); setStep(1); }} type="button" variant="outline">{copy(language, "返回", "Back")}</Button><Button disabled={verifyingPublicEntry} type="submit">{verifyingPublicEntry ? <Spinner data-icon="inline-start" /> : null}{verifyingPublicEntry ? copy(language, "正在检测…", "Checking…") : copy(language, "继续", "Continue")}</Button></CardFooter></form> : null}
-      {step === 3 ? <ReviewStep language={language} busy={busy} error={error} submitError={submitError} name={name} timezone={timezone} domainSuffix={domainSuffix} mode={mode} selected={selected} agentConnectUrl={agentConnectUrl} headscaleMode={headscaleMode} headscaleUrl={headscaleUrl} cloudflareZone={cloudflareZone} publicAddress={publicAddress} gatewayAddress={gatewayAddress} natMapped={!publicAddressCandidates.some((candidate) => candidate.address === publicAddress)} publishFixedEndpoint={publishFixedEndpoint} remoteAccessEnabled={remoteAccessEnabled} onBack={() => { setError(""); setSubmitError(null); setStep(2); }} onFinish={finish} /> : null}
-    </Card>
-  </div></main>;
+        {step === 3 ? <ReviewStep language={language} busy={busy} error={error} submitError={submitError} name={name} timezone={timezone} domainSuffix={domainSuffix} mode={mode} selected={selected} agentConnectUrl={agentConnectUrl} headscaleMode={headscaleMode} headscaleUrl={headscaleUrl} cloudflareZone={cloudflareZone} publicAddress={publicAddress} gatewayAddress={gatewayAddress} natMapped={!publicAddressCandidates.some((candidate) => candidate.address === publicAddress)} publishFixedEndpoint={publishFixedEndpoint} remoteAccessEnabled={remoteAccessEnabled} onBack={() => { setError(""); setSubmitError(null); setStep(2); }} onFinish={finish} /> : null}
+      </Card>
+    </div></main>
+  </div>;
 }
 
 function LocationStep({ language, name, timezone, domainSuffix, onName, onTimezone, onDomainSuffix, onSubmit }: { language: Language; name: string; timezone: string; domainSuffix: string; onName: (value: string) => void; onTimezone: (value: string) => void; onDomainSuffix: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <form onSubmit={onSubmit}><CardHeader><CardTitle>{copy(language, "创建第一个位置", "Create your first location")}</CardTitle><CardDescription>{copy(language, "位置通常是一处家庭、办公室或数据中心，用来归类同一网络中的节点。", "A location is usually a home, office, or data center and groups nodes on the same network.")}</CardDescription></CardHeader><CardContent><FieldGroup><Field><FieldLabel htmlFor="setup-location-name">{copy(language, "位置名称", "Location name")}</FieldLabel><Input autoFocus id="setup-location-name" maxLength={128} onChange={(event) => onName(event.target.value)} placeholder={copy(language, "例如：新加坡机房", "For example: Singapore data center")} required value={name} /></Field><Field><FieldLabel htmlFor="setup-timezone">{copy(language, "时区", "Time zone")}</FieldLabel><TimezoneCombobox id="setup-timezone" language={language} onValueChange={onTimezone} value={timezone} /><FieldDescription>{copy(language, "已读取当前浏览器的时区，也可以输入城市搜索并选择。", "Detected from this browser. You can also search by city and select another zone.")}</FieldDescription></Field><Field><FieldLabel htmlFor="setup-domain">{copy(language, "服务域名空间（可选）", "Service domain namespace (optional)")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="setup-domain" onChange={(event) => onDomainSuffix(event.target.value.toLowerCase())} placeholder="vastora.example.com" spellCheck={false} value={domainSuffix} /><FieldDescription>{copy(language, "连接 Cloudflare 后默认使用 vastora.根域名；Center、私网和应用都会放在这个空间下。", "After Cloudflare is connected, Vastora uses vastora.your-domain by default for Center, private networking, and apps.")}</FieldDescription></Field></FieldGroup></CardContent><CardFooter className="justify-end"><Button disabled={!name || !timezone} type="submit">{copy(language, "继续", "Continue")}</Button></CardFooter></form>;
+  return <form className="flex flex-col gap-(--card-spacing)" onSubmit={onSubmit}><CardHeader><CardTitle>{copy(language, "创建第一个位置", "Create your first location")}</CardTitle><CardDescription>{copy(language, "位置通常是一处家庭、办公室或数据中心，用来归类同一网络中的节点。", "A location is usually a home, office, or data center and groups nodes on the same network.")}</CardDescription></CardHeader><CardContent><FieldGroup><Field><FieldLabel htmlFor="setup-location-name">{copy(language, "位置名称", "Location name")}</FieldLabel><Input autoFocus id="setup-location-name" maxLength={128} onChange={(event) => onName(event.target.value)} placeholder={copy(language, "例如：新加坡机房", "For example: Singapore data center")} required value={name} /></Field><Field><FieldLabel htmlFor="setup-timezone">{copy(language, "时区", "Time zone")}</FieldLabel><TimezoneCombobox id="setup-timezone" language={language} onValueChange={onTimezone} value={timezone} /><FieldDescription>{copy(language, "已读取当前浏览器的时区，也可以输入城市搜索并选择。", "Detected from this browser. You can also search by city and select another zone.")}</FieldDescription></Field><Field><FieldLabel htmlFor="setup-domain">{copy(language, "服务域名空间（可选）", "Service domain namespace (optional)")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="setup-domain" onChange={(event) => onDomainSuffix(event.target.value.toLowerCase())} placeholder="vastora.example.com" spellCheck={false} value={domainSuffix} /><FieldDescription>{copy(language, "连接 Cloudflare 后默认使用 vastora.根域名；Center、私网和应用都会放在这个空间下。", "After Cloudflare is connected, Vastora uses vastora.your-domain by default for Center, private networking, and apps.")}</FieldDescription></Field></FieldGroup></CardContent><CardFooter className="justify-end"><Button disabled={!name || !timezone} type="submit">{copy(language, "继续", "Continue")}</Button></CardFooter></form>;
 }
 
 function ConnectionMode({ language, mode, onMode }: { language: Language; mode: AgentConnectionMode; onMode: (mode: AgentConnectionMode) => void }) {

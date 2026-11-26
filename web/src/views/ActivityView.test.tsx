@@ -13,4 +13,6 @@ it("shows a superseded gateway revision without rewriting its queued event", () 
   expect(html).not.toContain("已排队");
   expect(html).toContain("queued");
   expect(html).toContain("任务处理");
+  expect(html).toContain('aria-labelledby="activity-log-title"');
+  expect(html).not.toContain("<summary class=\"cursor-pointer text-sm font-medium\">操作日志</summary>");
 });

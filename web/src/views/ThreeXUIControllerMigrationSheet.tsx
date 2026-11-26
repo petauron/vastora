@@ -4,7 +4,7 @@ import { api } from "../api";
 import type { AppData, Mutate } from "../App";
 import type { Application, ThreeXUIControllerMigration } from "../types";
 import type { Language } from "../translations";
-import { copy, userError } from "./shared";
+import { copy, formatDate, userError } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -161,7 +161,7 @@ export function ThreeXUIControllerMigrationSheet({ application, data, language, 
           const current = migration.state !== "failed" && progress === index;
           return <li className="flex items-center gap-3 rounded-xl border p-3" key={step.id}>{complete ? <CheckCircle2Icon className="size-5 text-success" /> : current ? <Spinner className="size-5" /> : <span className="flex size-5 items-center justify-center rounded-full border text-xs text-muted-foreground">{index + 1}</span>}<span className={complete || current ? "font-medium" : "text-muted-foreground"}>{copy(language, step.zh, step.en)}</span></li>;
         })}</ol>
-        {migration.backup?.updatedAt ? <p className="text-xs text-muted-foreground">{copy(language, `恢复点：${new Date(migration.backup.updatedAt).toLocaleString()}`, `Restore point: ${new Date(migration.backup.updatedAt).toLocaleString()}`)}</p> : null}
+        {migration.backup?.updatedAt ? <p className="text-xs text-muted-foreground">{copy(language, `恢复点：${formatDate(language, migration.backup.updatedAt)}`, `Restore point: ${formatDate(language, migration.backup.updatedAt)}`)}</p> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
       </SheetBody> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
         <SheetBody><FieldGroup>
