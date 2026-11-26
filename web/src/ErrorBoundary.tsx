@@ -23,7 +23,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBound
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
             {chinese ? "你的设置没有丢失。重新载入页面即可继续。" : "Your settings are safe. Reload the page to continue."}
           </p>
-          <button className="mt-5 min-h-11 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground" onClick={() => window.location.reload()} type="button">
+          <button className="mt-5 min-h-11 rounded-xl bg-primary-control px-4 text-sm font-medium text-primary-foreground" onClick={() => window.location.reload()} type="button">
             {chinese ? "重新载入" : "Reload"}
           </button>
         </section>

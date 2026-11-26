@@ -200,18 +200,25 @@ export function CopyButton({ language, value, label, className, size = "sm", var
 }
 
 export function Brand() {
-  return <div className="flex items-center gap-2.5 font-semibold tracking-tight"><span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground shadow-xs" aria-hidden="true"><svg className="size-4" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5 20 7v10l-8 4.5L4 17V7l8-4.5Zm0 3.1L7.1 8.4v7.2l4.9 2.8 4.9-2.8V8.4L12 5.6Zm-3 4.1 3 1.7 3-1.7v3.5L12 15l-3-1.8V9.7Z" /></svg></span><span>Vastora</span></div>;
+  return <div className="flex items-center gap-2.5 font-semibold tracking-tight"><span className="grid size-8 place-items-center rounded-lg bg-primary-control text-primary-foreground shadow-xs" aria-hidden="true"><svg className="size-4" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5 20 7v10l-8 4.5L4 17V7l8-4.5Zm0 3.1L7.1 8.4v7.2l4.9 2.8 4.9-2.8V8.4L12 5.6Zm-3 4.1 3 1.7 3-1.7v3.5L12 15l-3-1.8V9.7Z" /></svg></span><span>Vastora</span></div>;
 }
 
 export function PageHeading({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
   return <div className="mac-page-heading"><div className="mac-page-heading-copy"><h1>{title}</h1>{description ? <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p> : null}</div>{action}</div>;
 }
 
-export function StateBadge({ value, language = document.documentElement.lang === "zh-CN" ? "zh-CN" : "en" }: { value: string; language?: Language }) {
-  const good = ["ready", "running", "succeeded", "configured", "connected", "active", "healthy"].includes(value);
-  const bad = ["failed", "degraded", "offline", "lease_expired", "recovery", "expired", "removal_failed"].includes(value);
+export function StateBadge({ value, language }: { value: string; language: Language }) {
+  const good = ["ready", "running", "succeeded", "configured", "connected", "active", "healthy", "verified", "approved", "applied"].includes(value);
+  const bad = ["failed", "degraded", "offline", "lease_expired", "recovery", "expired", "removal_failed", "action_required", "rejected"].includes(value);
   const Icon = value === "access_stopped" ? UnplugIcon : good ? CircleCheckIcon : bad ? CircleAlertIcon : Clock3Icon;
   const labels: Record<string, [string, string]> = {
+    action_required: ["需要处理", "Action required"],
+    verified: ["已验证", "Verified"],
+    approved: ["已批准", "Approved"],
+    rejected: ["已拒绝", "Rejected"],
+    applied: ["已执行", "Applied"],
+    cancelled: ["已取消", "Cancelled"],
+    unavailable: ["不可用", "Unavailable"],
     removing: ["正在移除", "Removing"],
     deploying: ["正在处理", "In progress"],
     removal_failed: ["移除未完成", "Removal incomplete"],

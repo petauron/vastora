@@ -159,7 +159,7 @@ export function ThreeXUIControllerMigrationSheet({ application, data, language, 
         <ol className="flex flex-col gap-2">{steps.map((step, index) => {
           const complete = progress > index;
           const current = migration.state !== "failed" && progress === index;
-          return <li className="flex items-center gap-3 rounded-xl border p-3" key={step.id}>{complete ? <CheckCircle2Icon className="size-5 text-emerald-500" /> : current ? <Spinner className="size-5" /> : <span className="flex size-5 items-center justify-center rounded-full border text-xs text-muted-foreground">{index + 1}</span>}<span className={complete || current ? "font-medium" : "text-muted-foreground"}>{copy(language, step.zh, step.en)}</span></li>;
+          return <li className="flex items-center gap-3 rounded-xl border p-3" key={step.id}>{complete ? <CheckCircle2Icon className="size-5 text-success" /> : current ? <Spinner className="size-5" /> : <span className="flex size-5 items-center justify-center rounded-full border text-xs text-muted-foreground">{index + 1}</span>}<span className={complete || current ? "font-medium" : "text-muted-foreground"}>{copy(language, step.zh, step.en)}</span></li>;
         })}</ol>
         {migration.backup?.updatedAt ? <p className="text-xs text-muted-foreground">{copy(language, `恢复点：${new Date(migration.backup.updatedAt).toLocaleString()}`, `Restore point: ${new Date(migration.backup.updatedAt).toLocaleString()}`)}</p> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
@@ -183,13 +183,13 @@ export function ThreeXUIControllerMigrationSheet({ application, data, language, 
         </FieldGroup></div>
         <SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !targetID || !confirmed || !sourceOnline && (consolidating || !allowStale)} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <ArrowRightLeftIcon data-icon="inline-start" />}{copy(language, consolidating ? "开始转换" : "开始迁移", consolidating ? "Convert" : "Start migration")}</Button></SheetFooter>
       </form>}
-      <SheetFooter>
+      {migration ? <SheetFooter>
         {cleanupBlocked ? <Button disabled={busy} onClick={() => void retryCleanup()} variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{copy(language, consolidating ? "重试主机转换" : "重试旧主机清理", consolidating ? "Retry host conversion" : "Retry old-host cleanup")}</Button> : null}
         {conversionBlocked ? <Button disabled={busy} onClick={() => void retryCleanup()} variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{copy(language, "重试 Xray 节点替换", "Retry Xray node replacement")}</Button> : null}
         {syncBlocked && migration.failedWorkerApplicationId ? <Button disabled={busy} onClick={() => void retrySync()} variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{copy(language, "重试失败节点接入", "Retry failed node attachment")}</Button> : null}
-        {migration?.state === "failed" ? <Button onClick={() => { setMigration(null); setConfirmed(false); setError(""); }} variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重新开始", "Start again")}</Button> : null}
-        {migration ? <Button onClick={onClose}>{copy(language, migration.state === "ready" ? "完成" : "关闭", migration.state === "ready" ? "Done" : "Close")}</Button> : null}
-      </SheetFooter>
+        {migration.state === "failed" ? <Button onClick={() => { setMigration(null); setConfirmed(false); setError(""); }} variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重新开始", "Start again")}</Button> : null}
+        <Button onClick={onClose}>{copy(language, migration.state === "ready" ? "完成" : "关闭", migration.state === "ready" ? "Done" : "Close")}</Button>
+      </SheetFooter> : null}
     </SheetContent>
   </Sheet>;
 }

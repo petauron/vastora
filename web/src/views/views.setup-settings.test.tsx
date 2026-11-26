@@ -12,7 +12,7 @@ import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { CenterUpdateCard } from "./CenterUpdateCard";
 import { AgentUpdateCard } from "./AgentUpdateCard";
 import type { AgentUpdatesStatus, AgentUpdateRollout, AgentUpdateTarget } from "../types";
-import { userError } from "./shared";
+import { StateBadge, userError } from "./shared";
 
 import { dashboard, rerender, resetRender, render } from "./views.test-support";
 
@@ -791,14 +791,65 @@ describe("network and app views", () => {
     const data = dashboard();
     data.systemDomain.activePublications = 1;
     const listZones = vi.spyOn(api, "cloudflareZones");
-    const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    const onNavigate = vi.fn();
+    const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onNavigate={onNavigate} onRefresh={async () => undefined} />);
     expect(container.textContent).not.toContain("请先停止 1 个访问入口");
     const changeDomain = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("切换域名"));
     expect(changeDomain?.disabled).toBe(false);
     await act(async () => { changeDomain?.click(); });
     expect(document.body.textContent).toContain("请先停止 1 个访问入口，再回来切换域名");
-    expect(document.body.textContent).toContain("管理访问入口");
+    const manageButton = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("管理访问入口"));
+    expect(manageButton).toBeDefined();
+    act(() => { manageButton!.click(); });
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("apps");
     expect(listZones).not.toHaveBeenCalled();
+  });
+
+  it("navigates to Network via SPA when domain-switch Cloudflare authorization fails", async () => {
+    vi.spyOn(api, "cloudflareZones").mockRejectedValue(new Error("cloudflare token expired"));
+    const onNavigate = vi.fn();
+    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onNavigate={onNavigate} onRefresh={async () => undefined} />);
+    const changeDomain = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("切换域名"));
+    await act(async () => {
+      changeDomain?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const manageCloudflare = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("管理 Cloudflare 连接"));
+    expect(manageCloudflare).toBeDefined();
+    act(() => { manageCloudflare!.click(); });
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("network");
+  });
+
+  it("renders localized labels and semantic variants for StateBadge statuses", () => {
+    const previousLang = document.documentElement.lang;
+    document.documentElement.lang = "en";
+    try {
+      const cases: Array<{ value: string; zh: string; en: string; variant: string }> = [
+        { value: "action_required", zh: "需要处理", en: "Action required", variant: "destructive" },
+        { value: "verified", zh: "已验证", en: "Verified", variant: "secondary" },
+        { value: "approved", zh: "已批准", en: "Approved", variant: "secondary" },
+        { value: "rejected", zh: "已拒绝", en: "Rejected", variant: "destructive" },
+        { value: "applied", zh: "已执行", en: "Applied", variant: "secondary" },
+        { value: "cancelled", zh: "已取消", en: "Cancelled", variant: "outline" },
+        { value: "unavailable", zh: "不可用", en: "Unavailable", variant: "outline" },
+      ];
+      for (const item of cases) {
+        resetRender();
+        const zh = render(<StateBadge language="zh-CN" value={item.value} />);
+        const zhBadge = zh.querySelector('[data-slot="badge"]');
+        expect(zhBadge?.textContent).toBe(item.zh);
+        expect(zhBadge?.getAttribute("data-variant")).toBe(item.variant);
+
+        resetRender();
+        const en = render(<StateBadge language="en" value={item.value} />);
+        const enBadge = en.querySelector('[data-slot="badge"]');
+        expect(enBadge?.textContent).toBe(item.en);
+        expect(enBadge?.getAttribute("data-variant")).toBe(item.variant);
+      }
+    } finally {
+      document.documentElement.lang = previousLang;
+    }
   });
 
   it("shows a confirmed Center update instead of exposing Docker access", () => {
