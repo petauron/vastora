@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BellIcon, LanguagesIcon, SearchIcon, Settings2Icon } from "lucide-react";
+import { BellIcon, CheckIcon, LanguagesIcon, SearchIcon, Settings2Icon } from "lucide-react";
 import type { Language } from "@/translations";
 import type { Screen } from "@/types";
 import type { DesktopApplication } from "@/views/applicationLaunch";
@@ -70,7 +70,7 @@ export function DesktopShell({ renderWindow, desktop, screen, language, loading,
         <DropdownMenuContent className="w-56"><DropdownMenuGroup>
           <DropdownMenuItem disabled={screen === "home"} onClick={minimize}>{copy(language, "最小化", "Minimize")}</DropdownMenuItem>
           <DropdownMenuItem disabled={screen === "home" || compact} onClick={() => activeWindow.current?.toggleMaximize()}>{copy(language, "最大化 / 还原", "Maximize / Restore")}</DropdownMenuItem>
-        </DropdownMenuGroup>{windows.entries.length ? <><DropdownMenuSeparator /><DropdownMenuGroup>{windows.entries.map((entry) => <DropdownMenuItem key={entry.id} onClick={() => onNavigateWindow(entry)}>{windowTitle(entry)}{entry.minimized ? <span className="ml-auto text-xs text-muted-foreground">{copy(language, "已最小化", "Minimized")}</span> : null}</DropdownMenuItem>)}</DropdownMenuGroup></> : null}</DropdownMenuContent>
+        </DropdownMenuGroup>{windows.entries.length ? <><DropdownMenuSeparator /><DropdownMenuGroup>{windows.entries.map((entry) => <DropdownMenuItem aria-current={entry.id === activeID ? "true" : undefined} key={entry.id} onClick={() => onNavigateWindow(entry)}>{windowTitle(entry)}{entry.minimized ? <span className="ml-auto text-xs text-muted-foreground">{copy(language, "已最小化", "Minimized")}</span> : entry.id === activeID ? <><CheckIcon aria-hidden="true" className="ml-auto text-primary" /><span className="sr-only">{copy(language, "当前窗口", "Active window")}</span></> : null}</DropdownMenuItem>)}</DropdownMenuGroup></> : null}</DropdownMenuContent>
       </DropdownMenu>
       <div className="flex-1" />
       <Button aria-label={copy(language, "搜索应用（⌘ K / Ctrl K）", "Search apps (⌘ K / Ctrl K)")} onClick={() => showLauncher("search")} variant="ghost" size="icon"><SearchIcon /></Button>

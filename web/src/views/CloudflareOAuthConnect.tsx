@@ -5,6 +5,7 @@ import type { CloudflareZone } from "../types";
 import type { Language } from "../translations";
 import { copy } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { SelectControl } from "@/components/SelectControl";
@@ -144,7 +145,7 @@ export function CloudflareOAuthConnect({ available, connected, language, zoneNam
       <div className="flex min-w-0 items-start gap-3">
         <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400"><CloudIcon aria-hidden="true" className="size-6" /></span>
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{copy(language, "连接 Cloudflare", "Connect Cloudflare")}</h3><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${connected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>{connected ? copy(language, "已连接", "Connected") : copy(language, "尚未连接", "Not connected")}</span></div>
+          <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{copy(language, "连接 Cloudflare", "Connect Cloudflare")}</h3><Badge variant={connected ? "secondary" : "outline"}>{connected ? copy(language, "已连接", "Connected") : copy(language, "尚未连接", "Not connected")}</Badge></div>
           <p className="mt-1 text-sm leading-5 text-muted-foreground">{connected && zoneName ? copy(language, `已选择 ${zoneName}。Vastora 只管理自己创建的 DNS、Tunnel、Access 与 Turnstile 资源。`, `${zoneName} selected. Vastora manages only the DNS, Tunnel, Access, and Turnstile resources it creates.`) : copy(language, "用于管理 Vastora 自己的 DNS、Tunnel、Access 与 Turnstile 资源，不会更改其他域名。", "Used to manage Vastora-owned DNS, Tunnel, Access, and Turnstile resources without changing other hostnames.")}</p>
         </div>
       </div>

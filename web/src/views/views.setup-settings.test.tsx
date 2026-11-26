@@ -11,8 +11,12 @@ import { SetupWizard } from "./SetupWizard";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { CenterUpdateCard } from "./CenterUpdateCard";
 import { AgentUpdateCard } from "./AgentUpdateCard";
+import { HostBackupCard } from "./HostBackupCard";
+import { TailscaleUpdateCard } from "./TailscaleUpdateCard";
+import { AppIcon } from "@/components/desktop/AppIcon";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { AgentUpdatesStatus, AgentUpdateRollout, AgentUpdateTarget } from "../types";
-import { StateBadge, userError } from "./shared";
+import { StateBadge, formatDate, userError } from "./shared";
 
 import { dashboard, rerender, resetRender, render } from "./views.test-support";
 
@@ -1069,5 +1073,181 @@ describe("network and app views", () => {
     const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
     expect(container.textContent).toContain("sha256:cb40ae4beda4");
     expect(container.textContent).toContain("sha256:3148cb611a4f");
+    expect(container.querySelector('[data-slot="card-header"] [data-slot="badge"]')?.textContent).toBe("镜像待修复");
+  });
+
+  it("shares the AuthShell visual header and high-contrast card container in SetupWizard", () => {
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
+    expect(container.querySelector(".auth-shell")).not.toBeNull();
+    expect(container.querySelector(".auth-brand .desktop-brand-mark")).not.toBeNull();
+    expect(container.querySelector(".setup-card .setup-progress-bar")).not.toBeNull();
+  });
+
+  it("places HostBackupCard actions in CardFooter, guards confirmation on dirty edits, and shows idle accurately", async () => {
+    vi.spyOn(api, "hostBackup").mockResolvedValue({
+      available: true,
+      passwordSet: true,
+      settings: { enabled: true, directory: "/var/backups/vastora", timeUTC: "03:00", intervalDays: 1, keepLast: 7 },
+      execution: { state: "idle", message: "" },
+      coverage: { containers: ["vastora-center"], units: [], sources: ["/var/lib/vastora"] },
+      snapshots: [{ id: "abcdef123456", time: "2026-11-26T00:00:00Z", bytes: 1024 ** 3 }],
+    });
+    const container = render(<HostBackupCard language="zh-CN" />);
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('[data-slot="card-header"] [data-slot="badge"]')?.textContent).toBe("尚未运行");
+    const footerButtons = [...container.querySelectorAll<HTMLButtonElement>('[data-slot="card-footer"] button')];
+    expect(footerButtons.map((button) => button.textContent)).toEqual(["刷新状态", "立即备份", "保存设置"]);
+    act(() => footerButtons[1]?.click());
+    const confirmButtons = [...container.querySelectorAll<HTMLButtonElement>('[data-slot="card-content"] button')];
+    expect(confirmButtons.map((button) => button.textContent)).toEqual(["取消", "开始备份"]);
+    // Confirmation panel appears after the snapshots table, right above CardFooter.
+    const table = container.querySelector("table")!;
+    expect(table.compareDocumentPosition(confirmButtons[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Editing settings invalidates confirmRun and closes the confirmation panel.
+    const dirInput = container.querySelector<HTMLInputElement>("#host-backup-directory")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(dirInput, "/var/backups/other");
+      dirInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect([...container.querySelectorAll<HTMLButtonElement>('[data-slot="card-content"] button')]).toHaveLength(0);
+    expect(footerButtons[1]?.disabled).toBe(true);
+  });
+
+  it("replaces the HostBackupCard header spinner on initial load failure and recovers settings on refresh", async () => {
+    const backup = vi.spyOn(api, "hostBackup")
+      .mockRejectedValueOnce(new Error("Failed to fetch"))
+      .mockResolvedValueOnce({
+        available: true,
+        passwordSet: true,
+        settings: { enabled: false, directory: "/var/backups/vastora", timeUTC: "03:00", intervalDays: 1, keepLast: 7 },
+        execution: { state: "idle", message: "" },
+        coverage: { containers: [], units: [], sources: [] },
+        snapshots: [],
+      });
+    const container = render(<HostBackupCard language="zh-CN" />);
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('[data-slot="card-header"] [data-slot="spinner"]')).toBeNull();
+    expect(container.querySelector('[data-slot="card-header"] [data-slot="badge"]')?.textContent).toBe("失败");
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-slot="card-footer"] button')?.click();
+      await Promise.resolve();
+    });
+    expect(backup).toHaveBeenCalledTimes(2);
+    expect(container.querySelector("#host-backup-directory")).not.toBeNull();
+  });
+
+  it("preserves HostBackupCard unsaved edits across language changes and clears stale notices on refresh", async () => {
+    const initialStatus = {
+      available: true,
+      passwordSet: true,
+      settings: { enabled: true, directory: "/var/backups/vastora", timeUTC: "03:00", intervalDays: 1, keepLast: 7 },
+      execution: { state: "idle" as const, message: "" },
+      coverage: { containers: [], units: [], sources: [] },
+      snapshots: [],
+    };
+    const backup = vi.spyOn(api, "hostBackup").mockResolvedValue(initialStatus);
+    vi.spyOn(api, "startHostBackup").mockResolvedValue({ ...initialStatus, execution: { state: "queued", message: "" } });
+    const container = render(<HostBackupCard language="zh-CN" />);
+    await act(async () => { await Promise.resolve(); });
+    expect(backup).toHaveBeenCalledTimes(1);
+
+    // Queue a backup so a transient notice appears, then verify language switch translates it without refetching.
+    act(() => [...container.querySelectorAll<HTMLButtonElement>('[data-slot="card-footer"] button')].find((button) => button.textContent === "立即备份")?.click());
+    await act(async () => {
+      [...container.querySelectorAll<HTMLButtonElement>('[data-slot="card-content"] button')].find((button) => button.textContent === "开始备份")?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("已排队");
+
+    const dirInput = container.querySelector<HTMLInputElement>("#host-backup-directory")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(dirInput, "/srv/custom-backup");
+      dirInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    rerender(<HostBackupCard language="en" />);
+    expect(backup).toHaveBeenCalledTimes(1);
+    expect(container.querySelector<HTMLInputElement>("#host-backup-directory")?.value).toBe("/srv/custom-backup");
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("Queued.");
+
+    // Manual refresh clears the stale notice while retaining unsaved settings.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-slot="card-footer"] button')?.click();
+      await Promise.resolve();
+    });
+    expect(backup).toHaveBeenCalledTimes(2);
+    expect(container.querySelector<HTMLInputElement>("#host-backup-directory")?.value).toBe("/srv/custom-backup");
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("Latest status:");
+  });
+
+  it("places TailscaleUpdateCard check action in CardFooter, shows an empty state, and separates task failures from observation badges", () => {
+    const empty = render(<TailscaleUpdateCard agents={[]} language="zh-CN" onRefresh={async () => undefined} />);
+    expect(empty.textContent).toContain("当前没有由 Vastora 管理的 Tailscale 节点");
+    const footerButtons = [...empty.querySelectorAll<HTMLButtonElement>('[data-slot="card-footer"] button')];
+    expect(footerButtons.map((button) => button.textContent)).toEqual(["检查更新"]);
+
+    resetRender();
+    const data = dashboard();
+    const mismatchNode = {
+      ...data.agents[0],
+      id: "node-mismatch",
+      name: "Mismatch Node",
+      tailscaleOwnership: "managed" as const,
+      capabilities: {
+        ...data.agents[0].capabilities,
+        tailscaleUpdate: { runningVersion: "1.80.0", installedVersion: "1.82.0", latestVersion: "1.82.0", updateAvailable: true, upgradeReady: true, checkedAt: new Date().toISOString() },
+      },
+    };
+    const failedTaskNode = {
+      ...data.agents[0],
+      id: "node-failed-task",
+      name: "Failed Task Node",
+      tailscaleOwnership: "managed" as const,
+      capabilities: {
+        ...data.agents[0].capabilities,
+        tailscaleUpdate: { runningVersion: "1.82.0", installedVersion: "1.82.0", latestVersion: "1.82.0", updateAvailable: false, upgradeReady: true, checkedAt: new Date().toISOString() },
+      },
+      tailscaleUpdateTask: { id: "task-1", targetVersion: "1.82.0", state: "failed" as const, error: "apt failed", updatedAt: new Date().toISOString() },
+    };
+    const container = render(<TailscaleUpdateCard agents={[mismatchNode, failedTaskNode]} language="zh-CN" onRefresh={async () => undefined} />);
+    const badges = [...container.querySelectorAll('[data-slot="badge"]')];
+    expect(badges[0]?.textContent).toBe("运行版本与已安装版本不一致");
+    expect(badges[0]?.getAttribute("data-variant")).toBe("destructive");
+    expect(badges[1]?.textContent).toBe("无可用更新");
+    expect(badges[1]?.getAttribute("data-variant")).toBe("outline");
+    expect(container.querySelector('[role="status"]')?.className).toContain("text-destructive");
+  });
+
+  it("updates SheetContent close label reactively when document language changes and guards malformed formatDate inputs", async () => {
+    const previousLang = document.documentElement.lang;
+    try {
+      document.documentElement.lang = "en";
+      render(<Sheet open><SheetContent><SheetHeader><SheetTitle>Demo</SheetTitle></SheetHeader></SheetContent></Sheet>);
+      expect(document.querySelector('[data-slot="sheet-close"] .sr-only')?.textContent).toBe("Close");
+      await act(async () => {
+        document.documentElement.lang = "zh-CN";
+        await Promise.resolve();
+      });
+      expect(document.querySelector('[data-slot="sheet-close"] .sr-only')?.textContent).toBe("关闭");
+      expect(formatDate("zh-CN", "not-a-date")).toBe("not-a-date");
+      expect(formatDate("en", "")).toBe("—");
+    } finally {
+      document.documentElement.lang = previousLang;
+    }
+  });
+
+  it("maps Daylight and Glivela runtime app keys to dedicated visual icons", () => {
+    const cases: Array<[string, string]> = [
+      ["vastora-official/daylight", "web-gateway"],
+      ["vastora-official/daylight-https", "web-gateway"],
+      ["vastora-official/glivela-entry", "glivela"],
+      ["vastora-official/glivela-node", "glivela"],
+      ["vastora-official/glivela-dual", "glivela"],
+    ];
+    for (const [appKey, expectedIcon] of cases) {
+      resetRender();
+      const container = render(<AppIcon appKey={appKey} />);
+      expect(container.querySelector('[data-icon]')?.getAttribute("data-icon")).toBe(expectedIcon);
+    }
   });
 });

@@ -36,16 +36,31 @@ function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   )
 }
 
+function subscribeDocumentLang(onStoreChange: () => void) {
+  if (typeof document === "undefined" || typeof MutationObserver === "undefined") return () => {}
+  const observer = new MutationObserver(onStoreChange)
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] })
+  return () => observer.disconnect()
+}
+
+function readDocumentLang() {
+  return typeof document === "undefined" ? "en" : document.documentElement.lang || "en"
+}
+
 function SheetContent({
   className,
   children,
   side = "right",
   showCloseButton = true,
+  closeLabel,
   ...props
 }: SheetPrimitive.Popup.Props & {
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
+  closeLabel?: string
 }) {
+  const documentLang = React.useSyncExternalStore(subscribeDocumentLang, readDocumentLang, () => "en")
+  const resolvedCloseLabel = closeLabel ?? (documentLang.toLowerCase().startsWith("zh") ? "关闭" : "Close")
   return (
     <SheetPortal>
       <SheetOverlay />
@@ -75,7 +90,7 @@ function SheetContent({
           >
             <XIcon
             />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{resolvedCloseLabel}</span>
           </SheetPrimitive.Close>
         )}
       </SheetPrimitive.Popup>

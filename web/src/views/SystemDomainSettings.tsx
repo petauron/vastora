@@ -11,7 +11,7 @@ import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHea
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { SelectControl } from "@/components/SelectControl";
-import { copy, userError } from "./shared";
+import { copy, formatDate, userError } from "./shared";
 
 export function SystemDomainSettings({ domain, language, onNavigate }: { domain: SystemDomain; language: Language; onNavigate?: (screen: Screen) => void }) {
   const [open, setOpen] = useState(false);
@@ -51,7 +51,7 @@ export function SystemDomainSettings({ domain, language, onNavigate }: { domain:
           {transitions.map(([transitionID, aliases]) => {
             const state = aliases[0]?.lifecycleState ?? "active";
             const error = aliases.find((alias) => alias.lastError)?.lastError;
-            const deadline = aliases[0]?.retireAfter ? new Date(aliases[0].retireAfter).toLocaleString() : "—";
+            const deadline = formatDate(language, aliases[0]?.retireAfter);
             return <div className="flex flex-col gap-3 rounded-xl border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between" key={transitionID}>
               <div className="min-w-0"><div className="flex items-center gap-2 font-medium"><Clock3Icon className="size-4" />{state === "active" ? copy(language, "等待自动停用", "Scheduled for retirement") : state === "retiring" ? copy(language, "正在安全停用", "Retirement in progress") : copy(language, "停用需要处理", "Retirement needs attention")}</div><p className="mt-1 truncate text-xs text-muted-foreground" title={aliases.map((alias) => alias.endpoint).join(" · ")}>{aliases.map((alias) => alias.endpoint).join(" · ")}</p><p className="mt-1 text-xs text-muted-foreground">{copy(language, "最迟停用：", "Retire by: ")}{deadline}</p>{error ? <p className="mt-1 text-xs text-destructive">{error}</p> : null}</div>
               <Button disabled={retiring === transitionID} onClick={() => void retire(transitionID)} size="sm" variant="outline">{retiring === transitionID ? <Spinner data-icon="inline-start" /> : null}{state === "active" ? copy(language, "立即停用", "Retire now") : copy(language, "继续清理", "Retry cleanup")}</Button>

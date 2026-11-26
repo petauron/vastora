@@ -34,7 +34,10 @@ it("adds the other family on the exact retained domain and revision", async () =
  const save=vi.spyOn(api,"ensureManagedDomain").mockResolvedValue({...domain,secondaryAddress:"1.1.1.1",revision:8,status:"pending"});
  const container=render(<ManagedDomainSettings applications={[app]} agents={data.agents} language="en" />);
  await act(async()=>{const select=container.querySelector("select")!;select.value=app.id;select.dispatchEvent(new Event("change",{bubbles:true}));});
- await act(async()=>{[...container.querySelectorAll("button")].find(x=>x.textContent?.includes("random.example.test"))!.click();});
+ const domainButton=[...container.querySelectorAll("button")].find(x=>x.textContent?.includes("random.example.test"))!;
+ expect(domainButton.getAttribute("aria-pressed")).toBe("false");
+ await act(async()=>{domainButton.click();});
+ expect(domainButton.getAttribute("aria-pressed")).toBe("true");
  act(()=>{const input=container.querySelector<HTMLInputElement>("#managed-domain-secondary")!;Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!.call(input,"1.1.1.1");input.dispatchEvent(new Event("input",{bubbles:true}));});
  await act(async()=>{container.querySelector("form")!.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true}));});
  expect(save).toHaveBeenLastCalledWith({applicationId:app.id,key:"ingress",prefix:"",hostname:domain.hostname,address:domain.address,secondaryAddress:"1.1.1.1",expectedRevision:7,expectedRecordAddress:undefined,migrateAddressFamily:undefined});

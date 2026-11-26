@@ -6,6 +6,9 @@ const icons: Record<string, VisualIconName> = {
   updates: "update", backup: "backup", catalog: "catalog",
   network: "network", overview: "info", activity: "activity", assistant: "assistant",
   "vastora-official/meridian": "glivela",
+  "vastora-official/glivela-entry": "glivela",
+  "vastora-official/glivela-node": "glivela",
+  "vastora-official/glivela-dual": "glivela",
   "vastora-official/senlun": "senulun",
   "vastora-official/senlun-agent": "probe",
   "vastora-official/telegram-bot": "telegram",
@@ -14,6 +17,8 @@ const icons: Record<string, VisualIconName> = {
   "vastora-official/keeper": "keeper",
   "vastora-official/filebrowser": "files",
   "vastora-official/3x-ui": "web-gateway",
+  "vastora-official/daylight": "web-gateway",
+  "vastora-official/daylight-https": "web-gateway",
 };
 
 export function AppIcon({ appKey, className, variant = "tile" }: { appKey: string; className?: string; variant?: "tile" | "glyph" }) {

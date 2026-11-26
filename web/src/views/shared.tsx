@@ -122,7 +122,7 @@ export function userError(language: Language, error: unknown) {
     return copy(language, "落地配置已变化，请刷新状态后重试。", "Landing settings changed. Refresh and retry.");
   }
   if (normalized === "refresh the app catalog and retry this operation.") {
-    return copy(language, "请先在设置中刷新应用目录，再重试。", "Refresh the app catalog in Settings, then retry.");
+    return copy(language, "请先在控制面板刷新应用目录，再重试。", "Refresh the app catalog in Control Panel, then retry.");
   }
   if (code === "protocols_need_own_exit") return copy(language, "请先切换为“本机出口”，启用 HY2 后再选择落地机。", "Switch to the node's own exit, enable HY2, then select the landing server again.");
   if (code === "protocols_need_domain") return copy(language, "请先配置节点的公网地址，再修改协议。", "Set up the node's public address before changing protocols.");
@@ -199,10 +199,6 @@ export function CopyButton({ language, value, label, className, size = "sm", var
   return <Button aria-label={text} className={className} onClick={async () => { try { await navigator.clipboard.writeText(value); setState("copied"); } catch { setState("failed"); } }} size={size} type="button" variant={variant}>{state === "copied" ? <CheckIcon aria-hidden="true" data-icon={iconOnly ? undefined : "inline-start"} /> : <CopyIcon aria-hidden="true" data-icon={iconOnly ? undefined : "inline-start"} />}{iconOnly ? <span className="sr-only" aria-live="polite">{text}</span> : text}</Button>;
 }
 
-export function Brand() {
-  return <div className="flex items-center gap-2.5 font-semibold tracking-tight"><span className="grid size-8 place-items-center rounded-lg bg-primary-control text-primary-foreground shadow-xs" aria-hidden="true"><svg className="size-4" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5 20 7v10l-8 4.5L4 17V7l8-4.5Zm0 3.1L7.1 8.4v7.2l4.9 2.8 4.9-2.8V8.4L12 5.6Zm-3 4.1 3 1.7 3-1.7v3.5L12 15l-3-1.8V9.7Z" /></svg></span><span>Vastora</span></div>;
-}
-
 export function PageHeading({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
   return <div className="mac-page-heading"><div className="mac-page-heading-copy"><h1>{title}</h1>{description ? <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p> : null}</div>{action}</div>;
 }
@@ -238,5 +234,7 @@ export function HighPrivilegeBadge({ language }: { language: Language }) {
 
 export function formatDate(language: Language, value?: string) {
   if (!value) return "—";
-  return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return value;
+  return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(parsed));
 }
