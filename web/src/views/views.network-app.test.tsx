@@ -520,6 +520,7 @@ describe("network and app views", () => {
     expect(actions?.contains(version!)).toBe(false);
     expect(version?.parentElement).toBe(actions?.parentElement);
     expect(version?.parentElement?.classList.contains("items-center")).toBe(true);
+    expect(version?.parentElement?.classList.contains("w-full")).toBe(true);
     expect(actions?.classList.contains("items-center")).toBe(true);
     expect(actions?.classList.contains("flex-wrap")).toBe(true);
     expect(actions?.getAttribute("aria-label")).toBe(language === "zh-CN" ? "应用操作" : "Application actions");
