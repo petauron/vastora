@@ -121,7 +121,7 @@ describe("app store cards", () => {
       expect(sheetBody).not.toBeNull();
       expect(sheetBody?.classList.contains("pt-4")).toBe(true);
       expect(sheetBody?.classList.contains("pb-5")).toBe(true);
-      const footerInstall = details.querySelector<HTMLButtonElement>(`[data-slot="sheet-footer"] ${installSelector}`);
+      const footerInstall = details.querySelector('[data-slot="sheet-footer"]')?.querySelector<HTMLButtonElement>(installSelector);
       expect(footerInstall?.getAttribute("data-size")).toBe("default");
       expect(footerInstall?.getAttribute("data-variant")).toBe("default");
       expect(details.textContent).toContain(value.app.description["zh-CN"]);
