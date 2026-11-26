@@ -6,7 +6,7 @@ import type { Language } from "../translations";
 import type { IPQualityCheck, IPQualityClassification, IPQualityRiskFactor, IPQualityService, IPQualityTarget } from "../ip-quality-types";
 import type { Carrier, NodeDiagnosticCheck } from "../node-diagnostics-types";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
@@ -261,7 +261,7 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, egressAddr
         <SheetTitle>{name} · {copy(language, "节点诊断", "Node diagnostics")}</SheetTitle>
         <SheetDescription>{includeIPQuality ? copy(language, "检测此代理入口或落地机自身的公网出口，不代表入口 → 落地组合的链路实测。", "Checks this proxy entry or landing host's own public exit, not an entry-to-landing route.") : copy(language, "查看这台基础设施节点的主机参数与按需网络诊断；不包含代理出口的 IP 质量或解锁结果。", "Shows host values and on-demand network diagnostics for this infrastructure node; proxy-exit IP quality and unlock results are excluded.")}</SheetDescription>
       </SheetHeader>
-      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4">
+      <SheetBody className="gap-2">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 text-xs text-muted-foreground">
             {includeIPQuality ? <p className="break-all">{currentLabel}: {currentAddress || "—"}</p> : <p>{copy(language, "节点诊断按需执行，不会在后台持续探测。", "Node diagnostics run on demand and do not probe continuously in the background.")}</p>}
@@ -375,8 +375,8 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, egressAddr
             </div>
           </TabsContent>
         </Tabs>
-      </div>
-      {includeIPQuality && tab === "quality" ? <SheetFooter className="border-t">
+      </SheetBody>
+      {includeIPQuality && tab === "quality" ? <SheetFooter>
         {unavailable ? <p className="text-xs text-muted-foreground">{ipQualityError(language, unavailable)}</p> : null}
         <p className="text-xs text-muted-foreground">{copy(language, "使用 IPQuality 访问第三方检测服务，会暴露该节点的出口 IP；不上传在线报告，不测速。首次需下载镜像。", "IPQuality contacts third-party services, revealing this node's exit IP. No online report upload or speed test. The first run downloads an image.")}</p>
         <Button disabled={!!unavailable || nodeActive || submitting || state.loading || state.error} onClick={() => void start()}>{report ? copy(language, `重新检测 ${ipQualityFamilyLabel(family)}`, `Check ${ipQualityFamilyLabel(family)} again`) : copy(language, `检测 ${ipQualityFamilyLabel(family)}`, `Check ${ipQualityFamilyLabel(family)}`)}</Button>

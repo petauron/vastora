@@ -4,7 +4,7 @@ import type { AppData, Application, AppView } from "@/types";
 import type { Language } from "@/translations";
 import { AppIcon } from "@/components/desktop/AppIcon";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { AppStoreTile } from "./AppStore";
 import { AppIdentityBadge } from "./AppIdentity";
 import { AppInstallationSummary } from "./apps/AppInstallationSummary";
@@ -49,7 +49,7 @@ export function DaylightStoreCard({ data, groups, language, onInstall, onOpen, o
       action={<div className="flex flex-wrap gap-2"><Button aria-label={copy(language, "管理 Daylight", "Manage Daylight")} onClick={() => setOpen(true)} size="sm" variant={group ? "outline" : "default"}>{copy(language, "管理", "Manage")}</Button>{group ? <Button aria-label={copy(language, "打开 Daylight", "Open Daylight")} onClick={() => onOpen(daylightAppKey)} size="sm">{copy(language, "打开", "Open")}</Button> : null}</div>} />
     <Sheet open={open} onOpenChange={setOpen}><SheetContent className="sm:max-w-xl">
       <SheetHeader><SheetTitle className="flex items-center gap-3"><AppIcon appKey={daylightAppKey} className="size-11" />Daylight{officialApp ? <AppIdentityBadge app={officialApp} language={language} /> : null}</SheetTitle><SheetDescription>{copy(language, "管理各主机的 Daylight 站点。", "Manage Daylight sites on each host.")}</SheetDescription></SheetHeader>
-      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4">
+      <SheetBody className="gap-5">
         {group ? <><div className="flex flex-wrap items-start justify-between gap-3"><AppInstallationSummary group={group} language={language} byNode />{batchPlan && batchPlan.eligible.length > 0 ? <Button onClick={() => { setOpen(false); onBatchUpgrade?.("Daylight", instances); }} size="sm"><CircleArrowUpIcon aria-hidden="true" data-icon="inline-start" />{copy(language, `全部更新 (${batchPlan.eligible.length})`, `Update all (${batchPlan.eligible.length})`)}</Button> : null}</div><div className="divide-y rounded-xl border">{instances.map((instance) => <div className="flex flex-wrap items-center gap-3 p-4" key={instance.application.id}>
           <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{instance.agent?.name ?? instance.application.nodeId}</p><p className="mt-1 text-xs text-muted-foreground">v{instance.application.installedVersion} · {instance.siteName}</p></div>
           <ApplicationStatus instance={instance} language={language} onUpgrade={(application) => { setOpen(false); onUpgrade(application); }} submittingUpgradeID={submittingUpgradeID} />
@@ -61,7 +61,7 @@ export function DaylightStoreCard({ data, groups, language, onInstall, onOpen, o
           <Button aria-describedby={blocker ? "daylight-install-blocker" : undefined} aria-label={copy(language, "安装 Daylight", "Install Daylight")} disabled={!canInstall} onClick={() => { setOpen(false); onInstall(officialApp); }} size="sm" variant="outline">{group ? copy(language, "安装到其他主机", "Install on another host") : copy(language, "安装", "Install")}</Button>
           {blocker ? <p className="text-xs text-muted-foreground" id="daylight-install-blocker">{blocker}</p> : null}
         </div> : null}
-      </div>
+      </SheetBody>
     </SheetContent></Sheet>
   </>;
 }

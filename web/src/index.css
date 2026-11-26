@@ -517,8 +517,8 @@
   .store-layout { display: flex; flex-direction: column; min-height: 0; }
   .store-navigation { flex-shrink: 0; flex-direction: row; align-items: center; padding: 10px 12px; gap: 4px; border-right: 0; border-bottom: 1px solid var(--border); }
   .store-navigation > div { min-width: 0; flex: 1; overflow-x: auto; }
-  .store-navigation-item { flex-shrink: 0; gap: 8px; }
-  .store-navigation > .store-catalog-settings { margin-top: 0; flex-shrink: 0; width: 44px; justify-content: center; padding: 0; }
+  .store-navigation-item { flex-shrink: 0; gap: 8px; min-height: 44px; }
+  .store-navigation > .store-catalog-settings { margin-top: 0; flex-shrink: 0; width: 44px; min-height: 44px; justify-content: center; padding: 0; }
   .store-catalog-settings > span { display: none; }
   .store-content { padding: 20px 16px; border-radius: 0; }
   .store-app-card { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 4px 12px; min-height: 88px; padding: 14px; }

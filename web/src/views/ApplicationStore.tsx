@@ -4,7 +4,7 @@ import type { AppData, Application, AppView } from "@/types";
 import type { Language } from "@/translations";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { AppIcon } from "@/components/desktop/AppIcon";
 import { AppStore, AppStoreCard, AppStoreTile } from "./AppStore";
 import { AppInstallationSummary } from "./apps/AppInstallationSummary";
@@ -70,23 +70,24 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
     const background = isBackgroundApplication(group.app);
     const showUpdate = section === "updates" && group.instances.some((instance) => instance.application.updateAvailable);
     const openVariant = showUpdate ? "outline" : "default";
+    const actionSize = compact ? "sm" : "default";
     const openAction = !background && !(compact && showUpdate) ? url
-      ? <Button className="min-h-9" nativeButton={false} render={<a href={url} target="_blank" rel="noreferrer" />} aria-label={copy(language, `在新标签页打开 ${name(group)}`, `Open ${name(group)} in a new tab`)} size="sm" variant={openVariant}>{copy(language, "打开", "Open")}<ArrowUpRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
-      : <Button className="min-h-9" onClick={() => onOpen(group.appKey)} size="sm" variant={openVariant}>{copy(language, "打开", "Open")}</Button> : null;
-    const manageAction = !compact || background || showUpdate ? <Button className="min-h-9" aria-label={copy(language, `${showUpdate ? "查看更新" : "管理"} ${name(group)}`, `${showUpdate ? "View updates for" : "Manage"} ${name(group)}`)} onClick={() => setManagedGroupKey(group.id)} size="sm" variant={background || showUpdate ? "default" : "outline"}>{showUpdate ? copy(language, "查看更新", "View updates") : copy(language, "管理", "Manage")}</Button> : null;
+      ? <Button nativeButton={false} render={<a href={url} target="_blank" rel="noreferrer" />} aria-label={copy(language, `在新标签页打开 ${name(group)}`, `Open ${name(group)} in a new tab`)} size={actionSize} variant={openVariant}>{copy(language, "打开", "Open")}<ArrowUpRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
+      : <Button onClick={() => onOpen(group.appKey)} size={actionSize} variant={openVariant}>{copy(language, "打开", "Open")}</Button> : null;
+    const manageAction = !compact || background || showUpdate ? <Button aria-label={copy(language, `${showUpdate ? "查看更新" : "管理"} ${name(group)}`, `${showUpdate ? "View updates for" : "Manage"} ${name(group)}`)} onClick={() => setManagedGroupKey(group.id)} size={actionSize} variant={background || showUpdate ? "default" : "outline"}>{showUpdate ? copy(language, "查看更新", "View updates") : copy(language, "管理", "Manage")}</Button> : null;
     return <div className="flex flex-wrap gap-2">{showUpdate ? <>{openAction}{manageAction}</> : <>{manageAction}{openAction}</>}</div>;
   };
   return <div className="store-layout">
     <nav aria-label={copy(language, "应用商店分类", "App Store categories")} className="store-navigation">
-      <div className="flex gap-1 md:flex-col">{sections.map(({ id, icon: Icon, label, count }) => <Button aria-current={section === id ? "page" : undefined} className="store-navigation-item min-h-11" key={id} onClick={() => setSection(id)} variant="ghost"><Icon /><span>{label}</span><span className="ml-auto text-xs tabular-nums opacity-60">{count}</span></Button>)}</div>
-      <Button aria-label={copy(language, "目录设置", "Catalog settings")} className="store-catalog-settings mt-auto min-h-11 justify-start gap-3" onClick={onSettings} variant="ghost"><Settings2Icon /><span>{copy(language, "目录设置", "Catalog settings")}</span></Button>
+      <div className="flex gap-1 md:flex-col">{sections.map(({ id, icon: Icon, label, count }) => <Button aria-current={section === id ? "page" : undefined} className="store-navigation-item" key={id} onClick={() => setSection(id)} variant="ghost"><Icon /><span>{label}</span><span className="ml-auto text-xs tabular-nums opacity-60">{count}</span></Button>)}</div>
+      <Button aria-label={copy(language, "目录设置", "Catalog settings")} className="store-catalog-settings mt-auto justify-start gap-3" onClick={onSettings} variant="ghost"><Settings2Icon /><span>{copy(language, "目录设置", "Catalog settings")}</span></Button>
     </nav>
     <div className="store-content">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div><h1 className="text-xl font-semibold tracking-tight">{sections.find((item) => item.id === section)!.label}</h1><p className="mt-1 text-xs text-muted-foreground" role="status">{copy(language, `${shownCount} 个应用`, `${shownCount} applications`)}</p></div>
         <div className="flex flex-wrap items-center gap-2">
           {activeTasksControl}
-          <InputGroup className="h-10 w-full sm:w-64"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={copy(language, "搜索应用商店", "Search App Store")} placeholder={copy(language, "搜索应用…", "Search apps…")} type="search" value={query} onChange={(event) => setQuery(event.target.value)} /></InputGroup>
+          <InputGroup className="w-full sm:w-64"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={copy(language, "搜索应用商店", "Search App Store")} placeholder={copy(language, "搜索应用…", "Search apps…")} type="search" value={query} onChange={(event) => setQuery(event.target.value)} /></InputGroup>
         </div>
       </header>
       {section === "all" ? <AppStore data={data} language={language} onInstall={onInstall} query={search} hideApp={(app) => isGlivelaCatalogApp(app) || isDaylightCatalogApp(app)} extraCard={<>{glivelaCard}{daylightCard}</>} renderInstalledStatus={(key) => { const group = groups.find((value) => value.appKey === key); return group ? <AppInstallationSummary group={group} language={language} compact /> : null; }} renderInstalledDetailActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group) : null; }} renderInstalledSummary={(key) => { const group = groups.find((value) => value.appKey === key); return group ? <AppInstallationSummary group={group} language={language} /> : null; }} renderInstalledActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group, true) : null; }} /> : <div className="store-app-grid">{glivelaCard}{daylightCard}{shown.map((group) => group.app
@@ -95,14 +96,14 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
       {(section === "all" ? !shownCount && Boolean(search) : !shownCount) ? <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-5 py-14 text-center"><AppIcon appKey="apps" className="size-12" /><p className="text-sm text-muted-foreground">{search ? copy(language, "没有匹配的应用", "No matching apps") : section === "updates" ? copy(language, "当前没有可用的应用更新", "No app updates available") : copy(language, "还没有安装应用", "No apps installed")}</p><Button onClick={() => { if (search) setQuery(""); else setSection("all"); }} variant="outline">{search ? copy(language, "清除搜索", "Clear search") : copy(language, "浏览所有应用", "Browse all apps")}</Button></div> : null}
     </div>
     <Sheet open={Boolean(managedGroup)} onOpenChange={(open) => { if (!open) setManagedGroupKey(null); }}><SheetContent className="sm:max-w-xl">
-      {managedGroup ? <><SheetHeader><SheetTitle className="flex items-center gap-3"><AppIcon appKey={managedGroup.appKey} className="size-11" />{name(managedGroup)}</SheetTitle><SheetDescription>{copy(language, `已安装到 ${managedGroup.instances.length} 台主机，选择安装以配置、更新或卸载。`, `Installed on ${managedGroup.instances.length} hosts. Select an installation to configure, update, or uninstall.`)}</SheetDescription></SheetHeader><div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
+      {managedGroup ? <><SheetHeader><SheetTitle className="flex items-center gap-3"><AppIcon appKey={managedGroup.appKey} className="size-11" />{name(managedGroup)}</SheetTitle><SheetDescription>{copy(language, `已安装到 ${managedGroup.instances.length} 台主机，选择安装以配置、更新或卸载。`, `Installed on ${managedGroup.instances.length} hosts. Select an installation to configure, update, or uninstall.`)}</SheetDescription></SheetHeader><SheetBody>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <AppInstallationSummary group={managedGroup} language={language} />
           {managedBatch && managedBatch.eligible.length > 0 ? <Button onClick={() => { setManagedGroupKey(null); onBatchUpgrade?.(name(managedGroup), managedGroup.instances); }} size="sm"><CircleArrowUpIcon aria-hidden="true" data-icon="inline-start" />{copy(language, `全部更新 (${managedBatch.eligible.length})`, `Update all (${managedBatch.eligible.length})`)}</Button> : null}
         </div>
         <div className="divide-y rounded-xl border">{managedGroup.instances.map((instance) => <div className="flex flex-wrap items-center gap-3 p-4" key={instance.application.id}><div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{instance.agent?.name ?? instance.application.nodeId}</p><p className="mt-1 text-xs text-muted-foreground">v{instance.application.installedVersion} · {instance.siteName}</p></div><ApplicationStatus instance={instance} language={language} submittingUpgradeID={submittingUpgradeID} onUpgrade={(application) => { setManagedGroupKey(null); onUpgrade(application); }} /><Button onClick={() => { setManagedGroupKey(null); onManage(instance.application); }} variant="outline" size="sm">{copy(language, "管理", "Manage")}</Button></div>)}</div>
         {managedApp ? <div className="flex flex-col gap-2"><Button disabled={!canInstallMore} onClick={() => { setManagedGroupKey(null); onInstall(managedApp); }} variant="outline">{copy(language, "安装到其他主机", "Install on another host")}</Button>{!canInstallMore ? <p className="text-xs text-muted-foreground">{catalogInstallBlocked(managedApp) ? copy(language, "请先在控制面板刷新应用目录。", "Refresh the app catalog in Control Panel first.") : installBlocker(data, managedApp.key, language)}</p> : null}</div> : null}
-      </div></> : null}
+      </SheetBody></> : null}
     </SheetContent></Sheet>
   </div>;
 }

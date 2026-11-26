@@ -10,7 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { ThreeXUIClientsSheet } from "./ThreeXUIClientsSheet";
 import { ThreeXUIControllerMigrationSheet } from "./ThreeXUIControllerMigrationSheet";
@@ -227,7 +227,7 @@ export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onO
   const activeTasksControl = inProgressOperations.length > 0 ? (
     <Button
       aria-label={copy(language, `查看 ${inProgressOperations.length} 个进行中的任务`, `View ${inProgressOperations.length} active tasks`)}
-      className="h-9 shrink-0 tabular-nums"
+      className="shrink-0 tabular-nums"
       onClick={() => setTasksSheetOpen(true)}
       size="sm"
       variant="outline"
@@ -260,13 +260,13 @@ export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onO
             <SheetTitle>{copy(language, `进行中的任务 · ${inProgressOperations.length}`, `Active tasks · ${inProgressOperations.length}`)}</SheetTitle>
             <SheetDescription>{copy(language, "节点执行完成后会自动更新状态，关闭此窗口不影响任务继续执行。", "Status updates automatically as hosts finish. Closing this dialog does not interrupt running tasks.")}</SheetDescription>
           </SheetHeader>
-          <div aria-live="polite" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4">
+          <SheetBody aria-live="polite" className="gap-3">
             {inProgressOperations.length > 0 ? inProgressOperations.map((deployment) => {
               const app = catalogByKey.get(deployment.appKey);
               const agent = data.agents.find((value) => value.id === deployment.agentId);
               return <Card key={deployment.id} size="sm"><CardContent className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center"><StateBadge language={language} value={deployment.state} /><div className="min-w-0 flex-1"><p className="font-medium">{operationLabel(language, deployment.operation)} · {app ? localized(app, language, "name") : deployment.appKey}</p><p className="mt-0.5 text-xs text-muted-foreground">{agent?.name ?? deployment.agentId}</p>{deployment.error ? <div className="mt-2"><TechnicalError error={deployment.error} language={language} /></div> : null}</div></CardContent></Card>;
             }) : <p className="py-6 text-center text-sm text-muted-foreground">{copy(language, "当前没有进行中的任务。", "All active tasks have finished.")}</p>}
-          </div>
+          </SheetBody>
         </SheetContent>
       </Sheet>
 

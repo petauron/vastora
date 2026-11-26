@@ -114,6 +114,10 @@ describe("app store cards", () => {
     expect(container.querySelector<HTMLButtonElement>(installSelector)?.disabled).toBe(false);
     expect(container.querySelector(installSelector)?.getAttribute("aria-label")).toBe("安装 Senlun 监控主机");
     await inspectDetails(value, "zh-CN", 1, (details) => {
+      expect(details.querySelector('[data-slot="sheet-body"]')).not.toBeNull();
+      const footerInstall = details.querySelector<HTMLButtonElement>(`[data-slot="sheet-footer"] ${installSelector}`);
+      expect(footerInstall?.getAttribute("data-size")).toBe("default");
+      expect(footerInstall?.getAttribute("data-variant")).toBe("default");
       expect(details.textContent).toContain(value.app.description["zh-CN"]);
       expect(details.textContent).toContain("v0.1.0-alpha.2 · r1");
       expect(details.textContent).toContain("容器应用");

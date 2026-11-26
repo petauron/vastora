@@ -48,6 +48,7 @@ import { SecretConfigInput } from "@/components/SecretConfigInput";
 import { SelectControl } from "@/components/SelectControl";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -333,7 +334,7 @@ export function DeploymentSheet({
           className="flex min-h-0 flex-1 flex-col"
           onSubmit={(event) => void submit(event)}
         >
-          <div className="flex-1 overflow-y-auto px-4">
+          <SheetBody>
             <FieldGroup>
               {adoptionBlocked || runtimeBlocker ? <Alert role="status"><AlertTitle>{copy(language, "暂不能修改此应用", "Application changes are blocked")}</AlertTitle><AlertDescription>{runtimeBlocker || installed?.adoptionError || copy(language, "维护窗口内核实并接管现有资源后才能修改。接管不会重装或重启应用。", "Verify and adopt existing resources during maintenance before changing them. Adoption does not reinstall or restart the application.")}</AlertDescription></Alert> : null}
               {editor ? <details><summary className="cursor-pointer text-xs text-muted-foreground">{copy(language, "技术详情", "Technical details")}</summary><FieldDescription>{copy(language, `配方修订：${installed?.installedPackageRevision ?? 0} → ${editor.app.app.packageRevision ?? 0}`, `Recipe revision: ${installed?.installedPackageRevision ?? 0} → ${editor.app.app.packageRevision ?? 0}`)}</FieldDescription></details> : null}
@@ -524,7 +525,7 @@ export function DeploymentSheet({
               ) : null}
               {error ? <FieldError role="alert">{error}</FieldError> : null}
             </FieldGroup>
-          </div>
+          </SheetBody>
           <SheetFooter>
             <Button onClick={onClose} type="button" variant="outline">
               {copy(language, "取消", "Cancel")}
@@ -799,7 +800,7 @@ export function PublicationSheet({ data, language, onClose, onSubmit, service }:
           <SheetDescription>{cpaClientAPI ? copy(language, "生成供客户端调用的 HTTPS API 地址。", "Create an HTTPS API URL for clients.") : copy(language, "选择谁可以访问，Vastora 会自动使用当前最安全的可用入口。", "Choose who can access it. Vastora automatically uses the safest available method.")}</SheetDescription>
         </SheetHeader>
         <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
-          <div className="flex-1 overflow-y-auto px-4">
+          <SheetBody>
             <FieldGroup>
               {cpaClientAPI ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "仅开放客户端 API", "Client API only")}</AlertTitle><AlertDescription>{copy(language, "此域名只转发 /v1 请求，并要求 CPA 客户端 API 密钥；管理页面仍使用原来的受保护入口。", "This hostname forwards only /v1 requests and requires the CPA client API key. The management page stays on its existing protected access point.")}</AlertDescription></Alert> : <FieldSet>
                 <FieldLegend>{copy(language, "谁需要访问？", "Who needs access?")}</FieldLegend>
@@ -849,7 +850,7 @@ export function PublicationSheet({ data, language, onClose, onSubmit, service }:
               </details>
               {error ? <FieldError role="alert">{error}</FieldError> : null}
             </FieldGroup>
-          </div>
+          </SheetBody>
           <SheetFooter>
             <Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button>
             <Button disabled={busy || !canSubmit} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{cpaClientAPI ? copy(language, "开启公网 API", "Enable public API") : copy(language, "创建访问方式", "Create access")}</Button>

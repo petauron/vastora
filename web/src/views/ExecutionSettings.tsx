@@ -13,7 +13,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Field, FieldGroup, FieldLabel, FieldError } from "@/components/ui/field";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 
@@ -95,7 +95,7 @@ export function ExecutionSettings({ language, agents, onNavigate }: { language: 
       {page && !visible?.length ? <Empty><EmptyHeader><EmptyTitle>{query ? copy(language,"本页没有匹配的节点","No matching nodes on this page") : filter === "attention" ? copy(language,"没有待处理任务","No tasks need attention") : copy(language,"暂无任务记录","No tasks found")}</EmptyTitle></EmptyHeader></Empty> : null}
       <ul className="flex flex-col gap-2" aria-label={copy(language, "执行记录", "Execution history")}>
         {visible?.map((execution) => <li key={execution.id}>
-          <Button className="h-auto min-h-11 w-full flex-col items-start justify-between gap-3 py-3 sm:flex-row sm:items-center" variant="outline" disabled={busy} onClick={() => setSelected(execution)}>
+          <Button className="h-auto w-full flex-col items-start justify-between gap-3 py-3 sm:flex-row sm:items-center" variant="outline" disabled={busy} onClick={() => setSelected(execution)}>
             <span className="flex min-w-0 flex-col items-start gap-1 text-left"><span className="max-w-full truncate">{names.get(execution.agentId) ?? copy(language, "未知节点", "Unknown node")}</span><span className="max-w-full whitespace-normal break-words text-xs text-muted-foreground">{kindLabel(language, execution.kind)} · {formatDate(language, execution.updatedAt)}</span></span>
             <Badge variant={!execution.disposition && ["failed", "unknown"].includes(execution.state) ? "destructive" : "secondary"}>{stateLabel(language, execution)}</Badge>
           </Button>
@@ -104,8 +104,8 @@ export function ExecutionSettings({ language, agents, onNavigate }: { language: 
       {control && !control.paused ? <details className="border-t pt-3 text-xs text-muted-foreground"><summary className="cursor-pointer">{copy(language,"高级：紧急维护","Advanced: emergency maintenance")}</summary><p className="my-3">{copy(language,"暂停所有节点接收新任务，仅用于系统维护。正在运行的应用不会因此停止。","Pause new tasks on every node for maintenance. This does not stop running applications.")}</p><Button disabled={busy} variant="outline" onClick={() => setConfirmControl(true)}>{copy(language,"进入紧急维护","Start emergency maintenance")}</Button></details> : null}
     </CardContent>
     <CardFooter className="flex-wrap justify-end gap-2">
-      <Button className="min-h-11" disabled={busy} variant="outline" onClick={() => void load()}>{copy(language, "刷新最新记录", "Refresh latest")}</Button>
-      {page?.nextCursor ? <Button className="min-h-11" disabled={busy} variant="outline" onClick={() => void load(page.nextCursor)}>{copy(language, "更早记录", "Older records")}</Button> : null}
+      <Button disabled={busy} size="sm" variant="outline" onClick={() => void load()}>{copy(language, "刷新最新记录", "Refresh latest")}</Button>
+      {page?.nextCursor ? <Button disabled={busy} size="sm" variant="outline" onClick={() => void load(page.nextCursor)}>{copy(language, "更早记录", "Older records")}</Button> : null}
     </CardFooter>
     {selected ? <ExecutionDetail key={selected.id} execution={selected} language={language} onNavigate={onNavigate} name={names.get(selected.agentId) ?? selected.agentId} onClose={() => setSelected(null)} onSaved={() => { setSelected(null); setNotice(selected.kind === "node.security" ? copy(language, "已记录放弃旧安全任务；这不代表回滚完成。请回到节点页重新读取实际状态。", "Old security task abandonment recorded; rollback is not confirmed. Return to the node page and inspect actual host state.") : selected.kind === "node.swap" ? copy(language, "已记录放弃旧 Swap 任务；请回到节点页重新读取宿主机实际状态。", "Old swap task abandonment recorded; return to the node page and inspect actual host state.") : copy(language, "处置已记录。", "Disposition recorded.")); void load(); }} /> : null}
     {confirmControl && control ? <ClaimControlConfirmation paused={control.paused} language={language} onClose={() => setConfirmControl(false)} onSaved={() => { setConfirmControl(false); setNotice(copy(language, "领取设置已保存。", "Claim settings saved.")); void load(); }} /> : null}
@@ -123,8 +123,8 @@ function ClaimControlConfirmation({ paused, language, onClose, onSaved }: { paus
   };
   return <Sheet open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><SheetContent showCloseButton={!busy}>
     <SheetHeader><SheetTitle>{paused ? copy(language, "结束紧急维护", "End emergency maintenance") : copy(language, "进入紧急维护", "Start emergency maintenance")}</SheetTitle><SheetDescription>{paused ? copy(language, "恢复所有节点领取新任务。失败或结果不明的任务仍保持原状态，不会自动重试。", "Resume new task claims for all nodes. Failed or uncertain tasks keep their current state and are not retried automatically.") : copy(language, "这是紧急总闸：将暂停包括 Agent 更新在内的所有新任务。正在执行的任务不会被取消，节点仍会上报状态。", "This is an emergency stop: all new tasks, including Agent updates, are paused. Running tasks are not cancelled and nodes continue reporting.")}</SheetDescription></SheetHeader>
-    {error ? <FieldError className="px-4" role="alert">{error}</FieldError> : null}
-    <SheetFooter><Button className="min-h-11" disabled={busy} variant="outline" onClick={onClose}>{copy(language, "取消", "Cancel")}</Button><Button className="min-h-11" disabled={busy} onClick={() => void submit()}>{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "确认", "Confirm")}</Button></SheetFooter>
+    {error ? <SheetBody><FieldError role="alert">{error}</FieldError></SheetBody> : null}
+    <SheetFooter><Button disabled={busy} variant="outline" onClick={onClose}>{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void submit()}>{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "确认", "Confirm")}</Button></SheetFooter>
   </SheetContent></Sheet>;
 }
 
@@ -151,18 +151,18 @@ export function ExecutionDetail({ execution, name, language, onClose, onSaved, o
   };
   return <Sheet open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><SheetContent showCloseButton={!busy} className="sm:max-w-lg" finalFocus={() => !navigating.current}>
     <SheetHeader><SheetTitle>{name}</SheetTitle><SheetDescription>{stateLabel(language, execution)} · {kindLabel(language, execution.kind)}</SheetDescription></SheetHeader>
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4">
+    <SheetBody className="gap-5">
       {!execution.disposition && ["failed", "unknown"].includes(execution.state) ? <Alert><AlertTitle>{copy(language,"先核对实际状态","Check the actual state first")}</AlertTitle><AlertDescription><p>{taskError(language, execution.lastError)}</p><p>{copy(language,"如果不确定是否已完成，请保留任务，交由维护人员核对。放弃任务不会撤销服务器上已经发生的修改。","If the outcome is unclear, leave the task for an administrator to review. Abandoning it does not undo changes on the server.")}</p>{onNavigate ? <Button variant="outline" size="sm" onClick={() => { navigating.current = true; onClose(); onNavigate((execution.kind.startsWith("agent.") || execution.kind === "node.security" || execution.kind === "node.swap" || execution.kind === "tailscale.update") ? "nodes" : "apps"); }}>{(execution.kind.startsWith("agent.") || execution.kind === "node.security" || execution.kind === "node.swap" || execution.kind === "tailscale.update") ? copy(language,"查看节点","View nodes") : copy(language,"查看应用","View apps")}</Button> : null}</AlertDescription></Alert> : null}
       <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer">{copy(language,"技术详情","Technical details")}</summary><dl className="mt-3 grid gap-3"><div><dt>{copy(language,"任务编号","Task ID")}</dt><dd className="break-all text-muted-foreground">{legacy?.taskId ?? execution.taskId}</dd></div><div><dt>{copy(language,"执行阶段","Phase")}</dt><dd>{execution.phase}</dd></div><div><dt>{copy(language,"执行次数","Attempt")}</dt><dd>{execution.attempt}</dd></div></dl>{execution.lastError ? <code className="mt-3 block break-all text-xs">{execution.lastError}</code> : null}</details>
       {execution.kind === "legacy.receipt" ? <p className="text-sm text-muted-foreground">{legacy ? legacy.hasCompletion ? copy(language, "旧执行结果已安全保存，需要核对后处置。这里不会显示其中的凭据。", "Old result securely retained for review. Credentials are not displayed here.") : copy(language, "旧执行没有完成结果，需要核对实际资源。", "No completion result was retained; inspect actual resources.") : copy(language, "正在读取旧执行记录", "Loading legacy evidence")}</p> : null}
       {execution.kind === "node.security" ? <Alert><AlertTitle>{copy(language, "放弃不代表回滚完成", "Abandonment does not prove rollback completed")}</AlertTitle><AlertDescription>{copy(language, "先通过独立管理通道核对旧执行已停止及本机防护检查点。放弃只处置这条任务，不撤销防火墙变更、不取消自动回滚，也不会标记防护成功。处置后请回到节点页，重新读取节点实际状态，再决定后续操作。", "Use an independent management connection to verify the old execution stopped and inspect the host security checkpoint. Abandonment only resolves this task; it does not revert firewall changes, cancel automatic rollback, or mark protection successful. After resolving it, return to the node page and inspect actual host state before any further operation.")}</AlertDescription></Alert> : null}
-      {!action ? <div className="flex flex-wrap gap-2">{executionActions(execution).map((option) => <Button className="min-h-11" key={option} variant="outline" onClick={() => setAction(option)}>{actionLabel(language, option, execution.kind)}</Button>)}</div> : <FieldGroup>
+      {!action ? <div className="flex flex-wrap gap-2">{executionActions(execution).map((option) => <Button key={option} variant="outline" onClick={() => setAction(option)}>{actionLabel(language, option, execution.kind)}</Button>)}</div> : <FieldGroup>
         <p className="text-sm">{action === "reexecute" ? copy(language, "将创建一次新的执行。请确认旧操作已停止，并核对现有资源，避免重复变更。", "A new attempt will be created. Verify the old operation has stopped and inspect resources to avoid duplicate changes.") : action === "abandon" ? copy(language, "只放弃此任务，不撤销已经发生的变更，也不删除历史证据。", "Abandons this task without undoing changes or deleting evidence.") : copy(language, "请核对实际完成结果。节点在线或重连本身不代表任务已完成。", "Verify the actual result. Being online or reconnecting alone does not prove completion.")}</p>
         <Field orientation="horizontal" data-disabled={busy}><Checkbox id="execution-stopped" checked={stopped} disabled={busy} onCheckedChange={setStopped} /><FieldLabel htmlFor="execution-stopped">{copy(language, "已确认旧执行停止，并核对实际资源", "I verified the old execution stopped and inspected resources")}</FieldLabel></Field>
         <Field data-disabled={busy}><FieldLabel htmlFor="execution-note">{copy(language, "核对说明", "Verification notes")}</FieldLabel><Textarea id="execution-note" disabled={busy} maxLength={1024} value={note} onChange={(event) => setNote(event.target.value)} required /></Field>
       </FieldGroup>}
       {error ? <FieldError role="alert">{error}</FieldError> : null}
-    </div>
-    <SheetFooter><Button className="min-h-11" disabled={busy} variant="outline" onClick={() => { if (action) { setAction(null); setStopped(false); setNote(""); setError(""); } else onClose(); }}>{copy(language, "返回", "Back")}</Button>{action ? <Button className="min-h-11" disabled={busy || !stopped || !note.trim()} onClick={() => void submit()}>{busy ? <Spinner data-icon="inline-start" /> : null}{actionLabel(language, action, execution.kind)}</Button> : null}</SheetFooter>
+    </SheetBody>
+    <SheetFooter><Button disabled={busy} variant="outline" onClick={() => { if (action) { setAction(null); setStopped(false); setNote(""); setError(""); } else onClose(); }}>{copy(language, "返回", "Back")}</Button>{action ? <Button disabled={busy || !stopped || !note.trim()} onClick={() => void submit()}>{busy ? <Spinner data-icon="inline-start" /> : null}{actionLabel(language, action, execution.kind)}</Button> : null}</SheetFooter>
   </SheetContent></Sheet>;
 }

@@ -4,7 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { api } from "../api";
 import type { Mutate } from "../App";
@@ -41,7 +41,7 @@ export function StopNodeAccessSheet({ agent, language, mutate, onClose }: { agen
         <SheetDescription>{copy(language, "无需节点在线，也无需先卸载应用。", "The node does not need to be online, and apps do not need to be uninstalled first.")}</SheetDescription>
       </SheetHeader>
       <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
-        <div className="flex-1 overflow-y-auto px-4">
+        <SheetBody>
           <FieldGroup>
             <Alert>
               <UnplugIcon aria-hidden="true" />
@@ -57,7 +57,7 @@ export function StopNodeAccessSheet({ agent, language, mutate, onClose }: { agen
             {stateChanged ? <FieldError role="alert">{copy(language, "节点状态已变化，请关闭后重新操作。", "The node status changed. Close this panel and try again.")}</FieldError> : null}
             {error ? <FieldError role="alert">{error}</FieldError> : null}
           </FieldGroup>
-        </div>
+        </SheetBody>
         <SheetFooter>
           <Button disabled={busy} onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button>
           <Button disabled={busy || !nameMatches || stateChanged} type="submit" variant="destructive">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "停止接入", "Stop access")}</Button>

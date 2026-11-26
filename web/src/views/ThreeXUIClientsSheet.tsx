@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
@@ -177,7 +177,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
       </SheetHeader>
 
       {editor ? <ClientEditor busy={busy} editor={editor} inbounds={inbounds} language={language} onCancel={discardEditor} onDirtyChange={setEditorDirty} onSave={async (input) => { if (await run(input)) { setEditorDirty(false); setEditor(null); } }} siteTimezone={siteTimezone} /> : <>
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-2">
+        <SheetBody>
           <div className="flex flex-wrap items-center gap-2">
             <Button disabled={busy || inbounds.length === 0} onClick={() => openEditor({})} size="sm"><PlusIcon data-icon="inline-start" />{copy(language, "添加客户端", "Add client")}</Button>
             <Button aria-label={copy(language, "刷新客户端", "Refresh clients")} disabled={busy} onClick={refresh} size="icon-sm" variant="outline">{busy ? <Spinner /> : <RefreshCwIcon />}</Button>
@@ -219,7 +219,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
             </ThreeXUIClientCard>)}
           </div>
           {pageCount > 1 ? <div className="flex items-center justify-between"><Button disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} size="sm" variant="outline">{copy(language, "上一页", "Previous")}</Button><span className="text-xs tabular-nums text-muted-foreground">{Math.min(page, pageCount)} / {pageCount}</span><Button disabled={page >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} size="sm" variant="outline">{copy(language, "下一页", "Next")}</Button></div> : null}
-        </div>
+        </SheetBody>
         <SheetFooter><Button onClick={requestClose} variant="outline">{copy(language, "关闭", "Close")}</Button></SheetFooter>
       </>}
     </SheetContent>
@@ -257,7 +257,7 @@ function ClientEditor({ busy, editor, inbounds, language, onCancel, onDirtyChang
     }
   };
   return <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
-    <div className="flex-1 overflow-y-auto px-4">
+    <SheetBody>
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor="three-xui-client-name">{copy(language, "名称", "Name")}</FieldLabel>
@@ -273,7 +273,7 @@ function ClientEditor({ busy, editor, inbounds, language, onCancel, onDirtyChang
         {!client ? <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="three-xui-client-enabled">{copy(language, "创建后立即启用", "Enable after creation")}</FieldLabel><FieldDescription>{copy(language, "关闭时会保存客户端，但暂时不能连接。", "When off, the client is saved but cannot connect yet.")}</FieldDescription></div><Switch checked={enabled} id="three-xui-client-enabled" onCheckedChange={setEnabled} /></Field> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
       </FieldGroup>
-    </div>
+    </SheetBody>
     <SheetFooter><Button disabled={busy} onClick={onCancel} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !dirty || !name.trim() || inboundIDs.length === 0} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{client ? copy(language, "保存修改", "Save changes") : copy(language, "添加客户端", "Add client")}</Button></SheetFooter>
   </form>;
 }
