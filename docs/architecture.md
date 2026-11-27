@@ -90,9 +90,18 @@ accept Debian 12/13 and Ubuntu 22.04/24.04/26.04 with `amd64` or `arm64` userlan
 architecture reported by `dpkg`. Debian 11, older Ubuntu releases, derivatives,
 and unlisted releases stop before package or Agent changes. Docker and
 Tailscale repositories use the selected distribution's official release
-codename; no cross-distribution repository fallback is allowed. The Docker
-installer leaves existing Docker installations in place and reports conflicting
-packages rather than removing them. Existing Tailscale installations retain
+codename; no cross-distribution repository fallback is allowed. The Docker installer leaves existing Docker installations in place and reports
+conflicting packages rather than removing them. Before installing or starting
+Docker on a fresh host (before `apt-get install docker-ce` on Debian/Ubuntu,
+where package postinst may start `dockerd`, and before `apk add` /
+`rc-service docker start` on Alpine), it writes bounded per-container
+`json-file` log rotation defaults to `/etc/docker/daemon.json` (`100m` × `5`
+compressed below 15 GiB or when the Docker data filesystem cannot be reliably
+confirmed; `200m` × `5` compressed at or above 15 GiB). Existing `log-driver`
+or `log-opts` settings and unknown keys are preserved, invalid or non-object
+JSON fails closed without overwriting, and pre-installed running Docker daemons
+remain administrator-managed without automatic daemon restarts or container
+recreation. Existing Tailscale installations retain
 their ownership and go through the shared compatibility check; they are not
 automatically replaced or downgraded.
 Official Catalog and infrastructure images must publish both Linux platforms.

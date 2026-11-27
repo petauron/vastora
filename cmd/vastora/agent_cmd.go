@@ -20,6 +20,7 @@ import (
 
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/hostservice"
 	"github.com/petauron/vastora/internal/nodesecurity"
 	"github.com/petauron/vastora/internal/osreinstall"
@@ -518,6 +519,32 @@ func runAgent(arguments []string) error {
 		default:
 			return errors.New("agent switch-control-plane action must be begin, rollback, or commit")
 		}
+	case "prepare-docker-logging":
+		flags := flag.NewFlagSet("agent prepare-docker-logging", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("usage: vastora agent prepare-docker-logging")
+		}
+		if runtime.GOOS != "linux" {
+			return errors.New("agent prepare-docker-logging supports Linux hosts")
+		}
+		if os.Geteuid() != 0 {
+			return errors.New("agent prepare-docker-logging must run as root")
+		}
+		result, err := dockerruntime.EnsureDefaultDaemonLogging(dockerruntime.DaemonLoggingOptions{})
+		if err != nil {
+			return err
+		}
+		switch result.Action {
+		case dockerruntime.DaemonLoggingPreserved:
+			fmt.Printf("Preserving existing Docker logging configuration in %s.\n", result.Path)
+		default:
+			fmt.Printf("Configured default Docker json-file log rotation (%s x %s, compressed) in %s.\n", result.MaxSize, result.MaxFile, result.Path)
+		}
+		return nil
 	case "check-tailscale":
 		flags := flag.NewFlagSet("agent check-tailscale", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)

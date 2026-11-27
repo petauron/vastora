@@ -41,6 +41,27 @@ Conflicting packages require operator review instead of automatic removal. See t
 [Docker Ubuntu instructions](https://docs.docker.com/engine/install/ubuntu/),
 and [Tailscale stable package instructions](https://pkgs.tailscale.com/stable/).
 
+On a fresh Docker installation, the installer configures bounded per-container
+`json-file` log rotation defaults in `/etc/docker/daemon.json` before package
+installation starts the daemon (including before `apt-get install docker-ce`,
+whose `postinst` can start `dockerd` immediately). It selects `100m` × `5` with
+`compress: "true"` when the Docker data filesystem is below 15 GiB or when a
+custom `data-root`/`graph` directory cannot be reliably confirmed, and `200m` ×
+`5` with `compress: "true"` when the verified Docker data filesystem is at
+least 15 GiB. These are per-container rotation defaults—Docker's `json-file`
+driver does not enforce a daemon-wide disk quota or day-based retention limit.
+Existing `log-driver` or `log-opts` keys and unknown fields are preserved, and
+invalid or non-object JSON fails closed without overwriting. When invoked by
+the authenticated Agent installer, fresh Docker installation reuses the already
+verified `vastora` binary for JSON merging; on a standalone minimal host where
+`/etc/docker/daemon.json` already exists and neither `python3` nor `jq` is
+installed, the existing file is preserved unchanged with a notice that default
+log rotation was not configured. Pre-installed Docker installations remain
+administrator-managed and untouched: Vastora does not edit their `daemon.json`,
+restart `dockerd`, or recreate containers, because Docker does not hot-reload
+`log-driver`/`log-opts` on `SIGHUP` and only applies updated daemon logging
+defaults to newly created containers after a daemon restart.
+
 ## Shared policy
 
 Installer preflight, fixed-endpoint reconciliation, and explicit legacy

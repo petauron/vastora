@@ -18,7 +18,10 @@ forward migration and explicit handling of interrupted updates remain in force.
 A completed update removes its temporary service and protected update material.
 
 Alpine requires ca-certificates, curl, iproute2 and OpenRC supervision tools.
-Docker Worker bootstrap uses the distribution's docker/docker-openrc packages;
+Docker Worker bootstrap uses the distribution's docker/docker-openrc packages
+and writes bounded per-container `json-file` log rotation defaults to
+`/etc/docker/daemon.json` before installing and starting Docker on fresh hosts
+(leaving pre-installed Docker daemons untouched);
 Glivela also requires nftables. For a fresh managed private network installation,
 the installer uses the reviewed official static Tailscale 1.102.3 archive with
 architecture-specific SHA-256 pins. It does not install an APK below the security
