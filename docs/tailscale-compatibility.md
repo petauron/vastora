@@ -41,6 +41,38 @@ Conflicting packages require operator review instead of automatic removal. See t
 [Docker Ubuntu instructions](https://docs.docker.com/engine/install/ubuntu/),
 and [Tailscale stable package instructions](https://pkgs.tailscale.com/stable/).
 
+On a fresh Docker installation, the installer first checks for pre-staged
+custom Docker service configuration (systemd `docker.service` units or
+`docker.service.d/*.conf` drop-ins on Debian/Ubuntu, and `/etc/conf.d/docker*`
+or `/etc/init.d/docker` on Alpine). If custom service launch configuration is
+already staged, the installer conservatively skips writing
+`/etc/docker/daemon.json` and logs a notice so it neither conflicts with
+explicit `dockerd` flags nor writes ineffective defaults alongside a custom
+`--config-file`. Otherwise, before package installation starts the daemon
+(including before `apt-get install docker-ce`, whose `postinst` can start
+`dockerd` immediately), it configures bounded per-container `json-file` log
+rotation defaults (`max-file: "5"`, `compress: "true"`): when the Docker data
+filesystem is confirmed, `max-size` is `floor(total_bytes / (100 * 1 MiB))`
+(10% divided across two resident containers and five rotated files), clamped to
+`1m`–`200m`; when a custom `data-root`/`graph` directory cannot be reliably
+confirmed or filesystem sizing fails, it falls back conservatively to `50m`.
+These are per-container rotation defaults—Docker's `json-file` driver does not
+enforce a daemon-wide disk quota or day-based retention limit. Existing
+`log-driver` or `log-opts` keys and unknown fields/values are preserved without
+re-encoding existing values, invalid or non-object JSON fails closed without
+overwriting, missing files use no-clobber atomic creation, and updates verify
+the file identity and contents before replacing. When invoked by the
+authenticated Agent installer, fresh Docker installation reuses the already
+verified `vastora` binary for JSON merging; on a standalone host where
+`/etc/docker/daemon.json` already exists, the installer uses isolated
+`python3 -I` when available, and otherwise preserves the file unchanged with a
+notice that default log rotation was not configured. Pre-installed Docker
+installations remain administrator-managed and untouched: Vastora does not edit
+their `daemon.json`, restart `dockerd`, or recreate containers, because Docker
+does not hot-reload `log-driver`/`log-opts` on `SIGHUP` and only applies
+updated daemon logging defaults to newly created containers after a daemon
+restart.
+
 ## Shared policy
 
 Installer preflight, fixed-endpoint reconciliation, and explicit legacy

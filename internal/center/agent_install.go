@@ -169,7 +169,6 @@ center_curl() {
     curl "$@"
   fi
 }
-@@DOCKER_BOOTSTRAP@@
 echo "Downloading the Vastora Agent for $arch..."
 bootstrap_curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 268435456 -fsS \
   -D "$headers" -H "Authorization: Bearer $token" \
@@ -230,6 +229,7 @@ if [ "$resume_install" -eq 0 ] && { [ -s /var/lib/vastora/agent/agent.db ] || ag
     *) echo "The existing Agent was not changed." >&2; exit 0 ;;
   esac
 fi
+@@DOCKER_BOOTSTRAP@@
 
 if [ "$replace_existing" -eq 1 ]; then
   switch_status="$("$temporary" agent switch-control-plane begin --data-dir /var/lib/vastora/agent --target-center-url "$center_url")"
@@ -292,7 +292,7 @@ func renderAgentInstallScript(profile AgentEnrollmentInstallProfile, bootstrapUR
   docker_installer="$(mktemp -t vastora-docker-installer.XXXXXX)"
   bootstrap_curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 1048576 -fsS \
     "${bootstrap_url%/}/install/docker.sh" -o "$docker_installer"
-  sh "$docker_installer"
+  VASTORA_AGENT_BIN="$temporary" sh "$docker_installer"
 fi
 if ! docker info >/dev/null 2>&1; then
   echo "Docker is installed but the daemon is not running." >&2

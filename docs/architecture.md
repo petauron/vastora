@@ -90,9 +90,23 @@ accept Debian 12/13 and Ubuntu 22.04/24.04/26.04 with `amd64` or `arm64` userlan
 architecture reported by `dpkg`. Debian 11, older Ubuntu releases, derivatives,
 and unlisted releases stop before package or Agent changes. Docker and
 Tailscale repositories use the selected distribution's official release
-codename; no cross-distribution repository fallback is allowed. The Docker
-installer leaves existing Docker installations in place and reports conflicting
-packages rather than removing them. Existing Tailscale installations retain
+codename; no cross-distribution repository fallback is allowed. The Docker installer leaves existing Docker installations in place and reports
+conflicting packages rather than removing them. Before installing or starting
+Docker on a fresh host (before `apt-get install docker-ce` on Debian/Ubuntu,
+where package postinst may start `dockerd`, and before `apk add` /
+`rc-service docker start` on Alpine), it checks for pre-staged custom Docker
+service configuration (systemd `docker.service` units/drop-ins or Alpine
+`/etc/conf.d/docker` / `/etc/init.d/docker`) and skips `daemon.json` edits when
+found. Otherwise it writes bounded per-container `json-file` log rotation
+defaults (`max-file: "5"`, `compress: "true"`, and `max-size` sized from 10%
+of the verified Docker data filesystem divided across a two-container,
+five-file planning assumption, floored to whole MiB and clamped to `1m`–`200m`,
+with a `50m` conservative fallback when the Docker data filesystem cannot be
+reliably confirmed). Existing `log-driver` or `log-opts` settings and unknown
+keys/values are preserved, invalid or non-object JSON fails closed without
+overwriting, and pre-installed running Docker daemons remain
+administrator-managed without automatic daemon restarts or container
+recreation. Existing Tailscale installations retain
 their ownership and go through the shared compatibility check; they are not
 automatically replaced or downgraded.
 Official Catalog and infrastructure images must publish both Linux platforms.
