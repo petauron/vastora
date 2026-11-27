@@ -9,10 +9,50 @@ docker_install_as_root() {
   fi
 }
 
+detect_custom_docker_service_config() {
+  docker_install_as_root sh -eu -c '
+    mode="$1"
+    if [ "$mode" = openrc ]; then
+      for path in /etc/conf.d/docker /etc/init.d/docker /etc/conf.d/docker.*; do
+        if [ -e "$path" ] || [ -L "$path" ]; then
+          printf "%s\n" "$path"
+          exit 0
+        fi
+      done
+      exit 0
+    fi
+    for dir in /etc/systemd/system /run/systemd/system /usr/local/lib/systemd/system /usr/lib/systemd/system /lib/systemd/system; do
+      if [ -e "$dir/docker.service" ] || [ -L "$dir/docker.service" ]; then
+        printf "%s\n" "$dir/docker.service"
+        exit 0
+      fi
+      if [ -L "$dir/docker.service.d" ]; then
+        printf "%s\n" "$dir/docker.service.d"
+        exit 0
+      fi
+      if [ -d "$dir/docker.service.d" ]; then
+        for conf in "$dir/docker.service.d"/*.conf; do
+          if [ -e "$conf" ] || [ -L "$conf" ]; then
+            printf "%s\n" "$conf"
+            exit 0
+          fi
+        done
+      fi
+    done
+  ' vastora-docker-service-check "$1"
+}
+
 # Configure bounded per-container json-file log rotation defaults before Docker
-# packages are installed or started. Existing log-driver/log-opts settings,
-# unknown keys, and pre-installed Docker daemons are preserved.
+# packages are installed or started. Pre-staged service overrides, existing
+# log-driver/log-opts settings, unknown keys, and pre-installed daemons are
+# preserved.
 configure_docker_logging() {
+  custom_service="$(detect_custom_docker_service_config "$1")"
+  if [ -n "$custom_service" ]; then
+    echo "Existing Docker service configuration detected ($custom_service); skipping default Docker log rotation configuration in /etc/docker/daemon.json." >&2
+    return 0
+  fi
+
   if [ "$(id -u)" -eq 0 ] &&
     [ -n "${VASTORA_AGENT_BIN:-}" ] &&
     [ -f "$VASTORA_AGENT_BIN" ] &&
@@ -26,20 +66,25 @@ configure_docker_logging() {
 daemon_json="$1"
 default_data_root="$2"
 daemon_dir="$(dirname "$daemon_json")"
-threshold_kib=15728640
 
 select_max_size_for_dir() {
   target_dir="$1"
   if ! command -v df >/dev/null 2>&1 || ! command -v awk >/dev/null 2>&1; then
-    printf '100m\n'
+    printf '50m\n'
     return 0
   fi
   total_kib="$(df -Pk "$target_dir" </dev/null 2>/dev/null | awk 'NR == 2 && $2 ~ /^[0-9]+$/ { print $2; exit }')"
-  if [ -n "$total_kib" ] && awk -v kib="$total_kib" -v limit="$threshold_kib" 'BEGIN { exit (kib + 0 >= limit ? 0 : 1) }' </dev/null; then
-    printf '200m\n'
-  else
-    printf '100m\n'
+  if [ -z "$total_kib" ]; then
+    printf '50m\n'
+    return 0
   fi
+  awk -v kib="$total_kib" 'BEGIN {
+    if (kib + 0 <= 0) { print "50m"; exit }
+    mib = int((kib + 0) / 102400)
+    if (mib < 1) mib = 1
+    if (mib > 200) mib = 200
+    printf "%dm\n", mib
+  }' </dev/null
 }
 
 select_default_max_size() {
@@ -47,13 +92,13 @@ select_default_max_size() {
   while [ ! -e "$probe" ]; do
     parent="$(dirname "$probe")"
     if [ "$parent" = "$probe" ]; then
-      printf '100m\n'
+      printf '50m\n'
       return 0
     fi
     probe="$parent"
   done
   if [ ! -d "$probe" ]; then
-    printf '100m\n'
+    printf '50m\n'
     return 0
   fi
   select_max_size_for_dir "$probe"
@@ -89,7 +134,11 @@ if [ ! -e "$daemon_json" ]; then
   trap 'rm -f "$tmp_file"' EXIT HUP INT TERM
   printf '{\n  "log-driver": "json-file",\n  "log-opts": {\n    "compress": "true",\n    "max-file": "5",\n    "max-size": "%s"\n  }\n}\n' "$max_size" > "$tmp_file"
   chmod 0644 "$tmp_file"
-  mv "$tmp_file" "$daemon_json"
+  if ! ln "$tmp_file" "$daemon_json" 2>/dev/null; then
+    echo "Refusing to overwrite $daemon_json: file appeared concurrently." >&2
+    exit 1
+  fi
+  rm -f "$tmp_file"
   trap - EXIT HUP INT TERM
   echo "Configured default Docker json-file log rotation ($max_size x 5, compressed) in $daemon_json."
   exit 0
@@ -101,8 +150,8 @@ if [ -z "$file_bytes" ] || [ "$file_bytes" -gt 1048576 ]; then
   exit 1
 fi
 
-if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' </dev/null >/dev/null 2>&1; then
-  python3 -c '
+if command -v python3 >/dev/null 2>&1 && python3 -I -c 'import json' </dev/null >/dev/null 2>&1; then
+  python3 -I -c '
 import errno
 import json
 import os
@@ -112,11 +161,41 @@ import tempfile
 
 daemon_json = sys.argv[1]
 default_data_root = sys.argv[2]
-threshold_bytes = 15 * 1024 * 1024 * 1024
+max_bytes = 1048576
+json_ws = " \t\r\n"
 
 
 def reject_constant(value):
     raise ValueError("invalid JSON constant: " + value)
+
+
+def read_regular_nofollow(path):
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ValueError("symbolic links are not supported")
+        raise
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("not a regular file")
+        if st.st_size > max_bytes:
+            raise ValueError("file exceeds 1 MiB")
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError("file exceeds 1 MiB")
+            chunks.append(chunk)
+        return st, b"".join(chunks)
+    finally:
+        os.close(fd)
 
 
 def fs_total_bytes(path):
@@ -130,65 +209,86 @@ def fs_total_bytes(path):
     return None
 
 
+def max_size_for_bytes(total_bytes):
+    if total_bytes is None or total_bytes <= 0:
+        return "50m"
+    mib = total_bytes // (100 * 1024 * 1024)
+    if mib < 1:
+        mib = 1
+    elif mib > 200:
+        mib = 200
+    return "%dm" % mib
+
+
 def select_max_size(doc):
     has_data_root = "data-root" in doc
     has_graph = "graph" in doc
     if has_data_root and has_graph:
-        return "100m"
+        return "50m"
     if has_data_root or has_graph:
         key = "data-root" if has_data_root else "graph"
         val = doc.get(key)
         if not isinstance(val, str) or not val.startswith("/"):
-            return "100m"
+            return "50m"
         try:
             st = os.stat(val)
         except OSError:
-            return "100m"
+            return "50m"
         if not stat.S_ISDIR(st.st_mode):
-            return "100m"
-        total = fs_total_bytes(val)
-        if total is not None and total >= threshold_bytes:
-            return "200m"
-        return "100m"
+            return "50m"
+        return max_size_for_bytes(fs_total_bytes(val))
     probe = default_data_root
     while True:
         try:
             st = os.stat(probe)
             if stat.S_ISDIR(st.st_mode):
-                total = fs_total_bytes(probe)
-                if total is not None and total >= threshold_bytes:
-                    return "200m"
-                return "100m"
-            return "100m"
+                return max_size_for_bytes(fs_total_bytes(probe))
+            return "50m"
         except OSError as exc:
             if exc.errno != errno.ENOENT:
-                return "100m"
+                return "50m"
             parent = os.path.dirname(probe)
             if parent == probe:
-                return "100m"
+                return "50m"
             probe = parent
 
 
-daemon_dir = os.path.dirname(daemon_json)
-st = os.lstat(daemon_json)
-if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
-    sys.stderr.write("Refusing to modify %s: not a regular file.\n" % daemon_json)
-    sys.exit(1)
-if st.st_size > 1048576:
-    sys.stderr.write("Refusing to modify %s: file exceeds 1 MiB.\n" % daemon_json)
-    sys.exit(1)
+def append_default_log_fields(text, is_empty, max_size):
+    snippet = (
+        "  \"log-driver\": \"json-file\",\n"
+        "  \"log-opts\": {\n"
+        "    \"compress\": \"true\",\n"
+        "    \"max-file\": \"5\",\n"
+        "    \"max-size\": \"%s\"\n"
+        "  }\n"
+        "}\n"
+    ) % max_size
+    if is_empty:
+        out = "{\n" + snippet
+    else:
+        trimmed = text.strip(json_ws)
+        prefix = trimmed[:-1].rstrip(json_ws)
+        out = prefix + ",\n" + snippet
+    json.loads(out, parse_float=str, parse_constant=reject_constant)
+    return out.encode("utf-8")
 
-mode = stat.S_IMODE(st.st_mode)
-with open(daemon_json, "rb") as handle:
-    raw = handle.read()
+
+daemon_dir = os.path.dirname(daemon_json)
+try:
+    orig_st, raw = read_regular_nofollow(daemon_json)
+except Exception as exc:
+    sys.stderr.write("Refusing to modify %s: %s\n" % (daemon_json, exc))
+    sys.exit(1)
 
 try:
-    doc = json.loads(raw.decode("utf-8"), parse_constant=reject_constant)
+    text = raw.decode("utf-8")
+    doc = json.loads(text, parse_float=str, parse_constant=reject_constant)
 except Exception as exc:
     sys.stderr.write("Refusing to overwrite invalid JSON in %s: %s\n" % (daemon_json, exc))
     sys.exit(1)
 
-if not isinstance(doc, dict):
+trimmed = text.strip(json_ws)
+if not isinstance(doc, dict) or not trimmed.startswith("{") or not trimmed.endswith("}"):
     sys.stderr.write("Refusing to overwrite %s: top-level JSON value must be an object.\n" % daemon_json)
     sys.exit(1)
 
@@ -197,13 +297,8 @@ if "log-driver" in doc or "log-opts" in doc:
     sys.exit(0)
 
 max_size = select_max_size(doc)
-doc["log-driver"] = "json-file"
-doc["log-opts"] = {
-    "compress": "true",
-    "max-file": "5",
-    "max-size": max_size,
-}
-payload = (json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
+payload = append_default_log_fields(text, len(doc) == 0, max_size)
+mode = stat.S_IMODE(orig_st.st_mode)
 
 fd, tmp_path = tempfile.mkstemp(prefix=".daemon.json.vastora.", dir=daemon_dir)
 wrapped = False
@@ -214,68 +309,44 @@ try:
         tmp_file.write(payload)
         tmp_file.flush()
         os.fsync(tmp_file.fileno())
+    try:
+        cur_st, cur_raw = read_regular_nofollow(daemon_json)
+    except Exception as exc:
+        sys.stderr.write("Refusing to overwrite %s: %s\n" % (daemon_json, exc))
+        sys.exit(1)
+    if (
+        cur_st.st_dev != orig_st.st_dev
+        or cur_st.st_ino != orig_st.st_ino
+        or stat.S_IMODE(cur_st.st_mode) != mode
+        or cur_raw != raw
+    ):
+        sys.stderr.write("Refusing to overwrite %s: file changed concurrently.\n" % daemon_json)
+        sys.exit(1)
     os.replace(tmp_path, daemon_json)
+    tmp_path = ""
     dir_fd = os.open(daemon_dir, os.O_RDONLY)
     try:
         os.fsync(dir_fd)
     finally:
         os.close(dir_fd)
-except Exception:
+finally:
     if not wrapped:
         try:
             os.close(fd)
         except OSError:
             pass
-    try:
-        os.unlink(tmp_path)
-    except OSError:
-        pass
-    raise
+    if tmp_path:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 print("Configured default Docker json-file log rotation (%s x 5, compressed) in %s." % (max_size, daemon_json))
 ' "$daemon_json" "$default_data_root" </dev/null
   exit 0
 fi
 
-if command -v jq >/dev/null 2>&1 && jq -n '{}' </dev/null >/dev/null 2>&1; then
-  if ! jq -e -s 'length == 1 and (.[0] | type == "object")' "$daemon_json" </dev/null >/dev/null 2>&1; then
-    echo "Refusing to overwrite invalid or non-object JSON in $daemon_json." >&2
-    exit 1
-  fi
-  if jq -e 'has("log-driver") or has("log-opts")' "$daemon_json" </dev/null >/dev/null 2>&1; then
-    echo "Preserving existing Docker logging configuration in $daemon_json."
-    exit 0
-  fi
-  if jq -e 'has("data-root") and has("graph")' "$daemon_json" </dev/null >/dev/null 2>&1; then
-    max_size=100m
-  elif jq -e 'has("data-root") or has("graph")' "$daemon_json" </dev/null >/dev/null 2>&1; then
-    custom_root="$(jq -er 'if has("data-root") then .["data-root"] else .["graph"] end | select(type == "string" and startswith("/") and (contains("\n") | not))' "$daemon_json" </dev/null 2>/dev/null || true)"
-    if [ -n "$custom_root" ] && [ -d "$custom_root" ]; then
-      max_size="$(select_max_size_for_dir "$custom_root")"
-    else
-      max_size=100m
-    fi
-  else
-    max_size="$(select_default_max_size)"
-  fi
-  file_mode="$(stat -c '%a' "$daemon_json" </dev/null 2>/dev/null || stat -f '%Lp' "$daemon_json" </dev/null 2>/dev/null || printf '644')"
-  case "$file_mode" in
-    [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) ;;
-    *) file_mode=644 ;;
-  esac
-  tmp_file="$(mktemp "$daemon_dir/.daemon.json.vastora.XXXXXX")"
-  trap 'rm -f "$tmp_file"' EXIT HUP INT TERM
-  jq --arg max_size "$max_size" \
-    '. + {"log-driver": "json-file", "log-opts": {"compress": "true", "max-file": "5", "max-size": $max_size}}' \
-    "$daemon_json" </dev/null > "$tmp_file"
-  chmod "$file_mode" "$tmp_file"
-  mv "$tmp_file" "$daemon_json"
-  trap - EXIT HUP INT TERM
-  echo "Configured default Docker json-file log rotation ($max_size x 5, compressed) in $daemon_json."
-  exit 0
-fi
-
-echo "Existing $daemon_json was preserved unchanged; default Docker log rotation was not configured because neither python3 nor jq is installed." >&2
+echo "Existing $daemon_json was preserved unchanged; default Docker log rotation was not configured because isolated python3 is not available." >&2
 exit 0
 VASTORA_DOCKER_LOG_EOF
 }
@@ -291,7 +362,7 @@ if [ -r /etc/os-release ]; then
    docker info >/dev/null 2>&1 || { echo 'Existing Docker daemon is not running; no changes made.' >&2; exit 1; }
    exit 0
   fi
-  configure_docker_logging
+  configure_docker_logging openrc
   apk add --no-cache docker docker-openrc docker-cli-compose
   rc-update add docker default
   rc-service docker start
@@ -351,7 +422,7 @@ if [ "$(id -u)" -ne 0 ] && ! command -v sudo >/dev/null 2>&1; then
   exit 1
 fi
 
-configure_docker_logging
+configure_docker_logging systemd
 
 echo "Installing Docker for $distro $VERSION_ID ($codename, $arch)..."
 docker_install_as_root apt-get update

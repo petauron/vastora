@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -19,26 +19,28 @@ const (
 	// "data-root" nor legacy "graph" is configured in daemon.json.
 	DefaultDataRoot = "/var/lib/docker"
 
-	// LargeDiskThresholdBytes selects between the two per-container rotation
-	// defaults (100m x 5 below 15 GiB or when the Docker data filesystem cannot
-	// be confirmed; 200m x 5 at or above 15 GiB). Docker's json-file driver
-	// enforces per-container rotation only, not a daemon-wide disk quota.
-	LargeDiskThresholdBytes uint64 = 15 << 30
+	// DefaultMinLogMaxSizeMiB is the lower clamp for confirmed data filesystems.
+	DefaultMinLogMaxSizeMiB uint64 = 1
 
-	// DefaultSmallDiskLogMaxSize is the conservative per-container log file size
-	// limit used below 15 GiB or whenever the Docker data filesystem cannot be
-	// reliably confirmed.
-	DefaultSmallDiskLogMaxSize = "100m"
+	// DefaultMaxLogMaxSizeMiB is the conservative upper clamp per rotated log
+	// file for confirmed data filesystems.
+	DefaultMaxLogMaxSizeMiB uint64 = 200
 
-	// DefaultLargeDiskLogMaxSize is the per-container log file size limit used
-	// when the verified Docker data filesystem is at least 15 GiB.
-	DefaultLargeDiskLogMaxSize = "200m"
+	// DefaultFallbackLogMaxSize is the conservative per-file rotation default
+	// used when the Docker data filesystem cannot be reliably confirmed.
+	DefaultFallbackLogMaxSize = "50m"
 
 	// DefaultLogMaxFile is the maximum number of rotated log files per container.
 	DefaultLogMaxFile = "5"
 
 	// DefaultLogCompress enables gzip compression for rotated json-file logs.
 	DefaultLogCompress = "true"
+
+	// Sizing divides 10% of the verified Docker data filesystem across a
+	// two-resident-container, five-file planning assumption (10% / 2 / 5 = 1%),
+	// floored to whole MiB and clamped to [1m, 200m]. Docker's json-file driver
+	// enforces per-container rotation only, not a daemon-wide disk quota.
+	defaultLogBudgetDivisor uint64 = 100
 
 	maxDaemonConfigBytes = 1 << 20
 )
@@ -72,10 +74,15 @@ type DaemonLoggingOptions struct {
 
 // EnsureDefaultDaemonLogging writes bounded json-file log rotation defaults to
 // /etc/docker/daemon.json before a fresh Docker daemon starts. It preserves
-// existing log-driver or log-opts settings, retains unknown fields and existing
-// file permissions, refuses invalid or non-object JSON and symlinks, and writes
-// updates atomically. It never restarts a running Docker daemon.
+// existing log-driver or log-opts settings, retains unknown fields and original
+// value bytes, rejects invalid or non-object JSON and symlinks, creates missing
+// files without clobbering concurrent writers, and verifies existing files did
+// not change before replacing them. It never restarts a running Docker daemon.
 func EnsureDefaultDaemonLogging(options DaemonLoggingOptions) (DaemonLoggingResult, error) {
+	return ensureDefaultDaemonLogging(options, nil)
+}
+
+func ensureDefaultDaemonLogging(options DaemonLoggingOptions, beforeCommit func()) (DaemonLoggingResult, error) {
 	configPath := strings.TrimSpace(options.ConfigPath)
 	if configPath == "" {
 		configPath = DefaultDaemonConfigPath
@@ -101,24 +108,21 @@ func EnsureDefaultDaemonLogging(options DaemonLoggingOptions) (DaemonLoggingResu
 		return DaemonLoggingResult{}, err
 	}
 
-	info, err := os.Lstat(configPath)
-	if errors.Is(err, os.ErrNotExist) {
+	origIdentity, raw, exists, err := readRegularNoFollow(configPath, maxDaemonConfigBytes)
+	if err != nil {
+		return DaemonLoggingResult{}, err
+	}
+
+	if !exists {
 		maxSize, confirmed := selectDefaultLogMaxSize(nil, defaultDataRoot, fsBytes)
-		doc := make(map[string]json.RawMessage, 2)
-		if err := setDefaultLogConfig(doc, maxSize); err != nil {
-			return DaemonLoggingResult{}, err
-		}
-		payload, err := encodeDaemonConfig(doc)
-		if err != nil {
-			return DaemonLoggingResult{}, err
-		}
+		payload := formatFreshDaemonConfig(maxSize)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return DaemonLoggingResult{}, fmt.Errorf("docker runtime: create %s: %w", dir, err)
 		}
 		if err := inspectRequiredDirectory(dir); err != nil {
 			return DaemonLoggingResult{}, err
 		}
-		if err := writeDaemonConfigAtomic(configPath, payload, 0o644); err != nil {
+		if err := createDaemonConfigExclusive(configPath, payload, 0o644, beforeCommit); err != nil {
 			return DaemonLoggingResult{}, err
 		}
 		return DaemonLoggingResult{
@@ -130,24 +134,8 @@ func EnsureDefaultDaemonLogging(options DaemonLoggingOptions) (DaemonLoggingResu
 			DataRootConfirmed: confirmed,
 		}, nil
 	}
-	if err != nil {
-		return DaemonLoggingResult{}, fmt.Errorf("docker runtime: inspect %s: %w", configPath, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return DaemonLoggingResult{}, fmt.Errorf("docker runtime: refusing to modify symbolic link %s", configPath)
-	}
-	if !info.Mode().IsRegular() {
-		return DaemonLoggingResult{}, fmt.Errorf("docker runtime: refusing to modify non-regular file %s", configPath)
-	}
-	if info.Size() > maxDaemonConfigBytes {
-		return DaemonLoggingResult{}, fmt.Errorf("docker runtime: refusing to modify %s exceeding %d bytes", configPath, maxDaemonConfigBytes)
-	}
 
-	raw, err := os.ReadFile(configPath)
-	if err != nil {
-		return DaemonLoggingResult{}, fmt.Errorf("docker runtime: read %s: %w", configPath, err)
-	}
-	doc, err := parseDaemonConfigObject(raw)
+	doc, err := parseStrictDaemonConfigObject(raw)
 	if err != nil {
 		return DaemonLoggingResult{}, fmt.Errorf("docker runtime: %s: %w", configPath, err)
 	}
@@ -159,14 +147,11 @@ func EnsureDefaultDaemonLogging(options DaemonLoggingOptions) (DaemonLoggingResu
 	}
 
 	maxSize, confirmed := selectDefaultLogMaxSize(doc, defaultDataRoot, fsBytes)
-	if err := setDefaultLogConfig(doc, maxSize); err != nil {
-		return DaemonLoggingResult{}, err
-	}
-	payload, err := encodeDaemonConfig(doc)
+	payload, err := appendDefaultLogFields(raw, len(doc) == 0, maxSize)
 	if err != nil {
-		return DaemonLoggingResult{}, err
+		return DaemonLoggingResult{}, fmt.Errorf("docker runtime: %s: %w", configPath, err)
 	}
-	if err := writeDaemonConfigAtomic(configPath, payload, info.Mode().Perm()); err != nil {
+	if err := replaceDaemonConfigIfUnchanged(configPath, origIdentity, raw, payload, beforeCommit); err != nil {
 		return DaemonLoggingResult{}, err
 	}
 	return DaemonLoggingResult{
@@ -207,24 +192,65 @@ func inspectRequiredDirectory(dir string) error {
 	return nil
 }
 
-func parseDaemonConfigObject(raw []byte) (map[string]json.RawMessage, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
+func isASCIIJSONWhitespace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}
+
+func trimASCIIJSONWhitespace(raw []byte) []byte {
+	start := 0
+	for start < len(raw) && isASCIIJSONWhitespace(raw[start]) {
+		start++
+	}
+	end := len(raw)
+	for end > start && isASCIIJSONWhitespace(raw[end-1]) {
+		end--
+	}
+	return raw[start:end]
+}
+
+func parseStrictDaemonConfigObject(raw []byte) (map[string]json.RawMessage, error) {
+	if !utf8.Valid(raw) {
+		return nil, errors.New("daemon configuration contains invalid UTF-8")
+	}
+	if !json.Valid(raw) {
+		return nil, errors.New("invalid JSON")
+	}
+	trimmed := trimASCIIJSONWhitespace(raw)
+	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
 		return nil, errors.New("daemon configuration must be a JSON object")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(trimmed))
 	var doc map[string]json.RawMessage
-	if err := decoder.Decode(&doc); err != nil {
+	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 	if doc == nil {
 		return nil, errors.New("daemon configuration must be a JSON object")
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return nil, errors.New("daemon configuration contains trailing data after JSON object")
-	}
 	return doc, nil
+}
+
+func formatFreshDaemonConfig(maxSize string) []byte {
+	return []byte(fmt.Sprintf("{\n  \"log-driver\": \"json-file\",\n  \"log-opts\": {\n    \"compress\": %q,\n    \"max-file\": %q,\n    \"max-size\": %q\n  }\n}\n", DefaultLogCompress, DefaultLogMaxFile, maxSize))
+}
+
+func appendDefaultLogFields(raw []byte, emptyObject bool, maxSize string) ([]byte, error) {
+	if emptyObject {
+		return formatFreshDaemonConfig(maxSize), nil
+	}
+	trimmed := trimASCIIJSONWhitespace(raw)
+	if len(trimmed) < 2 || trimmed[len(trimmed)-1] != '}' {
+		return nil, errors.New("daemon configuration must be a JSON object")
+	}
+	prefix := trimASCIIJSONWhitespace(trimmed[:len(trimmed)-1])
+	var buffer bytes.Buffer
+	buffer.Grow(len(prefix) + 128)
+	buffer.Write(prefix)
+	fmt.Fprintf(&buffer, ",\n  \"log-driver\": \"json-file\",\n  \"log-opts\": {\n    \"compress\": %q,\n    \"max-file\": %q,\n    \"max-size\": %q\n  }\n}\n", DefaultLogCompress, DefaultLogMaxFile, maxSize)
+	out := buffer.Bytes()
+	if !json.Valid(out) {
+		return nil, errors.New("merged daemon configuration is not valid JSON")
+	}
+	return out, nil
 }
 
 func selectDefaultLogMaxSize(doc map[string]json.RawMessage, defaultDataRoot string, fsBytes func(string) (uint64, error)) (string, bool) {
@@ -232,7 +258,7 @@ func selectDefaultLogMaxSize(doc map[string]json.RawMessage, defaultDataRoot str
 		rawDataRoot, hasDataRoot := doc["data-root"]
 		rawGraph, hasGraph := doc["graph"]
 		if hasDataRoot && hasGraph {
-			return DefaultSmallDiskLogMaxSize, false
+			return DefaultFallbackLogMaxSize, false
 		}
 		if hasDataRoot || hasGraph {
 			rawValue := rawDataRoot
@@ -241,24 +267,24 @@ func selectDefaultLogMaxSize(doc map[string]json.RawMessage, defaultDataRoot str
 			}
 			configured, ok := parseAbsoluteDataRoot(rawValue)
 			if !ok {
-				return DefaultSmallDiskLogMaxSize, false
+				return DefaultFallbackLogMaxSize, false
 			}
 			info, err := os.Stat(configured)
 			if err != nil || !info.IsDir() {
-				return DefaultSmallDiskLogMaxSize, false
+				return DefaultFallbackLogMaxSize, false
 			}
 			return maxSizeForPath(configured, fsBytes)
 		}
 	}
 	probe, ok := nearestExistingDirectory(defaultDataRoot)
 	if !ok {
-		return DefaultSmallDiskLogMaxSize, false
+		return DefaultFallbackLogMaxSize, false
 	}
 	return maxSizeForPath(probe, fsBytes)
 }
 
 func parseAbsoluteDataRoot(raw json.RawMessage) (string, bool) {
-	trimmed := bytes.TrimSpace(raw)
+	trimmed := trimASCIIJSONWhitespace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '"' {
 		return "", false
 	}
@@ -299,48 +325,22 @@ func nearestExistingDirectory(path string) (string, bool) {
 func maxSizeForPath(path string, fsBytes func(string) (uint64, error)) (string, bool) {
 	total, err := fsBytes(path)
 	if err != nil || total == 0 {
-		return DefaultSmallDiskLogMaxSize, false
+		return DefaultFallbackLogMaxSize, false
 	}
-	if total >= LargeDiskThresholdBytes {
-		return DefaultLargeDiskLogMaxSize, true
+	mib := total / (defaultLogBudgetDivisor * (1 << 20))
+	if mib < DefaultMinLogMaxSizeMiB {
+		mib = DefaultMinLogMaxSizeMiB
 	}
-	return DefaultSmallDiskLogMaxSize, true
+	if mib > DefaultMaxLogMaxSizeMiB {
+		mib = DefaultMaxLogMaxSizeMiB
+	}
+	return fmt.Sprintf("%dm", mib), true
 }
 
-func setDefaultLogConfig(doc map[string]json.RawMessage, maxSize string) error {
-	driverRaw, err := json.Marshal("json-file")
-	if err != nil {
-		return err
-	}
-	optsRaw, err := json.Marshal(map[string]string{
-		"compress": DefaultLogCompress,
-		"max-file": DefaultLogMaxFile,
-		"max-size": maxSize,
-	})
-	if err != nil {
-		return err
-	}
-	doc["log-driver"] = driverRaw
-	doc["log-opts"] = optsRaw
-	return nil
-}
-
-func encodeDaemonConfig(doc map[string]json.RawMessage) ([]byte, error) {
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(doc); err != nil {
-		return nil, fmt.Errorf("docker runtime: encode daemon configuration: %w", err)
-	}
-	return buffer.Bytes(), nil
-}
-
-func writeDaemonConfigAtomic(path string, content []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
+func stageTempFile(dir string, content []byte, mode os.FileMode) (string, error) {
 	temporary, err := os.CreateTemp(dir, ".daemon.json.vastora-*")
 	if err != nil {
-		return fmt.Errorf("docker runtime: stage %s: %w", path, err)
+		return "", err
 	}
 	temporaryPath := temporary.Name()
 	keep := false
@@ -351,23 +351,24 @@ func writeDaemonConfigAtomic(path string, content []byte, mode os.FileMode) erro
 	}()
 	if err := temporary.Chmod(mode); err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("docker runtime: set permissions on %s: %w", path, err)
+		return "", err
 	}
 	if _, err := temporary.Write(content); err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("docker runtime: write %s: %w", path, err)
+		return "", err
 	}
 	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("docker runtime: sync %s: %w", path, err)
+		return "", err
 	}
 	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("docker runtime: close %s: %w", path, err)
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return fmt.Errorf("docker runtime: replace %s: %w", path, err)
+		return "", err
 	}
 	keep = true
+	return temporaryPath, nil
+}
+
+func syncDirectory(dir string) error {
 	directory, err := os.Open(dir)
 	if err != nil {
 		return fmt.Errorf("docker runtime: open %s: %w", dir, err)
@@ -377,4 +378,55 @@ func writeDaemonConfigAtomic(path string, content []byte, mode os.FileMode) erro
 		return fmt.Errorf("docker runtime: sync %s: %w", dir, err)
 	}
 	return nil
+}
+
+func createDaemonConfigExclusive(path string, content []byte, mode os.FileMode, beforeCommit func()) error {
+	dir := filepath.Dir(path)
+	temporaryPath, err := stageTempFile(dir, content, mode)
+	if err != nil {
+		return fmt.Errorf("docker runtime: stage %s: %w", path, err)
+	}
+	defer os.Remove(temporaryPath)
+	if beforeCommit != nil {
+		beforeCommit()
+	}
+	if err := os.Link(temporaryPath, path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("docker runtime: refusing to overwrite %s: file appeared concurrently", path)
+		}
+		return fmt.Errorf("docker runtime: create %s: %w", path, err)
+	}
+	if err := os.Remove(temporaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("docker runtime: clean staged %s: %w", path, err)
+	}
+	return syncDirectory(dir)
+}
+
+func replaceDaemonConfigIfUnchanged(path string, origIdentity fileIdentity, origRaw, content []byte, beforeCommit func()) error {
+	dir := filepath.Dir(path)
+	temporaryPath, err := stageTempFile(dir, content, origIdentity.mode)
+	if err != nil {
+		return fmt.Errorf("docker runtime: stage %s: %w", path, err)
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if beforeCommit != nil {
+		beforeCommit()
+	}
+	currentIdentity, currentRaw, exists, err := readRegularNoFollow(path, maxDaemonConfigBytes)
+	if err != nil {
+		return fmt.Errorf("docker runtime: verify %s before replace: %w", path, err)
+	}
+	if !exists || currentIdentity != origIdentity || !bytes.Equal(currentRaw, origRaw) {
+		return fmt.Errorf("docker runtime: refusing to overwrite %s: file changed concurrently", path)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("docker runtime: replace %s: %w", path, err)
+	}
+	keep = true
+	return syncDirectory(dir)
 }

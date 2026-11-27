@@ -25,7 +25,6 @@ type dockerInstallerHarnessOptions struct {
 	osRelease   string
 	dfKiB       string
 	withPython3 bool
-	withJQ      bool
 }
 
 func newDockerInstallerHarness(t *testing.T, opts dockerInstallerHarnessOptions) dockerInstallerHarness {
@@ -58,27 +57,31 @@ func newDockerInstallerHarness(t *testing.T, opts dockerInstallerHarnessOptions)
 		t.Fatal(err)
 	}
 
+	// Map all host paths checked or written by install-docker.sh into t.TempDir()
+	// so CI runner Docker packages and systemd units never leak into tests.
 	rewritten := strings.NewReplacer(
 		"/etc/os-release", h.osRelease,
 		"/etc/docker/daemon.json", h.daemonJSON,
 		"/var/lib/docker", h.dataRoot,
 		"/etc/apt/keyrings", h.aptKeyrings,
 		"/etc/apt/sources.list.d/docker.sources", h.aptSources,
+		"/etc/conf.d/docker", filepath.Join(root, "etc", "conf.d", "docker"),
+		"/etc/init.d/docker", filepath.Join(root, "etc", "init.d", "docker"),
+		"/usr/local/lib/systemd/system", filepath.Join(root, "usr", "local", "lib", "systemd", "system"),
+		"/usr/lib/systemd/system", filepath.Join(root, "usr", "lib", "systemd", "system"),
+		"/etc/systemd/system", filepath.Join(root, "etc", "systemd", "system"),
+		"/run/systemd/system", filepath.Join(root, "run", "systemd", "system"),
+		"/lib/systemd/system", filepath.Join(root, "lib", "systemd", "system"),
 	).Replace(dockerInstallScript)
 	if err := os.WriteFile(h.scriptPath, []byte(rewritten), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Forward only the required standard utilities into the isolated PATH so a
-	// pre-installed host Docker binary on CI runners is never visible.
-	for _, tool := range []string{"sh", "awk", "cat", "chmod", "dirname", "install", "mkdir", "mktemp", "mv", "rm", "stat", "tee", "tr", "wc"} {
+	for _, tool := range []string{"sh", "awk", "cat", "chmod", "dirname", "install", "ln", "mkdir", "mktemp", "mv", "rm", "tee", "tr", "wc"} {
 		forwardHostTool(t, shimBin, tool)
 	}
 	if opts.withPython3 {
 		forwardHostTool(t, shimBin, "python3")
-	}
-	if opts.withJQ {
-		forwardHostTool(t, shimBin, "jq")
 	}
 
 	realID, err := exec.LookPath("id")
@@ -151,12 +154,15 @@ func writeShim(t *testing.T, dir, name, content string) {
 	}
 }
 
-func (h dockerInstallerHarness) run(extraEnv ...string) (string, error) {
+func (h dockerInstallerHarness) runInDir(dir string, extraEnv ...string) (string, error) {
 	realSH, err := exec.LookPath("sh")
 	if err != nil {
 		return "", err
 	}
 	command := exec.Command(realSH, h.scriptPath)
+	if dir != "" {
+		command.Dir = dir
+	}
 	env := []string{
 		"PATH=" + h.shimBin,
 		"HOME=" + h.root,
@@ -165,6 +171,10 @@ func (h dockerInstallerHarness) run(extraEnv ...string) (string, error) {
 	command.Env = env
 	output, err := command.CombinedOutput()
 	return string(output), err
+}
+
+func (h dockerInstallerHarness) run(extraEnv ...string) (string, error) {
+	return h.runInDir("", extraEnv...)
 }
 
 func readDaemonJSONMap(t *testing.T, path string) map[string]any {
@@ -188,67 +198,84 @@ func TestDockerInstallScriptConfiguresLoggingBeforePackageInstall(t *testing.T) 
 		wantMaxSize string
 		wantEvent   string
 	}{
-		{
-			name:        "debian13SmallDisk",
-			osRelease:   "ID=debian\nVERSION_ID=13\n",
-			dfKiB:       "10485760",
-			wantMaxSize: "100m",
-			wantEvent:   "apt-get:install --no-remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin:daemon_json=present",
-		},
-		{
-			name:        "ubuntu2404LargeDisk",
-			osRelease:   "ID=ubuntu\nVERSION_ID=24.04\n",
-			dfKiB:       "20971520",
-			wantMaxSize: "200m",
-			wantEvent:   "apt-get:install --no-remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin:daemon_json=present",
-		},
-		{
-			name:        "alpine324SmallDisk",
-			osRelease:   "ID=alpine\nVERSION_ID=3.24.0\n",
-			dfKiB:       "10485760",
-			wantMaxSize: "100m",
-			wantEvent:   "apk:add --no-cache docker docker-openrc docker-cli-compose:daemon_json=present",
-		},
-		{
-			name:        "alpine324LargeDisk",
-			osRelease:   "ID=alpine\nVERSION_ID=3.24.0\n",
-			dfKiB:       "25165824",
-			wantMaxSize: "200m",
-			wantEvent:   "apk:add --no-cache docker docker-openrc docker-cli-compose:daemon_json=present",
-		},
+		{"debian13Disk5GiB", "ID=debian\nVERSION_ID=13\n", "5242880", "51m", "apt-get:install --no-remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin:daemon_json=present"},
+		{"debian13Disk10GiB", "ID=debian\nVERSION_ID=13\n", "10485760", "102m", "apt-get:install --no-remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin:daemon_json=present"},
+		{"ubuntu2404Disk15GiB", "ID=ubuntu\nVERSION_ID=24.04\n", "15728640", "153m", "apt-get:install --no-remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin:daemon_json=present"},
+		{"ubuntu2404Disk20GiB", "ID=ubuntu\nVERSION_ID=24.04\n", "20971520", "200m", "apt-get:install --no-remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin:daemon_json=present"},
+		{"alpine324Disk10GiB", "ID=alpine\nVERSION_ID=3.24.0\n", "10485760", "102m", "apk:add --no-cache docker docker-openrc docker-cli-compose:daemon_json=present"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			// Fresh install without daemon.json must not require python3 or jq.
 			h := newDockerInstallerHarness(t, dockerInstallerHarnessOptions{
 				osRelease: test.osRelease,
 				dfKiB:     test.dfKiB,
 			})
-
 			output, err := h.run()
 			if err != nil {
 				t.Fatalf("install-docker.sh failed: %v\n%s", err, output)
 			}
 			events, err := os.ReadFile(h.eventsPath)
-			if err != nil {
-				t.Fatal(err)
+			if err != nil || !strings.Contains(string(events), test.wantEvent) {
+				t.Fatalf("daemon.json was not staged before package install (err=%v):\n%s", err, events)
 			}
-			if !strings.Contains(string(events), test.wantEvent) {
-				t.Fatalf("daemon.json was not written before Docker package install:\n%s", events)
-			}
-
 			parsed := readDaemonJSONMap(t, h.daemonJSON)
 			opts, ok := parsed["log-opts"].(map[string]any)
 			if !ok || parsed["log-driver"] != "json-file" || opts["max-size"] != test.wantMaxSize || opts["max-file"] != "5" || opts["compress"] != "true" {
 				t.Fatalf("unexpected daemon.json: %#v", parsed)
 			}
 			info, err := os.Stat(h.daemonJSON)
-			if err != nil {
+			if err != nil || info.Mode().Perm() != 0o644 {
+				t.Fatalf("mode = %o err=%v", info.Mode().Perm(), err)
+			}
+		})
+	}
+}
+
+func TestDockerInstallScriptSkipsCustomStagedServiceConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		osRelease string
+		relPath   string
+	}{
+		{"systemdDropIn", "ID=debian\nVERSION_ID=13\n", "etc/systemd/system/docker.service.d/override.conf"},
+		{"systemdCustomUnit", "ID=ubuntu\nVERSION_ID=24.04\n", "etc/systemd/system/docker.service"},
+		{"systemdRuntimeDropIn", "ID=debian\nVERSION_ID=13\n", "run/systemd/system/docker.service.d/cloud.conf"},
+		{"alpineConfD", "ID=alpine\nVERSION_ID=3.24.0\n", "etc/conf.d/docker"},
+		{"alpineInitD", "ID=alpine\nVERSION_ID=3.24.0\n", "etc/init.d/docker"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := newDockerInstallerHarness(t, dockerInstallerHarnessOptions{
+				osRelease: test.osRelease,
+				dfKiB:     "20971520",
+			})
+			staged := filepath.Join(h.root, test.relPath)
+			if err := os.MkdirAll(filepath.Dir(staged), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if info.Mode().Perm() != 0o644 {
-				t.Fatalf("mode = %o, want 644", info.Mode().Perm())
+			if err := os.WriteFile(staged, []byte("# admin override\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			// Verify both standalone and Agent-helper invocations skip before touching daemon.json.
+			helperPath := filepath.Join(h.root, "vastora-agent-bin")
+			writeShim(t, h.root, "vastora-agent-bin", "#!/bin/sh\nprintf 'helper-should-not-run\\n' >> "+shellQuote(h.eventsPath)+"\nexit 1\n")
+
+			output, err := h.run("VASTORA_AGENT_BIN=" + helperPath)
+			if err != nil {
+				t.Fatalf("install with custom service config failed: %v\n%s", err, output)
+			}
+			if !strings.Contains(output, "Existing Docker service configuration detected") || !strings.Contains(output, "skipping default Docker log rotation configuration") {
+				t.Fatalf("missing explicit skip notice:\n%s", output)
+			}
+			if _, err := os.Stat(h.daemonJSON); !os.IsNotExist(err) {
+				t.Fatalf("daemon.json was unexpectedly created when %s was staged", test.relPath)
+			}
+			events, _ := os.ReadFile(h.eventsPath)
+			if strings.Contains(string(events), "helper-should-not-run") {
+				t.Fatalf("Agent helper ran despite pre-staged service config:\n%s", events)
 			}
 		})
 	}
@@ -271,7 +298,7 @@ func TestDockerInstallScriptLeavesPreinstalledDockerUntouched(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(h.daemonJSON), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			original := `{"storage-driver": "overlay2"}` + "\n"
+			original := "{\"storage-driver\": \"overlay2\"}\n"
 			if err := os.WriteFile(h.daemonJSON, []byte(original), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -281,26 +308,23 @@ func TestDockerInstallScriptLeavesPreinstalledDockerUntouched(t *testing.T) {
 				t.Fatalf("existing Docker install failed: %v\n%s", err, output)
 			}
 			got, err := os.ReadFile(h.daemonJSON)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != original {
-				t.Fatalf("pre-installed Docker daemon.json was changed:\ngot:  %q\nwant: %q", string(got), original)
+			if err != nil || string(got) != original {
+				t.Fatalf("pre-installed Docker daemon.json changed: got %q err=%v", got, err)
 			}
 			if _, err := os.Stat(h.eventsPath); !os.IsNotExist(err) {
 				events, _ := os.ReadFile(h.eventsPath)
-				t.Fatalf("package installation or daemon control ran for pre-installed Docker:\n%s", events)
+				t.Fatalf("unexpected actions for pre-installed Docker:\n%s", events)
 			}
 		})
 	}
 }
 
-func TestDockerInstallScriptStandaloneMergeWithPython3(t *testing.T) {
+func TestDockerInstallScriptStandaloneIsolatedPythonMerge(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available in test environment")
 	}
 
-	t.Run("mergesUnknownFieldsAndPreservesMode", func(t *testing.T) {
+	t.Run("isolatesPythonFromCWDAndPreservesRawValues", func(t *testing.T) {
 		h := newDockerInstallerHarness(t, dockerInstallerHarnessOptions{
 			osRelease:   "ID=debian\nVERSION_ID=13\n",
 			dfKiB:       "10485760",
@@ -310,44 +334,64 @@ func TestDockerInstallScriptStandaloneMergeWithPython3(t *testing.T) {
 			t.Fatal(err)
 		}
 		missingDataRoot := filepath.Join(h.root, "mnt", "unmounted-docker")
-		initial := `{"storage-driver": "overlay2", "data-root": "` + missingDataRoot + `"}` + "\n"
+		initial := "{\n" +
+			"  \"storage-driver\": \"overlay2\",\n" +
+			"  \"high-precision\": 123456789012345678901234567890,\n" +
+			"  \"huge-exponent\": 1e500,\n" +
+			"  \"data-root\": \"" + missingDataRoot + "\"\n" +
+			"}\n"
 		if err := os.WriteFile(h.daemonJSON, []byte(initial), 0o600); err != nil {
 			t.Fatal(err)
 		}
 
-		output, err := h.run()
-		if err != nil {
-			t.Fatalf("python3 merge failed: %v\n%s", err, output)
-		}
-		info, err := os.Stat(h.daemonJSON)
-		if err != nil {
+		// Plant a hostile json.py in both CWD and PYTHONPATH to prove python3 -I ignores both.
+		untrustedDir := filepath.Join(h.root, "untrusted")
+		if err := os.MkdirAll(untrustedDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm() != 0o600 {
-			t.Fatalf("mode = %o, want 600", info.Mode().Perm())
+		if err := os.WriteFile(filepath.Join(untrustedDir, "json.py"), []byte("raise SystemExit('untrusted json.py imported')\n"), 0o644); err != nil {
+			t.Fatal(err)
 		}
-		parsed := readDaemonJSONMap(t, h.daemonJSON)
-		opts, ok := parsed["log-opts"].(map[string]any)
-		// Missing custom data-root must stay conservative at 100m regardless of host root disk size.
-		if !ok || parsed["storage-driver"] != "overlay2" || parsed["data-root"] != missingDataRoot || parsed["log-driver"] != "json-file" || opts["max-size"] != "100m" || opts["max-file"] != "5" || opts["compress"] != "true" {
-			t.Fatalf("unexpected merged daemon.json: %#v", parsed)
+
+		output, err := h.runInDir(untrustedDir, "PYTHONPATH="+untrustedDir)
+		if err != nil {
+			t.Fatalf("isolated python3 merge failed: %v\n%s", err, output)
+		}
+		info, err := os.Stat(h.daemonJSON)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("mode = %o err=%v", info.Mode().Perm(), err)
+		}
+		raw, err := os.ReadFile(h.daemonJSON)
+		if err != nil || !json.Valid(raw) {
+			t.Fatalf("merged daemon.json invalid: err=%v\n%s", err, raw)
+		}
+		for _, want := range []string{
+			`"high-precision": 123456789012345678901234567890`,
+			`"huge-exponent": 1e500`,
+			`"storage-driver": "overlay2"`,
+			`"log-driver": "json-file"`,
+			`"max-size": "50m"`,
+		} {
+			if !strings.Contains(string(raw), want) {
+				t.Fatalf("missing %q in:\n%s", want, raw)
+			}
 		}
 	})
 
 	t.Run("preservesExplicitLoggingAndRejectsInvalidJSON", func(t *testing.T) {
 		for _, tc := range []struct {
-			name        string
-			content     string
-			wantErr     bool
-			wantUntouch bool
+			name    string
+			content string
+			wantErr bool
 		}{
-			{"explicitDriver", `{"log-driver": "local"}` + "\n", false, true},
-			{"explicitOpts", `{"log-opts": {"max-size": "10m"}}` + "\n", false, true},
-			{"invalidJSON", `{broken`, true, true},
-			{"nonObjectArray", `[]`, true, true},
-			{"nonObjectNull", `null`, true, true},
-			{"nonStandardNaN", `{"n": NaN}`, true, true},
-			{"emptyFile", ``, true, true},
+			{"explicitDriver", "{\"log-driver\": \"local\"}\n", false},
+			{"explicitOpts", "{\"log-opts\": {\"max-size\": \"10m\"}}\n", false},
+			{"invalidJSON", `{broken`, true},
+			{"nonObjectArray", `[]`, true},
+			{"nonObjectNull", `null`, true},
+			{"nonStandardNaN", `{"n": NaN}`, true},
+			{"leadingNBSP", "\u00a0{}", true},
+			{"emptyFile", ``, true},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				h := newDockerInstallerHarness(t, dockerInstallerHarnessOptions{
@@ -369,11 +413,8 @@ func TestDockerInstallScriptStandaloneMergeWithPython3(t *testing.T) {
 					t.Fatalf("unexpected error for %s: %v\n%s", tc.name, err, output)
 				}
 				got, err := os.ReadFile(h.daemonJSON)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if tc.wantUntouch && string(got) != tc.content {
-					t.Fatalf("file was modified:\ngot:  %q\nwant: %q", string(got), tc.content)
+				if err != nil || string(got) != tc.content {
+					t.Fatalf("file was modified: got %q want %q err=%v", got, tc.content, err)
 				}
 				if tc.wantErr {
 					if _, statErr := os.Stat(h.eventsPath); !os.IsNotExist(statErr) {
@@ -385,88 +426,7 @@ func TestDockerInstallScriptStandaloneMergeWithPython3(t *testing.T) {
 	})
 }
 
-func TestDockerInstallScriptStandaloneMergeWithJQ(t *testing.T) {
-	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skip("jq not available in test environment")
-	}
-
-	t.Run("mergesUnknownFieldsAndSelectsTier", func(t *testing.T) {
-		h := newDockerInstallerHarness(t, dockerInstallerHarnessOptions{
-			osRelease: "ID=debian\nVERSION_ID=13\n",
-			dfKiB:     "20971520",
-			withJQ:    true,
-		})
-		if err := os.MkdirAll(filepath.Dir(h.daemonJSON), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(h.daemonJSON, []byte(`{"storage-driver":"overlay2"}`+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		output, err := h.run()
-		if err != nil {
-			t.Fatalf("jq merge failed: %v\n%s", err, output)
-		}
-		info, err := os.Stat(h.daemonJSON)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm() != 0o600 {
-			t.Fatalf("mode = %o, want 600", info.Mode().Perm())
-		}
-		parsed := readDaemonJSONMap(t, h.daemonJSON)
-		opts, ok := parsed["log-opts"].(map[string]any)
-		if !ok || parsed["storage-driver"] != "overlay2" || parsed["log-driver"] != "json-file" || opts["max-size"] != "200m" || opts["max-file"] != "5" || opts["compress"] != "true" {
-			t.Fatalf("unexpected jq-merged daemon.json: %#v", parsed)
-		}
-	})
-
-	t.Run("conservativeOnMissingDataRootAndRejectsInvalidJSON", func(t *testing.T) {
-		h := newDockerInstallerHarness(t, dockerInstallerHarnessOptions{
-			osRelease: "ID=debian\nVERSION_ID=13\n",
-			dfKiB:     "52428800",
-			withJQ:    true,
-		})
-		if err := os.MkdirAll(filepath.Dir(h.daemonJSON), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		missingDataRoot := filepath.Join(h.root, "mnt", "missing-volume")
-		if err := os.WriteFile(h.daemonJSON, []byte(`{"data-root":"`+missingDataRoot+`"}`+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		output, err := h.run()
-		if err != nil {
-			t.Fatalf("jq merge failed: %v\n%s", err, output)
-		}
-		parsed := readDaemonJSONMap(t, h.daemonJSON)
-		opts, ok := parsed["log-opts"].(map[string]any)
-		if !ok || opts["max-size"] != "100m" {
-			t.Fatalf("expected conservative 100m for missing data-root, got %#v", parsed)
-		}
-
-		for _, invalid := range []string{``, `{broken`, `[]`, `null`, `{}{}`} {
-			bad := newDockerInstallerHarness(t, dockerInstallerHarnessOptions{
-				osRelease: "ID=debian\nVERSION_ID=13\n",
-				dfKiB:     "20971520",
-				withJQ:    true,
-			})
-			if err := os.MkdirAll(filepath.Dir(bad.daemonJSON), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(bad.daemonJSON, []byte(invalid), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if out, err := bad.run(); err == nil {
-				t.Fatalf("jq path accepted invalid JSON %q:\n%s", invalid, out)
-			}
-			got, err := os.ReadFile(bad.daemonJSON)
-			if err != nil || string(got) != invalid {
-				t.Fatalf("invalid file was changed: got %q want %q err=%v", got, invalid, err)
-			}
-		}
-	})
-}
-
-func TestDockerInstallScriptPreservesExistingFileWhenNoParserAvailable(t *testing.T) {
+func TestDockerInstallScriptPreservesExistingFileWithoutPython3(t *testing.T) {
 	h := newDockerInstallerHarness(t, dockerInstallerHarnessOptions{
 		osRelease: "ID=alpine\nVERSION_ID=3.24.0\n",
 		dfKiB:     "20971520",
@@ -474,7 +434,7 @@ func TestDockerInstallScriptPreservesExistingFileWhenNoParserAvailable(t *testin
 	if err := os.MkdirAll(filepath.Dir(h.daemonJSON), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	original := `{"storage-driver": "overlay2"}` + "\n"
+	original := "{\"storage-driver\": \"overlay2\"}\n"
 	if err := os.WriteFile(h.daemonJSON, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -487,15 +447,12 @@ func TestDockerInstallScriptPreservesExistingFileWhenNoParserAvailable(t *testin
 		t.Fatalf("missing clear no-parser notice:\n%s", output)
 	}
 	got, err := os.ReadFile(h.daemonJSON)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != original {
-		t.Fatalf("existing daemon.json was altered without a parser: got %q want %q", got, original)
+	if err != nil || string(got) != original {
+		t.Fatalf("existing daemon.json was altered without python3: got %q err=%v", got, err)
 	}
 }
 
-func TestDockerInstallScriptUsesVerifiedAgentHelperWhenProvided(t *testing.T) {
+func TestDockerInstallScriptUsesVerifiedAgentHelperAndAgentInstallOrder(t *testing.T) {
 	h := newDockerInstallerHarness(t, dockerInstallerHarnessOptions{
 		osRelease: "ID=debian\nVERSION_ID=13\n",
 		dfKiB:     "10485760",
@@ -505,7 +462,7 @@ func TestDockerInstallScriptUsesVerifiedAgentHelperWhenProvided(t *testing.T) {
 	helperScript := "#!/bin/sh\n" +
 		"printf 'helper:%s\\n' \"$*\" >> " + shellQuote(h.eventsPath) + "\n" +
 		"mkdir -p " + shellQuote(filepath.Dir(h.daemonJSON)) + "\n" +
-		"printf '{\"log-driver\":\"json-file\",\"log-opts\":{\"compress\":\"true\",\"max-file\":\"5\",\"max-size\":\"100m\"}}\\n' > " + shellQuote(h.daemonJSON) + "\n"
+		"printf '{\"log-driver\":\"json-file\",\"log-opts\":{\"compress\":\"true\",\"max-file\":\"5\",\"max-size\":\"102m\"}}\\n' > " + shellQuote(h.daemonJSON) + "\n"
 	if err := os.WriteFile(helperPath, []byte(helperScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -524,22 +481,16 @@ func TestDockerInstallScriptUsesVerifiedAgentHelperWhenProvided(t *testing.T) {
 	if helperIndex < 0 || aptIndex < 0 || helperIndex > aptIndex {
 		t.Fatalf("verified Agent helper did not run before apt-get install docker-ce:\n%s", eventText)
 	}
-}
 
-func TestAgentInstallScriptPassesVerifiedBinaryToFreshDockerInstaller(t *testing.T) {
 	script := renderAgentInstallScript(AgentEnrollmentInstallProfile{
 		CenterURL:    "https://center.example.com",
 		Capabilities: NodeCapabilities{Docker: true},
 	}, "https://center.example.com")
-
 	versionCheck := strings.Index(script, "The downloaded Agent failed its version check.")
 	switchPrompt := strings.Index(script, "Switch this Agent to the requested Center?")
 	dockerBootstrap := strings.Index(script, `VASTORA_AGENT_BIN="$temporary" sh "$docker_installer"`)
 	switchBegin := strings.Index(script, "switch-control-plane begin")
-	if versionCheck < 0 || switchPrompt < 0 || dockerBootstrap < 0 || switchBegin < 0 {
-		t.Fatalf("expected ordering anchors missing:\n%s", script)
-	}
-	if !(versionCheck < switchPrompt && switchPrompt < dockerBootstrap && dockerBootstrap < switchBegin) {
+	if versionCheck < 0 || switchPrompt < 0 || dockerBootstrap < 0 || switchBegin < 0 || !(versionCheck < switchPrompt && switchPrompt < dockerBootstrap && dockerBootstrap < switchBegin) {
 		t.Fatalf("unexpected Docker bootstrap order: version=%d prompt=%d docker=%d switchBegin=%d", versionCheck, switchPrompt, dockerBootstrap, switchBegin)
 	}
 }
