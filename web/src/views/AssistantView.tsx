@@ -37,9 +37,10 @@ export function AssistantView({ language, onOpenSettings }: { language: Language
   const [selectedID, setSelectedID] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState("");
+  const [errorCause, setErrorCause] = useState<unknown>(null);
   const selectionVersion = useRef(0);
   const creationRequest = useRef<AbortController | null>(null);
+  const error = errorCause == null ? "" : userError(language, errorCause);
 
   const updateSummary = useCallback((value: AssistantConversation) => {
     setConversations((current) => current.map((item) => item.id === value.id ? { ...item, title: value.title, updatedAt: value.updatedAt } : item));
@@ -48,7 +49,7 @@ export function AssistantView({ language, onOpenSettings }: { language: Language
   const selectConversation = (id: string) => {
     selectionVersion.current += 1;
     setSelectedID(id);
-    setError("");
+    setErrorCause(null);
   };
 
   useEffect(() => {
@@ -60,10 +61,10 @@ export function AssistantView({ language, onOpenSettings }: { language: Language
         setConversations(result.conversations);
         setSelectedID((current) => current || result.conversations[0]?.id || "");
       })
-      .catch((loadError) => { if (!controller.signal.aborted) setError(userError(language, loadError)); })
+      .catch((loadError) => { if (!controller.signal.aborted) setErrorCause(loadError); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [language]);
+  }, []);
 
   useEffect(() => () => creationRequest.current?.abort(), []);
 
@@ -72,14 +73,14 @@ export function AssistantView({ language, onOpenSettings }: { language: Language
     const controller = new AbortController();
     const selection = selectionVersion.current;
     creationRequest.current = controller;
-    setCreating(true); setError("");
+    setCreating(true); setErrorCause(null);
     try {
       const created = await api.createAssistantConversation(copy(language, "新对话", "New conversation"));
       if (controller.signal.aborted) return;
       setConversations((current) => [created, ...current]);
       if (selectionVersion.current === selection) selectConversation(created.id);
     } catch (createError) {
-      if (!controller.signal.aborted && selectionVersion.current === selection) setError(userError(language, createError));
+      if (!controller.signal.aborted && selectionVersion.current === selection) setErrorCause(createError);
     } finally {
       if (!controller.signal.aborted) {
         creationRequest.current = null;
@@ -103,7 +104,7 @@ export function AssistantView({ language, onOpenSettings }: { language: Language
             {conversations.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "还没有对话。", "No conversations yet.")}</p> : conversations.map((item) => <button aria-current={selectedID === item.id ? "true" : undefined} className="min-w-0 rounded-lg px-3 py-2 text-left transition-colors" key={item.id} onClick={() => selectConversation(item.id)} type="button"><span className="block truncate font-medium">{item.title}</span><span className="mt-1 block text-xs text-muted-foreground">{formatDate(language, item.updatedAt)}</span></button>)}
           </CardContent>
         </Card>
-        {selectedID ? <AssistantConversationPanel key={`${selectedID}:${language}`} id={selectedID} language={language} onUpdate={updateSummary} providerReady={providerReady} /> : <Card className="min-h-[34rem] min-w-0 lg:max-h-[44rem]"><Empty><EmptyHeader><EmptyMedia variant="icon"><BotIcon /></EmptyMedia><EmptyTitle>{copy(language, "创建一个对话", "Create a conversation")}</EmptyTitle><EmptyDescription>{copy(language, "可以问：哪些节点需要处理？为什么应用打不开？", "Try asking: Which nodes need attention? Why is an app unavailable?")}</EmptyDescription></EmptyHeader><EmptyContent><Button disabled={creating || !providerReady} onClick={() => void createConversation()}><MessageSquarePlusIcon data-icon="inline-start" />{copy(language, "创建对话", "Create conversation")}</Button></EmptyContent></Empty></Card>}
+        {selectedID ? <AssistantConversationPanel key={selectedID} id={selectedID} language={language} onUpdate={updateSummary} providerReady={providerReady} /> : <Card className="min-h-[34rem] min-w-0 lg:max-h-[44rem]"><Empty><EmptyHeader><EmptyMedia variant="icon"><BotIcon /></EmptyMedia><EmptyTitle>{copy(language, "创建一个对话", "Create a conversation")}</EmptyTitle><EmptyDescription>{copy(language, "可以问：哪些节点需要处理？为什么应用打不开？", "Try asking: Which nodes need attention? Why is an app unavailable?")}</EmptyDescription></EmptyHeader><EmptyContent><Button disabled={creating || !providerReady} onClick={() => void createConversation()}><MessageSquarePlusIcon data-icon="inline-start" />{copy(language, "创建对话", "Create conversation")}</Button></EmptyContent></Empty></Card>}
       </div> : null}
     </section>
   );
@@ -116,12 +117,18 @@ function AssistantConversationPanel({ id, language, onUpdate, providerReady }: {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [loadError, setLoadError] = useState("");
+  const [errorCause, setErrorCause] = useState<unknown>(null);
+  const [loadErrorState, setLoadErrorState] = useState<{ kind: "mismatch" } | { kind: "cause"; cause: unknown } | null>(null);
   const lifetime = useRef<AbortController | null>(null);
   const refreshRequest = useRef<AbortController | null>(null);
   const mutationPending = useRef(false);
   const composing = useRef(false);
+  const error = errorCause == null ? "" : userError(language, errorCause);
+  const loadError = loadErrorState
+    ? loadErrorState.kind === "mismatch"
+      ? copy(language, "对话响应不匹配，请重新加载。", "Conversation response did not match. Reload and try again.")
+      : userError(language, loadErrorState.cause)
+    : "";
 
   const refreshConversation = useCallback(async () => {
     const scope = lifetime.current;
@@ -132,16 +139,19 @@ function AssistantConversationPanel({ id, language, onUpdate, providerReady }: {
     try {
       const value = await api.assistantConversation(id, controller.signal);
       if (scope.signal.aborted || controller.signal.aborted) return;
-      if (value.id !== id) throw new Error(copy(language, "对话响应不匹配，请重新加载。", "Conversation response did not match. Reload and try again."));
+      if (value.id !== id) {
+        setLoadErrorState({ kind: "mismatch" });
+        return;
+      }
       setConversation(value);
-      setLoadError("");
+      setLoadErrorState(null);
       onUpdate(value);
     } catch (fetchError) {
-      if (!scope.signal.aborted && !controller.signal.aborted) setLoadError(userError(language, fetchError));
+      if (!scope.signal.aborted && !controller.signal.aborted) setLoadErrorState({ kind: "cause", cause: fetchError });
     } finally {
       if (!scope.signal.aborted && !controller.signal.aborted) setLoading(false);
     }
-  }, [id, language, onUpdate]);
+  }, [id, onUpdate]);
 
   useEffect(() => {
     const scope = new AbortController();
@@ -170,14 +180,14 @@ function AssistantConversationPanel({ id, language, onUpdate, providerReady }: {
     const scope = lifetime.current;
     if (!ready || !scope || scope.signal.aborted || mutationPending.current) return;
     mutationPending.current = true;
-    setBusy(true); setError("");
+    setBusy(true); setErrorCause(null);
     try {
       await operation();
       if (scope.signal.aborted) return;
       onSuccess?.();
       await refreshConversation();
     } catch (mutationError) {
-      if (!scope.signal.aborted) setError(userError(language, mutationError));
+      if (!scope.signal.aborted) setErrorCause(mutationError);
     } finally {
       if (!scope.signal.aborted) {
         mutationPending.current = false;

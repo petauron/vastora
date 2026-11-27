@@ -548,3 +548,26 @@ it("uses SPA navigation for the assistant settings link on plain left-click", as
   expect(event.defaultPrevented).toBe(true);
   expect(onOpenSettings).toHaveBeenCalledOnce();
 });
+
+it("preserves unsent draft and SSE connection when switching language", async () => {
+  const conversation = conversationFixture("A");
+  const load = mockConversations([conversation]);
+  const providerSpy = vi.mocked(api.assistantProvider);
+  const listSpy = vi.mocked(api.assistantConversations);
+  const container = await renderAssistant();
+  enterMessage(container, "Unsent assistant draft");
+  expect(QuietEventSource.instances).toHaveLength(1);
+  expect(QuietEventSource.instances[0].closed).toBe(false);
+
+  await act(async () => {
+    root?.render(<ThemeProvider><AssistantView language="en" /></ThemeProvider>);
+    await Promise.resolve();
+  });
+
+  expect(providerSpy).toHaveBeenCalledTimes(1);
+  expect(listSpy).toHaveBeenCalledTimes(1);
+  expect(load).toHaveBeenCalledTimes(1);
+  expect(QuietEventSource.instances).toHaveLength(1);
+  expect(QuietEventSource.instances[0].closed).toBe(false);
+  expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message to the cluster assistant"]')?.value).toBe("Unsent assistant draft");
+});

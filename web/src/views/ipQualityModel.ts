@@ -1,7 +1,7 @@
 import type { IPQualityCheck, IPQualityTarget } from "../ip-quality-types";
 import type { PublicEgress } from "../types";
 import type { Language } from "../translations";
-import { copy } from "./shared";
+import { copy, formatDate } from "./shared";
 
 export function canonicalIPQualityAddress(address: string) {
   if (!address.includes(":")) return address;
@@ -125,6 +125,7 @@ export function ipQualitySummary(language: Language, check?: IPQualityCheck) {
     const service = check.report!.services.find((item) => item.name === name);
     return `${unlockServiceLabel(name)} ${unlockLabel(language, service?.status)}`;
   });
-  const history = check.assessment?.status === "expired" ? copy(language, `历史检测 ${check.checkedAt ? new Date(check.checkedAt).toLocaleString(language) : ""} · `, `Historical check ${check.checkedAt ? new Date(check.checkedAt).toLocaleString(language) : ""} · `) : "";
+  const checked = check.checkedAt ? formatDate(language, check.checkedAt) : "";
+  const history = check.assessment?.status === "expired" ? copy(language, `历史检测 ${checked} · `, `Historical check ${checked} · `) : "";
   return history + services.join(" · ");
 }

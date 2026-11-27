@@ -108,3 +108,27 @@ it("uses standard button sizes without hardcoded desktop min-h-11 overrides", as
   const footerBack = document.querySelector<HTMLButtonElement>('[data-slot="sheet-footer"] button');
   expect(footerBack?.getAttribute("data-size")).toBe("default");
 });
+
+it("preserves loaded executions and search query across language toggles and uses consistent search and maintenance controls", async () => {
+  const list = vi.spyOn(api, "executions").mockResolvedValue({ executions: [execution], nextCursor: 0 });
+  const control = vi.spyOn(api, "executionClaimControl").mockResolvedValue({ paused: false, actor: "", updatedAt: "" });
+  const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  await act(async () => root.render(<ExecutionSettings language="en" agents={[{ id: "agent-a", name: "Test node" }]} />));
+
+  const search = container.querySelector<HTMLInputElement>('[data-slot="input-group"] input[type="search"]');
+  expect(search).not.toBeNull();
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search!, "Test");
+    search!.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const maintenanceDetails = container.querySelector("details");
+  expect(maintenanceDetails?.classList.contains("rounded-xl")).toBe(true);
+  expect(maintenanceDetails?.classList.contains("border")).toBe(true);
+  expect(button("Start emergency maintenance").getAttribute("data-size")).toBe("sm");
+
+  await act(async () => root.render(<ExecutionSettings language="zh-CN" agents={[{ id: "agent-a", name: "Test node" }]} />));
+  expect(list).toHaveBeenCalledTimes(1);
+  expect(control).toHaveBeenCalledTimes(1);
+  expect(container.querySelector<HTMLInputElement>('[data-slot="input-group"] input[type="search"]')?.value).toBe("Test");
+  expect(container.textContent).toContain("结果待核对");
+});

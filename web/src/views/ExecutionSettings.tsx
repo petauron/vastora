@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SearchIcon } from "lucide-react";
 import { api } from "../api";
 import { executionActions, type ExecutionAction, type ExecutionClaimControl, type ExecutionPage, type ExecutionView, type LegacyReceiptView } from "../execution-types";
 import type { Screen } from "../types";
 import { SelectControl } from "@/components/SelectControl";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import type { Language } from "../translations";
 import { copy, formatDate, taskError, userError } from "./shared";
 import { Button } from "@/components/ui/button";
@@ -57,36 +58,49 @@ export function ExecutionSettings({ language, agents, onNavigate }: { language: 
   const [page, setPage] = useState<ExecutionPage | null>(null);
   const [control, setControl] = useState<ExecutionClaimControl | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [errorCause, setErrorCause] = useState<unknown>(null);
+  const [noticeKind, setNoticeKind] = useState<"security_abandoned" | "swap_abandoned" | "disposed" | "claims_saved" | null>(null);
   const [selected, setSelected] = useState<ExecutionView | null>(null);
   const [confirmControl, setConfirmControl] = useState(false);
   const pending = useRef<AbortController | null>(null);
+  const error = errorCause == null ? "" : userError(language, errorCause);
+  const notice = noticeKind === "security_abandoned"
+    ? copy(language, "已记录放弃旧安全任务；这不代表回滚完成。请回到节点页重新读取实际状态。", "Old security task abandonment recorded; rollback is not confirmed. Return to the node page and inspect actual host state.")
+    : noticeKind === "swap_abandoned"
+      ? copy(language, "已记录放弃旧 Swap 任务；请回到节点页重新读取宿主机实际状态。", "Old swap task abandonment recorded; return to the node page and inspect actual host state.")
+      : noticeKind === "disposed"
+        ? copy(language, "处置已记录。", "Disposition recorded.")
+        : noticeKind === "claims_saved"
+          ? copy(language, "领取设置已保存。", "Claim settings saved.")
+          : "";
   const load = useCallback(async (before = 0) => {
     pending.current?.abort();
     const request = new AbortController();
     pending.current = request;
-    setBusy(true); setPage(null); setError("");
+    setBusy(true); setPage(null); setErrorCause(null);
     try {
       const [nextPage, nextControl] = await Promise.all([api.executions(before, request.signal, filter), api.executionClaimControl(request.signal)]);
       if (request.signal.aborted) return;
       setPage(nextPage); setControl(nextControl);
     } catch (cause) {
-      if (!request.signal.aborted) setError(userError(language, cause));
+      if (!request.signal.aborted) setErrorCause(cause);
     } finally {
       if (!request.signal.aborted) setBusy(false);
     }
-  }, [language, filter]);
+  }, [filter]);
   useEffect(() => { void load(); return () => pending.current?.abort(); }, [load]);
   const names = new Map(agents.map((agent) => [agent.id, agent.name]));
   const visible = page?.executions.filter((execution) => !query.trim() || (names.get(execution.agentId) ?? "").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return <Card>
     <CardHeader><CardTitle>{copy(language, "任务处理", "Tasks")}</CardTitle><CardDescription>{copy(language, "先查看需要处理的任务；失败任务会保留，核对前不会自动重试。", "Review tasks needing attention first. Failed tasks are retained and never retried automatically.")}</CardDescription></CardHeader>
     <CardContent className="flex flex-col gap-4">
-      {control?.paused ? <Alert><AlertTitle>{copy(language, "紧急维护：已暂停所有新任务", "Emergency maintenance: all new task claims paused")}</AlertTitle><AlertDescription><Button disabled={busy} variant="outline" onClick={() => setConfirmControl(true)}>{copy(language, "结束紧急维护", "End emergency maintenance")}</Button></AlertDescription></Alert> : null}
+      {control?.paused ? <Alert><AlertTitle>{copy(language, "紧急维护：已暂停所有新任务", "Emergency maintenance: all new task claims paused")}</AlertTitle><AlertDescription><Button disabled={busy} size="sm" variant="outline" onClick={() => setConfirmControl(true)}>{copy(language, "结束紧急维护", "End emergency maintenance")}</Button></AlertDescription></Alert> : null}
       <div className="flex flex-wrap items-center gap-2">
         <SelectControl aria-label={copy(language, "任务状态", "Task status")} value={filter} onValueChange={(value) => setFilter(value as typeof filter)} options={[{value:"attention", label:copy(language,"需要处理","Needs attention")},{value:"running",label:copy(language,"进行中","In progress")},{value:"all",label:copy(language,"全部记录","All records")}]} />
-        <Input className="w-full sm:w-60" aria-label={copy(language,"搜索本页节点","Search nodes on this page")} placeholder={copy(language,"搜索本页节点…","Search nodes on this page…")} value={query} onChange={(event)=>setQuery(event.target.value)} />
+        <InputGroup className="w-full sm:w-60">
+          <InputGroupInput aria-label={copy(language, "搜索本页节点", "Search nodes on this page")} placeholder={copy(language, "搜索本页节点…", "Search nodes on this page…")} type="search" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
+        </InputGroup>
         {page ? <span className="text-xs text-muted-foreground">{copy(language, `本页 ${visible?.length ?? 0} 项`, `${visible?.length ?? 0} on this page`)}</span> : null}
       </div>
       {error ? <FieldError role="alert">{error}</FieldError> : null}
@@ -101,24 +115,25 @@ export function ExecutionSettings({ language, agents, onNavigate }: { language: 
           </Button>
         </li>)}
       </ul>
-      {control && !control.paused ? <details className="border-t pt-3 text-xs text-muted-foreground"><summary className="cursor-pointer">{copy(language,"高级：紧急维护","Advanced: emergency maintenance")}</summary><p className="my-3">{copy(language,"暂停所有节点接收新任务，仅用于系统维护。正在运行的应用不会因此停止。","Pause new tasks on every node for maintenance. This does not stop running applications.")}</p><Button disabled={busy} variant="outline" onClick={() => setConfirmControl(true)}>{copy(language,"进入紧急维护","Start emergency maintenance")}</Button></details> : null}
+      {control && !control.paused ? <details className="rounded-xl border p-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">{copy(language,"高级：紧急维护","Advanced: emergency maintenance")}</summary><p className="my-3">{copy(language,"暂停所有节点接收新任务，仅用于系统维护。正在运行的应用不会因此停止。","Pause new tasks on every node for maintenance. This does not stop running applications.")}</p><Button disabled={busy} size="sm" variant="outline" onClick={() => setConfirmControl(true)}>{copy(language,"进入紧急维护","Start emergency maintenance")}</Button></details> : null}
     </CardContent>
     <CardFooter className="flex-wrap justify-end gap-2">
       <Button disabled={busy} size="sm" variant="outline" onClick={() => void load()}>{copy(language, "刷新最新记录", "Refresh latest")}</Button>
       {page?.nextCursor ? <Button disabled={busy} size="sm" variant="outline" onClick={() => void load(page.nextCursor)}>{copy(language, "更早记录", "Older records")}</Button> : null}
     </CardFooter>
-    {selected ? <ExecutionDetail key={selected.id} execution={selected} language={language} onNavigate={onNavigate} name={names.get(selected.agentId) ?? selected.agentId} onClose={() => setSelected(null)} onSaved={() => { setSelected(null); setNotice(selected.kind === "node.security" ? copy(language, "已记录放弃旧安全任务；这不代表回滚完成。请回到节点页重新读取实际状态。", "Old security task abandonment recorded; rollback is not confirmed. Return to the node page and inspect actual host state.") : selected.kind === "node.swap" ? copy(language, "已记录放弃旧 Swap 任务；请回到节点页重新读取宿主机实际状态。", "Old swap task abandonment recorded; return to the node page and inspect actual host state.") : copy(language, "处置已记录。", "Disposition recorded.")); void load(); }} /> : null}
-    {confirmControl && control ? <ClaimControlConfirmation paused={control.paused} language={language} onClose={() => setConfirmControl(false)} onSaved={() => { setConfirmControl(false); setNotice(copy(language, "领取设置已保存。", "Claim settings saved.")); void load(); }} /> : null}
+    {selected ? <ExecutionDetail key={selected.id} execution={selected} language={language} onNavigate={onNavigate} name={names.get(selected.agentId) ?? selected.agentId} onClose={() => setSelected(null)} onSaved={() => { setSelected(null); setNoticeKind(selected.kind === "node.security" ? "security_abandoned" : selected.kind === "node.swap" ? "swap_abandoned" : "disposed"); void load(); }} /> : null}
+    {confirmControl && control ? <ClaimControlConfirmation paused={control.paused} language={language} onClose={() => setConfirmControl(false)} onSaved={() => { setConfirmControl(false); setNoticeKind("claims_saved"); void load(); }} /> : null}
   </Card>;
 }
 
 function ClaimControlConfirmation({ paused, language, onClose, onSaved }: { paused: boolean; language: Language; onClose: () => void; onSaved: () => void }) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [errorCause, setErrorCause] = useState<unknown>(null);
+  const error = errorCause == null ? "" : userError(language, errorCause);
   const submit = async () => {
-    setBusy(true); setError("");
+    setBusy(true); setErrorCause(null);
     try { await api.setExecutionClaimControl(!paused); onSaved(); }
-    catch (cause) { setError(userError(language, cause)); }
+    catch (cause) { setErrorCause(cause); }
     finally { setBusy(false); }
   };
   return <Sheet open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><SheetContent showCloseButton={!busy}>
@@ -134,19 +149,20 @@ export function ExecutionDetail({ execution, name, language, onClose, onSaved, o
   const [stopped, setStopped] = useState(false);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [errorCause, setErrorCause] = useState<unknown>(null);
   const [legacy, setLegacy] = useState<LegacyReceiptView | null>(null);
+  const error = errorCause == null ? "" : userError(language, errorCause);
   useEffect(() => {
     if (execution.kind !== "legacy.receipt") return;
     const request = new AbortController();
-    void api.inspectLegacyReceipt(execution.id, request.signal).then((value) => { if (!request.signal.aborted) setLegacy(value); }).catch((cause) => { if (!request.signal.aborted) setError(userError(language, cause)); });
+    void api.inspectLegacyReceipt(execution.id, request.signal).then((value) => { if (!request.signal.aborted) setLegacy(value); }).catch((cause) => { if (!request.signal.aborted) setErrorCause(cause); });
     return () => request.abort();
-  }, [execution.id, execution.kind, language]);
+  }, [execution.id, execution.kind]);
   const submit = async () => {
     if (!action || !executionActions(execution).includes(action) || !stopped || !note.trim() || busy) return;
-    setBusy(true); setError("");
+    setBusy(true); setErrorCause(null);
     try { await api.disposeExecution(execution.id, execution.kind, { action, executionStopped: true, note: note.trim() }); onSaved(); }
-    catch (cause) { setError(userError(language, cause)); }
+    catch (cause) { setErrorCause(cause); }
     finally { setBusy(false); }
   };
   return <Sheet open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><SheetContent showCloseButton={!busy} className="sm:max-w-lg" finalFocus={() => !navigating.current}>
@@ -163,6 +179,6 @@ export function ExecutionDetail({ execution, name, language, onClose, onSaved, o
       </FieldGroup>}
       {error ? <FieldError role="alert">{error}</FieldError> : null}
     </SheetBody>
-    <SheetFooter><Button disabled={busy} variant="outline" onClick={() => { if (action) { setAction(null); setStopped(false); setNote(""); setError(""); } else onClose(); }}>{copy(language, "返回", "Back")}</Button>{action ? <Button disabled={busy || !stopped || !note.trim()} onClick={() => void submit()}>{busy ? <Spinner data-icon="inline-start" /> : null}{actionLabel(language, action, execution.kind)}</Button> : null}</SheetFooter>
+    <SheetFooter><Button disabled={busy} variant="outline" onClick={() => { if (action) { setAction(null); setStopped(false); setNote(""); setErrorCause(null); } else onClose(); }}>{copy(language, "返回", "Back")}</Button>{action ? <Button disabled={busy || !stopped || !note.trim()} onClick={() => void submit()}>{busy ? <Spinner data-icon="inline-start" /> : null}{actionLabel(language, action, execution.kind)}</Button> : null}</SheetFooter>
   </SheetContent></Sheet>;
 }

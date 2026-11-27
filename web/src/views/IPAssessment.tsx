@@ -4,7 +4,7 @@ import type { Language } from "../translations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { copy } from "./shared";
+import { copy, formatDate } from "./shared";
 
 export function assessmentLabel(language: Language, assessment?: IPQualityAssessment) {
   if (!assessment || assessment.status === "ip_changed") {
@@ -26,7 +26,8 @@ export function AssessmentTypeBadge({ language, assessment, checkedAt }: { langu
   const type = available ? assessment.ipType : "unknown";
   const candidates = available && type === "unknown" && assessment.typeCandidates.length < 4 ? assessment.typeCandidates : [];
   const label = candidates.length > 1 ? candidates.map((value) => assessmentType(language, value)).join("／") : assessmentType(language, type);
-  const title = checkedAt ? copy(language, `检测于 ${new Date(checkedAt).toLocaleString(language)}${assessment?.status === "expired" ? " · 历史类型" : ""}`, `Checked ${new Date(checkedAt).toLocaleString(language)}${assessment?.status === "expired" ? " · Historical type" : ""}`) : undefined;
+  const formattedCheckedAt = checkedAt ? formatDate(language, checkedAt) : "";
+  const title = checkedAt ? copy(language, `检测于 ${formattedCheckedAt}${assessment?.status === "expired" ? " · 历史类型" : ""}`, `Checked ${formattedCheckedAt}${assessment?.status === "expired" ? " · Historical type" : ""}`) : undefined;
   return <Badge variant="outline" title={title} className={type === "residential" ? "quality-type-residential" : "text-muted-foreground"}>{label}</Badge>;
 }
 
@@ -59,7 +60,7 @@ export function AssessmentSummary({ language, assessment, report, checkedAt }: {
       <Button type="button" variant="ghost" size="sm" className="h-auto min-h-9 px-0" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(!expanded)}><AssessmentBadge language={language} assessment={assessment} /></Button>
       <span>{assessmentType(language, assessment.ipType)}</span>
       <span>{assessmentAdvice(language, assessment.advice)}</span>
-      {checkedAt ? <time className="text-muted-foreground" dateTime={checkedAt}>{new Date(checkedAt).toLocaleString(language, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time> : null}
+      {checkedAt ? <time className="text-muted-foreground" dateTime={checkedAt}>{formatDate(language, checkedAt, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time> : null}
     </div>
     {expanded ? <div id={id} className="flex flex-col gap-2 rounded-lg border p-3 text-xs">
       <p className="font-medium">{copy(language, `${ruleName} 评分 ${ruleVersion} · 出口适用性`, `${ruleName} score ${ruleVersion} · Exit suitability`)}</p>
@@ -70,7 +71,7 @@ export function AssessmentSummary({ language, assessment, report, checkedAt }: {
       <p>{copy(language, "来源原分（越低风险越低）", "Original provider scores (lower risk is better)")}: {report?.scores.filter((item) => riskSources.includes(item.source)).map((item) => `${item.source} ${item.value}`).join(" · ") || "—"}</p>
       {!ipv6 ? <p className="text-muted-foreground">{copy(language, "IP2Location 与 Scamalytics 取较高风险，共占 10 分。", "IP2Location and Scamalytics use the higher risk in one 10-point slot.")}</p> : null}
       {!ipv6 ? <p>IPPure: {report?.ippure?.status === "ok" ? `${report.ippure.riskScore} / 100` : report?.ippure?.status === "unsupported" ? copy(language, "IPv6 不支持", "IPv6 unsupported") : report?.ippure?.status === "ip_mismatch" ? copy(language, "返回 IP 不匹配", "Returned IP mismatch") : copy(language, "未取得有效结果", "No valid result")}</p> : null}
-      {!ipv6 && report?.ippure ? <p className="break-all text-muted-foreground">{report.ippure.provider} · {report.ippure.address || "—"} · {new Date(report.ippure.checkedAt).toLocaleString(language)}</p> : null}
+      {!ipv6 && report?.ippure ? <p className="break-all text-muted-foreground">{report.ippure.provider} · {report.ippure.address || "—"} · {formatDate(language, report.ippure.checkedAt)}</p> : null}
       {assessment.requiredFailed.length ? <p className="text-destructive">{copy(language, "必需服务未满足", "Required services unavailable")}: {assessment.requiredFailed.join("、")}</p> : null}
       {assessment.requiredUnknown.length ? <p>{copy(language, "必需服务待确认", "Required services unconfirmed")}: {assessment.requiredUnknown.join("、")}</p> : null}
       <p className="text-muted-foreground">{copy(language, "产品选机规则，不是行业标准或通过概率。证据不完整的评分单独列示，比较提升时用候选下界减当前上界；未取得有效评分的报告不参与排名。", "Product selection rules, not an industry standard or probability. Assessments with incomplete evidence are listed separately; comparisons use the candidate lower bound minus the current upper bound. Reports without a valid score are excluded from ranking.")}</p>
