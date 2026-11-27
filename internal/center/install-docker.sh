@@ -134,20 +134,14 @@ if [ ! -e "$daemon_json" ]; then
   trap 'rm -f "$tmp_file"' EXIT HUP INT TERM
   printf '{\n  "log-driver": "json-file",\n  "log-opts": {\n    "compress": "true",\n    "max-file": "5",\n    "max-size": "%s"\n  }\n}\n' "$max_size" > "$tmp_file"
   chmod 0644 "$tmp_file"
-  if ! ln "$tmp_file" "$daemon_json" 2>/dev/null; then
-    echo "Refusing to overwrite $daemon_json: file appeared concurrently." >&2
+  if ! ln -T "$tmp_file" "$daemon_json" 2>/dev/null; then
+    echo "Refusing to overwrite $daemon_json: file or directory appeared concurrently." >&2
     exit 1
   fi
   rm -f "$tmp_file"
   trap - EXIT HUP INT TERM
   echo "Configured default Docker json-file log rotation ($max_size x 5, compressed) in $daemon_json."
   exit 0
-fi
-
-file_bytes="$(wc -c < "$daemon_json" | tr -d '[:space:]')"
-if [ -z "$file_bytes" ] || [ "$file_bytes" -gt 1048576 ]; then
-  echo "Refusing to modify $daemon_json: file exceeds 1 MiB." >&2
-  exit 1
 fi
 
 if command -v python3 >/dev/null 2>&1 && python3 -I -c 'import json' </dev/null >/dev/null 2>&1; then
@@ -170,7 +164,7 @@ def reject_constant(value):
 
 
 def read_regular_nofollow(path):
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(path, flags)
     except OSError as exc:

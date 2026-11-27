@@ -331,6 +331,23 @@ func TestEnsureDefaultDaemonLoggingPreservesConcurrentWrites(t *testing.T) {
 		}
 	})
 
+	t.Run("noClobberOnConcurrentDirectory", func(t *testing.T) {
+		root := t.TempDir()
+		configPath := filepath.Join(root, "etc", "docker", "daemon.json")
+		hook := func() {
+			if err := os.MkdirAll(configPath, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := ensureDefaultDaemonLogging(DaemonLoggingOptions{ConfigPath: configPath, DefaultDataRoot: root, FilesystemBytes: fs}, hook); err == nil {
+			t.Fatal("concurrent directory at daemon.json was accepted")
+		}
+		entries, err := os.ReadDir(configPath)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("unexpected entries in concurrent directory: %v err=%v", entries, err)
+		}
+	})
+
 	t.Run("abortOnConcurrentEdit", func(t *testing.T) {
 		root := t.TempDir()
 		configPath := filepath.Join(root, "daemon.json")

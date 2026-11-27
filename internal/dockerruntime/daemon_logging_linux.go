@@ -38,7 +38,7 @@ func filesystemTotalBytes(path string) (uint64, error) {
 }
 
 func readRegularNoFollow(path string, maxBytes int64) (fileIdentity, []byte, bool, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fileIdentity{}, nil, false, nil

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -29,6 +30,9 @@ type dockerInstallerHarnessOptions struct {
 
 func newDockerInstallerHarness(t *testing.T, opts dockerInstallerHarnessOptions) dockerInstallerHarness {
 	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("install-docker.sh targets Linux with GNU or BusyBox ln -T")
+	}
 	root := t.TempDir()
 	shimBin := filepath.Join(root, "bin")
 	for _, dir := range []string{
@@ -77,7 +81,7 @@ func newDockerInstallerHarness(t *testing.T, opts dockerInstallerHarnessOptions)
 		t.Fatal(err)
 	}
 
-	for _, tool := range []string{"sh", "awk", "cat", "chmod", "dirname", "install", "ln", "mkdir", "mktemp", "mv", "rm", "tee", "tr", "wc"} {
+	for _, tool := range []string{"sh", "awk", "cat", "chmod", "dirname", "install", "ln", "mkdir", "mktemp", "mv", "rm", "tee"} {
 		forwardHostTool(t, shimBin, tool)
 	}
 	if opts.withPython3 {
@@ -424,6 +428,69 @@ func TestDockerInstallScriptStandaloneIsolatedPythonMerge(t *testing.T) {
 			})
 		}
 	})
+	t.Run("rejectsConcurrentFIFOWithoutBlocking", func(t *testing.T) {
+		realPython3, err := exec.LookPath("python3")
+		if err != nil {
+			t.Skip("python3 not available")
+		}
+		realMkfifo, err := exec.LookPath("mkfifo")
+		if err != nil {
+			t.Skip("mkfifo not available")
+		}
+		h := newDockerInstallerHarness(t, dockerInstallerHarnessOptions{
+			osRelease:   "ID=debian\nVERSION_ID=13\n",
+			dfKiB:       "20971520",
+			withPython3: true,
+		})
+		if err := os.MkdirAll(filepath.Dir(h.daemonJSON), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(h.daemonJSON, []byte("{\"storage-driver\": \"overlay2\"}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// Swap daemon.json to a FIFO right before the guarded Python open to prove
+		// O_NONBLOCK prevents blocking before S_ISREG rejection.
+		writeShim(t, h.shimBin, "python3", "#!/bin/sh\ncase \"$*\" in\n  *read_regular_nofollow*)\n    rm -f "+shellQuote(h.daemonJSON)+"\n    "+shellQuote(realMkfifo)+" "+shellQuote(h.daemonJSON)+"\n    ;;\nesac\nexec "+shellQuote(realPython3)+" \"$@\"\n")
+
+		output, err := h.run()
+		if err == nil {
+			t.Fatalf("expected failure when daemon.json is replaced with a FIFO:\n%s", output)
+		}
+		if !strings.Contains(output, "not a regular file") {
+			t.Fatalf("unexpected FIFO error output:\n%s", output)
+		}
+		if _, statErr := os.Stat(h.eventsPath); !os.IsNotExist(statErr) {
+			t.Fatal("apt-get ran despite FIFO rejection")
+		}
+	})
+}
+
+func TestDockerInstallScriptRejectsConcurrentDirectoryAtDaemonJSON(t *testing.T) {
+	h := newDockerInstallerHarness(t, dockerInstallerHarnessOptions{
+		osRelease: "ID=debian\nVERSION_ID=13\n",
+		dfKiB:     "20971520",
+	})
+	realLN, err := exec.LookPath("ln")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a directory appearing at daemon.json right before ln -T runs.
+	writeShim(t, h.shimBin, "ln", "#!/bin/sh\nmkdir -p "+shellQuote(h.daemonJSON)+"\nexec "+shellQuote(realLN)+" \"$@\"\n")
+
+	output, err := h.run()
+	if err == nil {
+		t.Fatalf("expected failure when directory appears concurrently at daemon.json:\n%s", output)
+	}
+	if !strings.Contains(output, "appeared concurrently") {
+		t.Fatalf("unexpected error output:\n%s", output)
+	}
+	entries, readErr := os.ReadDir(h.daemonJSON)
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("ln wrote inside concurrent directory: entries=%v err=%v", entries, readErr)
+	}
+	if _, statErr := os.Stat(h.eventsPath); !os.IsNotExist(statErr) {
+		t.Fatal("apt-get ran despite concurrent directory failure")
+	}
 }
 
 func TestDockerInstallScriptPreservesExistingFileWithoutPython3(t *testing.T) {
