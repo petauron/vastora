@@ -24,7 +24,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { displayRegionFlag } from "@/lib/regions";
+import { siteLabel, siteRegionCode } from "@/lib/regions";
 import { RuntimeRecoveryAlert } from "./RuntimeRecoveryAlert";
 import { RegionFlag } from "./RegionFlag";
 import { StopNodeAccessSheet } from "./StopNodeAccessSheet";
@@ -144,25 +144,6 @@ function FleetSummary({ agents, connected, attention, language }: { agents: numb
       <span className={item.tone}>{item.label}</span>
     </span>)}
   </div>;
-}
-
-const siteRegionCodes: Record<string, string> = {
-  "中国": "CN", "china": "CN",
-  "台湾": "TW", "taiwan": "TW",
-  "香港": "HK", "hong kong": "HK",
-  "美国": "US", "美西": "US", "美东": "US", "united states": "US", "usa": "US",
-  "德国": "DE", "germany": "DE",
-  "日本": "JP", "japan": "JP",
-};
-
-function siteRegionCode(site: AppData["sites"][number]) {
-  const [first = "", second = ""] = site.name.trim().split(/[-–—·｜|]/, 2).map((part) => part.trim().toLowerCase());
-  return (first === "中国" || first === "china" ? siteRegionCodes[second] : undefined) ?? siteRegionCodes[first] ?? "";
-}
-
-function siteLabel(site: AppData["sites"][number]) {
-  const flag = displayRegionFlag(siteRegionCode(site));
-  return flag ? `${flag} ${site.name}` : site.name;
 }
 
 function NodeSiteRows({ agents, data, language, onApplications, onConfigure, onNetwork, onReconnect, onRemove, site }: { agents: AgentView[]; data: AppData; language: Language; onApplications: () => void; onConfigure: (agent: AgentView) => void; onNetwork: () => void; onReconnect: (agent: AgentView) => void; onRemove: (id: string) => void; site: AppData["sites"][number] }) {

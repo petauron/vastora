@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AppWindowIcon, KeyRoundIcon } from "lucide-react";
+import { AppWindowIcon, CrosshairIcon, KeyRoundIcon } from "lucide-react";
 import { api, isAPIError } from "../api";
 import type { AppData, Mutate, Screen } from "../App";
 import type { AgentView, AppView, Application, Deployment, Service, ThreeXUIRole } from "../types";
@@ -7,11 +7,13 @@ import type { Language } from "../translations";
 import { latestOperations, localized, operationLabel, packageNodeBlocker } from "./appAccess";
 import { CopyButton, StateBadge, TechnicalError, copy, catalogInstallBlocked, userError } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
+import { AppIcon } from "@/components/desktop/AppIcon";
 import { ThreeXUIClientsSheet } from "./ThreeXUIClientsSheet";
 import { ThreeXUIControllerMigrationSheet } from "./ThreeXUIControllerMigrationSheet";
 import { ThreeXUIInboundTrafficSheet } from "./ThreeXUIInboundTrafficSheet";
@@ -19,7 +21,7 @@ import { RealitySheet } from "./RealitySheet";
 import { RealityRemoveDialog } from "./RealityRemoveDialog";
 import { clearSecretOperation, deploymentSecretScope, readSecretOperation, secretOperation } from "../secret-delivery";
 import { InstalledApps } from "./InstalledApps";
-import { ApplicationStore } from "./ApplicationStore";
+import { ApplicationStore, type StoreNavigationTarget } from "./ApplicationStore";
 import { installedAppGroups, type InstalledAppInstance } from "./installed-apps-model";
 import { ApplicationCredentialsSheet, InstalledAppDetails } from "./apps/ApplicationDetails";
 import { BatchUpgradeSheet, createBatchUpgradeRequest, type BatchUpgradeOutcome, type BatchUpgradeRequest, type BatchUpgradeTarget } from "./apps/BatchUpgradeSheet";
@@ -28,10 +30,11 @@ import { RealityRenameSheet, SubscriptionSheet, UninstallSheet } from "./apps/Su
 import { OfficialAppManagerHost } from "@/app-workspaces/OfficialAppWorkspaceHost";
 import { daylightInstalledGroup, isDaylightAppKey } from "./daylight";
 import { TaskRecoverySheet } from "./TaskRecoverySheet";
+import { glivelaControllerKey, glivelaRoleLabel, isGlivelaAppKey, suiteIdForAppKey } from "./apps/store-suites-model";
 
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
 
-export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onOpenApp, onStore, onSettings, active = true }: { data: AppData; language: Language; mutate: Mutate; active?: boolean; workspaceKey: string | null; onNavigate?: (screen: Screen) => void; onOpenApp: (key: string) => void; onStore: () => void; onSettings: () => void }) {
+export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onOpenApp, onStore, onSettings, onRefresh, refreshing = false, active = true }: { data: AppData; language: Language; mutate: Mutate; active?: boolean; workspaceKey: string | null; onNavigate?: (screen: Screen) => void; onOpenApp: (key: string) => void; onStore: () => void; onSettings: () => void; onRefresh?: () => void; refreshing?: boolean }) {
   const [deploymentEditor, setDeploymentEditor] = useState<DeploymentEditor>(null);
   const [publicationService, setPublicationService] = useState<Service | null>(null);
   const [uninstallApplication, setUninstallApplication] = useState<Application | null>(null);
@@ -51,6 +54,7 @@ export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onO
 	const [recoveryTask, setRecoveryTask] = useState<Deployment | null>(null);
 	const [batchUpgrade, setBatchUpgrade] = useState<BatchUpgradeRequest | null>(null);
 	const [tasksSheetOpen, setTasksSheetOpen] = useState(false);
+  const [storeNavTarget, setStoreNavTarget] = useState<StoreNavigationTarget | null>(null);
   const catalogByKey = useMemo(() => new Map(data.apps.map((app) => [app.key, app])), [data.apps]);
   const installedGroups = useMemo(() => installedAppGroups({
     applications: data.applications, apps: data.apps, agents: data.agents, sites: data.sites,
@@ -104,9 +108,9 @@ export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onO
       setSubmittingUpgrade((current) => current === application.id ? null : current);
     }
   };
-  const openBatchUpgrade = (title: string, instances: InstalledAppInstance[]) => {
+  const openBatchUpgrade = (title: string, instances: InstalledAppInstance[], initialSelectedIds?: string[]) => {
     setUpgradeError("");
-    setBatchUpgrade(createBatchUpgradeRequest(title, instances, data));
+    setBatchUpgrade(createBatchUpgradeRequest(title, instances, data, initialSelectedIds));
   };
   const submitBatchUpgrade = async (
     targets: BatchUpgradeTarget[],
@@ -224,6 +228,48 @@ export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onO
 		}
 	};
 
+  const groupedActiveTasks = useMemo(() => {
+    const siteByID = new Map(data.sites.map((site) => [site.id, site.name]));
+    const agentByID = new Map(data.agents.map((agent) => [agent.id, agent]));
+    const groups = new Map<string, {
+      suiteId: string;
+      iconKey: string;
+      name: string;
+      running: number;
+      pending: number;
+      tasks: Array<{ deployment: Deployment; agentName: string; siteName: string; roleLabel: string }>;
+    }>();
+    for (const deployment of inProgressOperations) {
+      const suiteId = suiteIdForAppKey(deployment.appKey);
+      const app = catalogByKey.get(deployment.appKey);
+      const agent = agentByID.get(deployment.agentId);
+      const agentName = agent?.name ?? deployment.agentId;
+      const siteName = agent ? (siteByID.get(agent.siteId) ?? agent.siteId) : "";
+      const roleLabel = isGlivelaAppKey(deployment.appKey) ? glivelaRoleLabel(deployment.appKey, language, true) : "";
+      const suiteName = isGlivelaAppKey(deployment.appKey)
+        ? "Glivela"
+        : isDaylightAppKey(deployment.appKey)
+          ? "Daylight"
+          : app ? localized(app, language, "name") : deployment.appKey;
+      const existing = groups.get(suiteId);
+      if (existing) {
+        if (deployment.state === "running") existing.running += 1;
+        else existing.pending += 1;
+        existing.tasks.push({ deployment, agentName, siteName, roleLabel });
+      } else {
+        groups.set(suiteId, {
+          suiteId,
+          iconKey: suiteId,
+          name: suiteName,
+          running: deployment.state === "running" ? 1 : 0,
+          pending: deployment.state === "running" ? 0 : 1,
+          tasks: [{ deployment, agentName, siteName, roleLabel }],
+        });
+      }
+    }
+    return [...groups.values()];
+  }, [inProgressOperations, data.sites, data.agents, catalogByKey, language]);
+
   const activeTasksControl = inProgressOperations.length > 0 ? (
     <Button
       aria-label={copy(language, `查看 ${inProgressOperations.length} 个进行中的任务`, `View ${inProgressOperations.length} active tasks`)}
@@ -252,7 +298,23 @@ export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onO
 
       {workspaceKey ? selectedGroup ? <InstalledApps key={selectedGroup.id} group={selectedGroup} data={data} language={language} mutate={mutate} activeTasksControl={activeTasksControl} submittingUpgradeID={submittingUpgrade} managerApplication={appManagerApplication?.appKey === "vastora-official/meridian" ? appManagerApplication : null} onManagerClose={() => setAppManagerApplication(null)} onClients={(application) => { if (application.appKey === "vastora-official/meridian") setAppManagerApplication(application); else setClientsApplication(application); }} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onBatchUpgrade={openBatchUpgrade} onReality={setRealityApplication} />
         : <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "此应用尚未安装或已移除", "This app is not installed")}</EmptyTitle><EmptyDescription>{copy(language, "在应用商店查看当前可用的应用。", "Visit the App Store to see available apps.")}</EmptyDescription><Button onClick={onStore}>{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty>
-        : <ApplicationStore data={data} groups={installedGroups} language={language} activeTasksControl={activeTasksControl} submittingUpgradeID={submittingUpgrade} onInstall={(app) => setDeploymentEditor({ app, operation: "install" })} onOpen={onOpenApp} onManage={(application) => setManagedApplicationID(application.id)} onUpgrade={(application) => openChange(application, "upgrade")} onBatchUpgrade={openBatchUpgrade} onSettings={onSettings} />}
+        : <ApplicationStore
+            activeTasksControl={activeTasksControl}
+            data={data}
+            groups={installedGroups}
+            language={language}
+            navigationTarget={storeNavTarget}
+            onBatchUpgrade={openBatchUpgrade}
+            onInstall={(app) => setDeploymentEditor({ app, operation: "install" })}
+            onManage={(application) => setManagedApplicationID(application.id)}
+            onOpen={onOpenApp}
+            onRecoverTask={setRecoveryTask}
+            onRefresh={onRefresh}
+            onSettings={onSettings}
+            onUpgrade={(application) => openChange(application, "upgrade")}
+            refreshing={refreshing}
+            submittingUpgradeID={submittingUpgrade}
+          />}
 
       <Sheet onOpenChange={setTasksSheetOpen} open={tasksSheetOpen}>
         <SheetContent className="sm:max-w-lg">
@@ -260,12 +322,66 @@ export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onO
             <SheetTitle>{copy(language, `进行中的任务 · ${inProgressOperations.length}`, `Active tasks · ${inProgressOperations.length}`)}</SheetTitle>
             <SheetDescription>{copy(language, "节点执行完成后会自动更新状态，关闭此窗口不影响任务继续执行。", "Status updates automatically as hosts finish. Closing this dialog does not interrupt running tasks.")}</SheetDescription>
           </SheetHeader>
-          <SheetBody aria-live="polite" className="gap-3">
-            {inProgressOperations.length > 0 ? inProgressOperations.map((deployment) => {
-              const app = catalogByKey.get(deployment.appKey);
-              const agent = data.agents.find((value) => value.id === deployment.agentId);
-              return <Card key={deployment.id} size="sm"><CardContent className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center"><StateBadge language={language} value={deployment.state} /><div className="min-w-0 flex-1"><p className="font-medium">{operationLabel(language, deployment.operation)} · {app ? localized(app, language, "name") : deployment.appKey}</p><p className="mt-0.5 text-xs text-muted-foreground">{agent?.name ?? deployment.agentId}</p>{deployment.error ? <div className="mt-2"><TechnicalError error={deployment.error} language={language} /></div> : null}</div></CardContent></Card>;
-            }) : <p className="py-6 text-center text-sm text-muted-foreground">{copy(language, "当前没有进行中的任务。", "All active tasks have finished.")}</p>}
+          <SheetBody aria-live="polite" className="gap-4">
+            {groupedActiveTasks.length > 0 ? groupedActiveTasks.map((group) => (
+              <section className="overflow-hidden rounded-xl border bg-card" key={group.suiteId}>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/35 px-3.5 py-2.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <AppIcon appKey={group.iconKey} className="size-6 shrink-0" />
+                    <h3 className="truncate text-sm font-medium">{group.name}</h3>
+                  </div>
+                  <div className="flex items-center gap-1.5 tabular-nums">
+                    {group.running > 0 ? (
+                      <Badge variant="outline">
+                        <Spinner aria-hidden="true" className="motion-reduce:animate-none" data-icon="inline-start" />
+                        {copy(language, `执行中 ${group.running}`, `Running ${group.running}`)}
+                      </Badge>
+                    ) : null}
+                    {group.pending > 0 ? (
+                      <Badge variant="secondary">
+                        {copy(language, `等待中 ${group.pending}`, `Queued ${group.pending}`)}
+                      </Badge>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="divide-y">
+                  {group.tasks.map(({ deployment, agentName, siteName, roleLabel }) => (
+                    <div className="flex flex-wrap items-center gap-2.5 px-3.5 py-2.5" key={deployment.id}>
+                      <StateBadge language={language} value={deployment.state} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">
+                          {operationLabel(language, deployment.operation)} · {agentName}
+                          {roleLabel ? <span className="ml-1 font-normal text-muted-foreground">({roleLabel})</span> : null}
+                        </p>
+                        {siteName ? <p className="text-xs text-muted-foreground">{siteName}</p> : null}
+                        {deployment.error ? <div className="mt-1.5"><TechnicalError error={deployment.error} language={language} /></div> : null}
+                      </div>
+                      {!workspaceKey ? (
+                        <Button
+                          aria-label={copy(language, `在 ${group.name} 中定位 ${agentName}`, `Locate ${agentName} in ${group.name}`)}
+                          onClick={() => {
+                            setTasksSheetOpen(false);
+                            const filterToHostRow = deployment.operation !== "install"
+                              && deployment.appKey !== glivelaControllerKey;
+                            setStoreNavTarget((current) => ({
+                              suiteId: group.suiteId,
+                              statusFilter: filterToHostRow ? "progress" : undefined,
+                              query: filterToHostRow ? agentName : undefined,
+                              nonce: (current?.nonce ?? 0) + 1,
+                            }));
+                          }}
+                          size="xs"
+                          variant="ghost"
+                        >
+                          <CrosshairIcon aria-hidden="true" data-icon="inline-start" />
+                          {copy(language, "定位", "Locate")}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )) : <p className="py-6 text-center text-sm text-muted-foreground">{copy(language, "当前没有进行中的任务。", "All active tasks have finished.")}</p>}
           </SheetBody>
         </SheetContent>
       </Sheet>

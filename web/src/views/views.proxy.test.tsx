@@ -194,10 +194,9 @@ describe("network and app views", () => {
     const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ id: "worker-deployment", agentId: "worker", appKey: "vastora-official/3x-ui", appVersion: "3.7.0", state: "pending", operation: "install", deleteData: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
     const mutate = async (operation: () => Promise<unknown>) => { await operation(); };
     const container = render(<AppsView startInStore data={data} language="zh-CN" mutate={mutate} />);
-    const details = container.querySelector<HTMLButtonElement>('[aria-label="查看 3x-ui 详情"]');
-    expect(details).not.toBeNull();
-    act(() => details!.click());
-    act(() => document.querySelector<HTMLButtonElement>('[aria-label="管理 3x-ui"]')!.click());
+    const manage = container.querySelector<HTMLButtonElement>('[aria-label="管理 3x-ui"]');
+    expect(manage).not.toBeNull();
+    act(() => manage!.click());
     const installMore = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "安装到其他主机");
     expect(installMore?.disabled).toBe(false);
     act(() => installMore!.click());
