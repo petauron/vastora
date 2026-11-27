@@ -226,8 +226,6 @@
 @media (pointer: coarse) {
   .apps-workspace [data-slot="tabs-trigger"] { min-height: 44px; }
   .apps-workspace [data-slot="tabs-list"] { height: auto; }
-  .apps-workspace [data-slot="input-group"] { height: auto; min-height: 44px; }
-  .apps-workspace [data-slot="input-group-control"] { min-height: 44px; }
 }
 
 @keyframes progress-indeterminate {
@@ -261,7 +259,12 @@
     min-width: 44px;
     min-height: 44px;
   }
+  [data-slot="input-group"] {
+    height: auto;
+    min-height: 44px;
+  }
   [data-slot="input"],
+  [data-slot="input-group-control"],
   [data-slot="select-trigger"],
   [data-slot="select-item"] {
     min-height: 44px;

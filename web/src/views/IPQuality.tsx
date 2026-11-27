@@ -39,7 +39,7 @@ function routeTierLabel(language: Language, tier: RouteTier) {
 
 function routeTierColor(tier: RouteTier) {
   return tier === "premium" ? "bg-warning/15 text-warning ring-warning/35"
-    : tier === "optimized" ? "bg-quality-good/15 text-quality-good ring-quality-good/35"
+    : tier === "optimized" ? "bg-quality-good/10 text-quality-good ring-quality-good/35"
       : tier === "standard" ? "bg-secondary text-secondary-foreground ring-border" : "bg-muted text-muted-foreground ring-border";
 }
 

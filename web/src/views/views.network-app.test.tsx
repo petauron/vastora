@@ -83,7 +83,7 @@ describe("network and app views", () => {
     rerender(<NetworkView data={{ ...data, tailscaleFixedEndpoint: { available: false, enabled: false, endpoint: "", localAddress: "", detectedEndpoint: "", detectedLocalAddress: "", localAddressCandidates: [], status: "disabled", lastError: "" } }} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).not.toContain("高级：私网直连设置");
 
-    rerender(<NetworkView data={{ ...data, tailscaleFixedEndpoint: { available: false, enabled: false, endpoint: "", localAddress: "", detectedEndpoint: "", detectedLocalAddress: "", localAddressCandidates: [], status: "action_required", lastError: "existing tailscale install detected" } }} language="zh-CN" mutate={async () => undefined} />);
+    rerender(<NetworkView data={{ ...data, tailscaleFixedEndpoint: { available: false, enabled: false, endpoint: "", localAddress: "", detectedEndpoint: "", detectedLocalAddress: "", localAddressCandidates: [], status: "unavailable", lastError: "existing tailscale install detected" } }} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("高级：私网直连设置");
     expect(container.textContent).toContain("接管旧版 Tailscale");
   });
