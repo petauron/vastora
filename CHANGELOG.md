@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0](https://github.com/petauron/vastora/compare/v0.3.1...v0.4.0) (2026-11-27)
+
+
+### Features
+
+* **web:** redesign App Store for multi-node viewing and Synology-style updates ([#1438](https://github.com/petauron/vastora/issues/1438)) ([daf9862](https://github.com/petauron/vastora/commit/daf9862f50fb0369e59311acd70a4eccb16fe706))
+* **web:** show package revision diff for same-version app upgrades ([#1437](https://github.com/petauron/vastora/issues/1437)) ([b9f43ac](https://github.com/petauron/vastora/commit/b9f43acec26bdc58849e044ae37ca7a52474b10e))
+
+
+### Bug Fixes
+
+* **web:** polish network disclosure, language switches, dates, and styles ([#1434](https://github.com/petauron/vastora/issues/1434)) ([f442fa5](https://github.com/petauron/vastora/commit/f442fa5662c5e216cf61c30a838f0b83d5f5a983))
+* **web:** reorganize node settings, setup wizard, and page-level UI ([#1432](https://github.com/petauron/vastora/issues/1432)) ([c8c062d](https://github.com/petauron/vastora/commit/c8c062df1f58bebdd9220ee2372700015ea28ce7))
+* **web:** resolve UI rendering bugs, CSS cascade conflicts, and dark-mode contrast ([#1427](https://github.com/petauron/vastora/issues/1427)) ([88aa2bb](https://github.com/petauron/vastora/commit/88aa2bb36cc225dd8b46f1cc1c5ce3f4802f4402))
+* **web:** standardize sheet bodies, footer actions, and button sizing ([#1430](https://github.com/petauron/vastora/issues/1430)) ([cdbf2ac](https://github.com/petauron/vastora/commit/cdbf2ac401ac0c8860bcd06d5029dd19c3b19db1))
+
 ## [0.3.1](https://github.com/petauron/vastora/compare/v0.3.0...v0.3.1) (2026-11-25)
 
 
