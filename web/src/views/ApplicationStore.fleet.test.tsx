@@ -340,4 +340,44 @@ describe("Synology-style App Store fleet UX", () => {
     expect(container.textContent).toContain("Telegram Bot");
     expect(container.textContent).not.toContain("该套件已移除或暂不可用");
   });
+
+  it("shows same-version revision summaries on Store Home and grouped cross-suite batch headers", () => {
+    const data = multiSiteFleetFixture();
+    data.apps[0].app.version = "0.2.1";
+    data.apps[0].app.packageRevision = 10;
+    data.applications = data.applications.map((item) => {
+      if (item.appKey !== agentAppKey) return item;
+      if (item.updateAvailable) {
+        return {
+          ...item,
+          installedVersion: "0.2.1",
+          installedPackageRevision: 9,
+          availableVersion: "0.2.1",
+          availablePackageRevision: 10,
+        };
+      }
+      return {
+        ...item,
+        installedVersion: "0.2.1",
+        installedPackageRevision: 10,
+        availableVersion: "0.2.1",
+        availablePackageRevision: 10,
+      };
+    });
+    const { container } = renderStore(data);
+
+    const updatesSection = container.querySelector('[aria-labelledby="store-available-updates-heading"]');
+    expect(updatesSection?.textContent).toContain("最新在线版本：v0.2.1 (r10)");
+    expect(updatesSection?.textContent).toContain("当前 v0.2.1 (r9)");
+
+    const updateAll = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("更新全部 (3)"));
+    expect(updateAll).toBeDefined();
+    act(() => updateAll?.click());
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("→ v0.2.1 (r10)");
+    expect(dialog?.textContent).toContain("v0.2.1 (r9 → r10)");
+    expect(dialog?.textContent).toContain("→ v7.3.0");
+    expect(dialog?.textContent).toContain("v7.2.0 → v7.3.0");
+  });
 });

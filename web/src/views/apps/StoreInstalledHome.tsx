@@ -23,6 +23,7 @@ import {
   type StoreUpdateEntry,
   type SuiteStatusFilter,
 } from "./store-suites-model";
+import { formatUpgradeTransition } from "./versionDisplay";
 
 export function StoreInstalledHome({
   data,
@@ -381,7 +382,13 @@ function StoreUpdateRow({
                       {role ? <span className="ml-1 font-normal text-muted-foreground">· {role}</span> : null}
                     </p>
                     <p className="truncate text-[11px] text-muted-foreground tabular-nums">
-                      {instance.siteName} · v{instance.application.installedVersion} → v{app.app.version}
+                      {instance.siteName} · {formatUpgradeTransition({
+                        fromVersion: instance.application.installedVersion,
+                        toVersion: app.app.version,
+                        fromRevision: instance.application.installedPackageRevision,
+                        toRevision: app.app.packageRevision ?? (instance.application.availableVersion === app.app.version ? instance.application.availablePackageRevision : undefined),
+                        prefix: "v",
+                      })}
                     </p>
                   </div>
                   <Button

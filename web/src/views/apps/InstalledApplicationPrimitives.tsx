@@ -9,6 +9,7 @@ import { isDaylightAppKey } from "../daylight";
 import { operationLabel } from "../appAccess";
 import { catalogInstallBlocked, copy, StateBadge } from "../shared";
 import { publicationNeedsAttention, serviceNeedsAttention, threeXUIAppKey, type InstalledAppInstance } from "../installed-apps-model";
+import { formatUpgradeTarget } from "./versionDisplay";
 
 export function ApplicationUpdate({ instance, language, onUpgrade, submitting = false }: { instance: InstalledAppInstance; language: Language; onUpgrade: (application: Application) => void; submitting?: boolean }) {
   const { application, app, agent, activeChange } = instance;
@@ -18,7 +19,16 @@ export function ApplicationUpdate({ instance, language, onUpgrade, submitting = 
   const disabled = submitting || !agent?.connected || legacy || catalogInstallBlocked(app) || ["pending", "deploying"].includes(application.status);
   const adoptionRequired = application.adoptionState === "pending" || application.adoptionState === "blocked";
   const name = agent?.name ?? application.nodeId;
-  return <Button aria-label={copy(language, `${reapply ? "重新应用" : "更新"} ${name} 的应用`, `${reapply ? "Reapply" : "Update"} application on ${name}`)} className="max-md:min-h-11" disabled={disabled} onClick={() => onUpgrade(application)} size="sm" variant="outline" title={copy(language, `${reapply ? "重新应用" : "更新到"} v${application.availableVersion || application.installedVersion}`, `${reapply ? "Reapply" : "Update to"} v${application.availableVersion || application.installedVersion}`)}>
+  const targetLabel = reapply
+    ? `v${application.availableVersion || application.installedVersion}`
+    : formatUpgradeTarget({
+        fromVersion: application.installedVersion,
+        toVersion: application.availableVersion,
+        fromRevision: application.installedPackageRevision,
+        toRevision: application.availablePackageRevision ?? (app?.app.version === application.availableVersion ? app?.app.packageRevision : undefined),
+        prefix: "v",
+      });
+  return <Button aria-label={copy(language, `${reapply ? "重新应用" : "更新"} ${name} 的应用`, `${reapply ? "Reapply" : "Update"} application on ${name}`)} className="max-md:min-h-11" disabled={disabled} onClick={() => onUpgrade(application)} size="sm" variant="outline" title={copy(language, `${reapply ? "重新应用" : "更新到"} ${targetLabel}`, `${reapply ? "Reapply" : "Update to"} ${targetLabel}`)}>
     {submitting ? <Spinner aria-hidden="true" data-icon="inline-start" className="motion-reduce:animate-none" /> : null}
     {submitting ? copy(language, "更新中…", "Updating…") : reapply ? copy(language, "重新应用", "Reapply") : adoptionRequired ? copy(language, "处理更新", "Resolve update") : application.status === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "更新", "Update")}
   </Button>;

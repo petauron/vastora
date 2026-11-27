@@ -10,6 +10,7 @@ import { threeXUIAppKey, type InstalledAppInstance } from "../installed-apps-mod
 import { catalogInstallBlocked, copy } from "../shared";
 import { RegionFlag } from "../RegionFlag";
 import { capabilityLabel } from "./DeploymentSheets";
+import { formatUpgradeTransition, isSameVersionRevisionUpgrade, isValidRevision } from "./versionDisplay";
 import { AppIcon } from "@/components/desktop/AppIcon";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -272,7 +273,18 @@ export function BatchUpgradeSheet({
       ? copy(language, "目录中的版本已更新，请关闭并重新打开此窗口，确认新版本后继续。", "The catalog version changed. Reopen this window to review the new version before continuing.")
       : "";
 
-  const targetVersions = [...new Set(eligible.map((item) => `v${item.app.app.version}`))];
+  const hasSameVersionRevisionUpgrade = eligible.some(({ instance, app }) => isSameVersionRevisionUpgrade({
+    fromVersion: instance.application.installedVersion,
+    toVersion: app.app.version,
+    fromRevision: instance.application.installedPackageRevision,
+    toRevision: app.app.packageRevision ?? (instance.application.availableVersion === app.app.version ? instance.application.availablePackageRevision : undefined),
+  }));
+  const targetVersions = [...new Set(eligible.map(({ instance, app }) => {
+    const toRevision = app.app.packageRevision ?? (instance.application.availableVersion === app.app.version ? instance.application.availablePackageRevision : undefined);
+    return hasSameVersionRevisionUpgrade && isValidRevision(toRevision)
+      ? `v${app.app.version} (r${toRevision})`
+      : `v${app.app.version}`;
+  }))];
   const allSelected = eligible.length > 0 && chosen.length === eligible.length;
 
   const siteChips = useMemo(() => {
@@ -313,15 +325,30 @@ export function BatchUpgradeSheet({
       const meta = batchSuiteGroupMeta(item.app, language);
       const existing = groups.get(meta.suiteId);
       if (existing) {
-        existing.versions.add(`v${item.app.app.version}`);
         existing.items.push(item);
       } else {
         groups.set(meta.suiteId, {
           suiteId: meta.suiteId,
           name: meta.name,
-          versions: new Set([`v${item.app.app.version}`]),
+          versions: new Set(),
           items: [item],
         });
+      }
+    }
+    for (const group of groups.values()) {
+      const groupHasSameVersionRevision = group.items.some(({ instance, app }) => isSameVersionRevisionUpgrade({
+        fromVersion: instance.application.installedVersion,
+        toVersion: app.app.version,
+        fromRevision: instance.application.installedPackageRevision,
+        toRevision: app.app.packageRevision ?? (instance.application.availableVersion === app.app.version ? instance.application.availablePackageRevision : undefined),
+      }));
+      for (const { instance, app } of group.items) {
+        const toRevision = app.app.packageRevision ?? (instance.application.availableVersion === app.app.version ? instance.application.availablePackageRevision : undefined);
+        group.versions.add(
+          groupHasSameVersionRevision && isValidRevision(toRevision)
+            ? `v${app.app.version} (r${toRevision})`
+            : `v${app.app.version}`,
+        );
       }
     }
     return [...groups.values()];
@@ -422,7 +449,13 @@ export function BatchUpgradeSheet({
           ) : null}
         </div>
         <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-          v{instance.application.installedVersion} → v{app.app.version}
+          {formatUpgradeTransition({
+            fromVersion: instance.application.installedVersion,
+            toVersion: app.app.version,
+            fromRevision: instance.application.installedPackageRevision,
+            toRevision: app.app.packageRevision ?? (instance.application.availableVersion === app.app.version ? instance.application.availablePackageRevision : undefined),
+            prefix: "v",
+          })}
         </span>
       </div>
     );
@@ -485,7 +518,6 @@ export function BatchUpgradeSheet({
                   </Button>
                 ) : null}
               </div>
-
               {showFilterControls ? (
                 <div className="flex flex-col gap-2">
                   <InputGroup>

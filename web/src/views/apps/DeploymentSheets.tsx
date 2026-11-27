@@ -60,6 +60,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { packageNodeBlocker } from "../appAccess";
+import { formatUpgradeTransition } from "./versionDisplay";
 
 export type DeploymentEditor = {
   app: AppView;
@@ -281,6 +282,17 @@ export function DeploymentSheet({
       : editor?.operation === "upgrade"
         ? ["升级", "Upgrade"]
         : ["修改配置", "Change settings"];
+  const upgradeInstalled = editor?.operation === "upgrade"
+    ? data.applications.find((application) => application.nodeId === editor.agent?.id && application.appKey === editor.app.key)
+    : undefined;
+  const upgradeVersionChange = editor?.operation === "upgrade"
+    ? formatUpgradeTransition({
+        fromVersion: upgradeInstalled?.installedVersion,
+        toVersion: editor.app.app.version,
+        fromRevision: upgradeInstalled?.installedPackageRevision,
+        toRevision: editor.app.app.packageRevision ?? (upgradeInstalled?.availableVersion === editor.app.app.version ? upgradeInstalled?.availablePackageRevision : undefined),
+      })
+    : "";
   return (
     <Sheet
       onOpenChange={(next) => {
@@ -310,8 +322,8 @@ export function DeploymentSheet({
                 : editor?.operation === "upgrade"
                   ? copy(
                       language,
-                      `版本：${data.applications.find((application) => application.nodeId === editor.agent?.id && application.appKey === editor.app.key)?.installedVersion ?? "—"} → ${editor.app.app.version}。保留现有配置、凭据和访问入口。`,
-                      `Version: ${data.applications.find((application) => application.nodeId === editor.agent?.id && application.appKey === editor.app.key)?.installedVersion ?? "—"} → ${editor.app.app.version}. Existing settings, credentials and access points are preserved.`,
+                      `版本：${upgradeVersionChange}。保留现有配置、凭据和访问入口。`,
+                      `Version: ${upgradeVersionChange}. Existing settings, credentials and access points are preserved.`,
                     )
                   : copy(
                       language,

@@ -356,4 +356,45 @@ describe("batch application upgrades and stable task UI", () => {
     rerender(withRecovery);
     expect(container.querySelector(".apps-workspace > details")?.textContent).toContain("核对并恢复");
   });
+
+  it("shows revision transitions for same-version updates across store home, suite workbench, batch sheet, tooltips, and app details", () => {
+    const data = fleetFixture();
+    data.apps[0].app.version = "0.2.1";
+    data.apps[0].app.packageRevision = 10;
+    data.applications = [
+      { id: "app-a", appKey, nodeId: "node-a", siteId: "site-a", name: "Senlun Agent", image: "", runtime: "host", status: "running", installedVersion: "0.2.1", installedPackageRevision: 9, availableVersion: "0.2.1", availablePackageRevision: 10, updateAvailable: true, createdAt: "", updatedAt: "" },
+      { id: "app-b", appKey, nodeId: "node-b", siteId: "site-a", name: "Senlun Agent", image: "", runtime: "host", status: "running", installedVersion: "0.2.0", installedPackageRevision: 8, availableVersion: "0.2.1", availablePackageRevision: 10, updateAvailable: true, createdAt: "", updatedAt: "" },
+    ];
+    const { container } = renderApps(data);
+
+    // Store Home update entry shows target revision and inline expanded host transition.
+    const updatesSection = container.querySelector('[aria-labelledby="store-available-updates-heading"]');
+    expect(updatesSection?.textContent).toContain("最新在线版本：v0.2.1 (r10)");
+    act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("查看待更新节点 (2)"))?.click());
+    expect(updatesSection?.textContent).toContain("Edge · v0.2.1 (r9 → r10)");
+    expect(updatesSection?.textContent).toContain("Edge · v0.2.0 → v0.2.1");
+
+    // Navigate into Suite Detail Workbench and verify table version cells and Update button tooltips.
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 Senlun 探针"]')?.click());
+    const alphaRow = container.querySelector<HTMLTableRowElement>('tr[data-application-id="app-a"]');
+    const betaRow = container.querySelector<HTMLTableRowElement>('tr[data-application-id="app-b"]');
+    expect(alphaRow?.textContent).toContain("v0.2.1");
+    expect(alphaRow?.textContent).toContain("(r9 → r10)");
+    expect(betaRow?.textContent).toContain("v0.2.0");
+    expect(betaRow?.textContent).toContain("→ v0.2.1");
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="更新 Node Alpha 的应用"]')?.title).toBe("更新到 v0.2.1 (r9 → r10)");
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="更新 Node Beta 的应用"]')?.title).toBe("更新到 v0.2.1");
+
+    // Open batch upgrade sheet and verify header + mixed row transitions.
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("全部更新 (2)"))?.click());
+    const batchDialog = document.querySelector('[role="dialog"]');
+    expect(batchDialog?.textContent).toContain("目标版本：v0.2.1 (r10)。");
+    expect(batchDialog?.textContent).toContain("v0.2.1 (r9 → r10)");
+    expect(batchDialog?.textContent).toContain("v0.2.0 → v0.2.1");
+
+    // Close batch sheet and open InstalledAppDetails from the Suite Detail Workbench row.
+    act(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === "取消")?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 Node Alpha 的应用"]')?.click());
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("升级到 v0.2.1 (r9 → r10)");
+  });
 });

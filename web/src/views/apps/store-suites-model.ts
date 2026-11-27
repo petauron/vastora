@@ -13,6 +13,7 @@ import {
 } from "../installed-apps-model";
 import { copy } from "../shared";
 import { planBatchUpgrade, type BatchUpgradePlan, type BatchUpgradeTarget } from "./BatchUpgradeSheet";
+import { isSameVersionRevisionUpgrade, isValidRevision } from "./versionDisplay";
 
 export const glivelaControllerKey = "vastora-official/meridian";
 
@@ -481,13 +482,38 @@ function makeUpdateEntry(
 ): StoreUpdateEntry {
   const plan = planBatchUpgrade(batchTitle, updatableInstances, data, language);
   const eligibleIds = new Set(plan.eligible.map((item) => item.instance.application.id));
+  const resolvedTargets = updatableInstances.map((instance) => {
+    const catalog = data.apps.find((app) => app.key === instance.application.appKey);
+    const toVersion = catalog?.app.version || instance.application.availableVersion;
+    const toRevision = catalog?.app.version
+      ? (catalog.app.packageRevision ?? (instance.application.availableVersion === catalog.app.version ? instance.application.availablePackageRevision : undefined))
+      : instance.application.availablePackageRevision;
+    const sameVersionRevision = isSameVersionRevisionUpgrade({
+      fromVersion: instance.application.installedVersion,
+      toVersion,
+      fromRevision: instance.application.installedPackageRevision,
+      toRevision,
+    });
+    return { instance, toVersion, toRevision, sameVersionRevision };
+  });
+  const hasSameVersionRevision = resolvedTargets.some((item) => item.sameVersionRevision);
   const targetVersions = uniqueVersions(
-    updatableInstances.map((instance) => {
-      const catalog = data.apps.find((app) => app.key === instance.application.appKey);
-      return catalog?.app.version || instance.application.availableVersion;
+    resolvedTargets.map(({ toVersion, toRevision }) => (
+      toVersion
+        ? (hasSameVersionRevision && isValidRevision(toRevision) ? `${toVersion} (r${toRevision})` : toVersion)
+        : undefined
+    )),
+  );
+  const installedVersions = uniqueVersions(
+    resolvedTargets.map(({ instance, sameVersionRevision }) => {
+      const fromVersion = instance.application.installedVersion;
+      const fromRevision = instance.application.installedPackageRevision;
+      if (!fromVersion) return undefined;
+      return sameVersionRevision && isValidRevision(fromRevision)
+        ? `${fromVersion} (r${fromRevision})`
+        : fromVersion;
     }),
   );
-  const installedVersions = uniqueVersions(updatableInstances.map((instance) => instance.application.installedVersion));
   const singleEligible = updatableInstances.length === 1 && plan.eligible.length === 1 && plan.skipped.length === 0
     ? plan.eligible[0]
     : undefined;
