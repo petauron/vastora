@@ -232,9 +232,9 @@ export function HighPrivilegeBadge({ language }: { language: Language }) {
   return <Badge variant="destructive"><ShieldAlertIcon data-icon="inline-start" />{copy(language, "高权限", "Privileged")}</Badge>;
 }
 
-export function formatDate(language: Language, value?: string) {
+export function formatDate(language: Language, value?: string, options?: Intl.DateTimeFormatOptions) {
   if (!value) return "—";
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return value;
-  return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(parsed));
+  return new Intl.DateTimeFormat(language, options ?? { dateStyle: "medium", timeStyle: "short" }).format(new Date(parsed));
 }

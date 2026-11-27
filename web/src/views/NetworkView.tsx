@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { CableIcon, CloudIcon, Globe2Icon, KeyRoundIcon, NetworkIcon, RouterIcon, ServerIcon, ShieldCheckIcon, TerminalIcon } from "lucide-react";
+import { CableIcon, CloudIcon, Globe2Icon, KeyRoundIcon, NetworkIcon, RouterIcon, SearchIcon, ServerIcon, ShieldCheckIcon, TerminalIcon } from "lucide-react";
 import { api } from "../api";
 import type { AppData, Mutate } from "../App";
 import type { AgentView, CenterRemoteAccess, HeadscaleJoin, Integration, NetworkKind, NetworkProfile, TailscaleFixedEndpoint, TailscaleFixedEndpointInput } from "../types";
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { SelectControl } from "@/components/SelectControl";
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
@@ -53,6 +54,9 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
     try { setJoin(await api.createHeadscaleJoin(agent.id)); setJoinAgentID(agent.id); } catch (error) { setJoinError(userError(language, error)); } finally { setJoinBusy(""); }
   };
 
+  const showAdoptTailscale = Boolean(tailscaleFixedEndpoint && !tailscaleFixedEndpoint.available && tailscaleFixedEndpoint.lastError);
+  const showFixedEndpoint = Boolean(tailscaleFixedEndpoint?.available);
+
   return (
     <section className="mac-network flex flex-col gap-6">
       <PageHeading title={copy(language, "网络", "Network")} description={copy(language, "每台节点可以同时具备局域网、安全私网和公网能力；Vastora 会为服务自动选择合适的入口。", "Each node can use local, secure private, and public networking together. Vastora selects a suitable access method for each service.")} />
@@ -66,19 +70,19 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
         <CapabilityCard icon={<Globe2Icon />} title={copy(language, "公网地址", "Public address")} description={copy(language, "Agent 自动检测出口；确认入站映射后可用于公网网页。", "Agents detect egress automatically; use it for public websites after confirming inbound mapping.")} count={enabledCount("public")} language={language} technical={copy(language, "检测到出口地址不等于公网端口已可达；Vastora 不会自动修改云防火墙或路由器。", "Detecting an egress address does not prove public ports are reachable. Vastora does not change cloud firewalls or routers.")} />
       </div>
 
-      <details className="rounded-xl border bg-card"><summary className="cursor-pointer p-4 text-sm font-medium">{copy(language,"高级：私网直连设置","Advanced: private network direct connection")}</summary><div className="flex flex-col gap-4 border-t p-4">
-      {tailscaleFixedEndpoint && !tailscaleFixedEndpoint.available && tailscaleFixedEndpoint.lastError ? <Card>
+      {showAdoptTailscale || showFixedEndpoint ? <details className="rounded-xl border bg-card"><summary className="cursor-pointer p-4 text-sm font-medium">{copy(language,"高级：私网直连设置","Advanced: private network direct connection")}</summary><div className="flex flex-col gap-4 border-t p-4">
+      {showAdoptTailscale ? <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><RouterIcon />{copy(language, "接管旧版 Tailscale", "Adopt an older Tailscale install")}</CardTitle><CardDescription>{copy(language, "仅适用于能够通过本机记录证明由旧版 Vastora 安装的 Tailscale。", "Only for Tailscale installations that local records prove were installed by an older Vastora release.")}</CardDescription><CardAction><StateBadge language={language} value="action_required" /></CardAction></CardHeader>
         <CardContent><Alert><TerminalIcon /><AlertTitle>{copy(language, "需要在 Center 主机确认", "Confirmation is required on the Center host")}</AlertTitle><AlertDescription><p>{copy(language, "该命令会先核对 Agent 服务、隐私配置、解析记录、固定版本和 APT 安装历史；任何一项不匹配都会拒绝接管。", "The command verifies the Agent service, privacy controls, resolver records, pinned version, and APT install history. Any mismatch refuses adoption.")}</p><div className="mt-3 flex items-start gap-2"><code className="min-w-0 flex-1 break-all rounded-lg bg-muted p-3 text-xs">{tailscaleAdoptionCommand}</code><CopyButton label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={tailscaleAdoptionCommand} /></div></AlertDescription></Alert></CardContent>
       </Card> : null}
 
-      {tailscaleFixedEndpoint?.available ? <Card>
+      {showFixedEndpoint && tailscaleFixedEndpoint ? <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><RouterIcon />{copy(language, "固定 Tailscale 直连端点", "Fixed Tailscale direct endpoint")}</CardTitle><CardDescription>{copy(language, "仅在公网 IPv4 和 UDP 41641 映射稳定时使用；默认的 STUN 自动发现仍然保留。", "Use only with a stable public IPv4 and UDP 41641 mapping. Default STUN discovery remains available.")}</CardDescription><CardAction><StateBadge language={language} value={tailscaleFixedEndpoint.status} /></CardAction></CardHeader>
         <CardContent className="flex flex-col gap-3"><p className="text-sm text-muted-foreground">{tailscaleFixedEndpoint.enabled ? `${tailscaleFixedEndpoint.endpoint} → ${tailscaleFixedEndpoint.localAddress}:41641/UDP` : copy(language, "当前关闭，Tailscale 会通过 STUN 自动发现可用直连路径。", "Currently off. Tailscale uses STUN to discover a direct path automatically.")}</p>{tailscaleFixedEndpoint.status === "action_required" ? <Alert variant="destructive"><AlertTitle>{copy(language, "需要重新确认", "Confirmation required")}</AlertTitle><AlertDescription>{copy(language, "原本确认的本机地址或公网地址已经变化，Vastora 已停止下发旧端点。", "The confirmed local or public address changed, so Vastora stopped advertising the stale endpoint.")}</AlertDescription></Alert> : null}<details className="text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">{copy(language, "隐私与回退", "Privacy and fallback")}</summary><p className="mt-2 leading-5">{copy(language, "Cloudflare 仅提供 stun.cloudflare.com:3478/UDP 的 STUN 探测，可能看到源 IP、源端口和探测时间；应用流量不会经过 Cloudflare。关闭固定端点会删除 Vastora 自己的配置并恢复 STUN 自动发现。", "Cloudflare provides STUN discovery only at stun.cloudflare.com:3478/UDP and may observe source IP, source port, and probe timing. Application traffic never passes through Cloudflare. Disabling the fixed endpoint removes only Vastora-owned configuration and restores STUN discovery.")}</p></details></CardContent>
         <CardFooter className="justify-end"><Button onClick={() => setEditor("tailscale-endpoint")} size="sm" variant="outline">{copy(language, "配置", "Configure")}</Button></CardFooter>
       </Card> : null}
 
-      </div></details>
+      </div></details> : null}
 
       <div className="flex flex-col gap-4">
         <div><h2 className="text-lg font-semibold">{copy(language, "外部服务", "Connections")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "可选连接只在需要自动管理域名或公网网页时使用。", "Optional connections are used only for automatic domain management or public websites.")}</p></div>
@@ -100,7 +104,7 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
 
       <div className="flex flex-col gap-4">
         <div><h2 className="text-lg font-semibold">{copy(language, "节点网络", "Node networks")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "Agent 自动发现地址，你只需要确认建议配置。", "Agents discover addresses automatically; you only confirm the suggestion.")}</p></div>
-        <div className="flex flex-wrap items-center gap-3"><Input className="w-full sm:w-72" aria-label={copy(language,"搜索网络节点","Search network nodes")} type="search" placeholder={copy(language,"按节点名称搜索…","Search by node name…")} value={nodeQuery} onChange={(event) => setNodeQuery(event.target.value)} /><span className="text-sm text-muted-foreground">{copy(language,`${matchingAgents.length} / ${activeAgents.length} 台节点`,`${matchingAgents.length} / ${activeAgents.length} nodes`)}</span></div>
+        <div className="flex flex-wrap items-center gap-3"><InputGroup className="w-full sm:w-72"><InputGroupInput aria-label={copy(language, "搜索网络节点", "Search network nodes")} type="search" placeholder={copy(language, "按节点名称搜索…", "Search by node name…")} value={nodeQuery} onChange={(event) => setNodeQuery(event.target.value)} /><InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon></InputGroup><span className="text-sm text-muted-foreground">{copy(language, `${matchingAgents.length} / ${activeAgents.length} 台节点`, `${matchingAgents.length} / ${activeAgents.length} nodes`)}</span></div>
         {!matchingAgents.length ? <p className="text-sm text-muted-foreground">{copy(language,"没有匹配的节点，请修改搜索条件。","No matching nodes. Change your search.")}</p> : null}
         <div className="mac-network-nodes" role="list" aria-label={copy(language, "节点网络", "Node networks")}>
           {matchingAgents.map((agent) => <NodeNetworkRow agent={agent} headscaleReady={headscale.status === "configured"} joinBusy={joinBusy === agent.id} key={agent.id} language={language} onConfigure={() => setProfileAgent(agent)} onJoin={() => void createJoin(agent)} />)}

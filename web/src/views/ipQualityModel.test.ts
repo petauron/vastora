@@ -59,4 +59,19 @@ describe("IP quality presentation", () => {
     expect(landingQualityAddress(native.bindAddress, native, [])).toBe(native.bindAddress);
     expect(landingQualityAddress("", native, targets)).toBe(native.address);
   });
+  it("guards malformed checkedAt timestamps in expired summaries", () => {
+    const expired: IPQualityCheck = {
+      agentId: "node", address: "203.0.113.8", family: "ipv4", selected: true, id: "check", state: "succeeded", stale: false,
+      checkedAt: "not-a-timestamp", updatedAt: "",
+      assessment: {
+        version: "glivela-v5", status: "expired", score: 70, min: 70, max: 70, grade: "good", ipType: "residential",
+        typeCandidates: ["residential"], typeEvidence: [], contributions: [], missing: [], advice: "recheck",
+        reasons: [], requiredFailed: [], requiredUnknown: [], preferences: { requiredServices: [], targetRegion: "" },
+      },
+      report: { address: "203.0.113.8", version: "test", scores: [], services: [{ name: "Netflix", status: "Yes" }] },
+    };
+    const summary = ipQualitySummary("zh-CN", expired);
+    expect(summary).toContain("not-a-timestamp");
+    expect(summary).not.toContain("Invalid Date");
+  });
 });

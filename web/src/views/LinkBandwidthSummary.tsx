@@ -1,6 +1,6 @@
 import type { NodeDiagnosticCheck } from "../node-diagnostics-types";
 import type { Language } from "../translations";
-import { copy } from "./shared";
+import { copy, formatDate } from "./shared";
 
 export const bandwidthBands = [
   { minimum: 500, label: "≥500", className: "quality-grade-excellent" },
@@ -48,7 +48,7 @@ export function LinkBandwidthSummary({ check, language, unavailable, showUnit = 
   const label = unavailable ? copy(language, "读取失败", "Unavailable") : linkBandwidthStatusLabel(status, language);
   const stamp = check?.checkedAt || check?.updatedAt;
   const description = valid ? copy(language, `入口→落地 ${valid.uploadMbps.toFixed(1)} Mbps；落地→入口 ${valid.downloadMbps.toFixed(1)} Mbps`, `Entry → landing ${valid.uploadMbps.toFixed(1)} Mbps; landing → entry ${valid.downloadMbps.toFixed(1)} Mbps`) : label;
-  const title = `${description}${stamp ? ` · ${new Date(stamp).toLocaleString(language)}` : ""}`;
+  const title = `${description}${stamp ? ` · ${formatDate(language, stamp)}` : ""}`;
   return <span className={`shrink-0 whitespace-nowrap text-right ${valid ? "text-foreground" : failed || unavailable ? "text-destructive" : active ? "quality-grade-good" : "text-muted-foreground"}`} title={title} aria-label={title}>
     {valid ? <><span className={bandwidthColor(valid.uploadMbps)}>↑{valid.uploadMbps.toFixed(1)}</span>{" "}<span className={bandwidthColor(valid.downloadMbps)}>↓{valid.downloadMbps.toFixed(1)}</span> {showUnit ? <span className="text-muted-foreground">Mbps</span> : null}</> : label}
   </span>;

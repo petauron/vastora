@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
 import { SelectControl } from "@/components/SelectControl";
 import { cn } from "@/lib/utils";
-import { copy } from "./shared";
+import { copy, formatDate } from "./shared";
 import { RegionFlag } from "./RegionFlag";
 import { routeLine, type RouteTier } from "./returnRouteModel";
 import { canonicalIPQualityAddress, checkPending, cleanIPQualityValue, ipClassification, ipQualityCheckForAddress, ipQualityError, ipQualityFamilyLabel, ipQualitySummary, landingQualityAddress, unlockLabel, unlockServiceLabel, unlockServices, unlockTypeLabel } from "./ipQualityModel";
@@ -39,8 +39,8 @@ function routeTierLabel(language: Language, tier: RouteTier) {
 
 function routeTierColor(tier: RouteTier) {
   return tier === "premium" ? "bg-warning/15 text-warning ring-warning/35"
-    : tier === "optimized" ? "bg-sky-500/15 text-sky-800 ring-sky-500/35 dark:text-sky-300"
-      : tier === "standard" ? "bg-slate-500/15 text-slate-700 ring-slate-500/30 dark:text-slate-300" : "bg-muted text-muted-foreground ring-border";
+    : tier === "optimized" ? "bg-quality-good/10 text-quality-good ring-quality-good/35"
+      : tier === "standard" ? "bg-secondary text-secondary-foreground ring-border" : "bg-muted text-muted-foreground ring-border";
 }
 
 function ClassificationBadge({ language, value }: { language: Language; value?: string }) {
@@ -281,7 +281,7 @@ function DiagnosticsButton({ nodeId, name, language, compact = false, egressAddr
             if (next) { setSelection({ address: next.address, currentAddress }); setError(""); }
           }}><TabsList aria-label={copy(language, "出口地址族", "Exit address family")}>{(["ipv4", "ipv6"] as const).map((value) => <TabsTrigger key={value} value={value} disabled={submitting || value !== family && !targets.some((item) => item.family === value)}>{ipQualityFamilyLabel(value)}</TabsTrigger>)}</TabsList><TabsContent value={family} className="flex min-w-0 flex-col gap-3">
             {familyTargets.length > 1 ? <SelectControl size="sm" disabled={submitting} aria-label={copy(language, "检测出口 IP", "Exit IP to inspect")} value={address} onValueChange={(value) => { setSelection({ address: value, currentAddress }); setError(""); }} options={familyTargets.map((item) => ({ value: item.address, label: `${item.address}${item.address === currentAddress ? ` · ${currentLabel}` : ""}` }))} /> : null}
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="break-all font-mono">{address || copy(language, "地址待上报", "Address unavailable")}</span>{address && address === currentAddress ? <span>{currentLabel}</span> : null}{check?.checkedAt ? <time dateTime={check.checkedAt}>{new Date(check.checkedAt).toLocaleString(language)}</time> : null}</div>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="break-all font-mono">{address || copy(language, "地址待上报", "Address unavailable")}</span>{address && address === currentAddress ? <span>{currentLabel}</span> : null}{check?.checkedAt ? <time dateTime={check.checkedAt}>{formatDate(language, check.checkedAt)}</time> : null}</div>
             {active || submitting && requestAddress === address ? <p role="status" className="flex items-center gap-2 text-sm"><Spinner aria-hidden="true" />{submitting ? copy(language, "正在提交检测…", "Submitting check…") : check?.state === "pending" ? copy(language, "等待节点执行，可关闭此面板。", "Waiting for the node. You can close this panel.") : copy(language, "正在检测，可关闭此面板。", "Checking. You can close this panel.")}</p> : nodeActive ? <p role="status" className="text-xs text-muted-foreground">{copy(language, "此节点的其他出口正在检测，完成后可检测当前地址。", "Another exit on this node is being checked. Wait before checking this address.")}</p> : null}
             {error && requestAddress === address || check?.error ? <p role="alert" className="text-sm text-destructive">{ipQualityError(language, requestAddress === address && error || check!.error!)}</p> : null}
             {check?.stale ? <p role="status" className="text-sm text-destructive">{copy(language, "此 IP 已不在当前可检测地址中，以下为历史结果。", "This IP is no longer available for checking. These are historical results.")}</p> : null}

@@ -74,6 +74,20 @@ describe("network and app views", () => {
     expect(container.textContent).not.toContain("retired-node");
   });
 
+  it("hides the advanced private-direct disclosure when neither fixed endpoint nor adoption applies", () => {
+    const data = dashboard();
+    const container = render(<NetworkView data={data} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.textContent).not.toContain("高级：私网直连设置");
+    expect(container.querySelector('[data-slot="input-group"] input[type="search"]')).not.toBeNull();
+
+    rerender(<NetworkView data={{ ...data, tailscaleFixedEndpoint: { available: false, enabled: false, endpoint: "", localAddress: "", detectedEndpoint: "", detectedLocalAddress: "", localAddressCandidates: [], status: "disabled", lastError: "" } }} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.textContent).not.toContain("高级：私网直连设置");
+
+    rerender(<NetworkView data={{ ...data, tailscaleFixedEndpoint: { available: false, enabled: false, endpoint: "", localAddress: "", detectedEndpoint: "", detectedLocalAddress: "", localAddressCandidates: [], status: "unavailable", lastError: "existing tailscale install detected" } }} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.textContent).toContain("高级：私网直连设置");
+    expect(container.textContent).toContain("接管旧版 Tailscale");
+  });
+
   it("recognizes a reported Headscale address before the network profile is confirmed", () => {
     const data = dashboard();
     data.agents[0].networkProfile = undefined;

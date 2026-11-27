@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import type { IPQualityAssessment } from "../ip-quality-types";
 import { api } from "../api";
-import { AssessmentSummary, assessmentLabel } from "./IPAssessment";
+import { AssessmentSummary, AssessmentTypeBadge, assessmentLabel } from "./IPAssessment";
 import { IPQualityComparison } from "./IPQualityComparison";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -106,4 +106,21 @@ it("shows an IPv6 number with its own rule and no excluded providers", async () 
   expect(container.textContent).not.toContain("IPPure");
   expect(container.textContent).not.toContain("SCAMALYTICS");
   expect(container.textContent).toContain("0 / 25");
+});
+
+it("guards malformed check timestamps without rendering Invalid Date", async () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => root?.render(<>
+    <AssessmentTypeBadge language="zh-CN" assessment={assessment()} checkedAt="not-a-date" />
+    <AssessmentSummary language="zh-CN" assessment={assessment()} checkedAt="not-a-date" report={{ address: "203.0.113.8", version: "test", scores: [], services: [], ippure: { provider: "IPPure", status: "ok", address: "203.0.113.8", checkedAt: "bad-ippure-time", riskScore: 10 } }} />
+  </>));
+  const badge = container.querySelector('[title]');
+  expect(badge?.getAttribute("title")).toContain("not-a-date");
+  expect(badge?.getAttribute("title")).not.toContain("Invalid Date");
+  expect(container.querySelector("time")?.textContent).toBe("not-a-date");
+  await act(async () => container.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click());
+  expect(container.textContent).toContain("bad-ippure-time");
+  expect(container.textContent).not.toContain("Invalid Date");
 });
