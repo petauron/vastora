@@ -212,6 +212,7 @@ function StoreUpdateRow({
           <div className="min-w-0">
             <h3 className="text-sm font-semibold leading-5" id={titleId}>
               <button
+                aria-label={copy(language, `查看 ${entry.title} 详情`, `View ${entry.title} details`)}
                 className="store-app-title"
                 onClick={() => onOpenDetail(entry.suiteId)}
                 title={entry.title}
@@ -488,6 +489,7 @@ function StoreInstalledCard({
           <div className="flex items-start justify-between gap-2">
             <h3 className="min-w-0 text-sm font-semibold leading-5" id={titleId}>
               <button
+                aria-label={copy(language, `查看 ${suite.name} 详情`, `View ${suite.name} details`)}
                 className="store-app-title"
                 onClick={() => onOpenDetail(suite.id)}
                 title={suite.name}
