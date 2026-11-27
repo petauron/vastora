@@ -24,6 +24,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { NodeSiteCertificateCard } from "./NodeSiteCertificateCard";
 import { ServiceHandover } from "./ServiceHandover";
+import { formatUpgradeTarget } from "./versionDisplay";
 
 export function InstalledAppDetails({ instance, data, language, onClients, onConfigure, onCredentials, onMigrate, onAppManager, onPublish, onReality, onRenameReality, onRemoveReality, onSubscription, onTraffic, onUninstall, onUpgrade, mutate }: { instance: InstalledAppInstance; data: AppData; language: Language; onClients: () => void; onConfigure: () => void; onCredentials: () => void; onMigrate: () => void; onAppManager: () => void; onPublish: (service: Service) => void; onReality: () => void; onRenameReality: (service: Service) => void; onRemoveReality: (service: Service) => void; onSubscription: () => void; onTraffic: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
   const [syncingNode, setSyncingNode] = useState(false);
@@ -65,6 +66,13 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
       setAdopting(false);
     }
   };
+  const upgradeTarget = formatUpgradeTarget({
+    fromVersion: application.installedVersion,
+    toVersion: application.availableVersion,
+    fromRevision: application.installedPackageRevision,
+    toRevision: application.availablePackageRevision ?? (app?.app.version === application.availableVersion ? app?.app.packageRevision : undefined),
+    prefix: "v",
+  });
   return <SheetContent className="apps-workspace sm:max-w-xl">
     <SheetHeader>
       <SheetTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app ? <AppIdentityBadge app={app} language={language} /> : null}{isController ? <Badge>{copy(language, "全局订阅主机", "Global subscription controller")}</Badge> : null}{isLegacyController ? <Badge variant="outline">{copy(language, "待替换为 Xray", "Converting to Xray")}</Badge> : null}{isWorker ? <Badge variant="outline">{copy(language, "Xray 节点", "Xray node")}</Badge> : null}</SheetTitle>
@@ -103,7 +111,7 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
         {app && !application.updateAvailable ? <Badge variant="secondary">{copy(language, "版本已是最新", "Version up to date")}</Badge> : null}
         <div aria-label={copy(language, "应用操作", "Application actions")} className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2" role="group">
           {isLegacyController ? <Button disabled={Boolean(activeChange) || application.restorePointState === "pending"} onClick={onMigrate} variant="outline"><ArrowRightLeftIcon data-icon="inline-start" />{copy(language, "查看转换进度", "View conversion")}</Button> : isController && activeWorkers.some((worker) => worker.nodeSyncStatus === "ready") ? <Button disabled={Boolean(activeChange) || application.restorePointState === "pending"} onClick={onMigrate} variant="outline"><ArrowRightLeftIcon data-icon="inline-start" />{copy(language, "迁移订阅主机", "Move subscription host")}</Button> : null}
-          {application.updateAvailable && application.adoptionState !== "pending" && application.adoptionState !== "blocked" ? <Button disabled={Boolean(activeChange) || isLegacyController || catalogInstallBlocked(app)} onClick={onUpgrade}><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, `升级到 v${application.availableVersion}`, `Upgrade to v${application.availableVersion}`)}</Button> : null}
+          {application.updateAvailable && application.adoptionState !== "pending" && application.adoptionState !== "blocked" ? <Button disabled={Boolean(activeChange) || isLegacyController || catalogInstallBlocked(app)} onClick={onUpgrade}><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, `升级到 ${upgradeTarget}`, `Upgrade to ${upgradeTarget}`)}</Button> : null}
           {application.updateAvailable && catalogInstallBlocked(app) ? <p className="text-sm text-muted-foreground">{copy(language, "请先在控制面板刷新应用目录，再升级。", "Refresh the app catalog in Control Panel before upgrading.")}</p> : null}
           {app && app.app.config.length > 0 ? <Button disabled={Boolean(activeChange) || isLegacyController} onClick={onConfigure} variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "修改配置", "Change settings")}</Button> : null}
           <Button disabled={Boolean(activeChange) || isLegacyController || activeWorkers.length > 0} onClick={onUninstall} variant="destructive"><Trash2Icon data-icon="inline-start" />{copy(language, "卸载", "Uninstall")}</Button>

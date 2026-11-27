@@ -134,4 +134,30 @@ describe("declarative package deployment review", () => {
     await act(async () => document.querySelector('[role="dialog"] form')?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     expect(onSubmit).not.toHaveBeenCalled();
   });
+
+  it("displays package revision diff inline when upgrading within the same upstream version", () => {
+    const { data, app } = fixture();
+    app.app.version = "0.2.1";
+    app.app.packageRevision = 10;
+    app.app.runtime.requiredCapabilities = [];
+    data.applications = [{
+      ...dashboard().applications[0],
+      appKey: app.key,
+      nodeId: data.agents[0].id,
+      installedVersion: "0.2.1",
+      installedPackageRevision: 9,
+      availableVersion: "0.2.1",
+      availablePackageRevision: 10,
+      updateAvailable: true,
+    }];
+    render(<DeploymentSheet data={data} editor={{ app, agent: data.agents[0], operation: "upgrade" }} language="en" onClose={vi.fn()} onSubmit={vi.fn()} />);
+    expect(document.body.textContent).toContain("Version: 0.2.1 (r9 → r10).");
+
+    rerender(<DeploymentSheet data={data} editor={{ app, agent: data.agents[0], operation: "upgrade" }} language="zh-CN" onClose={vi.fn()} onSubmit={vi.fn()} />);
+    expect(document.body.textContent).toContain("版本：0.2.1 (r9 → r10)。");
+
+    const crossVersion = { ...data, applications: [{ ...data.applications[0], installedVersion: "0.2.0", installedPackageRevision: 8 }] };
+    rerender(<DeploymentSheet data={crossVersion} editor={{ app, agent: data.agents[0], operation: "upgrade" }} language="zh-CN" onClose={vi.fn()} onSubmit={vi.fn()} />);
+    expect(document.body.textContent).toContain("版本：0.2.0 → 0.2.1。");
+  });
 });

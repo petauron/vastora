@@ -24,6 +24,7 @@ import type { InstalledAppInstance } from "../installed-apps-model";
 import { catalogInstallBlocked, copy } from "../shared";
 import { planBatchUpgrade } from "./BatchUpgradeSheet";
 import { AccessStatus, ApplicationPrimaryStatus, ApplicationUpdate } from "./InstalledApplicationPrimitives";
+import { isSameVersionRevisionUpgrade } from "./versionDisplay";
 import {
   glivelaControllerKey,
   glivelaNodeCapabilities,
@@ -398,6 +399,15 @@ export function SuiteDetailView({
                 const site = siteByID.get(instance.application.siteId);
                 const regionCode = site ? siteRegionCode(site) : siteRegionCode({ name: instance.siteName });
                 const targetVersion = instance.application.availableVersion || instance.app?.app.version;
+                const targetRevision = instance.application.availableVersion
+                  ? (instance.application.availablePackageRevision ?? (instance.app?.app.version === instance.application.availableVersion ? instance.app?.app.packageRevision : undefined))
+                  : instance.app?.app.packageRevision;
+                const sameVersionRevision = isSameVersionRevisionUpgrade({
+                  fromVersion: instance.application.installedVersion,
+                  toVersion: targetVersion,
+                  fromRevision: instance.application.installedPackageRevision,
+                  toRevision: targetRevision,
+                });
                 return (
                   <div className="flex flex-wrap items-center gap-3 px-4 py-3" key={instance.application.id}>
                     <div className="min-w-0 flex-1">
@@ -408,7 +418,11 @@ export function SuiteDetailView({
                         <span aria-hidden="true">·</span>
                         <span>v{instance.application.installedVersion}</span>
                         {instance.application.updateAvailable && targetVersion ? (
-                          <span className="font-medium text-success">→ v{targetVersion}</span>
+                          sameVersionRevision ? (
+                            <span className="font-medium text-success">(r{instance.application.installedPackageRevision} → r{targetRevision})</span>
+                          ) : (
+                            <span className="font-medium text-success">→ v{targetVersion}</span>
+                          )
                         ) : null}
                       </p>
                     </div>
@@ -641,6 +655,15 @@ export function SuiteDetailView({
                     const isSelected = effectiveSelectedIds.includes(instance.application.id);
                     const skipReason = skippedReasonByID.get(instance.application.id);
                     const targetVersion = instance.app?.app.version || instance.application.availableVersion;
+                    const targetRevision = instance.app?.app.version
+                      ? (instance.app.app.packageRevision ?? (instance.application.availableVersion === instance.app.app.version ? instance.application.availablePackageRevision : undefined))
+                      : instance.application.availablePackageRevision;
+                    const sameVersionRevision = isSameVersionRevisionUpgrade({
+                      fromVersion: instance.application.installedVersion,
+                      toVersion: targetVersion,
+                      fromRevision: instance.application.installedPackageRevision,
+                      toRevision: targetRevision,
+                    });
                     const role = showRoleCol ? glivelaRoleLabel(instance.application.appKey, language) : "";
                     const daylightMode = showSiteTlsCol
                       ? (instance.application.appKey === "vastora-official/daylight-https" ? "HTTPS" : "HTTP")
@@ -698,7 +721,11 @@ export function SuiteDetailView({
                         <TableCell className="whitespace-nowrap tabular-nums">
                           <span className="text-foreground">v{instance.application.installedVersion}</span>
                           {instance.application.updateAvailable && targetVersion ? (
-                            <span className="block text-xs font-medium text-success">→ v{targetVersion}</span>
+                            sameVersionRevision ? (
+                              <span className="block text-xs font-medium text-success">(r{instance.application.installedPackageRevision} → r{targetRevision})</span>
+                            ) : (
+                              <span className="block text-xs font-medium text-success">→ v{targetVersion}</span>
+                            )
                           ) : (
                             <span className="block text-xs text-muted-foreground">{copy(language, "已是最新", "Up to date")}</span>
                           )}
