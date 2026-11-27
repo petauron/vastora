@@ -30,7 +30,7 @@ import { RealityRenameSheet, SubscriptionSheet, UninstallSheet } from "./apps/Su
 import { OfficialAppManagerHost } from "@/app-workspaces/OfficialAppWorkspaceHost";
 import { daylightInstalledGroup, isDaylightAppKey } from "./daylight";
 import { TaskRecoverySheet } from "./TaskRecoverySheet";
-import { glivelaRoleLabel, isGlivelaAppKey, suiteIdForAppKey } from "./apps/store-suites-model";
+import { glivelaControllerKey, glivelaRoleLabel, isGlivelaAppKey, suiteIdForAppKey } from "./apps/store-suites-model";
 
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
 
@@ -361,10 +361,12 @@ export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onO
                           aria-label={copy(language, `在 ${group.name} 中定位 ${agentName}`, `Locate ${agentName} in ${group.name}`)}
                           onClick={() => {
                             setTasksSheetOpen(false);
+                            const filterToHostRow = deployment.operation !== "install"
+                              && deployment.appKey !== glivelaControllerKey;
                             setStoreNavTarget((current) => ({
                               suiteId: group.suiteId,
-                              statusFilter: "progress",
-                              query: agentName,
+                              statusFilter: filterToHostRow ? "progress" : undefined,
+                              query: filterToHostRow ? agentName : undefined,
                               nonce: (current?.nonce ?? 0) + 1,
                             }));
                           }}

@@ -354,7 +354,9 @@ export function buildStoreSuites(
     });
   }
 
+  const installedStandardKeys = new Set<string>();
   for (const group of otherGroups) {
+    installedStandardKeys.add(group.appKey);
     const app = group.app;
     const name = app ? localized(app, language, "name") : group.instances[0]?.application.name ?? group.appKey;
     const description = app
@@ -390,6 +392,47 @@ export function buildStoreSuites(
         name, group.appKey, app?.sourceId, description,
         ...group.instances.flatMap((instance) => [instance.application.name, instance.agent?.name, instance.siteName]),
       ]),
+    });
+  }
+
+  for (const app of data.apps) {
+    if (isGlivelaCatalogApp(app) || isDaylightCatalogApp(app) || installedStandardKeys.has(app.key)) continue;
+    const name = localized(app, language, "name");
+    const description = localized(app, language, "description");
+    const background = isBackgroundApplication(app);
+    suites.push({
+      id: app.key,
+      kind: "standard",
+      appKey: app.key,
+      name,
+      description,
+      catalogApp: app,
+      catalogApps: [app],
+      instances: [],
+      controllerInstances: [],
+      nodeInstances: [],
+      legacyInstances: [],
+      background,
+      launchUrl: undefined,
+      canOpenWorkspace: false,
+      openTargetKey: undefined,
+      counts: {
+        instances: 0,
+        hosts: 0,
+        attention: 0,
+        progress: 0,
+        updatableTotal: 0,
+        updatableOnline: 0,
+        updatableSkipped: 0,
+        offline: 0,
+        running: 0,
+      },
+      hasUpdates: false,
+      hasRecovery: false,
+      installedVersions: [],
+      availableVersions: [],
+      siteNames: [],
+      searchText: buildSearchText([name, app.key, app.sourceId, description]),
     });
   }
 

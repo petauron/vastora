@@ -596,6 +596,9 @@
 }
 @media (forced-colors: active) {
   .desktop-shortcuts[data-reordering="true"] .desktop-shortcut[data-drop-target="true"] { border-color: Highlight; outline: 1px solid Highlight; background: Canvas; box-shadow: none; }
+  .store-filter-chip { border: 1px solid ButtonText; }
+  .store-filter-chip-active { background: Highlight; color: HighlightText; border-color: Highlight; forced-color-adjust: none; }
+  .store-nav-badge-update { border-color: Highlight; }
 }
 
 .desktop-drag-preview { position: fixed; z-index: 100; transform: translate(-50%, -50%); pointer-events: none; opacity: .85; filter: drop-shadow(0 8px 12px #17283840); }

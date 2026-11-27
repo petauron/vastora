@@ -180,7 +180,7 @@ export function createBatchUpgradeRequest(
   return {
     title,
     applicationIds: updatable.map((instance) => instance.application.id),
-    initialSelectedIds: initialSelectedIds?.length ? [...initialSelectedIds] : undefined,
+    initialSelectedIds: initialSelectedIds !== undefined ? [...initialSelectedIds] : undefined,
     snapshots,
   };
 }
@@ -228,8 +228,10 @@ export function BatchUpgradeSheet({
     const initialInstances = request.applicationIds.map((id) => instancesByID.get(id)).filter((value): value is InstalledAppInstance => Boolean(value));
     const initialPlan = planBatchUpgrade(request.title, initialInstances, data, language);
     const eligibleIds = initialPlan.eligible.map((item) => item.instance.application.id);
-    const preselected = request.initialSelectedIds?.filter((id) => eligibleIds.includes(id)) ?? [];
-    setSelectedIds(preselected.length > 0 ? preselected : eligibleIds);
+    const nextSelected = request.initialSelectedIds !== undefined
+      ? request.initialSelectedIds.filter((id) => eligibleIds.includes(id))
+      : eligibleIds;
+    setSelectedIds(nextSelected);
     setApprovedCapabilities([]);
     setSearchQuery("");
     setBusy(false);

@@ -423,7 +423,7 @@ function StoreUpdateRow({
           <div className="mt-2.5 flex justify-end">
             <button
               className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-              onClick={() => onOpenDetail(entry.suiteId, "updatable")}
+              onClick={() => onOpenDetail(entry.suiteId, entry.id === `${entry.suiteId}:controller` ? undefined : "updatable")}
               type="button"
             >
               {copy(

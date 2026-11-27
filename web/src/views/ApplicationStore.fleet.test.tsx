@@ -6,6 +6,8 @@ import type { AppData } from "../types";
 import { ThemeProvider } from "../components/theme";
 import { api } from "../api";
 import { AppsView } from "./AppsView";
+import { BatchUpgradeSheet, createBatchUpgradeRequest } from "./apps/BatchUpgradeSheet";
+import { installedAppGroups } from "./installed-apps-model";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -279,5 +281,63 @@ describe("Synology-style App Store fleet UX", () => {
     expect(container.querySelector(".store-detail-workbench")).not.toBeNull();
     expect(container.querySelectorAll("tbody tr[data-application-id]")).toHaveLength(1);
     expect(container.querySelector("tbody")?.textContent).toContain("us-west-01");
+  });
+
+  it("never widens an explicit batch preselection to all eligible hosts when preselected hosts become ineligible", () => {
+    const data = multiSiteFleetFixture();
+    const groups = installedAppGroups(data);
+    const senlunGroup = groups.find((group) => group.appKey === agentAppKey)!;
+    const instancesByID = new Map(senlunGroup.instances.map((instance) => [instance.application.id, instance]));
+    // Explicitly preselect only probe-jp-2 (which is offline/ineligible), while probe-jp-1 and probe-us-1 remain eligible.
+    const request = createBatchUpgradeRequest("Senlun 探针", senlunGroup.instances, data, ["probe-jp-2"]);
+
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => root?.render(
+      <ThemeProvider>
+        <BatchUpgradeSheet
+          data={data}
+          instancesByID={instancesByID}
+          language="zh-CN"
+          onClose={vi.fn()}
+          onSubmit={vi.fn(async () => ({ queued: 0, failed: [] }))}
+          request={request}
+        />
+      </ThemeProvider>,
+    ));
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("已选择 0/2 台主机");
+    expect(dialog?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+  });
+
+  it("locates fresh-install standard apps and Glivela controller tasks without dead ends and reports offline/stopped status accurately in All apps", () => {
+    const data = multiSiteFleetFixture();
+    // Remove Telegram Bot installation so it becomes an active fresh install, and make CPA stopped on an offline host.
+    data.applications = data.applications.filter((item) => item.id !== "tg-jp-1");
+    data.applications = data.applications.map((item) =>
+      item.id === "cpa-us-1"
+        ? { ...item, nodeId: "node-jp-2", siteId: "site-jp", updateAvailable: false, installedVersion: "7.3.0", availableVersion: "7.3.0" }
+        : item,
+    );
+    data.deployments = [
+      { id: "dep-fresh", agentId: "node-us-2", appKey: telegramAppKey, appVersion: "1.1.0", state: "running", operation: "install", deleteData: false, createdAt: "2026-09-11T00:00:00Z", updatedAt: "2026-09-11T00:00:00Z" },
+    ];
+    const { container } = renderStore(data);
+
+    // All apps tab must report offline CPA as offline, never "运行中".
+    const allAppsNav = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("所有应用"));
+    act(() => allAppsNav?.click());
+    const cpaCard = [...container.querySelectorAll('[role="article"]')].find((card) => card.querySelector("h3")?.textContent === "CPA");
+    expect(cpaCard?.textContent).toContain("1 台离线");
+    expect(cpaCard?.textContent).not.toContain("运行中");
+
+    // Locating a fresh-install task opens Telegram Bot's SuiteDetailView cleanly instead of "该套件已移除或暂不可用".
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="查看 1 个进行中的任务"]')?.click());
+    act(() => document.querySelector<HTMLButtonElement>('[aria-label="在 Telegram Bot 中定位 us-west-02"]')?.click());
+    expect(container.querySelector(".store-detail-workbench")).not.toBeNull();
+    expect(container.textContent).toContain("Telegram Bot");
+    expect(container.textContent).not.toContain("该套件已移除或暂不可用");
   });
 });

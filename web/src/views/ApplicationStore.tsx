@@ -93,6 +93,7 @@ export function ApplicationStore({
     () => allSuites.filter((suite) => suite.instances.length > 0 || suite.legacyInstances.length > 0),
     [allSuites],
   );
+  const installedSuiteByID = useMemo(() => new Map(installedSuites.map((suite) => [suite.id, suite])), [installedSuites]);
   const updateEntries = useMemo(
     () => buildStoreUpdateEntries(installedSuites, data, language),
     [installedSuites, data, language],
@@ -215,8 +216,14 @@ export function ApplicationStore({
     if (suite.counts.updatableTotal > 0) {
       return <span className="text-success">{copy(language, `${suite.counts.updatableTotal} 台可更新`, `${suite.counts.updatableTotal} updatable`)}</span>;
     }
+    if (suite.counts.offline > 0) {
+      return <span className="text-muted-foreground">{copy(language, `${suite.counts.offline} 台离线`, `${suite.counts.offline} offline`)}</span>;
+    }
+    if (suite.counts.running > 0) {
+      return <span>{copy(language, `运行中 · ${suite.counts.running} 台主机`, `Running · ${suite.counts.running} hosts`)}</span>;
+    }
     if (suite.counts.hosts > 0) {
-      return <span>{copy(language, `运行中 · ${suite.counts.hosts} 台主机`, `Running · ${suite.counts.hosts} hosts`)}</span>;
+      return <span className="text-muted-foreground">{copy(language, "未运行", "Stopped")}</span>;
     }
     return <span>{copy(language, "尚未安装", "Not installed")}</span>;
   };
@@ -499,19 +506,19 @@ export function ApplicationStore({
                 onInstall={onInstall}
                 query={search}
                 renderInstalledActions={(key) => {
-                  const suite = suiteByID.get(key);
+                  const suite = installedSuiteByID.get(key);
                   return suite ? catalogSuiteActions(suite, true) : null;
                 }}
                 renderInstalledDetailActions={(key) => {
-                  const suite = suiteByID.get(key);
+                  const suite = installedSuiteByID.get(key);
                   return suite ? catalogSuiteActions(suite, false) : null;
                 }}
                 renderInstalledStatus={(key) => {
-                  const suite = suiteByID.get(key);
+                  const suite = installedSuiteByID.get(key);
                   return suite ? catalogSuiteStatusText(suite) : null;
                 }}
                 renderInstalledSummary={(key) => {
-                  const suite = suiteByID.get(key);
+                  const suite = installedSuiteByID.get(key);
                   if (!suite) return null;
                   const versionText = suite.installedVersions.length === 1
                     ? suite.installedVersions[0]

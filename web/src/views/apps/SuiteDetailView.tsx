@@ -159,11 +159,15 @@ export function SuiteDetailView({
     return [...seen.values()].sort((left, right) => left.name.localeCompare(right.name, language));
   }, [tableInstances, siteByID, language]);
 
+  const effectiveSiteFilter = siteFilter !== "all" && availableSites.some((site) => site.id === siteFilter)
+    ? siteFilter
+    : "all";
+
   const filteredInstances = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     const matched = tableInstances.filter((instance) => {
       if (!instanceMatchesStatus(instance, statusFilter)) return false;
-      if (siteFilter !== "all" && instance.application.siteId !== siteFilter) return false;
+      if (effectiveSiteFilter !== "all" && instance.application.siteId !== effectiveSiteFilter) return false;
       if (!normalizedQuery) return true;
       const hostName = instance.agent?.name ?? instance.application.nodeId;
       const role = glivelaRoleLabel(instance.application.appKey, language);
@@ -179,7 +183,7 @@ export function SuiteDetailView({
       ].some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
     });
     return sortSuiteInstances(matched, sort);
-  }, [tableInstances, statusFilter, siteFilter, query, sort, language]);
+  }, [tableInstances, statusFilter, effectiveSiteFilter, query, sort, language]);
 
   const effectiveSelectedIds = selectedIds.filter((id) => eligibleIdSet.has(id));
   const visibleEligibleIds = filteredInstances
@@ -559,7 +563,7 @@ export function SuiteDetailView({
                         })),
                       ]}
                       size="sm"
-                      value={siteFilter}
+                      value={effectiveSiteFilter}
                     />
                   </div>
                 ) : null}

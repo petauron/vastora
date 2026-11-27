@@ -116,9 +116,9 @@ export function NodeCombobox({
       itemToStringValue={(option) => option.id}
       items={visibleOptions}
       onInputValueChange={setInputValue}
-      onOpenChange={(next) => {
+      onOpenChange={(next, eventDetails) => {
         setOpen(next);
-        if (next) setInputValue("");
+        if (next && eventDetails?.reason !== "input-change") setInputValue("");
       }}
       onValueChange={(option) => {
         if (option) {
@@ -139,16 +139,17 @@ export function NodeCombobox({
           aria-label={copy(language, "搜索并选择节点", "Search and select a node")}
           autoComplete="off"
           className={cn(
-            "h-9 w-full min-w-0 rounded-lg border border-input bg-transparent py-1 pr-9 pl-8 text-base outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-70 md:h-8 md:text-sm dark:bg-input/30",
+            "h-11 w-full min-w-0 rounded-lg border border-input bg-transparent py-1 pr-12 pl-8 text-base outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-70 md:h-8 md:pr-9 md:text-sm dark:bg-input/30",
             ariaInvalid && "border-destructive",
           )}
+          data-slot="input"
           disabled={disabled}
           id={id}
           placeholder={copy(language, "搜索节点名或站点…", "Search node name or site…")}
         />
         <Combobox.Trigger
           aria-label={copy(language, "打开节点列表", "Open node list")}
-          className="absolute inset-y-0 right-1 inline-flex w-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+          className="absolute inset-y-0 right-1 inline-flex w-11 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:w-8 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
           disabled={disabled}
         >
           <ChevronsUpDownIcon aria-hidden="true" className="size-4" />
@@ -180,7 +181,8 @@ export function NodeCombobox({
                     </div>
                   ) : null}
                   <Combobox.Item
-                    className="flex min-h-9 cursor-default items-center gap-2 rounded-md px-2.5 text-sm outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground"
+                    className="flex min-h-11 cursor-default items-center gap-2 rounded-md px-2.5 text-sm outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground md:min-h-9 [@media(pointer:coarse)]:min-h-11"
+                    data-slot="select-item"
                     value={option}
                   >
                     <span className="min-w-0 flex-1 truncate font-medium">{option.name}</span>
