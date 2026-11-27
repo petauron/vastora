@@ -458,7 +458,7 @@ function StoreInstalledCard({
       ? copy(language, `${suite.installedVersions.length} 个版本`, `${suite.installedVersions.length} versions`)
       : "";
 
-  let subtitle = "";
+  let subtitle: string;
   if (suite.kind === "glivela") {
     const ctrlCount = suite.controllerInstances.length;
     const nodeHosts = new Set(suite.nodeInstances.map((item) => item.application.nodeId)).size;
