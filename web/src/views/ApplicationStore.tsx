@@ -1,26 +1,65 @@
-import { useState, type ReactNode } from "react";
-import { ArrowUpCircleIcon, ArrowUpRightIcon, CircleArrowUpIcon, DownloadIcon, Grid2X2Icon, SearchIcon, Settings2Icon } from "lucide-react";
-import type { AppData, Application, AppView } from "@/types";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  ArrowUpRightIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  DownloadIcon,
+  Grid2X2Icon,
+  PackagePlusIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  Settings2Icon,
+} from "lucide-react";
+import type { AppData, Application, AppView, Deployment } from "@/types";
 import type { Language } from "@/translations";
+import { AppIcon } from "@/components/desktop/AppIcon";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { AppIcon } from "@/components/desktop/AppIcon";
-import { AppStore, AppStoreCard, AppStoreTile } from "./AppStore";
-import { AppInstallationSummary } from "./apps/AppInstallationSummary";
-import { planBatchUpgrade } from "./apps/BatchUpgradeSheet";
-import { ApplicationStatus } from "./apps/InstalledApplicationPrimitives";
-import { eligibleAppNodes, installBlocker, localized } from "./appAccess";
-import { catalogInstallBlocked, copy } from "./shared";
+import { AppStore, AppStoreTile } from "./AppStore";
+import { eligibleAppNodes, localized } from "./appAccess";
+import { daylightAppKey, isDaylightCatalogApp } from "./daylight";
 import type { InstalledAppGroup, InstalledAppInstance } from "./installed-apps-model";
-import { applicationLaunchURL, isBackgroundApplication } from "./applicationLaunch";
-import { GlivelaStoreCard, glivelaAppKeys, glivelaMatches, isGlivelaCatalogApp } from "./GlivelaStoreCard";
+import { catalogInstallBlocked, copy } from "./shared";
+import { StoreInstalledHome } from "./apps/StoreInstalledHome";
+import { SuiteDetailView } from "./apps/SuiteDetailView";
+import {
+  buildStoreSuites,
+  buildStoreUpdateEntries,
+  isGlivelaCatalogApp,
+  type StoreSuite,
+  type SuiteStatusFilter,
+} from "./apps/store-suites-model";
 
-import { DaylightStoreCard, daylightMatches } from "./DaylightStoreCard";
-import { isDaylightAppKey, isDaylightCatalogApp } from "./daylight";
+type Section = "installed" | "all";
 
-type Section = "installed" | "all" | "updates";
-export function ApplicationStore({ data, groups, language, onInstall, onOpen, onManage, onUpgrade, onBatchUpgrade, submittingUpgradeID, activeTasksControl, onSettings }: {
+type StoreRoute =
+  | { kind: "section"; section: Section }
+  | { kind: "detail"; suiteId: string; origin: Section; initialStatus?: SuiteStatusFilter; initialQuery?: string; detailKey: number };
+
+export type StoreNavigationTarget = {
+  suiteId: string;
+  statusFilter?: SuiteStatusFilter;
+  query?: string;
+  nonce: number;
+};
+
+export function ApplicationStore({
+  data,
+  groups,
+  language,
+  onInstall,
+  onOpen,
+  onManage,
+  onUpgrade,
+  onBatchUpgrade,
+  onRecoverTask,
+  onRefresh,
+  refreshing = false,
+  submittingUpgradeID,
+  activeTasksControl,
+  navigationTarget,
+  onSettings,
+}: {
   data: AppData;
   groups: InstalledAppGroup[];
   language: Language;
@@ -28,82 +67,477 @@ export function ApplicationStore({ data, groups, language, onInstall, onOpen, on
   onOpen: (key: string) => void;
   onManage: (application: Application) => void;
   onUpgrade: (application: Application) => void;
-  onBatchUpgrade?: (title: string, instances: InstalledAppInstance[]) => void;
+  onBatchUpgrade?: (title: string, instances: InstalledAppInstance[], initialSelectedIds?: string[]) => void;
+  onRecoverTask?: (deployment: Deployment) => void;
+  onRefresh?: () => void;
+  refreshing?: boolean;
   submittingUpgradeID?: string | null;
   activeTasksControl?: ReactNode;
+  navigationTarget?: StoreNavigationTarget | null;
   onSettings: () => void;
 }) {
-  const [section, setSection] = useState<Section>(() => groups.length ? "installed" : "all");
+  const [navState, setNavState] = useState<{ entries: StoreRoute[]; index: number; nonce: number }>(() => ({
+    entries: [{ kind: "section", section: groups.length > 0 ? "installed" : "all" }],
+    index: 0,
+    nonce: 1,
+  }));
   const [query, setQuery] = useState("");
-  const [managedGroupKey, setManagedGroupKey] = useState<string | null>(null);
-  const glivelaGroups = groups.filter((group) => glivelaAppKeys.has(group.appKey));
-  const daylightGroups = groups.filter((group) => isDaylightAppKey(group.appKey));
-  const otherGroups = groups.filter((group) => !glivelaAppKeys.has(group.appKey) && !isDaylightAppKey(group.appKey));
+
+  const currentRoute = navState.entries[navState.index] ?? navState.entries[0];
+  const activeSection: Section = currentRoute.kind === "section" ? currentRoute.section : currentRoute.origin;
+  const search = query.trim().toLocaleLowerCase();
+
+  const allSuites = useMemo(() => buildStoreSuites(data, groups, language), [data, groups, language]);
+  const suiteByID = useMemo(() => new Map(allSuites.map((suite) => [suite.id, suite])), [allSuites]);
+  const installedSuites = useMemo(
+    () => allSuites.filter((suite) => suite.instances.length > 0 || suite.legacyInstances.length > 0),
+    [allSuites],
+  );
+  const updateEntries = useMemo(
+    () => buildStoreUpdateEntries(installedSuites, data, language),
+    [installedSuites, data, language],
+  );
+  const updatableSuiteCount = useMemo(
+    () => new Set(updateEntries.map((entry) => entry.suiteId)).size,
+    [updateEntries],
+  );
+
+  const filteredInstalledSuites = useMemo(
+    () => (search ? installedSuites.filter((suite) => suite.searchText.includes(search)) : installedSuites),
+    [installedSuites, search],
+  );
+  const filteredUpdateEntries = useMemo(
+    () => (search ? updateEntries.filter((entry) => entry.suite.searchText.includes(search) || entry.title.toLocaleLowerCase().includes(search)) : updateEntries),
+    [updateEntries, search],
+  );
+
   const glivelaCatalog = data.apps.filter(isGlivelaCatalogApp);
   const daylightCatalog = data.apps.filter(isDaylightCatalogApp);
   const otherCatalog = data.apps.filter((app) => !isGlivelaCatalogApp(app) && !isDaylightCatalogApp(app));
-  const updates = otherGroups.filter((group) => group.instances.some((instance) => instance.application.updateAvailable));
-  const glivelaHasUpdates = glivelaGroups.some((group) => group.instances.some((instance) => instance.application.updateAvailable));
-  const daylightHasUpdates = daylightGroups.some((group) => group.instances.some((instance) => instance.application.updateAvailable));
-  const search = query.trim().toLocaleLowerCase();
-  const name = (group: InstalledAppGroup) => group.app ? localized(group.app, language, "name") : group.instances[0].application.name;
-  const shown = (section === "updates" ? updates : otherGroups).filter((group) => !search || [name(group), group.appKey, group.app ? localized(group.app, language, "description") : ""].some((value) => value.toLocaleLowerCase().includes(search)));
-  const matchingCatalog = otherCatalog.filter((app) => !search || [localized(app, language, "name"), localized(app, language, "description"), app.sourceId, app.key].some((value) => value.toLocaleLowerCase().includes(search)));
-  const showGlivela = glivelaMatches(search, data, glivelaGroups, language) && (section === "all" ? glivelaCatalog.length > 0 : section === "updates" ? glivelaHasUpdates : glivelaGroups.length > 0);
-  const showDaylight = daylightMatches(search, data, daylightGroups, language) && (section === "all" ? daylightCatalog.length > 0 : section === "updates" ? daylightHasUpdates : daylightGroups.length > 0);
-  const shownCount = (section === "all" ? matchingCatalog.length : shown.length) + Number(showGlivela) + Number(showDaylight);
-  const managedGroup = groups.find((group) => group.id === managedGroupKey);
-  const managedApp = managedGroup?.app;
-  const managedBatch = managedGroup && onBatchUpgrade && managedGroup.instances.length > 1
-    ? planBatchUpgrade(name(managedGroup), managedGroup.instances, data, language)
-    : null;
-  const canInstallMore = managedApp && !catalogInstallBlocked(managedApp) && eligibleAppNodes(data, managedApp.key).length > 0;
-  const sections = [
-    { id: "installed" as const, icon: DownloadIcon, label: copy(language, "已安装", "Installed"), count: otherGroups.length + Number(glivelaGroups.length > 0) + Number(daylightGroups.length > 0) },
-    { id: "all" as const, icon: Grid2X2Icon, label: copy(language, "所有应用", "All apps"), count: otherCatalog.length + Number(glivelaCatalog.length > 0) + Number(daylightCatalog.length > 0) },
-    { id: "updates" as const, icon: ArrowUpCircleIcon, label: copy(language, "可更新", "Updates"), count: updates.length + Number(glivelaHasUpdates) + Number(daylightHasUpdates) },
-  ];
-  const glivelaCard = showGlivela ? <GlivelaStoreCard data={data} groups={glivelaGroups} language={language} onInstall={onInstall} onOpen={onOpen} onManage={onManage} onUpgrade={onUpgrade} onBatchUpgrade={onBatchUpgrade} submittingUpgradeID={submittingUpgradeID} /> : null;
-  const daylightCard = showDaylight ? <DaylightStoreCard data={data} groups={daylightGroups} language={language} onInstall={onInstall} onOpen={onOpen} onManage={onManage} onUpgrade={onUpgrade} onBatchUpgrade={onBatchUpgrade} submittingUpgradeID={submittingUpgradeID} /> : null;
-  const actions = (group: InstalledAppGroup, compact = false) => {
-    const url = applicationLaunchURL(data, group.appKey);
-    const background = isBackgroundApplication(group.app);
-    const showUpdate = section === "updates" && group.instances.some((instance) => instance.application.updateAvailable);
-    const openVariant = showUpdate ? "outline" : "default";
-    const actionSize = compact ? "sm" : "default";
-    const openAction = !background && !(compact && showUpdate) ? url
-      ? <Button nativeButton={false} render={<a href={url} target="_blank" rel="noreferrer" />} aria-label={copy(language, `在新标签页打开 ${name(group)}`, `Open ${name(group)} in a new tab`)} size={actionSize} variant={openVariant}>{copy(language, "打开", "Open")}<ArrowUpRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
-      : <Button onClick={() => onOpen(group.appKey)} size={actionSize} variant={openVariant}>{copy(language, "打开", "Open")}</Button> : null;
-    const manageAction = !compact || background || showUpdate ? <Button aria-label={copy(language, `${showUpdate ? "查看更新" : "管理"} ${name(group)}`, `${showUpdate ? "View updates for" : "Manage"} ${name(group)}`)} onClick={() => setManagedGroupKey(group.id)} size={actionSize} variant={background || showUpdate ? "default" : "outline"}>{showUpdate ? copy(language, "查看更新", "View updates") : copy(language, "管理", "Manage")}</Button> : null;
-    return <div className="flex flex-wrap gap-2">{showUpdate ? <>{openAction}{manageAction}</> : <>{manageAction}{openAction}</>}</div>;
+  const totalCatalogCount = otherCatalog.length + Number(glivelaCatalog.length > 0) + Number(daylightCatalog.length > 0);
+  const matchingOtherCatalog = otherCatalog.filter((app) =>
+    !search || [localized(app, language, "name"), localized(app, language, "description"), app.sourceId, app.key]
+      .some((value) => value.toLocaleLowerCase().includes(search)),
+  );
+  const glivelaSuite = suiteByID.get("vastora-official/meridian");
+  const daylightSuite = suiteByID.get(daylightAppKey);
+  const showGlivelaInCatalog = glivelaCatalog.length > 0 && Boolean(glivelaSuite) && (!search || glivelaSuite!.searchText.includes(search));
+  const showDaylightInCatalog = daylightCatalog.length > 0 && Boolean(daylightSuite) && (!search || daylightSuite!.searchText.includes(search));
+  const catalogShownCount = matchingOtherCatalog.length + Number(showGlivelaInCatalog) + Number(showDaylightInCatalog);
+
+  const pushRoute = (next: StoreRoute) => {
+    setNavState((current) => {
+      const head = current.entries[current.index];
+      if (
+        head
+        && head.kind === next.kind
+        && (head.kind === "section"
+          ? next.kind === "section" && head.section === next.section
+          : next.kind === "detail"
+            && head.suiteId === next.suiteId
+            && head.initialStatus === next.initialStatus
+            && head.initialQuery === next.initialQuery)
+      ) {
+        return current;
+      }
+      const sliced = current.entries.slice(0, current.index + 1);
+      const nextEntries = [...sliced, next];
+      return {
+        entries: nextEntries,
+        index: nextEntries.length - 1,
+        nonce: current.nonce + 1,
+      };
+    });
   };
-  return <div className="store-layout">
-    <nav aria-label={copy(language, "应用商店分类", "App Store categories")} className="store-navigation">
-      <div className="flex gap-1 md:flex-col">{sections.map(({ id, icon: Icon, label, count }) => <Button aria-current={section === id ? "page" : undefined} className="store-navigation-item" key={id} onClick={() => setSection(id)} variant="ghost"><Icon /><span>{label}</span><span className="ml-auto text-xs tabular-nums opacity-60">{count}</span></Button>)}</div>
-      <Button aria-label={copy(language, "目录设置", "Catalog settings")} className="store-catalog-settings mt-auto justify-start gap-3" onClick={onSettings} variant="ghost"><Settings2Icon /><span>{copy(language, "目录设置", "Catalog settings")}</span></Button>
-    </nav>
-    <div className="store-content">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div><h1 className="text-xl font-semibold tracking-tight">{sections.find((item) => item.id === section)!.label}</h1><p className="mt-1 text-xs text-muted-foreground" role="status">{copy(language, `${shownCount} 个应用`, `${shownCount} applications`)}</p></div>
-        <div className="flex flex-wrap items-center gap-2">
+
+  const navigateSection = (section: Section) => {
+    pushRoute({ kind: "section", section });
+  };
+
+  const openDetail = (suiteId: string, statusFilter?: SuiteStatusFilter, initialQuery?: string, originOverride?: Section) => {
+    setNavState((current) => {
+      const nextNonce = current.nonce + 1;
+      const head = current.entries[current.index];
+      const fallbackOrigin: Section = head ? (head.kind === "detail" ? head.origin : head.section) : "installed";
+      const nextRoute: StoreRoute = {
+        kind: "detail",
+        suiteId,
+        origin: originOverride ?? fallbackOrigin,
+        initialStatus: statusFilter,
+        initialQuery,
+        detailKey: nextNonce,
+      };
+      const sliced = current.entries.slice(0, current.index + 1);
+      const nextEntries = [...sliced, nextRoute];
+      return {
+        entries: nextEntries,
+        index: nextEntries.length - 1,
+        nonce: nextNonce,
+      };
+    });
+  };
+
+  useEffect(() => {
+    if (!navigationTarget) return;
+    setNavState((current) => {
+      const nextNonce = current.nonce + 1;
+      const sliced = current.entries.slice(0, current.index + 1);
+      const nextEntries: StoreRoute[] = [
+        ...sliced,
+        {
+          kind: "detail",
+          suiteId: navigationTarget.suiteId,
+          origin: "installed",
+          initialStatus: navigationTarget.statusFilter,
+          initialQuery: navigationTarget.query,
+          detailKey: nextNonce,
+        },
+      ];
+      return {
+        entries: nextEntries,
+        index: nextEntries.length - 1,
+        nonce: nextNonce,
+      };
+    });
+  }, [navigationTarget]);
+
+  const canGoBack = navState.index > 0;
+  const canGoForward = navState.index < navState.entries.length - 1;
+  const activeDetailSuite = currentRoute.kind === "detail" ? suiteByID.get(currentRoute.suiteId) : undefined;
+
+  const catalogSuiteStatusText = (suite: StoreSuite) => {
+    if (suite.counts.attention > 0) {
+      return <span className="text-destructive">{copy(language, `${suite.counts.attention} 台需处理`, `${suite.counts.attention} need attention`)}</span>;
+    }
+    if (suite.counts.progress > 0) {
+      return <span>{copy(language, `${suite.counts.progress} 台处理中`, `${suite.counts.progress} in progress`)}</span>;
+    }
+    if (suite.counts.updatableTotal > 0) {
+      return <span className="text-success">{copy(language, `${suite.counts.updatableTotal} 台可更新`, `${suite.counts.updatableTotal} updatable`)}</span>;
+    }
+    if (suite.counts.hosts > 0) {
+      return <span>{copy(language, `运行中 · ${suite.counts.hosts} 台主机`, `Running · ${suite.counts.hosts} hosts`)}</span>;
+    }
+    return <span>{copy(language, "尚未安装", "Not installed")}</span>;
+  };
+
+  const catalogSuiteActions = (suite: StoreSuite, compact = false) => {
+    const actionSize = compact ? "sm" : "default";
+    const hasOpen = !suite.background && Boolean(suite.launchUrl || suite.canOpenWorkspace);
+    const manageButton = (
+      <Button
+        aria-label={copy(language, `管理 ${suite.name}`, `Manage ${suite.name}`)}
+        onClick={() => openDetail(suite.id, undefined, undefined, "all")}
+        size={actionSize}
+        variant={hasOpen ? "outline" : "default"}
+      >
+        {copy(language, "管理", "Manage")}
+      </Button>
+    );
+    const openButton = hasOpen
+      ? suite.launchUrl
+        ? (
+          <Button
+            aria-label={copy(language, `在新标签页打开 ${suite.name}`, `Open ${suite.name} in a new tab`)}
+            nativeButton={false}
+            render={<a href={suite.launchUrl} rel="noreferrer" target="_blank" />}
+            size={actionSize}
+            variant="default"
+          >
+            {copy(language, "打开", "Open")}
+            <ArrowUpRightIcon aria-hidden="true" data-icon="inline-end" />
+          </Button>
+        )
+        : suite.openTargetKey
+          ? <Button onClick={() => onOpen(suite.openTargetKey!)} size={actionSize} variant="default">{copy(language, "打开", "Open")}</Button>
+          : null
+      : null;
+
+    return <div className="flex flex-wrap gap-2">{manageButton}{openButton}</div>;
+  };
+
+  const glivelaCatalogTile = showGlivelaInCatalog && glivelaSuite ? (
+    <AppStoreTile
+      action={
+        <div className="flex flex-wrap gap-2">
+          <Button
+            aria-label={copy(language, "管理 Glivela", "Manage Glivela")}
+            onClick={() => openDetail(glivelaSuite.id, undefined, undefined, "all")}
+            size="sm"
+            variant={glivelaSuite.canOpenWorkspace ? "outline" : "default"}
+          >
+            {copy(language, "管理", "Manage")}
+          </Button>
+          {glivelaSuite.canOpenWorkspace && glivelaSuite.openTargetKey ? (
+            <Button
+              aria-label={copy(language, "打开 Glivela", "Open Glivela")}
+              onClick={() => onOpen(glivelaSuite.openTargetKey!)}
+              size="sm"
+            >
+              {copy(language, "打开", "Open")}
+            </Button>
+          ) : null}
+        </div>
+      }
+      appKey={glivelaSuite.appKey}
+      language={language}
+      meta={
+        glivelaSuite.instances.length > 0
+          ? catalogSuiteStatusText(glivelaSuite)
+          : copy(language, "控制端与节点端 · 尚未安装", "Controller & nodes · Not installed")
+      }
+      name="Glivela"
+      onDetails={() => openDetail(glivelaSuite.id, undefined, undefined, "all")}
+    />
+  ) : null;
+
+  const daylightCatalogTile = showDaylightInCatalog && daylightSuite ? (() => {
+    const officialDaylight = daylightSuite.catalogApp;
+    const canInstall = Boolean(officialDaylight && !catalogInstallBlocked(officialDaylight) && eligibleAppNodes(data, officialDaylight.key).length > 0);
+    return (
+      <AppStoreTile
+        action={
+          daylightSuite.instances.length > 0 ? catalogSuiteActions(daylightSuite, true) : (
+            <div className="flex flex-wrap gap-2">
+              {officialDaylight ? (
+                <Button
+                  aria-label={copy(language, "安装 Daylight", "Install Daylight")}
+                  disabled={!canInstall}
+                  onClick={() => onInstall(officialDaylight)}
+                  size="sm"
+                  variant="secondary"
+                >
+                  <PackagePlusIcon aria-hidden="true" data-icon="inline-start" />
+                  {copy(language, "安装", "Install")}
+                </Button>
+              ) : null}
+              <Button
+                aria-label={copy(language, "管理 Daylight", "Manage Daylight")}
+                onClick={() => openDetail(daylightSuite.id, undefined, undefined, "all")}
+                size="sm"
+                variant="outline"
+              >
+                {copy(language, "管理", "Manage")}
+              </Button>
+            </div>
+          )
+        }
+        appKey={daylightSuite.appKey}
+        language={language}
+        meta={daylightSuite.instances.length > 0 ? catalogSuiteStatusText(daylightSuite) : daylightSuite.description}
+        name="Daylight"
+        onDetails={() => openDetail(daylightSuite.id, undefined, undefined, "all")}
+      />
+    );
+  })() : null;
+
+  return (
+    <div className="store-shell">
+      {/* Synology-style Unified Top Command Bar */}
+      <div className="store-topbar">
+        <div className="store-topbar-nav">
+          <Button
+            aria-label={copy(language, "返回上一页", "Go back")}
+            disabled={!canGoBack}
+            onClick={() => setNavState((current) => ({ ...current, index: Math.max(0, current.index - 1) }))}
+            size="icon-sm"
+            variant="ghost"
+          >
+            <ChevronLeftIcon aria-hidden="true" />
+          </Button>
+          <Button
+            aria-label={copy(language, "前进", "Go forward")}
+            disabled={!canGoForward}
+            onClick={() => setNavState((current) => ({ ...current, index: Math.min(current.entries.length - 1, current.index + 1) }))}
+            size="icon-sm"
+            variant="ghost"
+          >
+            <ChevronRightIcon aria-hidden="true" />
+          </Button>
+          {onRefresh ? (
+            <Button
+              aria-label={copy(language, "刷新应用商店", "Refresh App Store")}
+              disabled={refreshing}
+              onClick={onRefresh}
+              size="icon-sm"
+              variant="ghost"
+            >
+              <RefreshCwIcon aria-hidden="true" className={refreshing ? "animate-spin motion-reduce:animate-none" : undefined} />
+            </Button>
+          ) : null}
+        </div>
+
+        <InputGroup className="store-topbar-search">
+          <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
+          <InputGroupInput
+            aria-label={copy(language, "搜索应用商店", "Search App Store")}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setQuery(nextValue);
+              if (nextValue.trim() && currentRoute.kind === "detail") {
+                navigateSection(activeSection);
+              }
+            }}
+            placeholder={copy(language, "搜索套件、节点或站点…", "Search apps, hosts, or sites…")}
+            type="search"
+            value={query}
+          />
+        </InputGroup>
+
+        <div className="store-topbar-actions">
           {activeTasksControl}
-          <InputGroup className="w-full sm:w-64"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={copy(language, "搜索应用商店", "Search App Store")} placeholder={copy(language, "搜索应用…", "Search apps…")} type="search" value={query} onChange={(event) => setQuery(event.target.value)} /></InputGroup>
+          <Button
+            aria-label={copy(language, "目录设置", "Catalog settings")}
+            className="store-catalog-settings shrink-0"
+            onClick={onSettings}
+            size="sm"
+            variant="outline"
+          >
+            <Settings2Icon aria-hidden="true" data-icon="inline-start" />
+            <span>{copy(language, "目录设置", "Catalog settings")}</span>
+          </Button>
         </div>
-      </header>
-      {section === "all" ? <AppStore data={data} language={language} onInstall={onInstall} query={search} hideApp={(app) => isGlivelaCatalogApp(app) || isDaylightCatalogApp(app)} extraCard={<>{glivelaCard}{daylightCard}</>} renderInstalledStatus={(key) => { const group = groups.find((value) => value.appKey === key); return group ? <AppInstallationSummary group={group} language={language} compact /> : null; }} renderInstalledDetailActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group) : null; }} renderInstalledSummary={(key) => { const group = groups.find((value) => value.appKey === key); return group ? <AppInstallationSummary group={group} language={language} /> : null; }} renderInstalledActions={(key) => { const group = groups.find((value) => value.appKey === key); return group ? actions(group, true) : null; }} /> : <div className="store-app-grid">{glivelaCard}{daylightCard}{shown.map((group) => group.app
-        ? <AppStoreCard key={group.id} app={group.app} language={language} installedCount={group.instances.length} status={<AppInstallationSummary group={group} language={language} compact />} detailActions={actions(group)} summary={<AppInstallationSummary group={group} language={language} />} canInstall={false} blocker="" onInstall={onInstall} actions={actions(group, true)} />
-        : <AppStoreTile key={group.id} appKey={group.appKey} name={name(group)} language={language} meta={copy(language, "已安装 · 已从目录移除", "Installed · unavailable in catalog")} onDetails={() => setManagedGroupKey(group.id)} action={actions(group, true)} />)}</div>}
-      {(section === "all" ? !shownCount && Boolean(search) : !shownCount) ? <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-5 py-14 text-center"><AppIcon appKey="apps" className="size-12" /><p className="text-sm text-muted-foreground">{search ? copy(language, "没有匹配的应用", "No matching apps") : section === "updates" ? copy(language, "当前没有可用的应用更新", "No app updates available") : copy(language, "还没有安装应用", "No apps installed")}</p><Button onClick={() => { if (search) setQuery(""); else setSection("all"); }} variant="outline">{search ? copy(language, "清除搜索", "Clear search") : copy(language, "浏览所有应用", "Browse all apps")}</Button></div> : null}
+      </div>
+
+      {/* Main Split: 2-Item Sidebar + Content / Workbench */}
+      <div className="store-layout">
+        <nav aria-label={copy(language, "应用商店分类", "App Store categories")} className="store-navigation">
+          <div className="flex gap-1 md:flex-col">
+            <Button
+              aria-current={activeSection === "installed" ? "page" : undefined}
+              className="store-navigation-item"
+              onClick={() => navigateSection("installed")}
+              variant="ghost"
+            >
+              <DownloadIcon aria-hidden="true" />
+              <span>{copy(language, "已安装", "Installed")}</span>
+              {updatableSuiteCount > 0 ? (
+                <span
+                  aria-label={copy(language, `${updatableSuiteCount} 个套件有可用更新`, `${updatableSuiteCount} apps have updates`)}
+                  className="store-nav-badge-update ml-auto tabular-nums"
+                >
+                  {updatableSuiteCount}
+                </span>
+              ) : (
+                <span className="ml-auto text-xs tabular-nums opacity-60">{installedSuites.length}</span>
+              )}
+            </Button>
+
+            <Button
+              aria-current={activeSection === "all" ? "page" : undefined}
+              className="store-navigation-item"
+              onClick={() => navigateSection("all")}
+              variant="ghost"
+            >
+              <Grid2X2Icon aria-hidden="true" />
+              <span>{copy(language, "所有应用", "All apps")}</span>
+              <span className="ml-auto text-xs tabular-nums opacity-60">{totalCatalogCount}</span>
+            </Button>
+          </div>
+        </nav>
+
+        <div className="store-content">
+          {currentRoute.kind === "detail" ? (
+            activeDetailSuite ? (
+              <SuiteDetailView
+                data={data}
+                initialQuery={currentRoute.initialQuery}
+                initialStatus={currentRoute.initialStatus}
+                key={`${activeDetailSuite.id}:${currentRoute.detailKey}`}
+                language={language}
+                onBatchUpgrade={onBatchUpgrade}
+                onInstall={onInstall}
+                onManage={onManage}
+                onOpen={onOpen}
+                onRecoverTask={onRecoverTask}
+                onUpgrade={onUpgrade}
+                submittingUpgradeID={submittingUpgradeID}
+                suite={activeDetailSuite}
+              />
+            ) : (
+              <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-5 py-14 text-center">
+                <AppIcon appKey="apps" className="size-12" />
+                <p className="text-sm text-muted-foreground">{copy(language, "该套件已移除或暂不可用", "This app is no longer installed or available")}</p>
+                <Button onClick={() => navigateSection("installed")} variant="outline">
+                  {copy(language, "返回已安装", "Back to Installed")}
+                </Button>
+              </div>
+            )
+          ) : currentRoute.section === "installed" ? (
+            <StoreInstalledHome
+              data={data}
+              installedSuites={filteredInstalledSuites}
+              language={language}
+              onBatchUpgrade={onBatchUpgrade}
+              onBrowseAll={() => navigateSection("all")}
+              onClearSearch={() => setQuery("")}
+              onManageInstance={onManage}
+              onOpenApp={onOpen}
+              onOpenDetail={(suiteId, statusFilter) => openDetail(suiteId, statusFilter, undefined, "installed")}
+              onRecoverTask={onRecoverTask}
+              onUpgrade={onUpgrade}
+              search={search}
+              submittingUpgradeID={submittingUpgradeID}
+              updateEntries={filteredUpdateEntries}
+            />
+          ) : (
+            <div className="flex flex-col gap-5">
+              <header className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                  <h1 className="text-base font-semibold tracking-tight">{copy(language, "所有应用", "All apps")}</h1>
+                  <p className="text-xs text-muted-foreground tabular-nums" role="status">
+                    {copy(language, `${catalogShownCount} 个应用`, `${catalogShownCount} applications`)}
+                  </p>
+                </div>
+              </header>
+
+              <AppStore
+                data={data}
+                extraCard={<>{glivelaCatalogTile}{daylightCatalogTile}</>}
+                hideApp={(app) => isGlivelaCatalogApp(app) || isDaylightCatalogApp(app)}
+                language={language}
+                onInstall={onInstall}
+                query={search}
+                renderInstalledActions={(key) => {
+                  const suite = suiteByID.get(key);
+                  return suite ? catalogSuiteActions(suite, true) : null;
+                }}
+                renderInstalledDetailActions={(key) => {
+                  const suite = suiteByID.get(key);
+                  return suite ? catalogSuiteActions(suite, false) : null;
+                }}
+                renderInstalledStatus={(key) => {
+                  const suite = suiteByID.get(key);
+                  return suite ? catalogSuiteStatusText(suite) : null;
+                }}
+                renderInstalledSummary={(key) => {
+                  const suite = suiteByID.get(key);
+                  if (!suite) return null;
+                  const versionText = suite.installedVersions.length === 1
+                    ? suite.installedVersions[0]
+                    : suite.installedVersions.length > 1
+                      ? copy(language, `${suite.installedVersions.length} 种版本`, `${suite.installedVersions.length} versions`)
+                      : "";
+                  return (
+                    <p className="text-xs text-muted-foreground tabular-nums">
+                      {copy(language, `已安装到 ${suite.counts.hosts} 台主机`, `Installed on ${suite.counts.hosts} host(s)`)}
+                      {versionText ? ` · ${versionText}` : ""}
+                    </p>
+                  );
+                }}
+              />
+
+              {!catalogShownCount && Boolean(search) ? (
+                <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-5 py-14 text-center">
+                  <AppIcon appKey="apps" className="size-12" />
+                  <p className="text-sm text-muted-foreground">{copy(language, "没有匹配的应用", "No matching apps")}</p>
+                  <Button onClick={() => setQuery("")} variant="outline">{copy(language, "清除搜索", "Clear search")}</Button>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
-    <Sheet open={Boolean(managedGroup)} onOpenChange={(open) => { if (!open) setManagedGroupKey(null); }}><SheetContent className="sm:max-w-xl">
-      {managedGroup ? <><SheetHeader><SheetTitle className="flex items-center gap-3"><AppIcon appKey={managedGroup.appKey} className="size-11" />{name(managedGroup)}</SheetTitle><SheetDescription>{copy(language, `已安装到 ${managedGroup.instances.length} 台主机，选择安装以配置、更新或卸载。`, `Installed on ${managedGroup.instances.length} hosts. Select an installation to configure, update, or uninstall.`)}</SheetDescription></SheetHeader><SheetBody>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <AppInstallationSummary group={managedGroup} language={language} />
-          {managedBatch && managedBatch.eligible.length > 0 ? <Button onClick={() => { setManagedGroupKey(null); onBatchUpgrade?.(name(managedGroup), managedGroup.instances); }} size="sm"><CircleArrowUpIcon aria-hidden="true" data-icon="inline-start" />{copy(language, `全部更新 (${managedBatch.eligible.length})`, `Update all (${managedBatch.eligible.length})`)}</Button> : null}
-        </div>
-        <div className="divide-y rounded-xl border">{managedGroup.instances.map((instance) => <div className="flex flex-wrap items-center gap-3 p-4" key={instance.application.id}><div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{instance.agent?.name ?? instance.application.nodeId}</p><p className="mt-1 text-xs text-muted-foreground">v{instance.application.installedVersion} · {instance.siteName}</p></div><ApplicationStatus instance={instance} language={language} submittingUpgradeID={submittingUpgradeID} onUpgrade={(application) => { setManagedGroupKey(null); onUpgrade(application); }} /><Button onClick={() => { setManagedGroupKey(null); onManage(instance.application); }} variant="outline" size="sm">{copy(language, "管理", "Manage")}</Button></div>)}</div>
-        {managedApp ? <div className="flex flex-col gap-2"><Button disabled={!canInstallMore} onClick={() => { setManagedGroupKey(null); onInstall(managedApp); }} variant="outline">{copy(language, "安装到其他主机", "Install on another host")}</Button>{!canInstallMore ? <p className="text-xs text-muted-foreground">{catalogInstallBlocked(managedApp) ? copy(language, "请先在控制面板刷新应用目录。", "Refresh the app catalog in Control Panel first.") : installBlocker(data, managedApp.key, language)}</p> : null}</div> : null}
-      </SheetBody></> : null}
-    </SheetContent></Sheet>
-  </div>;
+  );
 }

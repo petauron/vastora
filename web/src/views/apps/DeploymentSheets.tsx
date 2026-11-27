@@ -44,6 +44,7 @@ import {
   FieldSet,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { NodeCombobox } from "@/components/NodeCombobox";
 import { SecretConfigInput } from "@/components/SecretConfigInput";
 import { SelectControl } from "@/components/SelectControl";
 import {
@@ -160,17 +161,6 @@ export function DeploymentSheet({
         "所选节点暂时不可用，请重新选择。",
         "The selected node is unavailable. Select a node again.",
       );
-  const nodeOptions = [
-    {
-      value: "",
-      label: copy(language, "选择节点", "Select a node"),
-      disabled: true,
-    },
-    ...(retryInstall && editor?.agent && nodeUnavailable
-      ? [{ value: editor.agent.id, label: editor.agent.name, disabled: true }]
-      : []),
-    ...candidates.map((agent) => ({ value: agent.id, label: agent.name })),
-  ];
   const isThreeXUIInstall =
     editor?.operation === "install" &&
     editor.app.key === "vastora-official/3x-ui";
@@ -356,7 +346,7 @@ export function DeploymentSheet({
                 <FieldLabel htmlFor="deployment-agent">
                   {copy(language, "节点", "Node")}
                 </FieldLabel>
-                <SelectControl
+                <NodeCombobox
                   aria-describedby={
                     nodeUnavailable
                       ? "deployment-agent-error"
@@ -364,10 +354,13 @@ export function DeploymentSheet({
                   }
                   aria-invalid={nodeUnavailable}
                   disabled={editor?.operation !== "install" || retryInstall}
+                  fallbackLabel={retryInstall && editor?.agent && nodeUnavailable ? editor.agent.name : undefined}
                   id="deployment-agent"
+                  language={language}
+                  nodes={candidates}
                   onValueChange={(value) => { setAgentID(value); setBackupsConfirmed(false); }}
-                  options={nodeOptions}
                   required
+                  sites={data.sites}
                   value={agentID}
                 />
                 <FieldDescription id="deployment-agent-help">

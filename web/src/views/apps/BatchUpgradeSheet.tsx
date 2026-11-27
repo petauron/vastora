@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { CircleArrowUpIcon } from "lucide-react";
+import { CircleArrowUpIcon, SearchIcon } from "lucide-react";
 import type { AppData } from "../../App";
 import type { AgentView, AppView } from "../../types";
 import type { Language } from "../../translations";
+import { siteRegionCode } from "@/lib/regions";
 import { localized, packageNodeBlocker } from "../appAccess";
+import { isDaylightAppKey, daylightAppKey } from "../daylight";
 import { threeXUIAppKey, type InstalledAppInstance } from "../installed-apps-model";
 import { catalogInstallBlocked, copy } from "../shared";
+import { RegionFlag } from "../RegionFlag";
 import { capabilityLabel } from "./DeploymentSheets";
+import { AppIcon } from "@/components/desktop/AppIcon";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
@@ -43,6 +48,7 @@ export type BatchUpgradeSnapshot = {
 export type BatchUpgradeRequest = {
   title: string;
   applicationIds: string[];
+  initialSelectedIds?: string[];
   snapshots: Record<string, BatchUpgradeSnapshot>;
 };
 
@@ -50,6 +56,23 @@ export type BatchUpgradeOutcome = {
   queued: number;
   failed: Array<{ applicationId: string; name: string; error: string }>;
 };
+
+const batchGlivelaKeys = new Set([
+  "vastora-official/meridian",
+  "vastora-official/glivela-entry",
+  "vastora-official/glivela-node",
+  "vastora-official/glivela-dual",
+]);
+
+function batchSuiteGroupMeta(app: AppView, language: Language) {
+  if (batchGlivelaKeys.has(app.key)) {
+    return { suiteId: "vastora-official/meridian", name: "Glivela" };
+  }
+  if (isDaylightAppKey(app.key)) {
+    return { suiteId: daylightAppKey, name: "Daylight" };
+  }
+  return { suiteId: app.key, name: localized(app, language, "name") };
+}
 
 function recipeDisambiguator(appKey: string, app: AppView | undefined, language: Language) {
   const glivelaLabels: Record<string, [string, string]> = {
@@ -140,6 +163,7 @@ export function createBatchUpgradeRequest(
   title: string,
   instances: InstalledAppInstance[],
   data: AppData,
+  initialSelectedIds?: string[],
 ): BatchUpgradeRequest {
   const catalogByKey = new Map(data.apps.map((app) => [app.key, app]));
   const snapshots: Record<string, BatchUpgradeSnapshot> = {};
@@ -156,6 +180,7 @@ export function createBatchUpgradeRequest(
   return {
     title,
     applicationIds: updatable.map((instance) => instance.application.id),
+    initialSelectedIds: initialSelectedIds?.length ? [...initialSelectedIds] : undefined,
     snapshots,
   };
 }
@@ -181,6 +206,7 @@ export function BatchUpgradeSheet({
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [approvedCapabilities, setApprovedCapabilities] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [result, setResult] = useState<BatchUpgradeOutcome | null>(null);
@@ -195,13 +221,17 @@ export function BatchUpgradeSheet({
     [request, scopedInstances, data, language],
   );
   const catalogByKey = useMemo(() => new Map(data.apps.map((app) => [app.key, app])), [data.apps]);
+  const siteByID = useMemo(() => new Map(data.sites.map((site) => [site.id, site])), [data.sites]);
 
   useEffect(() => {
     if (!request) return;
     const initialInstances = request.applicationIds.map((id) => instancesByID.get(id)).filter((value): value is InstalledAppInstance => Boolean(value));
     const initialPlan = planBatchUpgrade(request.title, initialInstances, data, language);
-    setSelectedIds(initialPlan.eligible.map((item) => item.instance.application.id));
+    const eligibleIds = initialPlan.eligible.map((item) => item.instance.application.id);
+    const preselected = request.initialSelectedIds?.filter((id) => eligibleIds.includes(id)) ?? [];
+    setSelectedIds(preselected.length > 0 ? preselected : eligibleIds);
     setApprovedCapabilities([]);
+    setSearchQuery("");
     setBusy(false);
     setProgress(null);
     setResult(null);
@@ -243,6 +273,61 @@ export function BatchUpgradeSheet({
   const targetVersions = [...new Set(eligible.map((item) => `v${item.app.app.version}`))];
   const allSelected = eligible.length > 0 && chosen.length === eligible.length;
 
+  const siteChips = useMemo(() => {
+    const map = new Map<string, { siteId: string; siteName: string; regionCode: string; ids: string[] }>();
+    for (const target of eligible) {
+      const siteId = target.instance.application.siteId;
+      const site = siteByID.get(siteId);
+      const siteName = site?.name ?? target.instance.siteName;
+      const existing = map.get(siteId);
+      if (existing) existing.ids.push(target.instance.application.id);
+      else {
+        map.set(siteId, {
+          siteId,
+          siteName,
+          regionCode: site ? siteRegionCode(site) : siteRegionCode({ name: siteName }),
+          ids: [target.instance.application.id],
+        });
+      }
+    }
+    return [...map.values()].sort((left, right) => right.ids.length - left.ids.length || left.siteName.localeCompare(right.siteName, language));
+  }, [eligible, siteByID, language]);
+
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
+  const visibleEligible = useMemo(() => {
+    if (!normalizedSearch) return eligible;
+    return eligible.filter((item) => [
+      item.label,
+      item.agent.name,
+      item.instance.siteName,
+      localized(item.app, language, "name"),
+      item.app.key,
+    ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch)));
+  }, [eligible, normalizedSearch, language]);
+
+  const groupedEligible = useMemo(() => {
+    const groups = new Map<string, { suiteId: string; name: string; versions: Set<string>; items: BatchUpgradeTarget[] }>();
+    for (const item of visibleEligible) {
+      const meta = batchSuiteGroupMeta(item.app, language);
+      const existing = groups.get(meta.suiteId);
+      if (existing) {
+        existing.versions.add(`v${item.app.app.version}`);
+        existing.items.push(item);
+      } else {
+        groups.set(meta.suiteId, {
+          suiteId: meta.suiteId,
+          name: meta.name,
+          versions: new Set([`v${item.app.app.version}`]),
+          items: [item],
+        });
+      }
+    }
+    return [...groups.values()];
+  }, [visibleEligible, language]);
+
+  const showGroupHeaders = new Set(eligible.map((item) => batchSuiteGroupMeta(item.app, language).suiteId)).size > 1;
+  const showFilterControls = eligible.length > 5 || siteChips.length > 1;
+
   const updateSelection = (nextIds: string[]) => {
     const prevChosen = eligible.filter((item) => selectedIds.includes(item.instance.application.id));
     const nextChosen = eligible.filter((item) => nextIds.includes(item.instance.application.id));
@@ -260,6 +345,14 @@ export function BatchUpgradeSheet({
 
   const toggleAll = () => {
     updateSelection(allSelected ? [] : eligible.map((item) => item.instance.application.id));
+  };
+
+  const toggleSubset = (subsetIds: string[]) => {
+    const allInSubsetSelected = subsetIds.length > 0 && subsetIds.every((id) => selectedIds.includes(id));
+    const nextIds = allInSubsetSelected
+      ? selectedIds.filter((id) => !subsetIds.includes(id))
+      : [...new Set([...selectedIds, ...subsetIds])];
+    updateSelection(nextIds);
   };
 
   const toggleOne = (applicationId: string, checked: boolean) => {
@@ -308,9 +401,34 @@ export function BatchUpgradeSheet({
 
   const progressText = progress ? copy(language, `正在提交 ${progress.done}/${progress.total} 台…`, `Submitting ${progress.done}/${progress.total}…`) : "";
 
+  const renderTargetRow = ({ instance, app, label }: BatchUpgradeTarget) => {
+    const checked = selectedIds.includes(instance.application.id);
+    const id = `batch-target-${instance.application.id}`;
+    return (
+      <div className="flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-muted/40" key={instance.application.id}>
+        <Checkbox
+          aria-label={copy(language, `选择 ${label}`, `Select ${label}`)}
+          checked={checked}
+          disabled={busy}
+          id={id}
+          onCheckedChange={(value) => toggleOne(instance.application.id, Boolean(value))}
+        />
+        <div className="min-w-0 flex-1">
+          <FieldLabel className="block cursor-pointer truncate font-medium" htmlFor={id}>{label}</FieldLabel>
+          {siteChips.length > 1 ? (
+            <span className="block truncate text-[11px] text-muted-foreground">{instance.siteName}</span>
+          ) : null}
+        </div>
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+          v{instance.application.installedVersion} → v{app.app.version}
+        </span>
+      </div>
+    );
+  };
+
   return (
     <Sheet open={Boolean(request)} onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
-      <SheetContent className="sm:max-w-lg">
+      <SheetContent className="sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>{request ? copy(language, `批量更新 ${request.title}`, `Update ${request.title}`) : ""}</SheetTitle>
           <SheetDescription>
@@ -357,7 +475,7 @@ export function BatchUpgradeSheet({
 
             <FieldSet>
               <FieldLegend>{copy(language, "选择更新主机", "Select hosts to update")}</FieldLegend>
-              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span className="tabular-nums">{copy(language, `已选择 ${chosen.length}/${eligible.length} 台主机`, `${chosen.length} of ${eligible.length} host(s) selected`)}</span>
                 {eligible.length > 1 ? (
                   <Button disabled={busy} onClick={toggleAll} size="xs" type="button" variant="ghost">
@@ -365,28 +483,95 @@ export function BatchUpgradeSheet({
                   </Button>
                 ) : null}
               </div>
-              {eligible.length > 0 ? (
-                <div className="max-h-60 divide-y overflow-y-auto rounded-lg border">
-                  {eligible.map(({ instance, app, label }) => {
-                    const checked = selectedIds.includes(instance.application.id);
-                    const id = `batch-target-${instance.application.id}`;
-                    return (
-                      <div className="flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-muted/40" key={instance.application.id}>
-                        <Checkbox
-                          aria-label={copy(language, `选择 ${label}`, `Select ${label}`)}
-                          checked={checked}
-                          disabled={busy}
-                          id={id}
-                          onCheckedChange={(value) => toggleOne(instance.application.id, Boolean(value))}
-                        />
-                        <FieldLabel className="min-w-0 flex-1 cursor-pointer truncate font-medium" htmlFor={id}>{label}</FieldLabel>
-                        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                          v{instance.application.installedVersion} → v{app.app.version}
-                        </span>
-                      </div>
-                    );
-                  })}
+
+              {showFilterControls ? (
+                <div className="flex flex-col gap-2">
+                  <InputGroup>
+                    <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
+                    <InputGroupInput
+                      aria-label={copy(language, "筛选待更新主机", "Filter updatable hosts")}
+                      disabled={busy}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder={copy(language, "按主机、站点或套件筛选…", "Filter by host, site, or app…")}
+                      type="search"
+                      value={searchQuery}
+                    />
+                  </InputGroup>
+                  {siteChips.length > 1 ? (
+                    <div aria-label={copy(language, "按站点快捷勾选", "Quick-select by site")} className="flex flex-wrap items-center gap-1.5" role="group">
+                      {siteChips.map((chip) => {
+                        const selectedCount = chip.ids.filter((id) => selectedIds.includes(id)).length;
+                        const active = selectedCount === chip.ids.length;
+                        return (
+                          <button
+                            aria-pressed={active}
+                            className={`store-filter-chip ${active ? "store-filter-chip-active" : ""}`}
+                            disabled={busy}
+                            key={chip.siteId}
+                            onClick={() => toggleSubset(chip.ids)}
+                            type="button"
+                          >
+                            {chip.regionCode ? <RegionFlag code={chip.regionCode} language={language} /> : null}
+                            <span>{chip.siteName}</span>
+                            <span className="tabular-nums opacity-75">{selectedCount}/{chip.ids.length}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                 </div>
+              ) : null}
+
+              {eligible.length > 0 ? (
+                visibleEligible.length > 0 ? (
+                  <div className="max-h-[min(26rem,46svh)] overflow-y-auto rounded-lg border">
+                    {showGroupHeaders ? (
+                      <div className="divide-y">
+                        {groupedEligible.map((group) => {
+                          const groupIds = group.items.map((item) => item.instance.application.id);
+                          const selectedCount = groupIds.filter((id) => selectedIds.includes(id)).length;
+                          const allGroupSelected = selectedCount === groupIds.length;
+                          return (
+                            <div key={group.suiteId}>
+                              <div className="flex items-center justify-between gap-2 bg-muted/45 px-3 py-2 text-xs">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <AppIcon appKey={group.suiteId} className="size-4 shrink-0" />
+                                  <span className="truncate font-medium text-foreground">{group.name}</span>
+                                  <span className="shrink-0 text-muted-foreground tabular-nums">→ {[...group.versions].join(" / ")}</span>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-2">
+                                  <span className="text-muted-foreground tabular-nums">{selectedCount}/{groupIds.length}</span>
+                                  {groupIds.length > 1 ? (
+                                    <Button
+                                      disabled={busy}
+                                      onClick={() => toggleSubset(groupIds)}
+                                      size="xs"
+                                      type="button"
+                                      variant="ghost"
+                                    >
+                                      {allGroupSelected ? copy(language, "取消", "Clear") : copy(language, "全选", "All")}
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="divide-y">
+                                {group.items.map(renderTargetRow)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="divide-y">
+                        {visibleEligible.map(renderTargetRow)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="rounded-lg border border-dashed py-5 text-center text-xs text-muted-foreground">
+                    {copy(language, "没有匹配的待更新主机。", "No updatable hosts match your filter.")}
+                  </p>
+                )
               ) : (
                 <p className="text-sm text-muted-foreground">{copy(language, "当前没有可直接更新的在线主机。", "No online hosts are currently eligible to update.")}</p>
               )}

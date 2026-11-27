@@ -104,8 +104,8 @@ describe("application operation history", () => {
     const install = container.querySelector<HTMLButtonElement>('[aria-label="安装 探针"]');
     expect(install).not.toBeNull();
     act(() => install?.click());
-    const selectedNode = document.querySelector<HTMLButtonElement>('[role="dialog"] [role="combobox"]');
-    expect(selectedNode?.textContent).toContain("Edge Node C");
+    const selectedNode = document.querySelector<HTMLInputElement>('[role="dialog"] [role="combobox"]');
+    expect(selectedNode?.value).toContain("Edge Node C");
     expect(selectedNode?.disabled).toBe(false);
   });
 });

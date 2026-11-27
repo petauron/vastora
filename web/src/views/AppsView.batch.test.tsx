@@ -128,11 +128,12 @@ describe("batch application upgrades and stable task UI", () => {
     expect(batchButton).toBeDefined();
 
     act(() => batchButton!.click());
-    expect(document.body.textContent).toContain("批量更新 Senlun 探针");
-    expect(document.body.textContent).toContain("已自动跳过 1 台不可更新主机");
-    expect(document.body.textContent).toContain("Node Gamma");
-    expect(document.body.textContent).toContain("节点离线");
-    expect(document.body.textContent).not.toContain("Node Delta");
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("批量更新 Senlun 探针");
+    expect(dialog?.textContent).toContain("已自动跳过 1 台不可更新主机");
+    expect(dialog?.textContent).toContain("Node Gamma");
+    expect(dialog?.textContent).toContain("节点离线");
+    expect(dialog?.textContent).not.toContain("Node Delta");
 
     const submit = () => document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]');
     expect(submit()?.disabled).toBe(true);
