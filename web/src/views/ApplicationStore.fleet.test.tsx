@@ -197,7 +197,7 @@ describe("Synology-style App Store fleet UX", () => {
     expect(dialog?.textContent).toContain("日本-东京");
     expect(dialog?.textContent).toContain("美西-洛杉矶");
 
-    act(() => document.getElementById("batch-capability-native-services")?.click());
+    expect(document.getElementById("batch-capability-native-services")).toBeNull();
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]')?.click();
     });

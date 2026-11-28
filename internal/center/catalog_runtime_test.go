@@ -448,3 +448,213 @@ func TestCatalogRuntimeRenamedInstanceRetainsDeploymentHistory(t *testing.T) {
 		t.Fatal("renaming rewrote historical deployment evidence")
 	}
 }
+
+func TestCatalogRuntimeBuiltInPlatformCapabilitiesSkipManualApproval(t *testing.T) {
+	store, node, app := independentRuntimeStore(t)
+	ctx := context.Background()
+	app.ID = "glivela-entry"
+	app.Version = "0.2.0"
+	app.Images = nil
+	app.Artifacts = []catalog.Artifact{{Name: "bundle", OperatingSystem: "linux", Architecture: "amd64", URL: "https://example.com/bundle", SHA256: strings.Repeat("a", 64), Format: "raw"}}
+	app.Runtime = &catalog.RuntimeSpec{
+		Kind:                 "native",
+		Version:              2,
+		RequiredCapabilities: []string{"native-services", "root", "host-tcp-budget"},
+		NativeServices: &catalog.NativeServicesRuntime{
+			Users: []string{},
+			Services: []catalog.NativeService{{
+				Name:    "node",
+				Start:   "automatic",
+				Process: catalog.SystemdRuntime{Artifact: "bundle", Executable: "glivela", User: "root", Files: []catalog.ArtifactFile{{Path: "glivela", Executable: true}}},
+			}},
+		},
+	}
+	caps, _ := json.Marshal(NodeCapabilities{ExecutorVersions: map[string]int{"native": 2}, RuntimeCapabilities: []string{"native-services", "root", "host-tcp-budget", "shared-caddy"}})
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET capabilities_json=? WHERE id=?`, caps, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	seedIndependentPackage(t, store, app)
+	appKey := OfficialCatalogSourceID + "/" + app.ID
+
+	catalogApps, err := store.ListApps(ctx)
+	if err != nil || len(catalogApps) != 1 {
+		t.Fatalf("list catalog apps: %v %+v", err, catalogApps)
+	}
+	if len(catalogApps[0].ApprovalRequiredCapabilities) != 1 || catalogApps[0].ApprovalRequiredCapabilities[0] != "root" {
+		t.Fatalf("expected only root to require manual approval, got %+v", catalogApps[0].ApprovalRequiredCapabilities)
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Config: json.RawMessage(`{}`)}); err == nil || !strings.Contains(err.Error(), "approval required") {
+		t.Fatalf("missing root approval was accepted: %v", err)
+	}
+	extra := []string{"root", "devices"}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Config: json.RawMessage(`{}`), AuthorizedCapabilities: &extra}); err == nil || !strings.Contains(err.Error(), "extra capability authorizations") {
+		t.Fatalf("extra undeclared capability was accepted: %v", err)
+	}
+	onlyRoot := []string{"root"}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Config: json.RawMessage(`{}`), AuthorizedCapabilities: &onlyRoot}); err != nil {
+		t.Fatalf("root-only explicit approval rejected: %v", err)
+	}
+	task := claimTask(t, store, node)
+	if strings.Join(task.AuthorizedCapabilities, ",") != "host-tcp-budget,native-services,root" {
+		t.Fatalf("deployment task missing built-in platform capabilities: %+v", task.AuthorizedCapabilities)
+	}
+	receipt, _ := json.Marshal(map[string]any{"resources": map[string]any{"version": 1, "applicationId": task.ApplicationID, "appKey": task.AppKey, "taskId": task.ID, "runtime": "native", "runtimeVersion": 2, "packageVersion": app.Version, "packageRevision": app.PackageRevision, "manifestSha256": task.ManifestSHA256, "authorizedCapabilities": task.AuthorizedCapabilities, "state": "ready", "resources": []any{map[string]string{"kind": "unit", "logicalName": "node", "name": "vastora-pkg-glivela-node.service", "path": "/etc/systemd/system/vastora-pkg-glivela-node.service"}}}})
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", receipt, task.RequiredRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+
+	// Upgrading to a new version with the same root service requires no re-approval.
+	app.Version = "0.3.0"
+	app.PackageRevision = 2
+	seedIndependentPackage(t, store, app)
+	installed, err := store.ListApplications(ctx)
+	if err != nil || len(installed) != 1 || !installed[0].UpdateAvailable {
+		t.Fatalf("unexpected applications: %v %+v", err, installed)
+	}
+	if installed[0].UpgradeApprovalCapabilities == nil || len(*installed[0].UpgradeApprovalCapabilities) != 0 {
+		t.Fatalf("unchanged root upgrade unexpectedly required re-approval: %+v", installed[0].UpgradeApprovalCapabilities)
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err != nil {
+		t.Fatalf("unchanged native upgrade failed without manual re-approval: %v", err)
+	}
+	upgradeTask := claimTask(t, store, node)
+	if strings.Join(upgradeTask.AuthorizedCapabilities, ",") != "host-tcp-budget,native-services,root" {
+		t.Fatalf("upgrade task capabilities mismatch: %+v", upgradeTask.AuthorizedCapabilities)
+	}
+	receipt2, _ := json.Marshal(map[string]any{"resources": map[string]any{"version": 1, "applicationId": upgradeTask.ApplicationID, "appKey": upgradeTask.AppKey, "taskId": upgradeTask.ID, "runtime": "native", "runtimeVersion": 2, "packageVersion": app.Version, "packageRevision": app.PackageRevision, "manifestSha256": upgradeTask.ManifestSHA256, "authorizedCapabilities": upgradeTask.AuthorizedCapabilities, "state": "ready", "resources": []any{map[string]string{"kind": "unit", "logicalName": "node", "name": "vastora-pkg-glivela-node.service", "path": "/etc/systemd/system/vastora-pkg-glivela-node.service"}}}})
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, upgradeTask.ID, upgradeTask.Attempt, true, "", receipt2, upgradeTask.RequiredRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+
+	// Adding a second root service expands scope and requires re-approving root.
+	app.Version = "0.4.0"
+	app.PackageRevision = 3
+	app.Runtime.NativeServices.Services = append(app.Runtime.NativeServices.Services, catalog.NativeService{
+		Name:    "helper",
+		Start:   "automatic",
+		Process: catalog.SystemdRuntime{Artifact: "bundle", Executable: "glivela", User: "root", Files: []catalog.ArtifactFile{{Path: "glivela", Executable: true}}},
+	})
+	seedIndependentPackage(t, store, app)
+	installed, err = store.ListApplications(ctx)
+	if err != nil || len(installed) != 1 || installed[0].UpgradeApprovalCapabilities == nil || strings.Join(*installed[0].UpgradeApprovalCapabilities, ",") != "root" {
+		t.Fatalf("expanded native root scope did not require root re-approval: %+v", installed)
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err == nil || !strings.Contains(err.Error(), "approval required") {
+		t.Fatalf("expanded native root scope succeeded without re-approval: %v", err)
+	}
+
+	// Official native apps with only platform capabilities require zero checkboxes on install.
+	if isBuiltInPlatformCapability("community/third-party", "host-tcp-budget") {
+		t.Fatal("non-official package must not inherit official platform capability bypass")
+	}
+}
+
+func TestCatalogRuntimeUpgradeRemembersPriorApprovalUnlessScopeExpands(t *testing.T) {
+	store, node, app := independentRuntimeStore(t)
+	ctx := context.Background()
+	appKey := OfficialCatalogSourceID + "/" + app.ID
+
+	// Unprivileged packages persist [] (never JSON null) in authorized_capabilities_json.
+	unprivInstall, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Config: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var depGrants string
+	if err := store.db.QueryRowContext(ctx, `SELECT CAST(authorized_capabilities_json AS TEXT) FROM deployments WHERE id=?`, unprivInstall.ID).Scan(&depGrants); err != nil {
+		t.Fatal(err)
+	}
+	if depGrants != "[]" {
+		t.Fatalf("unprivileged deployment stored %q instead of []", depGrants)
+	}
+	confirmIndependentTask(t, store, node, claimTask(t, store, node))
+	var resGrants string
+	if err := store.db.QueryRowContext(ctx, `SELECT CAST(authorized_capabilities_json AS TEXT) FROM application_resources WHERE application_id=?`, unprivInstall.ApplicationID).Scan(&resGrants); err != nil {
+		t.Fatal(err)
+	}
+	if resGrants != "[]" {
+		t.Fatalf("unprivileged application_resources stored %q instead of []", resGrants)
+	}
+
+	// Upgrade into a GID-0-only root user ("1000:0") + host-network + read/write host-path mount.
+	app.PackageRevision = 2
+	app.Runtime.RequiredCapabilities = []string{"root", "host-network", "host-path"}
+	app.Runtime.Docker.Containers[0].User = "1000:0"
+	app.Runtime.Docker.Containers[0].HostNetwork = true
+	app.Runtime.Docker.Containers[0].Mounts = []catalog.Mount{{HostPath: "/var/log/demo", Target: "/logs", ReadOnly: false}}
+	seedIndependentPackage(t, store, app)
+
+	initialGrants := []string{"root", "host-network", "host-path"}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`), AuthorizedCapabilities: &initialGrants}); err != nil {
+		t.Fatal(err)
+	}
+	confirmIndependentTask(t, store, node, claimTask(t, store, node))
+
+	// Same capabilities with narrower read-only mount need no re-approval.
+	app.PackageRevision = 3
+	app.Runtime.Docker.Containers[0].Mounts = []catalog.Mount{{HostPath: "/var/log/demo", Target: "/logs", ReadOnly: true}}
+	seedIndependentPackage(t, store, app)
+	installed, err := store.ListApplications(ctx)
+	if err != nil || len(installed) != 1 || installed[0].UpgradeApprovalCapabilities == nil || len(*installed[0].UpgradeApprovalCapabilities) != 0 {
+		t.Fatalf("narrowed privilege scope unexpectedly required re-approval: %+v", installed)
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err != nil {
+		t.Fatalf("upgrade with unchanged/narrowed privileges failed: %v", err)
+	}
+	confirmIndependentTask(t, store, node, claimTask(t, store, node))
+
+	// Escalating from GID-0 ("1000:0") to UID-0+GID-0 ("0:0") requires re-approving root.
+	app.PackageRevision = 4
+	app.Runtime.Docker.Containers[0].User = "0:0"
+	seedIndependentPackage(t, store, app)
+	installed, err = store.ListApplications(ctx)
+	if err != nil || len(installed) != 1 || installed[0].UpgradeApprovalCapabilities == nil || strings.Join(*installed[0].UpgradeApprovalCapabilities, ",") != "root" {
+		t.Fatalf("UID-0 escalation from 1000:0 expected root re-approval, got %+v", installed)
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err == nil || !strings.Contains(err.Error(), "approval required") {
+		t.Fatalf("UID-0 escalation from 1000:0 accepted without approval: %v", err)
+	}
+	onlyRoot := []string{"root"}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`), AuthorizedCapabilities: &onlyRoot}); err != nil {
+		t.Fatalf("upgrade approving UID-0 escalation failed: %v", err)
+	}
+	confirmIndependentTask(t, store, node, claimTask(t, store, node))
+
+	// Adding a new host-path mount requires approving only host-path, not root or host-network.
+	app.PackageRevision = 5
+	app.Runtime.Docker.Containers[0].Mounts = append(app.Runtime.Docker.Containers[0].Mounts, catalog.Mount{HostPath: "/etc/demo", Target: "/etc/demo", ReadOnly: true})
+	seedIndependentPackage(t, store, app)
+	installed, err = store.ListApplications(ctx)
+	if err != nil || len(installed) != 1 || installed[0].UpgradeApprovalCapabilities == nil || strings.Join(*installed[0].UpgradeApprovalCapabilities, ",") != "host-path" {
+		t.Fatalf("expanded host-path scope expected only host-path approval, got %+v", installed)
+	}
+	if strings.Join(installed[0].UpgradePermissionDetails, ",") != "app: /etc/demo -> /etc/demo (read-only)" {
+		t.Fatalf("unexpected upgrade permission details: %+v", installed[0].UpgradePermissionDetails)
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err == nil || !strings.Contains(err.Error(), "approval required") {
+		t.Fatalf("expanded host-path mount accepted without approval: %v", err)
+	}
+	onlyNew := []string{"host-path"}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`), AuthorizedCapabilities: &onlyNew}); err != nil {
+		t.Fatalf("upgrade approving only expanded host-path failed: %v", err)
+	}
+	upgradedTask := claimTask(t, store, node)
+	if strings.Join(upgradedTask.AuthorizedCapabilities, ",") != "host-network,host-path,root" {
+		t.Fatalf("upgraded task grants mismatch: %+v", upgradedTask.AuthorizedCapabilities)
+	}
+
+	// Narrowing from 0:0 to 0:1000 needs no re-approval, then re-escalating to bare "root" requires root approval.
+	confirmIndependentTask(t, store, node, upgradedTask)
+	app.PackageRevision = 6
+	app.Runtime.Docker.Containers[0].User = "0:1000"
+	seedIndependentPackage(t, store, app)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err != nil {
+		t.Fatalf("narrowing 0:0 to 0:1000 unexpectedly required re-approval: %v", err)
+	}
+	confirmIndependentTask(t, store, node, claimTask(t, store, node))
+	app.PackageRevision = 7
+	app.Runtime.Docker.Containers[0].User = "root"
+	seedIndependentPackage(t, store, app)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err == nil || !strings.Contains(err.Error(), "approval required") {
+		t.Fatalf("GID-0 escalation from 0:1000 to bare root accepted without approval: %v", err)
+	}
+}

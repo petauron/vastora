@@ -1641,7 +1641,7 @@
                       "type": "string",
                       "minLength": 1
                     },
-                    "description": "Explicit administrator grants. Omission may retain existing grants, never authorize an expansion. Unknown or undeclared grants fail closed."
+                    "description": "Explicit administrator grants for privileged host capabilities. Built-in platform capabilities and unchanged previously approved upgrade grants do not require re-approval; new or expanded privileged scopes and unknown or undeclared grants fail closed."
                   },
                   "packageRevision": {
                     "type": "integer",
@@ -2232,6 +2232,34 @@
                           },
                           "adoptionError": {
                             "type": "string"
+                          },
+                          "authorizedCapabilities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Capabilities currently authorized for this installed instance."
+                          },
+                          "upgradeApprovalCapabilities": {
+                            "anyOf": [
+                              {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "High-risk capabilities that still require explicit administrator approval before upgrading this instance to the available catalog recipe. Empty when all required privileges were already approved without scope expansion."
+                          },
+                          "upgradePermissionDetails": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Concrete privilege scope details for newly required or expanded capabilities on upgrade."
                           },
                           "availablePackageRevision": {
                             "type": "integer",
@@ -13503,6 +13531,13 @@
                               "type": "string"
                             },
                             "description": "Configuration keys owned by the Center product integration, not browser input or secret values."
+                          },
+                          "approvalRequiredCapabilities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Privileged host capabilities requiring explicit administrator approval on installation. Excludes built-in platform capabilities still enforced between Center and Agent."
                           },
                           "permissionDetails": {
                             "type": "array",

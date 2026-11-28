@@ -651,7 +651,7 @@ for (const route of routes) {
     schema.properties.config = { type: "object", additionalProperties: { type: ["string", "boolean", "number"] }, description: "Administrator-provided fields only; product-managed fields are supplied by Center and must not be submitted." };
     schema.properties.packageRevision = { type: "integer", minimum: 1, maximum: 9007199254740991 };
     schema.properties.manifestSha256 = { type: "string", pattern: "^[a-f0-9]{64}$" };
-    schema.properties.authorizedCapabilities = { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 }, description: "Explicit administrator grants. Omission may retain existing grants, never authorize an expansion. Unknown or undeclared grants fail closed." };
+    schema.properties.authorizedCapabilities = { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 }, description: "Explicit administrator grants for privileged host capabilities. Built-in platform capabilities and unchanged previously approved upgrade grants do not require re-approval; new or expanded privileged scopes and unknown or undeclared grants fail closed." };
     schema.oneOf = [
       { properties: { operation: { enum: ["install", "upgrade"] } }, required: ["packageRevision", "manifestSha256"] },
       { properties: { operation: { enum: ["configure", "uninstall"] } }, required: ["operation"] },
@@ -683,6 +683,9 @@ for (const route of routes) {
       item.properties.availablePackageRevision.minimum = 0;
       item.properties.adoptionState.enum = ["pending", "ready", "blocked"];
       item.properties.adoptionState.description = "Historical instances stay pending/blocked until read-only resource adoption succeeds. ready does not imply application upgrade or healthy runtime.";
+      item.properties.authorizedCapabilities.description = "Capabilities currently authorized for this installed instance.";
+      item.properties.upgradeApprovalCapabilities.description = "High-risk capabilities that still require explicit administrator approval before upgrading this instance to the available catalog recipe. Empty when all required privileges were already approved without scope expansion.";
+      item.properties.upgradePermissionDetails.description = "Concrete privilege scope details for newly required or expanded capabilities on upgrade.";
     }
     if (type === "AgentView") {
       item.properties.capabilities.properties.executorVersions.description = "Supported executor protocol versions, keyed by runtime kind (for example docker/systemd). No application-ID allowlist.";
@@ -728,6 +731,7 @@ for (const route of routes) {
       item.required = ["key", "sourceId", "app", "fetchedAt", "manifestSha256"];
       item.properties.manifestSha256.pattern = "^[a-f0-9]{64}$";
       item.properties.managedConfigFields.description = "Configuration keys owned by the Center product integration, not browser input or secret values.";
+      item.properties.approvalRequiredCapabilities.description = "Privileged host capabilities requiring explicit administrator approval on installation. Excludes built-in platform capabilities still enforced between Center and Agent.";
     }
     operation.responses["200"].content["application/json"].schema = {
       type: "object", required: [field], additionalProperties: false,
