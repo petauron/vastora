@@ -21,7 +21,10 @@ import (
 	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
-const defaultCaddyConfigVerifyInterval = time.Minute
+const (
+	defaultCaddyConfigVerifyInterval = time.Minute
+	caddyAdminConnectTimeout         = 2 * time.Second
+)
 
 var errProtectedSystemGatewayStateIncomplete = errors.New("agent: protected system gateway state is incomplete")
 
@@ -284,10 +287,11 @@ func (driver *CaddyGatewayDriver) Health(ctx context.Context) error {
 	return driver.checkHealth(ctx, false)
 }
 
-// HeartbeatHealth bounds routine GET /config/ readbacks when a verified
-// runtime instance identity (Docker container ID/PID/start time and, when used,
-// Admin Unix socket inode) is unchanged within the verification window. Native
-// or unidentified runtimes always perform an immediate GET /config/ check.
+// HeartbeatHealth bounds routine GET /config/ readbacks for Docker-managed
+// Unix-socket Caddy instances when the verified container identity and Admin
+// Unix socket inode are unchanged within the 60s window and a live Unix
+// connect succeeds. Native, loopback HTTP, or unidentified runtimes always
+// perform an immediate GET /config/ check.
 func (driver *CaddyGatewayDriver) HeartbeatHealth(ctx context.Context) error {
 	return driver.checkHealth(ctx, true)
 }
@@ -303,10 +307,8 @@ func (driver *CaddyGatewayDriver) checkHealth(ctx context.Context, allowCached b
 		return err
 	}
 	instanceID := ""
-	if runtimeID != "" {
-		if driver.AdminSocketPath == "" {
-			instanceID = runtimeID
-		} else if socketID := adminSocketIdentity(driver.AdminSocketPath); socketID != "" {
+	if runtimeID != "" && driver.AdminSocketPath != "" {
+		if socketID := adminSocketIdentity(driver.AdminSocketPath); socketID != "" {
 			instanceID = runtimeID + "|" + socketID
 		}
 	}
@@ -324,6 +326,10 @@ func (driver *CaddyGatewayDriver) checkHealth(ctx context.Context, allowCached b
 		probeWithinInterval(now, driver.configProbe.verifiedAt, defaultCaddyConfigVerifyInterval)
 	driver.mu.RUnlock()
 	if canReuse {
+		if err := checkAdminUnixSocketReachable(ctx, driver.AdminSocketPath); err != nil {
+			driver.invalidateConfigProbe()
+			return fmt.Errorf("agent: Caddy Admin Unix socket is unreachable: %w", err)
+		}
 		return nil
 	}
 	loaded, err := driver.runtimeConfigurationLoaded(ctx)
@@ -355,7 +361,9 @@ func (driver *CaddyGatewayDriver) checkHealth(ctx context.Context, allowCached b
 }
 
 func (driver *CaddyGatewayDriver) checkRuntimeHealth(ctx context.Context) (string, error) {
-	if runtime, ok := driver.SystemGateway.(interface{ runtimeHealthIdentity(context.Context) (string, error) }); ok {
+	if runtime, ok := driver.SystemGateway.(interface {
+		runtimeHealthIdentity(context.Context) (string, error)
+	}); ok {
 		return runtime.runtimeHealthIdentity(ctx)
 	}
 	if runtime, ok := driver.SystemGateway.(interface{ Health(context.Context) error }); ok {
@@ -405,6 +413,16 @@ func adminSocketIdentity(socketPath string) string {
 		return ""
 	}
 	return fmt.Sprintf("sock:%d:%d", stat.Dev, stat.Ino)
+}
+
+func checkAdminUnixSocketReachable(ctx context.Context, socketPath string) error {
+	dialer := &net.Dialer{Timeout: caddyAdminConnectTimeout}
+	conn, err := dialer.DialContext(ctx, "unix", socketPath)
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
+	return nil
 }
 
 func (driver *CaddyGatewayDriver) client() *http.Client {

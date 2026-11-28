@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -167,6 +168,25 @@ func (fixture *fakeCaddyAdminFixture) replaceUnixSocket(t *testing.T) {
 		_ = oldListener.Close()
 	}
 	fixture.startUnix(t)
+}
+
+func (fixture *fakeCaddyAdminFixture) closeListenerKeepSocket(t *testing.T) {
+	t.Helper()
+	fixture.mu.Lock()
+	oldServer := fixture.server
+	oldListener := fixture.listener
+	fixture.server = nil
+	fixture.listener = nil
+	fixture.mu.Unlock()
+	if unixListener, ok := oldListener.(*net.UnixListener); ok {
+		unixListener.SetUnlinkOnClose(false)
+	}
+	if oldServer != nil {
+		_ = oldServer.Close()
+	}
+	if oldListener != nil {
+		_ = oldListener.Close()
+	}
 }
 
 func (fixture *fakeCaddyAdminFixture) removeUnixSocket(t *testing.T) {
@@ -525,6 +545,71 @@ func TestCaddyHeartbeatInvalidatesOnRestartReplacementSocketAndRuntimeError(t *t
 			t.Fatal("removed Admin socket was reported healthy")
 		}
 	})
+
+	t.Run("stale unix socket inode with closed listener", func(t *testing.T) {
+		fixture, caddy := newCaddyAdminUnixFixture(t)
+		inspector := &fakeCaddyRuntimeInspector{identity: "docker:container-a:101:2026-11-28T00:00:00Z"}
+		caddy.SystemGateway = inspector
+		currentTime := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+		caddy.now = func() time.Time { return currentTime }
+
+		ctx := context.Background()
+		if err := caddy.ApplyConfiguration(ctx, gatewayState(1, 3000), nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := caddy.HeartbeatHealth(ctx); err != nil {
+			t.Fatal(err)
+		}
+		beforeInfo, err := os.Lstat(fixture.socketPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		beforeStat, ok := beforeInfo.Sys().(*syscall.Stat_t)
+		if !ok {
+			t.Fatal("missing unix socket stat metadata")
+		}
+
+		// Close the listener while preserving the exact socket pathname and inode.
+		fixture.closeListenerKeepSocket(t)
+		afterInfo, err := os.Lstat(fixture.socketPath)
+		if err != nil || afterInfo.Mode()&os.ModeSocket == 0 {
+			t.Fatalf("expected stale socket file to remain in place: info=%v err=%v", afterInfo, err)
+		}
+		afterStat, ok := afterInfo.Sys().(*syscall.Stat_t)
+		if !ok || afterStat.Dev != beforeStat.Dev || afterStat.Ino != beforeStat.Ino {
+			t.Fatalf("stale socket inode changed unexpectedly: before=(%d,%d) after=(%d,%d)", beforeStat.Dev, beforeStat.Ino, afterStat.Dev, afterStat.Ino)
+		}
+
+		currentTime = currentTime.Add(15 * time.Second)
+		if err := caddy.HeartbeatHealth(ctx); err == nil {
+			t.Fatal("closed Admin listener with retained socket inode was reported healthy")
+		}
+		gets, _ := fixture.counts()
+		if gets != 1 {
+			t.Fatalf("closed listener path issued unexpected GET /config/: gets=%d want 1", gets)
+		}
+		caddy.mu.RLock()
+		stillValid := caddy.configProbe.valid
+		caddy.mu.RUnlock()
+		if stillValid {
+			t.Fatal("unreachable Admin Unix socket did not invalidate cached probe")
+		}
+
+		// Once the listener recovers, the next routine heartbeat must perform a
+		// fresh GET /config/.
+		if err := os.Remove(fixture.socketPath); err != nil {
+			t.Fatal(err)
+		}
+		fixture.startUnix(t)
+		currentTime = currentTime.Add(15 * time.Second)
+		if err := caddy.HeartbeatHealth(ctx); err != nil {
+			t.Fatal(err)
+		}
+		gets, _ = fixture.counts()
+		if gets != 2 {
+			t.Fatalf("recovery after unreachable socket did not re-probe GET /config/: gets=%d want 2", gets)
+		}
+	})
 }
 
 func TestCaddyHeartbeatInvalidatesOnApplyWebsiteReloadRecoveryAndStrictPaths(t *testing.T) {
@@ -540,6 +625,7 @@ func TestCaddyHeartbeatInvalidatesOnApplyWebsiteReloadRecoveryAndStrictPaths(t *
 	caddy.SystemGateway = inspector
 	caddy.Sites = func(context.Context) ([]CaddySite, error) { return nil, nil }
 	caddy.SiteRuntime = func(context.Context, gateway.DesiredState, []CaddySite) error { return nil }
+	caddy.SiteContainer = true
 	currentTime := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
 	caddy.now = func() time.Time { return currentTime }
 	store.sharedCaddy = caddy
@@ -683,6 +769,34 @@ func TestCaddyHeartbeatStaysStrictForNativeAndUnidentifiedRuntimes(t *testing.T)
 		gets, _ := fixture.counts()
 		if gets != 3 {
 			t.Fatalf("unidentified runtime skipped GET /config/: gets=%d want 3", gets)
+		}
+	})
+
+	t.Run("docker runtime with loopback HTTP admin endpoint stays strict", func(t *testing.T) {
+		fixture, caddy := newCaddyAdminHTTPFixture(t)
+		inspector := &fakeCaddyRuntimeInspector{identity: "docker:container-a:101:2026-11-28T00:00:00Z"}
+		caddy.SystemGateway = inspector
+		currentTime := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+		caddy.now = func() time.Time { return currentTime }
+		if err := caddy.ApplyConfiguration(ctx, gatewayState(1, 3000), nil); err != nil {
+			t.Fatal(err)
+		}
+		for range 3 {
+			if err := caddy.HeartbeatHealth(ctx); err != nil {
+				t.Fatal(err)
+			}
+			currentTime = currentTime.Add(15 * time.Second)
+		}
+		gets, _ := fixture.counts()
+		if gets != 3 || inspector.callCount() != 3 {
+			t.Fatalf("loopback HTTP Admin endpoint cached GET /config/: gets=%d runtimeCalls=%d want 3 and 3", gets, inspector.callCount())
+		}
+		// If the loopback Admin listener disappears while the inspected Docker
+		// container still appears healthy, the next heartbeat fails immediately.
+		fixture.httpServer.Close()
+		currentTime = currentTime.Add(15 * time.Second)
+		if err := caddy.HeartbeatHealth(ctx); err == nil {
+			t.Fatal("unreachable loopback HTTP Admin endpoint was reported healthy")
 		}
 	})
 }
