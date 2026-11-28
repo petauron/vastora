@@ -192,6 +192,9 @@ jobs:
           docker pull "$VASTORA_LANDING_XRAY_IMAGE"
           sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" VASTORA_PACKAGE_HOST_INTEGRATION=1 VASTORA_LANDING_XRAY_IMAGE="$VASTORA_LANDING_XRAY_IMAGE" "$RUNNER_TEMP/package-systemd.test" -test.run '^TestSenlunVolumeTransferRealDocker$' -test.count=1 -test.v
           (cd internal/landing && "$RUNNER_TEMP/landing.test" -test.run '^TestLandingRoutesAcceptedByCatalogXray$' -test.count=1)
+      - name: Verify Docker Caddy heartbeat silence with pinned image
+        if: ${{ !cancelled() }}
+        run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" VASTORA_PACKAGE_HOST_INTEGRATION=1 "$RUNNER_TEMP/package-systemd.test" -test.run '^TestCaddyDockerHeartbeatMetricsSilenceRealDocker$' -test.count=1 -test.v
       - name: Validate generated Headscale config with pinned binary
         env:
           VASTORA_HEADSCALE_CONFIG_INTEGRATION: "1"

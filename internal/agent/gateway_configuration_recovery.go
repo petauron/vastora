@@ -44,6 +44,7 @@ func (s *Store) restoreGatewayConfiguration(ctx context.Context) error {
 	driver := s.sharedCaddy
 	driver.mutationMu.Lock()
 	defer driver.mutationMu.Unlock()
+	driver.invalidateConfigProbe()
 	expected, err := driver.configuration(ctx, state.Desired, state.Certificates)
 	if err != nil {
 		return err
@@ -65,6 +66,7 @@ func (s *Store) restoreGatewayConfiguration(ctx context.Context) error {
 	driver.mu.Lock()
 	driver.state = state.Desired.Sorted()
 	driver.certificates = append([]gateway.Certificate(nil), state.Certificates...)
+	driver.invalidateConfigProbeLocked()
 	driver.mu.Unlock()
 	return nil
 }

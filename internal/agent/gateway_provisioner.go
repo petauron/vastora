@@ -88,27 +88,49 @@ func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
 // Health includes Docker's live attachment: a reachable Unix Admin socket
 // alone does not prove that the website origin or published ports are usable.
 func (provisioner DockerGatewayProvisioner) Health(ctx context.Context) error {
+	_, err := provisioner.runtimeHealthIdentity(ctx)
+	return err
+}
+
+func (provisioner DockerGatewayProvisioner) runtimeHealthIdentity(ctx context.Context) (string, error) {
 	settings, err := provisioner.settings()
 	if err != nil {
-		return err
+		return "", err
 	}
 	docker, err := provisioner.client()
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer docker.Close()
 	existing, err := inspectManagedCaddy(ctx, docker, settings.Container)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if existing == nil || existing.Container.State == nil || !existing.Container.State.Running {
-		return errors.New("agent: Caddy gateway is not running")
+	if existing == nil || existing.Container.State == nil || !existing.Container.State.Running ||
+		existing.Container.State.Paused || existing.Container.State.Restarting || existing.Container.State.Dead {
+		return "", errors.New("agent: Caddy gateway is not running")
 	}
 	if existing.Container.HostConfig == nil || string(existing.Container.HostConfig.NetworkMode) != dockerruntime.NetworkName ||
 		!dockerruntime.AttachmentHealthy(*existing, dockerruntime.NetworkName, dockerruntime.CaddyAlias) {
-		return errors.New("agent: Caddy network attachment is incomplete")
+		return "", errors.New("agent: Caddy network attachment is incomplete")
 	}
-	return gatewayruntime.CheckContainerTCPProfile(ctx, docker, *existing)
+	if err := gatewayruntime.CheckContainerTCPProfile(ctx, docker, *existing); err != nil {
+		return "", err
+	}
+	return dockerContainerRuntimeIdentity(*existing), nil
+}
+
+func dockerContainerRuntimeIdentity(existing client.ContainerInspectResult) string {
+	id := strings.TrimSpace(existing.Container.ID)
+	state := existing.Container.State
+	if id == "" || state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
+		return ""
+	}
+	startedAt := strings.TrimSpace(state.StartedAt)
+	if state.Pid <= 0 || startedAt == "" || startedAt == "0001-01-01T00:00:00Z" {
+		return ""
+	}
+	return fmt.Sprintf("docker:%s:%d:%s", id, state.Pid, startedAt)
 }
 
 // Reconcile publishes exactly the sockets declared by the current desired

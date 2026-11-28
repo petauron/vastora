@@ -49,7 +49,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err != nil {
 		return nil, err
 	}
-	gatewayHealthy, gatewayRevision, gatewayConfigHash := gatewayRuntimeStatus(ctx, store, c.GatewayDriver)
+	gatewayHealthy, gatewayRevision, gatewayConfigHash := gatewayRuntimeStatus(ctx, store, c.GatewayDriver, startup)
 	nodeListenerHealthy, nodeListenerRevision, nodeListenerConfigHash := nodeListenerRuntimeStatus(ctx, store, c.NodeListener)
 	now := time.Now()
 	candidates, err := networking.Discover(now)

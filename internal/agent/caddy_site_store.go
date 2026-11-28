@@ -71,6 +71,7 @@ func (s *Store) ConfigureSharedCaddy(driver *CaddyGatewayDriver) error {
 	}
 	driver.mu.Lock()
 	driver.state, driver.certificates = state.Desired, state.Certificates
+	driver.invalidateConfigProbeLocked()
 	driver.mu.Unlock()
 	return nil
 }
