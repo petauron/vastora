@@ -16,10 +16,10 @@ describe("catalog task rejection guidance", () => {
   const message = "Refresh the app catalog and retry this operation.";
 
   it("shows actionable Chinese guidance without requiring technical details", () => {
-    expect(userError("zh-CN", message)).toBe("请先在控制面板刷新应用目录，再重试。");
+    expect(userError("zh-CN", message)).toBe("请先在应用商店点击「检查更新」，再重试。");
   });
 
   it("shows the same guidance for a failed request", () => {
-    expect(userError("en", new Error(message))).toBe("Refresh the app catalog in Control Panel, then retry.");
+    expect(userError("en", new Error(message))).toBe("Select Check for updates in the App Store, then retry.");
   });
 });

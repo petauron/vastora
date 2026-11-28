@@ -129,8 +129,8 @@ export function DeploymentSheet({
   const catalogMessage = catalogBlocked
     ? currentCatalogApp?.installBlockedReason || copy(
         language,
-        "请先在控制面板刷新应用目录，再安装或升级。已安装应用不受影响。",
-        "Refresh the app catalog in Control Panel before installing or upgrading. Installed apps are unaffected.",
+        "请在应用商店点击「检查更新」刷新应用目录，再安装或升级。已安装应用不受影响。",
+        "Select Check for updates in the App Store to refresh the catalog before installing or upgrading. Installed apps are unaffected.",
       )
     : catalogChanged
       ? copy(
