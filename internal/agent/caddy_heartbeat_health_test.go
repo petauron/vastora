@@ -173,6 +173,31 @@ func (fixture *fakeCaddyAdminFixture) startUnix(t *testing.T) {
 	go func() { _ = server.Serve(listener) }()
 }
 
+func (fixture *fakeCaddyAdminFixture) replaceUnixSocketGraceful(t *testing.T) {
+	t.Helper()
+	fixture.mu.Lock()
+	oldServer := fixture.server
+	oldListener := fixture.listener
+	retired := fixture.socketPath + ".old"
+	fixture.mu.Unlock()
+	// Keep the old inode referenced under a sibling name before recreating the
+	// socket so the replacement allocates a distinct inode, while allowing any
+	// in-flight HTTP response on oldServer to complete cleanly.
+	if err := os.Rename(fixture.socketPath, retired); err != nil {
+		t.Fatal(err)
+	}
+	if oldListener != nil {
+		if unixListener, ok := oldListener.(*net.UnixListener); ok {
+			unixListener.SetUnlinkOnClose(false)
+		}
+		_ = oldListener.Close()
+	}
+	if oldServer != nil {
+		t.Cleanup(func() { _ = oldServer.Close() })
+	}
+	fixture.startUnix(t)
+}
+
 func (fixture *fakeCaddyAdminFixture) replaceUnixSocket(t *testing.T) {
 	t.Helper()
 	fixture.mu.Lock()
@@ -748,8 +773,9 @@ func TestCaddyHeartbeatRefusesStaleFingerprintAcrossConcurrentReloadAndInstanceC
 		if err := caddy.ApplyConfiguration(ctx, gatewayState(1, 3000), nil); err != nil {
 			t.Fatal(err)
 		}
+		oldSocketID := adminSocketIdentity(fixture.socketPath)
 		fixture.setOnConfigGet(func(f *fakeCaddyAdminFixture) {
-			f.replaceUnixSocket(t)
+			f.replaceUnixSocketGraceful(t)
 		})
 		if err := caddy.HeartbeatHealth(ctx); err != nil {
 			t.Fatalf("socket replacement during readback did not settle on retry: %v", err)
@@ -757,6 +783,71 @@ func TestCaddyHeartbeatRefusesStaleFingerprintAcrossConcurrentReloadAndInstanceC
 		gets, _, _ := fixture.counts()
 		if gets != 2 {
 			t.Fatalf("socket swap mid-read did not trigger immediate retry: gets=%d want 2", gets)
+		}
+		newSocketID := adminSocketIdentity(fixture.socketPath)
+		if newSocketID == "" || newSocketID == oldSocketID {
+			t.Fatalf("replacement socket did not allocate new inode: old=%q new=%q", oldSocketID, newSocketID)
+		}
+		caddy.mu.RLock()
+		cachedProbe := caddy.configProbe
+		caddy.mu.RUnlock()
+		if !cachedProbe.valid || cachedProbe.instanceID != inspector.identity+"|"+newSocketID {
+			t.Fatalf("cached probe not bound to replacement socket: %+v want instance %q", cachedProbe, inspector.identity+"|"+newSocketID)
+		}
+		// Subsequent steady heartbeat reuses the baseline bound to the new inode.
+		if err := caddy.HeartbeatHealth(ctx); err != nil {
+			t.Fatalf("steady heartbeat on replacement socket failed: %v", err)
+		}
+		getsAfter, _, _ := fixture.counts()
+		if getsAfter != 2 {
+			t.Fatalf("steady heartbeat after replacement socket did not reuse new baseline: gets=%d want 2", getsAfter)
+		}
+	})
+
+	t.Run("socket transport EOF during GET /config/ fails safely and recovers on next heartbeat", func(t *testing.T) {
+		fixture, caddy := newCaddyAdminUnixFixture(t)
+		inspector := &fakeCaddyRuntimeInspector{identity: "docker:container-a:101:2026-11-28T00:00:00Z"}
+		caddy.SystemGateway = inspector
+		if err := caddy.ApplyConfiguration(ctx, gatewayState(1, 3000), nil); err != nil {
+			t.Fatal(err)
+		}
+		oldSocketID := adminSocketIdentity(fixture.socketPath)
+		fixture.setOnConfigGet(func(f *fakeCaddyAdminFixture) {
+			f.replaceUnixSocket(t)
+		})
+		if err := caddy.HeartbeatHealth(ctx); err == nil {
+			t.Fatal("aborted GET /config/ transport EOF was reported healthy")
+		}
+		caddy.mu.RLock()
+		cachedAfterEOF := caddy.configProbe.valid
+		caddy.mu.RUnlock()
+		if cachedAfterEOF {
+			t.Fatal("aborted GET /config/ left a valid cached probe")
+		}
+		// Next routine heartbeat recovers cleanly against the new listener.
+		if err := caddy.HeartbeatHealth(ctx); err != nil {
+			t.Fatalf("heartbeat did not recover after socket replacement EOF: %v", err)
+		}
+		gets, _, _ := fixture.counts()
+		if gets != 2 {
+			t.Fatalf("recovery after socket replacement EOF did not re-read GET /config/: gets=%d want 2", gets)
+		}
+		newSocketID := adminSocketIdentity(fixture.socketPath)
+		if newSocketID == "" || newSocketID == oldSocketID {
+			t.Fatalf("replacement socket did not allocate new inode: old=%q new=%q", oldSocketID, newSocketID)
+		}
+		caddy.mu.RLock()
+		cachedAfterRecovery := caddy.configProbe
+		caddy.mu.RUnlock()
+		if !cachedAfterRecovery.valid || cachedAfterRecovery.instanceID != inspector.identity+"|"+newSocketID {
+			t.Fatalf("recovered probe not bound to replacement socket: %+v want instance %q", cachedAfterRecovery, inspector.identity+"|"+newSocketID)
+		}
+		if err := caddy.HeartbeatHealth(ctx); err != nil {
+			t.Fatalf("steady heartbeat after EOF recovery failed: %v", err)
+		}
+		getsAfter, _, _ := fixture.counts()
+		if getsAfter != 2 {
+			t.Fatalf("steady heartbeat after EOF recovery did not reuse new baseline: gets=%d want 2", getsAfter)
 		}
 	})
 
