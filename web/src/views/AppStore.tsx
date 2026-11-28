@@ -15,6 +15,9 @@ import { AppIcon } from "@/components/desktop/AppIcon";
 export function AppStore({ data, language, onInstall, query = "", hideApp, extraCard, renderInstalledActions, renderInstalledSummary, renderInstalledStatus, renderInstalledDetailActions }: { data: AppData; language: Language; onInstall: (app: AppView) => void; query?: string; hideApp?: (app: AppView) => boolean; extraCard?: ReactNode; renderInstalledActions?: (key: string) => ReactNode; renderInstalledSummary?: (key: string) => ReactNode; renderInstalledStatus?: (key: string) => ReactNode; renderInstalledDetailActions?: (key: string) => ReactNode }) {
   const officialSource = data.sources.find((source) => source.id === "vastora-official");
   const officialUnavailable = officialSource && (officialSource.status === "pending" || officialSource.status === "failed" || officialSource.status === "expired" || !data.apps.some((app) => app.sourceId === officialSource.id));
+  const catalogRecovery = data.sources.some((source) => source.enabled)
+    ? copy(language, "请使用上方的「检查更新」验证目录，验证完成后即可安装。已安装应用不受影响。", "Select Check for updates above to verify the catalog before installing. Installed apps are unaffected.")
+    : copy(language, "请在目录设置中启用应用目录。已安装应用仍可管理。", "Enable an app catalog in Catalog settings. Installed apps remain manageable.");
   const installedCounts = new Map<string, number>();
   for (const application of data.applications) {
     if (isInstalledApplication(application)) {
@@ -36,7 +39,7 @@ export function AppStore({ data, language, onInstall, query = "", hideApp, extra
         : copy(language, "应用目录暂不可用", "App catalog unavailable")}</AlertTitle>
       <AlertDescription>{data.catalogSourcesError
         ? copy(language, "请刷新页面重试。已安装应用仍可管理。", "Refresh the page to retry. Installed apps remain manageable.")
-        : copy(language, "请到控制面板刷新应用目录，验证完成后即可安装。已安装应用不受影响。", "Refresh the app catalog in Control Panel before installing. Installed apps are unaffected.")}</AlertDescription>
+        : catalogRecovery}</AlertDescription>
     </Alert> : null}
     <div className="store-app-grid">
       {extraCard}
@@ -82,7 +85,7 @@ export function AppStoreCard({ app, language, installedCount, canInstall: nodeAv
   const catalogBlocked = catalogInstallBlocked(app);
   const canInstall = nodeAvailable && !catalogBlocked;
   const blocker = catalogBlocked
-    ? app.installBlockedReason || copy(language, "请先在控制面板刷新应用目录，再安装或升级。已安装应用不受影响。", "Refresh the app catalog in Control Panel before installing or upgrading. Installed apps are unaffected.")
+    ? app.installBlockedReason || copy(language, "请在应用商店点击「检查更新」刷新应用目录，再安装或升级。已安装应用不受影响。", "Select Check for updates in the App Store to refresh the catalog before installing or upgrading. Installed apps are unaffected.")
     : nodeBlocker;
   const officialCatalog = app.sourceId === "vastora-official" && app.key === `vastora-official/${app.app.id}`;
   const installAction = (size: "sm" | "default", variant: "secondary" | "default" = "secondary") => <Button aria-label={copy(language, `安装 ${name}`, `Install ${name}`)} aria-describedby={blocker ? `${id}-blocker` : undefined} disabled={!canInstall} onClick={() => { setDetailsOpen(false); onInstall(app); }} size={size} variant={variant}><PackagePlusIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "安装", "Install")}</Button>;

@@ -106,7 +106,7 @@ export function SuiteDetailView({
   );
   const standardBlocker = suite.kind !== "glivela" && primaryApp && !canInstallStandard
     ? catalogInstallBlocked(primaryApp)
-      ? primaryApp.installBlockedReason || copy(language, "请先在控制面板刷新应用目录。", "Refresh the app catalog in Control Panel first.")
+      ? primaryApp.installBlockedReason || copy(language, "请先在应用商店点击「检查更新」。", "Select Check for updates in the App Store first.")
       : installBlocker(data, primaryApp.key, language)
     : "";
 
@@ -121,7 +121,7 @@ export function SuiteDetailView({
   );
   const controllerBlocker = glivelaControllerApp && !canInstallController
     ? catalogInstallBlocked(glivelaControllerApp)
-      ? glivelaControllerApp.installBlockedReason || copy(language, "请先在控制面板刷新应用目录。", "Refresh the app catalog in Control Panel first.")
+      ? glivelaControllerApp.installBlockedReason || copy(language, "请先在应用商店点击「检查更新」。", "Select Check for updates in the App Store first.")
       : installBlocker(data, glivelaControllerApp.key, language)
     : "";
 
@@ -135,7 +135,7 @@ export function SuiteDetailView({
   );
   const nodeBlocker = glivelaNodeApp && !canInstallNode
     ? catalogInstallBlocked(glivelaNodeApp)
-      ? glivelaNodeApp.installBlockedReason || copy(language, "请先在控制面板刷新应用目录。", "Refresh the app catalog in Control Panel first.")
+      ? glivelaNodeApp.installBlockedReason || copy(language, "请先在应用商店点击「检查更新」。", "Select Check for updates in the App Store first.")
       : installBlocker(data, glivelaNodeApp.key, language)
     : "";
 

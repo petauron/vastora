@@ -303,6 +303,7 @@ export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onO
             data={data}
             groups={installedGroups}
             language={language}
+            mutate={mutate}
             navigationTarget={storeNavTarget}
             onBatchUpgrade={openBatchUpgrade}
             onInstall={(app) => setDeploymentEditor({ app, operation: "install" })}

@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { App } from "./App";
 import { ApplicationPageDataError, emptyAppData, loadScreenData, screenFromPath } from "./app-data";
 import { ThemeProvider } from "./components/theme";
 import type { AgentView, AppData, Application, AppView, CatalogSource, CenterStatus } from "./types";
@@ -43,18 +44,23 @@ afterEach(() => {
   root = undefined;
   document.body.replaceChildren();
   window.history.replaceState({}, "", "/");
+  window.localStorage.removeItem("vastora.language");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 function mockCenter() {
-  const state = { sources: [official], apps: [catalogApp("community")], applications: [] as Application[], sourceStatus: 200, appStatus: 200 };
+  const state = {
+    sources: [official], apps: [catalogApp("community")], applications: [] as Application[], sourceStatus: 200, appStatus: 200,
+    refreshSource: undefined as ((id: string) => Promise<number>) | undefined,
+  };
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     if (init?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     let responseStatus = 200;
     let body: unknown;
     switch (path) {
+      case "/api/v1/setup/status": body = { administratorConfigured: true, onboardingComplete: true }; break;
       case "/api/v1/status": body = status; break;
       case "/api/v1/catalog/apps": responseStatus = state.appStatus; body = { apps: state.apps }; break;
       case "/api/v1/catalog/sources": responseStatus = state.sourceStatus; body = { sources: state.sources }; break;
@@ -68,7 +74,13 @@ function mockCenter() {
       case "/api/v1/sites": body = { sites: [] }; break;
       case "/api/v1/three-x-ui-migrations": body = { migrations: [] }; break;
       case "/api/v1/network/center-remote-access": body = { available: true, enabled: false, status: "disabled" }; break;
-      default: throw new Error(`Unexpected endpoint: ${path}`);
+      default: {
+        const refresh = /^\/api\/v1\/catalog\/sources\/([^/]+)\/refresh$/.exec(path);
+        if (init?.method !== "POST" || !refresh || !state.refreshSource) throw new Error(`Unexpected endpoint: ${path}`);
+        const sourceID = decodeURIComponent(refresh[1]);
+        responseStatus = await state.refreshSource(sourceID);
+        body = { sourceID, notModified: false };
+      }
     }
     return new Response(JSON.stringify(responseStatus === 200 ? body : { error: "Internal upstream detail" }), { status: responseStatus, headers: { "Content-Type": "application/json" } });
   });
@@ -115,6 +127,60 @@ describe("apps loader to AppStore integration", () => {
     await loadStore();
     expect(container.querySelector('[role="status"]')?.textContent).toContain("官方目录等待首次验证");
     expect(container.textContent).toContain("已安装应用不受影响");
+  });
+
+  it("checks enabled sources from the toolbar and shows updated inventory after a partial failure", async () => {
+    const { state, fetch } = mockCenter();
+    const latest = catalogApp(official.id);
+    state.sources = [
+      { ...official, id: "community", displayName: "Community catalog" },
+      { ...official, id: "disabled", enabled: false, status: "disabled" },
+      { ...official, status: "healthy" },
+    ];
+    state.apps = [{ ...latest, app: { ...latest.app, version: "1.0.0" } }];
+    state.applications = [{ ...installed, availableVersion: "1.0.0", updateAvailable: false }];
+    let allowRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolve) => { allowRefresh = resolve; });
+    state.refreshSource = async (id) => {
+      if (id === "community") return 502;
+      await refreshGate;
+      state.apps = [latest];
+      state.applications = [installed];
+      return 200;
+    };
+    window.localStorage.setItem("vastora.language", "zh-CN");
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+
+    await act(async () => root?.render(<ThemeProvider><App /></ThemeProvider>));
+    const check = () => container.querySelector<HTMLButtonElement>(".store-check-updates");
+    await vi.waitFor(() => expect(check()?.disabled).toBe(false));
+    expect(check()?.textContent).toBe("检查更新");
+    expect(container.querySelector("#store-available-updates-heading")).toBeNull();
+
+    await act(async () => check()?.click());
+    expect(check()?.disabled).toBe(true);
+    expect(check()?.getAttribute("aria-busy")).toBe("true");
+    act(() => check()?.click());
+    await act(async () => allowRefresh());
+
+    expect(check()?.disabled).toBe(false);
+    expect(container.querySelector(".store-catalog-check-result")?.textContent).toContain("未能检查 Community catalog");
+    expect(container.querySelector('[aria-labelledby="store-available-updates-heading"]')?.textContent).toContain("2.0.0");
+    expect(window.location.pathname).toBe("/apps");
+
+    const allApps = [...container.querySelectorAll<HTMLButtonElement>(".store-navigation button")].find((button) => button.querySelector("span")?.textContent === "所有应用");
+    expect(allApps).toBeDefined();
+    state.refreshSource = async () => 200;
+    act(() => allApps?.click());
+    expect(allApps?.getAttribute("aria-current")).toBe("page");
+    await act(async () => check()?.click());
+    expect(container.querySelector(".store-catalog-check-result")?.textContent).toBe("应用目录检查完成。");
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path]) => path)).toEqual([
+      "/api/v1/catalog/sources/community/refresh",
+      "/api/v1/catalog/sources/vastora-official/refresh",
+      "/api/v1/catalog/sources/community/refresh",
+      "/api/v1/catalog/sources/vastora-official/refresh",
+    ]);
   });
 
   it("clears stale sources on API failure and replaces both error and metadata after refresh or reentry", async () => {
