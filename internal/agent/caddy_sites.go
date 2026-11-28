@@ -260,6 +260,8 @@ func (driver *CaddyGatewayDriver) ReloadSites(ctx context.Context) error {
 	if driver.Sites == nil || driver.SiteRuntime == nil {
 		return errors.New("agent: shared Caddy website runtime is unavailable")
 	}
+	driver.invalidateConfigProbe()
+	defer driver.invalidateConfigProbe()
 	desired, certificates := driver.CurrentConfiguration()
 	if driver.SystemGateway != nil {
 		services, err := driver.SystemGateway.ProtectedSystemServices(ctx)

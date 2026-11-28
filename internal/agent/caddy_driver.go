@@ -10,16 +10,29 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
+const defaultCaddyConfigVerifyInterval = time.Minute
+
 var errProtectedSystemGatewayStateIncomplete = errors.New("agent: protected system gateway state is incomplete")
+
+type caddyConfigProbe struct {
+	valid      bool
+	epoch      uint64
+	instanceID string
+	expected   bool
+	loaded     bool
+	verifiedAt time.Time
+}
 
 type CaddyGatewayDriver struct {
 	AdminURL        string
@@ -35,10 +48,14 @@ type CaddyGatewayDriver struct {
 	SiteIdle      func(context.Context) error
 	SiteContainer bool
 
+	now func() time.Time
+
 	mutationMu   sync.Mutex
 	mu           sync.RWMutex
 	state        gateway.DesiredState
 	certificates []gateway.Certificate
+	probeEpoch   uint64
+	configProbe  caddyConfigProbe
 }
 
 func NewCaddyGatewayDriver(adminURL string) (*CaddyGatewayDriver, error) {
@@ -87,6 +104,7 @@ func (driver *CaddyGatewayDriver) applyConfiguration(ctx context.Context, desire
 	driver.mu.Lock()
 	driver.state = desired.Sorted()
 	driver.certificates = append([]gateway.Certificate(nil), certificates...)
+	driver.invalidateConfigProbeLocked()
 	driver.mu.Unlock()
 	return nil
 }
@@ -125,6 +143,8 @@ func (driver *CaddyGatewayDriver) configuration(ctx context.Context, desired gat
 }
 
 func (driver *CaddyGatewayDriver) load(ctx context.Context, configuration []byte) error {
+	driver.invalidateConfigProbe()
+	defer driver.invalidateConfigProbe()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, driver.AdminURL+"/load", bytes.NewReader(configuration))
 	if err != nil {
 		return err
@@ -261,22 +281,130 @@ func (driver *CaddyGatewayDriver) GetRouteStatus(ctx context.Context, routeID st
 }
 
 func (driver *CaddyGatewayDriver) Health(ctx context.Context) error {
-	if runtime, ok := driver.SystemGateway.(interface{ Health(context.Context) error }); ok {
-		if err := runtime.Health(ctx); err != nil {
-			return err
+	return driver.checkHealth(ctx, false)
+}
+
+// HeartbeatHealth bounds routine GET /config/ readbacks when a verified
+// runtime instance identity (Docker container ID/PID/start time and, when used,
+// Admin Unix socket inode) is unchanged within the verification window. Native
+// or unidentified runtimes always perform an immediate GET /config/ check.
+func (driver *CaddyGatewayDriver) HeartbeatHealth(ctx context.Context) error {
+	return driver.checkHealth(ctx, true)
+}
+
+func (driver *CaddyGatewayDriver) checkHealth(ctx context.Context, allowCached bool) error {
+	driver.mu.RLock()
+	epochBefore := driver.probeEpoch
+	expectedBefore := len(driver.state.Routes) != 0
+	driver.mu.RUnlock()
+	runtimeID, err := driver.checkRuntimeHealth(ctx)
+	if err != nil {
+		driver.invalidateConfigProbe()
+		return err
+	}
+	instanceID := ""
+	if runtimeID != "" {
+		if driver.AdminSocketPath == "" {
+			instanceID = runtimeID
+		} else if socketID := adminSocketIdentity(driver.AdminSocketPath); socketID != "" {
+			instanceID = runtimeID + "|" + socketID
 		}
+	}
+	now := driver.clock()
+	driver.mu.RLock()
+	canReuse := allowCached &&
+		instanceID != "" &&
+		driver.probeEpoch == epochBefore &&
+		(len(driver.state.Routes) != 0) == expectedBefore &&
+		driver.configProbe.valid &&
+		driver.configProbe.epoch == epochBefore &&
+		driver.configProbe.instanceID == instanceID &&
+		driver.configProbe.expected == expectedBefore &&
+		(!expectedBefore || driver.configProbe.loaded) &&
+		probeWithinInterval(now, driver.configProbe.verifiedAt, defaultCaddyConfigVerifyInterval)
+	driver.mu.RUnlock()
+	if canReuse {
+		return nil
 	}
 	loaded, err := driver.runtimeConfigurationLoaded(ctx)
 	if err != nil {
+		driver.invalidateConfigProbe()
 		return err
 	}
-	driver.mu.RLock()
+	driver.mu.Lock()
 	expected := len(driver.state.Routes) != 0
-	driver.mu.RUnlock()
 	if expected && !loaded {
+		driver.invalidateConfigProbeLocked()
+		driver.mu.Unlock()
 		return errors.New("agent: Caddy has only its Admin bootstrap; gateway configuration is missing")
 	}
+	if instanceID != "" && driver.probeEpoch == epochBefore && expected == expectedBefore {
+		driver.configProbe = caddyConfigProbe{
+			valid:      true,
+			epoch:      epochBefore,
+			instanceID: instanceID,
+			expected:   expected,
+			loaded:     loaded,
+			verifiedAt: now,
+		}
+	} else if driver.probeEpoch == epochBefore {
+		driver.configProbe = caddyConfigProbe{}
+	}
+	driver.mu.Unlock()
 	return nil
+}
+
+func (driver *CaddyGatewayDriver) checkRuntimeHealth(ctx context.Context) (string, error) {
+	if runtime, ok := driver.SystemGateway.(interface{ runtimeHealthIdentity(context.Context) (string, error) }); ok {
+		return runtime.runtimeHealthIdentity(ctx)
+	}
+	if runtime, ok := driver.SystemGateway.(interface{ Health(context.Context) error }); ok {
+		if err := runtime.Health(ctx); err != nil {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
+func (driver *CaddyGatewayDriver) invalidateConfigProbe() {
+	driver.mu.Lock()
+	driver.invalidateConfigProbeLocked()
+	driver.mu.Unlock()
+}
+
+func (driver *CaddyGatewayDriver) invalidateConfigProbeLocked() {
+	driver.probeEpoch++
+	driver.configProbe = caddyConfigProbe{}
+}
+
+func (driver *CaddyGatewayDriver) clock() time.Time {
+	if driver.now != nil {
+		return driver.now()
+	}
+	return time.Now()
+}
+
+func probeWithinInterval(now, verifiedAt time.Time, interval time.Duration) bool {
+	if interval <= 0 || verifiedAt.IsZero() {
+		return false
+	}
+	elapsed := now.Sub(verifiedAt)
+	return elapsed >= 0 && elapsed < interval
+}
+
+func adminSocketIdentity(socketPath string) string {
+	if socketPath == "" {
+		return ""
+	}
+	info, err := os.Lstat(socketPath)
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return ""
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("sock:%d:%d", stat.Dev, stat.Ino)
 }
 
 func (driver *CaddyGatewayDriver) client() *http.Client {

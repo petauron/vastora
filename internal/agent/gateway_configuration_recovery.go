@@ -65,6 +65,7 @@ func (s *Store) restoreGatewayConfiguration(ctx context.Context) error {
 	driver.mu.Lock()
 	driver.state = state.Desired.Sorted()
 	driver.certificates = append([]gateway.Certificate(nil), state.Certificates...)
+	driver.invalidateConfigProbeLocked()
 	driver.mu.Unlock()
 	return nil
 }

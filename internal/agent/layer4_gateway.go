@@ -113,6 +113,7 @@ func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.D
 	if driver.Caddy.SiteRuntime != nil && !driver.Caddy.SiteContainer && (len(desired.Listeners) != 0 || len(desired.Routes) != 0 || desired.SharedHTTPS != nil) {
 		return errors.New("agent: native website Caddy requires an explicit gateway runtime migration")
 	}
+	driver.Caddy.invalidateConfigProbe()
 	if desired.SharedHTTPS == nil {
 		runtimeDesired := desired
 		driver.mu.RLock()
@@ -185,6 +186,9 @@ func (driver *ManagedGatewayDriver) PrepareNodeListener(ctx context.Context) err
 	}
 	runtimeState := current
 	runtimeState.SharedHTTPS = &gateway.SharedHTTPS{Address: public.Address, Port: public.HTTPSPort, CaddyAddress: dockerruntime.CaddyAlias, CaddyPort: 443}
+	if driver.Caddy != nil {
+		driver.Caddy.invalidateConfigProbe()
+	}
 	if err := driver.Runtime.Reconcile(ctx, runtimeState); err != nil {
 		return err
 	}
@@ -214,6 +218,9 @@ func (driver *ManagedGatewayDriver) RestoreGatewayPublicBindings(ctx context.Con
 	}
 	retiredLegacySharedHTTPS := current.SharedHTTPS != nil
 	current.SharedHTTPS = nil
+	if driver.Caddy != nil {
+		driver.Caddy.invalidateConfigProbe()
+	}
 	if err := driver.Runtime.Reconcile(ctx, current); err != nil {
 		return err
 	}
@@ -319,10 +326,24 @@ func (driver *ManagedGatewayDriver) GetRouteStatus(ctx context.Context, routeID 
 }
 
 func (driver *ManagedGatewayDriver) Health(ctx context.Context) error {
+	return driver.checkHealth(ctx, false)
+}
+
+func (driver *ManagedGatewayDriver) HeartbeatHealth(ctx context.Context) error {
+	return driver.checkHealth(ctx, true)
+}
+
+func (driver *ManagedGatewayDriver) checkHealth(ctx context.Context, routine bool) error {
 	if driver.Caddy == nil || driver.Layer4 == nil || driver.Runtime == nil {
 		return errors.New("agent: managed gateway is not configured")
 	}
-	if err := driver.Caddy.Health(ctx); err != nil {
+	var err error
+	if routine {
+		err = driver.Caddy.HeartbeatHealth(ctx)
+	} else {
+		err = driver.Caddy.Health(ctx)
+	}
+	if err != nil {
 		return err
 	}
 	driver.mu.RLock()

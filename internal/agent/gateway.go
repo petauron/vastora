@@ -66,7 +66,7 @@ func applyGatewayDesiredState(ctx context.Context, store *Store, driver GatewayD
 	return nil
 }
 
-func gatewayRuntimeStatus(ctx context.Context, store *Store, driver GatewayDriver) (bool, int64, string) {
+func gatewayRuntimeStatus(ctx context.Context, store *Store, driver GatewayDriver, startup bool) (bool, int64, string) {
 	if driver == nil {
 		return false, 0, ""
 	}
@@ -79,7 +79,17 @@ func gatewayRuntimeStatus(ctx context.Context, store *Store, driver GatewayDrive
 		}
 		liveHash = hash
 	}
-	if err := driver.Health(ctx); err != nil {
+	var err error
+	if !startup {
+		if checker, ok := driver.(interface{ HeartbeatHealth(context.Context) error }); ok {
+			err = checker.HeartbeatHealth(ctx)
+		} else {
+			err = driver.Health(ctx)
+		}
+	} else {
+		err = driver.Health(ctx)
+	}
+	if err != nil {
 		return false, live.Revision, liveHash
 	}
 	persisted, err := store.GatewayState(ctx)
