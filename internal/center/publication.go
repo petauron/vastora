@@ -581,6 +581,11 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 			if err := s.queueGatewayState(ctx, tx, gatewayID.String, now); err != nil {
 				return err
 			}
+			if kind == publicationPublic {
+				if _, err := s.syncNodeListenerStateIfChanged(ctx, tx, gatewayID.String, now, "node-local listener synced after stopping public HTTPS publication"); err != nil {
+					return err
+				}
+			}
 		case ingressTunnelConnector:
 			if err := s.queueTunnelState(ctx, tx, gatewayID.String, now); err != nil {
 				return err

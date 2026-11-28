@@ -1176,15 +1176,9 @@ func (s *Store) projectGatewayComponent(ctx context.Context, tx *sql.Tx, commit 
 	if _, err := tx.ExecContext(ctx, `UPDATE gateway_components SET applied_generation = CASE WHEN ? THEN ? ELSE applied_generation END, status = ?, lease_expires_at = '', last_error = ?, updated_at = ? WHERE gateway_node_id = ? AND generation = ?`, succeeded, generation, status, taskError, s.now().UTC().Format(time.RFC3339Nano), agentID, generation); err != nil {
 		return err
 	}
-	if succeeded && desiredStatus == "running" {
-		var nodeListenerExists int
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_listener_states WHERE node_id = ?)`, agentID).Scan(&nodeListenerExists); err != nil {
+	if succeeded {
+		if _, err := s.syncNodeListenerStateIfChanged(ctx, tx, agentID, s.now().UTC(), "node-local listener synced after gateway component change"); err != nil {
 			return err
-		}
-		if nodeListenerExists != 0 {
-			if err := s.queueNodeListenerState(ctx, tx, agentID, s.now().UTC()); err != nil {
-				return err
-			}
 		}
 	}
 	event := "succeeded"

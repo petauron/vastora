@@ -173,6 +173,27 @@ func (s *Server) handleConfirmNetworkProfile(writer http.ResponseWriter, request
 	writeJSON(writer, http.StatusOK, profile)
 }
 
+func (s *Server) handleReconcileNodeListener(writer http.ResponseWriter, request *http.Request) {
+	writer.Header().Set("Cache-Control", "no-store")
+	result, err := s.store.ReconcileNodeListener(request.Context(), request.PathValue("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, errExecutionBlocked), errors.Is(err, errNodeListenerBusy), errors.Is(err, errNodeListenerFailed):
+			writeError(writer, http.StatusConflict, err)
+		case errors.Is(err, errNodeListenerNotFound):
+			writeError(writer, http.StatusNotFound, err)
+		default:
+			writeError(writer, http.StatusBadRequest, err)
+		}
+		return
+	}
+	status := http.StatusOK
+	if result.Queued {
+		status = http.StatusAccepted
+	}
+	writeJSON(writer, status, result)
+}
+
 func (s *Server) handleQueueAgentUpdate(writer http.ResponseWriter, request *http.Request) {
 	update, err := s.store.QueueAgentUpdate(request.Context(), request.PathValue("id"), Version)
 	if err != nil {

@@ -148,6 +148,12 @@ func (s *Server) handleNodeSiteAction(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			_, err = tx.ExecContext(r.Context(), `UPDATE node_sites SET state='action_required',error='Cancelled by administrator' WHERE application_id=?`, id)
 		}
+		if err == nil {
+			var cancelAgentID string
+			if scanErr := tx.QueryRowContext(r.Context(), `SELECT agent_id FROM node_sites WHERE application_id=?`, id).Scan(&cancelAgentID); scanErr == nil && cancelAgentID != "" {
+				_, err = s.store.syncNodeListenerStateIfChanged(r.Context(), tx, cancelAgentID, s.store.now().UTC(), "node-local listener synced after website certificate cancellation")
+			}
+		}
 	} else {
 		err = s.store.queueNodeSitePhase(r.Context(), tx, id, input.Action)
 	}
@@ -302,7 +308,15 @@ func (s *Store) queueNodeSitePhase(ctx context.Context, tx *sql.Tx, id, action s
 	if err != nil {
 		return err
 	}
-	return s.recordTaskEvent(ctx, tx, taskID, agentID, nodesite.Kind, t.Revision, "queued", action)
+	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, nodesite.Kind, t.Revision, "queued", action); err != nil {
+		return err
+	}
+	if (action == "apply" || action == "prepare-migration") && !t.TLSLoopbackOnly && t.AppKey == "vastora-official/daylight-https" {
+		if _, err := s.syncNodeListenerStateIfChanged(ctx, tx, agentID, s.now().UTC(), "node-local listener synced for standalone HTTPS website"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (s *Store) claimNodeSite(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
 	var id, app, raw string
@@ -425,6 +439,9 @@ func (s *Store) projectNodeSite(ctx context.Context, tx *sql.Tx, commit projecti
 		return err
 	}
 	if err = s.recordTaskEvent(ctx, tx, id, agentID, nodesite.Kind, t.Revision, taskState, ""); err != nil {
+		return err
+	}
+	if _, err = s.syncNodeListenerStateIfChanged(ctx, tx, agentID, s.now().UTC(), "node-local listener synced after website certificate update"); err != nil {
 		return err
 	}
 	return commit(tx)

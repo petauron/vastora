@@ -110,8 +110,8 @@ func TestRealityGuardRecoveryPreservesReadyPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	var dualRole gateway.NodeListenerState
-	if json.Unmarshal(dualRoleJSON, &dualRole) != nil || dualRole.Listener.RejectUnmatched || dualRole.Listener.CaddyAddress != "vastora-gateway-caddy" || dualRole.Listener.CaddyPort != 443 {
-		t.Fatalf("ready Site Gateway was not added as the local node-listener fallback: %#v", dualRole.Listener)
+	if json.Unmarshal(dualRoleJSON, &dualRole) != nil || !dualRole.Listener.RejectUnmatched || dualRole.Listener.CaddyAddress != "" || dualRole.Listener.CaddyPort != 0 {
+		t.Fatalf("empty ready Site Gateway unexpectedly enabled local Caddy fallback: %#v", dualRole.Listener)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE three_x_ui_reality_guards SET target_asn = 0 WHERE service_id = 'reality-guard-service'`); err != nil {
 		t.Fatal(err)
