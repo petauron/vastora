@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0](https://github.com/petauron/vastora/compare/v0.4.0...v0.5.0) (2026-11-28)
+
+
+### Features
+
+* **apps:** skip built-in platform capability prompts and remember prior approvals ([#1449](https://github.com/petauron/vastora/issues/1449)) ([a491d46](https://github.com/petauron/vastora/commit/a491d46425228d960fba8064872ce3ef7d094890))
+* **install:** configure bounded Docker log rotation defaults on fresh install ([#1440](https://github.com/petauron/vastora/issues/1440)) ([14892b4](https://github.com/petauron/vastora/commit/14892b4e79086168884a6056b7a939b487d04a31)), closes [#1439](https://github.com/petauron/vastora/issues/1439)
+* **web:** check for updates from the App Store ([#1448](https://github.com/petauron/vastora/issues/1448)) ([236e76d](https://github.com/petauron/vastora/commit/236e76d766ba4a9afc1f3d91b754d9b5d14236e4)), closes [#1446](https://github.com/petauron/vastora/issues/1446)
+
+
+### Bug Fixes
+
+* **agent:** silence routine Docker Caddy heartbeat INFO logs ([#1443](https://github.com/petauron/vastora/issues/1443)) ([c58570c](https://github.com/petauron/vastora/commit/c58570c1dabc7efe94d76879f590473377d88928)), closes [#1442](https://github.com/petauron/vastora/issues/1442)
+* **center:** enable HAProxy Caddy fallback only for explicit public HTTPS ([#1445](https://github.com/petauron/vastora/issues/1445)) ([55e6f0e](https://github.com/petauron/vastora/commit/55e6f0efade5a22b29d232e52f3139b17c6bc640)), closes [#1444](https://github.com/petauron/vastora/issues/1444)
+
 ## [0.4.0](https://github.com/petauron/vastora/compare/v0.3.1...v0.4.0) (2026-11-27)
 
 
