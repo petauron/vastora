@@ -43,6 +43,20 @@ func validateCenterNodeListenerState(state gateway.NodeListenerState) error {
 	return nil
 }
 
+var (
+	errNodeListenerNotFound = errors.New("center: node has no managed shared listener")
+	errNodeListenerBusy     = errors.New("center: wait for the current node listener operation to finish")
+	errNodeListenerFailed   = errors.New("center: resolve the failed node listener task before recomputing")
+)
+
+type NodeListenerReconcileResult struct {
+	AgentID         string `json:"agentId"`
+	Revision        int64  `json:"revision"`
+	Queued          bool   `json:"queued"`
+	Status          string `json:"status"`
+	RejectUnmatched bool   `json:"rejectUnmatched"`
+}
+
 func (s *Store) queueNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID string, now time.Time) error {
 	var current int64
 	err := tx.QueryRowContext(ctx, `SELECT desired_revision FROM node_listener_states WHERE node_id = ?`, nodeID).Scan(&current)
@@ -54,6 +68,151 @@ func (s *Store) queueNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 		return err
 	}
 	return s.saveNodeListenerState(ctx, tx, state, now, "node-local listener desired state queued")
+}
+
+func nodeListenerSpecEqual(first, second gateway.NodeListenerState) (bool, error) {
+	first.Revision = 1
+	second.Revision = 1
+	firstJSON, err := json.Marshal(first.Sorted())
+	if err != nil {
+		return false, err
+	}
+	secondJSON, err := json.Marshal(second.Sorted())
+	if err != nil {
+		return false, err
+	}
+	return string(firstJSON) == string(secondJSON), nil
+}
+
+// syncNodeListenerStateIfChanged recomputes an existing node-direct listener
+// after a fallback dependency changes and queues a new revision only when the
+// effective listener specification changed.
+func (s *Store) syncNodeListenerStateIfChanged(ctx context.Context, tx *sql.Tx, nodeID string, now time.Time, message string) (bool, error) {
+	var currentRevision int64
+	var encoded []byte
+	err := tx.QueryRowContext(ctx, `SELECT desired_revision, desired_json FROM node_listener_states WHERE node_id = ?`, nodeID).Scan(&currentRevision, &encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	blocked, err := agentReinstallBlocked(ctx, tx, nodeID)
+	if err != nil || blocked {
+		return false, err
+	}
+	var current gateway.NodeListenerState
+	if json.Unmarshal(encoded, &current) != nil || validateCenterNodeListenerState(current) != nil || current.NodeID != nodeID || current.Revision != currentRevision {
+		return false, errors.New("center: stored node-listener desired state is invalid")
+	}
+	next, err := s.desiredNodeListenerState(ctx, tx, nodeID, currentRevision+1)
+	if err != nil {
+		var prerequisite nodeListenerPrerequisiteError
+		if errors.As(err, &prerequisite) {
+			return false, nil
+		}
+		return false, err
+	}
+	equal, err := nodeListenerSpecEqual(current, next)
+	if err != nil || equal {
+		return false, err
+	}
+	if err := s.saveNodeListenerState(ctx, tx, next, now, message); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ReconcileNodeListener recomputes one Agent's node-direct shared 443 listener
+// on explicit operator request and queues a new revision only if the effective
+// listener specification changed. Other nodes and unchanged listeners stay untouched.
+func (s *Store) ReconcileNodeListener(ctx context.Context, agentID string) (NodeListenerReconcileResult, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return NodeListenerReconcileResult{}, errors.New("center: agent is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return NodeListenerReconcileResult{}, err
+	}
+	defer tx.Rollback()
+	var agentStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM agents WHERE id = ?`, agentID).Scan(&agentStatus); errors.Is(err, sql.ErrNoRows) {
+		return NodeListenerReconcileResult{}, errors.New("center: active Agent not found")
+	} else if err != nil {
+		return NodeListenerReconcileResult{}, err
+	}
+	if agentStatus != "active" {
+		return NodeListenerReconcileResult{}, errors.New("center: active Agent not found")
+	}
+	if blocked, err := agentReinstallBlocked(ctx, tx, agentID); err != nil {
+		return NodeListenerReconcileResult{}, err
+	} else if blocked {
+		return NodeListenerReconcileResult{}, errExecutionBlocked
+	}
+	var unresolved bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM task_executions
+		WHERE agent_id = ? AND state <> 'succeeded' AND disposition = ''
+	)`, agentID).Scan(&unresolved); err != nil {
+		return NodeListenerReconcileResult{}, err
+	}
+	if unresolved {
+		return NodeListenerReconcileResult{}, errExecutionBlocked
+	}
+	var desiredRevision, appliedRevision int64
+	var status string
+	var encoded []byte
+	err = tx.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status, desired_json FROM node_listener_states WHERE node_id = ?`, agentID).Scan(&desiredRevision, &appliedRevision, &status, &encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return NodeListenerReconcileResult{}, errNodeListenerNotFound
+	}
+	if err != nil {
+		return NodeListenerReconcileResult{}, err
+	}
+	var current gateway.NodeListenerState
+	if json.Unmarshal(encoded, &current) != nil || validateCenterNodeListenerState(current) != nil || current.NodeID != agentID || current.Revision != desiredRevision {
+		return NodeListenerReconcileResult{}, errors.New("center: stored node-listener desired state is invalid")
+	}
+	next, err := s.desiredNodeListenerState(ctx, tx, agentID, desiredRevision+1)
+	if err != nil {
+		return NodeListenerReconcileResult{}, err
+	}
+	equal, err := nodeListenerSpecEqual(current, next)
+	if err != nil {
+		return NodeListenerReconcileResult{}, err
+	}
+	if equal {
+		if status == "failed" {
+			return NodeListenerReconcileResult{}, errNodeListenerFailed
+		}
+		return NodeListenerReconcileResult{
+			AgentID:         agentID,
+			Revision:        desiredRevision,
+			Queued:          false,
+			Status:          status,
+			RejectUnmatched: current.Listener.RejectUnmatched,
+		}, nil
+	}
+	if status == "failed" {
+		return NodeListenerReconcileResult{}, errNodeListenerFailed
+	}
+	if status != "ready" || desiredRevision != appliedRevision {
+		return NodeListenerReconcileResult{}, errNodeListenerBusy
+	}
+	if err := s.saveNodeListenerState(ctx, tx, next, s.now().UTC(), "node-local listener desired state recomputed"); err != nil {
+		return NodeListenerReconcileResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return NodeListenerReconcileResult{}, err
+	}
+	return NodeListenerReconcileResult{
+		AgentID:         agentID,
+		Revision:        next.Revision,
+		Queued:          true,
+		Status:          "pending",
+		RejectUnmatched: next.Listener.RejectUnmatched,
+	}, nil
 }
 
 func (s *Store) saveNodeListenerState(ctx context.Context, tx *sql.Tx, state gateway.NodeListenerState, now time.Time, message string) error {
@@ -257,19 +416,35 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 			return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: err}
 		}
 	}
-	var siteGateway int
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM site_gateways membership
-		JOIN gateway_components component ON component.gateway_node_id = membership.agent_id
-		WHERE membership.agent_id = ? AND component.desired_status = 'running' AND (component.status = 'ready' OR ?)
-	)`, nodeID, restore != nil).Scan(&siteGateway); err != nil {
-		return gateway.NodeListenerState{}, err
-	}
-	listener := gateway.SharedHTTPS{Address: bindAddress, Port: 443, RejectUnmatched: siteGateway == 0, Routes: routes}
-	if siteGateway != 0 {
-		if restore != nil {
+	useCaddyFallback := false
+	if restore != nil {
+		var sharedGateway int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM site_gateways membership
+			JOIN gateway_components component ON component.gateway_node_id = membership.agent_id
+			WHERE membership.agent_id = ? AND component.desired_status = 'running'
+		)`, nodeID).Scan(&sharedGateway); err != nil {
+			return gateway.NodeListenerState{}, err
+		}
+		if sharedGateway != 0 {
 			return gateway.NodeListenerState{}, errors.New("center: restore the shared gateway before restoring this entry")
 		}
+		standalonePublicHTTPS, err := s.standaloneDaylightPublicHTTPSFallback(ctx, tx, nodeID, bindAddress, routes)
+		if err != nil {
+			return gateway.NodeListenerState{}, err
+		}
+		if standalonePublicHTTPS {
+			return gateway.NodeListenerState{}, errors.New("center: restore the shared gateway before restoring this entry")
+		}
+	} else {
+		var fallbackErr error
+		useCaddyFallback, fallbackErr = s.nodeListenerNeedsCaddyFallback(ctx, tx, nodeID, bindAddress, routes)
+		if fallbackErr != nil {
+			return gateway.NodeListenerState{}, fallbackErr
+		}
+	}
+	listener := gateway.SharedHTTPS{Address: bindAddress, Port: 443, RejectUnmatched: !useCaddyFallback, Routes: routes}
+	if useCaddyFallback {
 		listener.CaddyAddress, listener.CaddyPort = dockerruntime.CaddyAlias, 443
 	}
 	state := gateway.NodeListenerState{Revision: revision, NodeID: nodeID, Listener: listener}
@@ -277,6 +452,320 @@ func (s *Store) buildNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID s
 		return gateway.NodeListenerState{}, err
 	}
 	return state.Sorted(), nil
+}
+
+// nodeListenerNeedsCaddyFallback returns true only when Caddy explicitly serves
+// public HTTPS on the same bindAddress:443 socket as the node-direct listener.
+// Site Gateway membership, a merely ready gateway component, private TLS routes,
+// or loopback-only Daylight self-camouflage sites never qualify.
+func (s *Store) nodeListenerNeedsCaddyFallback(ctx context.Context, tx *sql.Tx, nodeID, bindAddress string, routes []gateway.Layer4Route) (bool, error) {
+	hasGatewayHTTPS, err := s.gatewayHasPublicHTTPSFallback(ctx, tx, nodeID, bindAddress)
+	if err != nil || hasGatewayHTTPS {
+		return hasGatewayHTTPS, err
+	}
+	return s.standaloneDaylightPublicHTTPSFallback(ctx, tx, nodeID, bindAddress, routes)
+}
+
+func (s *Store) gatewayHasPublicHTTPSFallback(ctx context.Context, tx *sql.Tx, nodeID, bindAddress string) (bool, error) {
+	var componentReady bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM gateway_components
+		WHERE gateway_node_id = ? AND desired_status = 'running' AND status = 'ready'
+	)`, nodeID).Scan(&componentReady); err != nil {
+		return false, err
+	}
+	if !componentReady {
+		return false, nil
+	}
+	desired, err := s.desiredGatewayState(ctx, tx, nodeID, 1)
+	if err != nil {
+		return false, err
+	}
+	if !gatewayStateHasPublicHTTPSOn(desired, bindAddress, 443) {
+		return false, nil
+	}
+	// Require applied gateway-route evidence rather than waiting for public
+	// reachability verification (which traverses this fallback) or enabling
+	// fallback before Caddy has applied its public 443 listener.
+	var desiredRevision, appliedRevision int64
+	var status string
+	var desiredJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status, desired_json FROM gateway_states WHERE gateway_node_id = ?`, nodeID).Scan(&desiredRevision, &appliedRevision, &status, &desiredJSON); errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	if appliedRevision < 1 {
+		return false, nil
+	}
+	// When the stored desired revision is already applied, desired_json is the
+	// exact gateway payload running in Caddy (covering both system and site routes).
+	if appliedRevision == desiredRevision && status == "ready" {
+		var appliedState gateway.DesiredState
+		if json.Unmarshal(desiredJSON, &appliedState) == nil && appliedState.Revision == appliedRevision {
+			return gatewayStateHasPublicHTTPSOn(appliedState, bindAddress, 443), nil
+		}
+	}
+	var appliedPublicRoute bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM routes r
+		JOIN services s ON s.id = r.service_id
+		JOIN publications p ON p.id = r.publication_id
+		JOIN agent_network_profiles n ON n.agent_id = r.gateway_node_id
+		WHERE r.gateway_node_id = ?
+		  AND r.tls_enabled = 1
+		  AND r.applied_revision > 0
+		  AND p.kind = ?
+		  AND p.ingress_owner = ?
+		  AND p.status <> 'stopped'
+		  AND s.status <> 'stopped'
+		  AND n.public_bind_address = ?
+	)`, nodeID, publicationPublic, ingressSiteGateway, bindAddress).Scan(&appliedPublicRoute); err != nil {
+		return false, err
+	}
+	if appliedPublicRoute {
+		return true, nil
+	}
+	// While a follow-up gateway revision is pending, keep an already-active Caddy
+	// fallback on this exact socket when system public HTTPS routes still require
+	// it, but never promote reject to Caddy from an earlier applied revision alone.
+	if gatewayStateHasSystemPublicHTTPSOn(desired, bindAddress, 443) {
+		return nodeListenerHasActiveCaddyFallback(ctx, tx, nodeID, bindAddress, 443)
+	}
+	return false, nil
+}
+
+func gatewayStateHasPublicHTTPSOn(state gateway.DesiredState, bindAddress string, port int) bool {
+	if !gatewayStateHasPublicListenerOn(state, bindAddress, port) {
+		return false
+	}
+	for _, route := range state.Routes {
+		if route.ListenerKind == "public" && route.TLSEnabled {
+			return true
+		}
+	}
+	return false
+}
+
+func gatewayStateHasSystemPublicHTTPSOn(state gateway.DesiredState, bindAddress string, port int) bool {
+	if !gatewayStateHasPublicListenerOn(state, bindAddress, port) {
+		return false
+	}
+	for _, route := range state.Routes {
+		if route.System && route.ListenerKind == "public" && route.TLSEnabled {
+			return true
+		}
+	}
+	return false
+}
+
+func gatewayStateHasPublicListenerOn(state gateway.DesiredState, bindAddress string, port int) bool {
+	for _, listener := range state.Listeners {
+		if listener.Kind == "public" && listener.Address == bindAddress && listener.HTTPSPort == port {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeListenerHasActiveCaddyFallback(ctx context.Context, tx *sql.Tx, nodeID, bindAddress string, port int) (bool, error) {
+	var appliedRevision int64
+	var desiredJSON []byte
+	err := tx.QueryRowContext(ctx, `SELECT applied_revision, desired_json FROM node_listener_states WHERE node_id = ?`, nodeID).Scan(&appliedRevision, &desiredJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if appliedRevision < 1 {
+		return false, nil
+	}
+	var current gateway.NodeListenerState
+	if json.Unmarshal(desiredJSON, &current) != nil {
+		return false, nil
+	}
+	return len(current.Listener.Routes) != 0 &&
+		!current.Listener.RejectUnmatched &&
+		current.Listener.Address == bindAddress &&
+		current.Listener.Port == port &&
+		current.Listener.CaddyAddress == dockerruntime.CaddyAlias &&
+		current.Listener.CaddyPort == 443, nil
+}
+
+func (s *Store) standaloneDaylightPublicHTTPSFallback(ctx context.Context, tx *sql.Tx, nodeID, bindAddress string, routes []gateway.Layer4Route) (bool, error) {
+	type siteCandidate struct {
+		applicationID   string
+		hostname        string
+		migrationFrom   string
+		httpsListen     string
+		revision        int64
+		appliedRevision int64
+		state           string
+		tlsLoopbackOnly bool
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT n.application_id, n.hostname, n.migration_from, n.revision, n.applied_revision, n.state, n.tls_loopback_only, COALESCE(json_extract(d.config_json, '$.https_listen'), '')
+		FROM node_sites n
+		JOIN applications a ON a.id = n.application_id
+		JOIN deployments d ON d.rowid = (
+			SELECT latest.rowid FROM deployments latest
+			WHERE latest.application_id = a.id
+			  AND latest.agent_id = a.node_id
+			  AND latest.state = 'succeeded'
+			ORDER BY latest.updated_at DESC, latest.rowid DESC LIMIT 1
+		)
+		WHERE n.agent_id = ?
+		  AND a.node_id = ?
+		  AND a.app_key = 'vastora-official/daylight-https'
+		  AND a.status <> 'stopped'
+		  AND d.operation IN ('install', 'upgrade', 'configure')`, nodeID, nodeID)
+	if err != nil {
+		return false, err
+	}
+	var candidates []siteCandidate
+	for rows.Next() {
+		var c siteCandidate
+		if err := rows.Scan(&c.applicationID, &c.hostname, &c.migrationFrom, &c.revision, &c.appliedRevision, &c.state, &c.tlsLoopbackOnly, &c.httpsListen); err != nil {
+			rows.Close()
+			return false, err
+		}
+		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return false, err
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	realityHosts := make(map[string]bool, len(routes))
+	for _, route := range routes {
+		if route.ManagedReality {
+			realityHosts[strings.ToLower(route.Hostname)] = true
+		}
+	}
+	for _, c := range candidates {
+		host, port, splitErr := net.SplitHostPort(strings.TrimSpace(c.httpsListen))
+		if splitErr != nil || host != bindAddress || port != "443" {
+			continue
+		}
+		nonRealityHost := (c.hostname != "" && !realityHosts[strings.ToLower(c.hostname)]) ||
+			(c.migrationFrom != "" && !realityHosts[strings.ToLower(c.migrationFrom)])
+		if !nonRealityHost {
+			continue
+		}
+		active, err := nodeSiteServesPublicHTTPS(ctx, tx, nodeID, c.applicationID, c.revision, c.appliedRevision, c.state, c.tlsLoopbackOnly)
+		if err != nil || active {
+			return active, err
+		}
+	}
+	return false, nil
+}
+
+func nodeSiteServesPublicHTTPS(ctx context.Context, tx *sql.Tx, nodeID, applicationID string, revision, appliedRevision int64, state string, tlsLoopbackOnly bool) (bool, error) {
+	if state == "pending" && !tlsLoopbackOnly {
+		var applyPending bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM node_site_tasks
+			WHERE application_id = ?
+			  AND agent_id = ?
+			  AND revision = ?
+			  AND state IN ('pending', 'running')
+			  AND json_extract(input_json, '$.action') IN ('apply', 'prepare-migration')
+		)`, applicationID, nodeID, revision).Scan(&applyPending); err != nil {
+			return false, err
+		}
+		if applyPending {
+			return true, nil
+		}
+	}
+	if state == "rolled_back" {
+		// Rollback restores the Agent's previous site snapshot. Only when an
+		// earlier non-rolled-back apply/migration revision served public TLS
+		// (not loopback-only) did rollback retain a public 443 listener; rolling
+		// back an initial TLS revision restores the non-TLS site.
+		loopback, found, err := latestNodeSiteTaskLoopback(ctx, tx, nodeID, applicationID, revision, true)
+		if err != nil || !found {
+			return false, err
+		}
+		return !loopback, nil
+	}
+	if appliedRevision <= 0 {
+		return false, nil
+	}
+	if state == "ready" && appliedRevision == revision {
+		return !tlsLoopbackOnly, nil
+	}
+	// Another revision is pending/issuing/action_required while appliedRevision
+	// remains recorded; inspect the latest non-rolled-back applied task up to
+	// appliedRevision so a rolled-back revision cannot vouch for public TLS.
+	loopback, found, err := latestNodeSiteTaskLoopback(ctx, tx, nodeID, applicationID, appliedRevision, false)
+	if err != nil {
+		return false, err
+	}
+	if found {
+		return !loopback, nil
+	}
+	var hasHistory bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM node_site_tasks
+		WHERE application_id = ? AND agent_id = ? AND revision <= ?
+	)`, applicationID, nodeID, appliedRevision).Scan(&hasHistory); err != nil {
+		return false, err
+	}
+	if hasHistory {
+		return false, nil
+	}
+	return !tlsLoopbackOnly, nil
+}
+
+func latestNodeSiteTaskLoopback(ctx context.Context, tx *sql.Tx, nodeID, applicationID string, revision int64, strictlyBefore bool) (bool, bool, error) {
+	var loopback int
+	var err error
+	if strictlyBefore {
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(t.result_json, '$.tlsLoopbackOnly'), 0)
+			FROM node_site_tasks t
+			WHERE t.application_id = ?
+			  AND t.agent_id = ?
+			  AND t.state = 'succeeded'
+			  AND json_extract(t.input_json, '$.action') IN ('apply', 'prepare-migration', 'accept-migration', 'cancel-migration')
+			  AND NOT EXISTS (
+				SELECT 1 FROM node_site_tasks rb
+				WHERE rb.application_id = t.application_id
+				  AND rb.agent_id = t.agent_id
+				  AND rb.revision = t.revision
+				  AND rb.state = 'succeeded'
+				  AND json_extract(rb.input_json, '$.action') = 'rollback'
+			  )
+			  AND t.revision < ?
+			ORDER BY t.revision DESC, t.rowid DESC
+			LIMIT 1`, applicationID, nodeID, revision).Scan(&loopback)
+	} else {
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(t.result_json, '$.tlsLoopbackOnly'), 0)
+			FROM node_site_tasks t
+			WHERE t.application_id = ?
+			  AND t.agent_id = ?
+			  AND t.state = 'succeeded'
+			  AND json_extract(t.input_json, '$.action') IN ('apply', 'prepare-migration', 'accept-migration', 'cancel-migration')
+			  AND NOT EXISTS (
+				SELECT 1 FROM node_site_tasks rb
+				WHERE rb.application_id = t.application_id
+				  AND rb.agent_id = t.agent_id
+				  AND rb.revision = t.revision
+				  AND rb.state = 'succeeded'
+				  AND json_extract(rb.input_json, '$.action') = 'rollback'
+			  )
+			  AND t.revision <= ?
+			ORDER BY t.revision DESC, t.rowid DESC
+			LIMIT 1`, applicationID, nodeID, revision).Scan(&loopback)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	return loopback != 0, true, nil
 }
 
 func (s *Store) activateMigratedNodeListeners(ctx context.Context) error {
@@ -500,7 +989,8 @@ func (s *Store) projectNodeListenerState(ctx context.Context, tx *sql.Tx, commit
 	var err error
 	var desired, applied, attempt int64
 	var status string
-	if err := tx.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status, attempt FROM node_listener_states WHERE node_id = ?`, agentID).Scan(&desired, &applied, &status, &attempt); err != nil {
+	var desiredJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status, attempt, desired_json FROM node_listener_states WHERE node_id = ?`, agentID).Scan(&desired, &applied, &status, &attempt, &desiredJSON); err != nil {
 		return errors.New("center: node listener desired state not found")
 	}
 	if revision <= applied || revision < desired || (revision == desired && expectedAttempt < attempt) {
@@ -527,6 +1017,17 @@ func (s *Store) projectNodeListenerState(ctx context.Context, tx *sql.Tx, commit
 		}
 		if err == nil {
 			verificationTargets, err = s.publicationVerificationTargetsForNodeListener(ctx, tx, agentID)
+		}
+		if err == nil {
+			var appliedState gateway.NodeListenerState
+			if json.Unmarshal(desiredJSON, &appliedState) == nil && len(appliedState.Listener.Routes) != 0 && !appliedState.Listener.RejectUnmatched {
+				gatewayTargets, gatewayErr := s.publicationVerificationTargetsForGateway(ctx, tx, agentID)
+				if gatewayErr != nil {
+					err = gatewayErr
+				} else {
+					verificationTargets = append(verificationTargets, gatewayTargets...)
+				}
+			}
 		}
 		if err == nil {
 			err = s.completeNodeListenerMigrationCutovers(ctx, tx, agentID, s.now().UTC())

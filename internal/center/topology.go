@@ -386,14 +386,8 @@ func (s *Store) replaceSiteGateways(ctx context.Context, tx *sql.Tx, siteID stri
 					return err
 				}
 			}
-			var nodeListener int
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_listener_states WHERE node_id = ?)`, agentID).Scan(&nodeListener); err != nil {
+			if _, err := s.syncNodeListenerStateIfChanged(ctx, tx, agentID, now, "node-local listener synced after gateway assignment"); err != nil {
 				return err
-			}
-			if nodeListener != 0 {
-				if err := s.queueNodeListenerState(ctx, tx, agentID, now); err != nil {
-					return err
-				}
 			}
 		}
 	}
@@ -404,21 +398,15 @@ func (s *Store) replaceSiteGateways(ctx context.Context, tx *sql.Tx, siteID stri
 		if _, err := tx.ExecContext(ctx, `DELETE FROM routes WHERE site_id = ? AND gateway_node_id = ?`, siteID, agentID); err != nil {
 			return fmt.Errorf("center: remove gateway routes: %w", err)
 		}
-		var nodeListener int
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_listener_states WHERE node_id = ?)`, agentID).Scan(&nodeListener); err != nil {
-			return err
-		}
-		if nodeListener != 0 {
-			if err := s.queueNodeListenerState(ctx, tx, agentID, now); err != nil {
-				return err
-			}
-		}
 		state := gateway.DesiredState{Revision: 1}
 		if err := s.appendSystemGatewayRoutes(ctx, tx, agentID, &state, map[string]gateway.Listener{}); err != nil {
 			return err
 		}
 		if len(state.Routes) != 0 {
 			if err := s.queueGatewayState(ctx, tx, agentID, now); err != nil {
+				return err
+			}
+			if _, err := s.syncNodeListenerStateIfChanged(ctx, tx, agentID, now, "node-local listener synced after site gateway removal"); err != nil {
 				return err
 			}
 			continue
@@ -435,6 +423,9 @@ func (s *Store) replaceSiteGateways(ctx context.Context, tx *sql.Tx, siteID stri
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM gateway_states WHERE gateway_node_id = ?`, agentID); err != nil {
 			return fmt.Errorf("center: remove gateway desired state: %w", err)
+		}
+		if _, err := s.syncNodeListenerStateIfChanged(ctx, tx, agentID, now, "node-local listener synced after site gateway removal"); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -241,6 +241,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/revoke", s.requireAuth(true, s.handleRevokeAgentCredential))
 	mux.HandleFunc("POST /api/v1/agents/{id}/remove", s.requireAuth(true, s.handleRemoveOfflineAgent))
 	mux.HandleFunc("PUT /api/v1/agents/{id}/network-profile", s.requireAuth(true, s.handleConfirmNetworkProfile))
+	mux.HandleFunc("POST /api/v1/agents/{id}/node-listener/reconcile", s.requireAuth(true, s.handleReconcileNodeListener))
 	mux.HandleFunc("GET /api/v1/executions", s.requireAuth(false, s.handleListExecutions))
 	mux.HandleFunc("GET /api/v1/tasks/{id}/execution", s.requireAuth(false, s.handleTaskExecution))
 	mux.HandleFunc("GET /api/v1/execution-claim-control", s.requireAuth(false, s.handleGetExecutionClaimControl))

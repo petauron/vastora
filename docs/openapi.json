@@ -11805,6 +11805,139 @@
         }
       }
     },
+    "/api/v1/agents/{id}/node-listener/reconcile": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Reconcile Node Listener",
+        "operationId": "reconcileNodeListener_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Node listener already matches desired state or has an identical revision pending.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "revision": {
+                      "type": "integer"
+                    },
+                    "queued": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "rejectUnmatched": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "agentId",
+                    "revision",
+                    "queued",
+                    "status",
+                    "rejectUnmatched"
+                  ]
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "A new node-listener revision was queued for this Agent.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "revision": {
+                      "type": "integer"
+                    },
+                    "queued": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "rejectUnmatched": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "agentId",
+                    "revision",
+                    "queued",
+                    "status",
+                    "rejectUnmatched"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Explicitly recompute one Agent's node-direct shared 443 listener and queue a new revision only when its effective configuration changed. Leaves other nodes and gateway states untouched; returns 200 when unchanged or already pending, 202 when a new revision is queued, 404 when the node has no managed shared listener, and 409 when fenced, busy, or failed."
+      }
+    },
     "/api/v1/executions": {
       "get": {
         "tags": [

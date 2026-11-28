@@ -516,6 +516,7 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationPublic, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "center.example.test", DNSProvider: "manual", ConfirmHighRisk: true}); err != nil {
 		t.Fatal(err)
 	}
+	completeNextTask(t, store, node, "gateway.routes.apply", nil)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, observed_listen, status, created_at, updated_at)
 		VALUES('vless-service', ?, ?, 'vless', 'tcp', 2443, 2443, '10.0.0.10:2443', 'observed', 'vless/tcp', '10.0.0.10', 'ready', ?, ?)`, applicationID, testSiteID(t, store), now, now); err != nil {

@@ -892,6 +892,13 @@ for (const route of routes) {
     schema.required = ["address"];
     schema.properties.address.description = "An exact public IPv4 or IPv6 address from this node's eligible targets. Center resolves the trusted local bind address.";
   }
+  if (route.handler === "handleReconcileNodeListener") {
+    const schema = schemaForGoType("NodeListenerReconcileResult");
+    schema.required = ["agentId", "revision", "queued", "status", "rejectUnmatched"];
+    operation.description = "Explicitly recompute one Agent's node-direct shared 443 listener and queue a new revision only when its effective configuration changed. Leaves other nodes and gateway states untouched; returns 200 when unchanged or already pending, 202 when a new revision is queued, 404 when the node has no managed shared listener, and 409 when fenced, busy, or failed.";
+    operation.responses["200"] = { description: "Node listener already matches desired state or has an identical revision pending.", headers: noStoreHeaders, content: { "application/json": { schema } } };
+    operation.responses["202"] = { description: "A new node-listener revision was queued for this Agent.", headers: noStoreHeaders, content: { "application/json": { schema } } };
+  }
   if (route.handler === "handleListPublications") {
     operation.responses["200"].content["application/json"].schema = {
       type: "object",
