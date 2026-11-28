@@ -552,21 +552,45 @@ func TestCatalogRuntimeBuiltInPlatformCapabilitiesSkipManualApproval(t *testing.
 func TestCatalogRuntimeUpgradeRemembersPriorApprovalUnlessScopeExpands(t *testing.T) {
 	store, node, app := independentRuntimeStore(t)
 	ctx := context.Background()
+	appKey := OfficialCatalogSourceID + "/" + app.ID
+
+	// Unprivileged packages persist [] (never JSON null) in authorized_capabilities_json.
+	unprivInstall, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Config: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var depGrants string
+	if err := store.db.QueryRowContext(ctx, `SELECT CAST(authorized_capabilities_json AS TEXT) FROM deployments WHERE id=?`, unprivInstall.ID).Scan(&depGrants); err != nil {
+		t.Fatal(err)
+	}
+	if depGrants != "[]" {
+		t.Fatalf("unprivileged deployment stored %q instead of []", depGrants)
+	}
+	confirmIndependentTask(t, store, node, claimTask(t, store, node))
+	var resGrants string
+	if err := store.db.QueryRowContext(ctx, `SELECT CAST(authorized_capabilities_json AS TEXT) FROM application_resources WHERE application_id=?`, unprivInstall.ApplicationID).Scan(&resGrants); err != nil {
+		t.Fatal(err)
+	}
+	if resGrants != "[]" {
+		t.Fatalf("unprivileged application_resources stored %q instead of []", resGrants)
+	}
+
+	// Upgrade into a GID-0-only root user ("1000:0") + host-network + read/write host-path mount.
+	app.PackageRevision = 2
 	app.Runtime.RequiredCapabilities = []string{"root", "host-network", "host-path"}
-	app.Runtime.Docker.Containers[0].User = "0:0"
+	app.Runtime.Docker.Containers[0].User = "1000:0"
 	app.Runtime.Docker.Containers[0].HostNetwork = true
 	app.Runtime.Docker.Containers[0].Mounts = []catalog.Mount{{HostPath: "/var/log/demo", Target: "/logs", ReadOnly: false}}
 	seedIndependentPackage(t, store, app)
-	appKey := OfficialCatalogSourceID + "/" + app.ID
 
 	initialGrants := []string{"root", "host-network", "host-path"}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Config: json.RawMessage(`{}`), AuthorizedCapabilities: &initialGrants}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`), AuthorizedCapabilities: &initialGrants}); err != nil {
 		t.Fatal(err)
 	}
 	confirmIndependentTask(t, store, node, claimTask(t, store, node))
 
 	// Same capabilities with narrower read-only mount need no re-approval.
-	app.PackageRevision = 2
+	app.PackageRevision = 3
 	app.Runtime.Docker.Containers[0].Mounts = []catalog.Mount{{HostPath: "/var/log/demo", Target: "/logs", ReadOnly: true}}
 	seedIndependentPackage(t, store, app)
 	installed, err := store.ListApplications(ctx)
@@ -578,8 +602,25 @@ func TestCatalogRuntimeUpgradeRemembersPriorApprovalUnlessScopeExpands(t *testin
 	}
 	confirmIndependentTask(t, store, node, claimTask(t, store, node))
 
+	// Escalating from GID-0 ("1000:0") to UID-0+GID-0 ("0:0") requires re-approving root.
+	app.PackageRevision = 4
+	app.Runtime.Docker.Containers[0].User = "0:0"
+	seedIndependentPackage(t, store, app)
+	installed, err = store.ListApplications(ctx)
+	if err != nil || len(installed) != 1 || installed[0].UpgradeApprovalCapabilities == nil || strings.Join(*installed[0].UpgradeApprovalCapabilities, ",") != "root" {
+		t.Fatalf("UID-0 escalation from 1000:0 expected root re-approval, got %+v", installed)
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err == nil || !strings.Contains(err.Error(), "approval required") {
+		t.Fatalf("UID-0 escalation from 1000:0 accepted without approval: %v", err)
+	}
+	onlyRoot := []string{"root"}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`), AuthorizedCapabilities: &onlyRoot}); err != nil {
+		t.Fatalf("upgrade approving UID-0 escalation failed: %v", err)
+	}
+	confirmIndependentTask(t, store, node, claimTask(t, store, node))
+
 	// Adding a new host-path mount requires approving only host-path, not root or host-network.
-	app.PackageRevision = 3
+	app.PackageRevision = 5
 	app.Runtime.Docker.Containers[0].Mounts = append(app.Runtime.Docker.Containers[0].Mounts, catalog.Mount{HostPath: "/etc/demo", Target: "/etc/demo", ReadOnly: true})
 	seedIndependentPackage(t, store, app)
 	installed, err = store.ListApplications(ctx)
@@ -599,5 +640,21 @@ func TestCatalogRuntimeUpgradeRemembersPriorApprovalUnlessScopeExpands(t *testin
 	upgradedTask := claimTask(t, store, node)
 	if strings.Join(upgradedTask.AuthorizedCapabilities, ",") != "host-network,host-path,root" {
 		t.Fatalf("upgraded task grants mismatch: %+v", upgradedTask.AuthorizedCapabilities)
+	}
+
+	// Narrowing from 0:0 to 0:1000 needs no re-approval, then re-escalating to bare "root" requires root approval.
+	confirmIndependentTask(t, store, node, upgradedTask)
+	app.PackageRevision = 6
+	app.Runtime.Docker.Containers[0].User = "0:1000"
+	seedIndependentPackage(t, store, app)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err != nil {
+		t.Fatalf("narrowing 0:0 to 0:1000 unexpectedly required re-approval: %v", err)
+	}
+	confirmIndependentTask(t, store, node, claimTask(t, store, node))
+	app.PackageRevision = 7
+	app.Runtime.Docker.Containers[0].User = "root"
+	seedIndependentPackage(t, store, app)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: appKey, Operation: "upgrade", Config: json.RawMessage(`{}`)}); err == nil || !strings.Contains(err.Error(), "approval required") {
+		t.Fatalf("GID-0 escalation from 0:1000 to bare root accepted without approval: %v", err)
 	}
 }

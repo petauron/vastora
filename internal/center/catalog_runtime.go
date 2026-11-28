@@ -157,19 +157,39 @@ func approvalRequiredCapabilities(appKey string, manifest catalog.AppManifest) [
 	return required
 }
 
-func isRootProcessUser(user string) bool {
+func isZeroID(part string) bool {
+	if part == "root" {
+		return true
+	}
+	numeric, err := strconv.ParseUint(part, 10, 32)
+	return err == nil && numeric == 0
+}
+
+func rootProcessPrivileges(user string) (uidRoot, gidRoot bool) {
 	if user == "" {
-		return false
+		return false, false
 	}
-	for _, part := range strings.Split(user, ":") {
-		if part == "root" {
-			return true
-		}
-		if numeric, err := strconv.ParseUint(part, 10, 32); err == nil && numeric == 0 {
-			return true
-		}
+	parts := strings.Split(user, ":")
+	if len(parts) == 1 {
+		root := isZeroID(parts[0])
+		return root, root
 	}
-	return false
+	return isZeroID(parts[0]), isZeroID(parts[1])
+}
+
+func isRootProcessUser(user string) bool {
+	uidRoot, gidRoot := rootProcessPrivileges(user)
+	return uidRoot || gidRoot
+}
+
+func appendRootScopes(scopes map[string][]string, prefix, user string) {
+	uidRoot, gidRoot := rootProcessPrivileges(user)
+	if uidRoot {
+		scopes["root"] = append(scopes["root"], prefix+":uid0")
+	}
+	if gidRoot {
+		scopes["root"] = append(scopes["root"], prefix+":gid0")
+	}
 }
 
 func packageCapabilityScopes(manifest catalog.AppManifest) map[string][]string {
@@ -179,9 +199,7 @@ func packageCapabilityScopes(manifest catalog.AppManifest) map[string][]string {
 	}
 	if docker := manifest.Runtime.Docker; docker != nil {
 		for _, c := range docker.Containers {
-			if isRootProcessUser(c.User) {
-				scopes["root"] = append(scopes["root"], "docker:"+c.Name+":root")
-			}
+			appendRootScopes(scopes, "docker:"+c.Name, c.User)
 			if c.HostNetwork {
 				scopes["host-network"] = append(scopes["host-network"], "docker:"+c.Name+":host-network")
 			}
@@ -199,13 +217,13 @@ func packageCapabilityScopes(manifest catalog.AppManifest) map[string][]string {
 			}
 		}
 	}
-	if native := manifest.Runtime.Systemd; native != nil && isRootProcessUser(native.User) {
-		scopes["root"] = append(scopes["root"], "systemd:root")
+	if native := manifest.Runtime.Systemd; native != nil {
+		appendRootScopes(scopes, "systemd", native.User)
 	}
 	if bundle := manifest.Runtime.NativeServices; bundle != nil {
 		for _, service := range bundle.Services {
-			if service.ManagedUser == "" && isRootProcessUser(service.Process.User) {
-				scopes["root"] = append(scopes["root"], "native:"+service.Name+":root")
+			if service.ManagedUser == "" {
+				appendRootScopes(scopes, "native:"+service.Name, service.Process.User)
 			}
 		}
 	}
@@ -283,7 +301,7 @@ func deploymentPermissions(ctx context.Context, db registryCredentialQuerier, re
 		}
 	}
 	required := []string{}
-	if manifest.Runtime != nil {
+	if manifest.Runtime != nil && len(manifest.Runtime.RequiredCapabilities) > 0 {
 		required = slices.Clone(manifest.Runtime.RequiredCapabilities)
 	}
 	explicit := map[string]bool{}

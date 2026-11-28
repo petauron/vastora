@@ -74,14 +74,14 @@ type sourceCredential struct {
 }
 
 type AppView struct {
-	Key                  string              `json:"key"`
-	SourceID             string              `json:"sourceId"`
-	App                  catalog.AppManifest `json:"app"`
-	FetchedAt            time.Time           `json:"fetchedAt"`
-	CatalogExpiresAt     *time.Time          `json:"catalogExpiresAt,omitempty"`
-	CatalogRevision      uint64              `json:"catalogRevision,omitempty"`
-	InstallBlocked       bool                `json:"installBlocked,omitempty"`
-	InstallBlockedReason string              `json:"installBlockedReason,omitempty"`
+	Key                          string              `json:"key"`
+	SourceID                     string              `json:"sourceId"`
+	App                          catalog.AppManifest `json:"app"`
+	FetchedAt                    time.Time           `json:"fetchedAt"`
+	CatalogExpiresAt             *time.Time          `json:"catalogExpiresAt,omitempty"`
+	CatalogRevision              uint64              `json:"catalogRevision,omitempty"`
+	InstallBlocked               bool                `json:"installBlocked,omitempty"`
+	InstallBlockedReason         string              `json:"installBlockedReason,omitempty"`
 	ManifestSHA256               string              `json:"manifestSha256"`
 	ManagedConfigFields          []string            `json:"managedConfigFields,omitempty"`
 	ApprovalRequiredCapabilities []string            `json:"approvalRequiredCapabilities"`
