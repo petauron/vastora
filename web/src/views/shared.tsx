@@ -122,7 +122,7 @@ export function userError(language: Language, error: unknown) {
     return copy(language, "落地配置已变化，请刷新状态后重试。", "Landing settings changed. Refresh and retry.");
   }
   if (normalized === "refresh the app catalog and retry this operation.") {
-    return copy(language, "请先在控制面板刷新应用目录，再重试。", "Refresh the app catalog in Control Panel, then retry.");
+    return copy(language, "请先在应用商店点击「检查更新」，再重试。", "Select Check for updates in the App Store, then retry.");
   }
   if (code === "protocols_need_own_exit") return copy(language, "请先切换为“本机出口”，启用 HY2 后再选择落地机。", "Switch to the node's own exit, enable HY2, then select the landing server again.");
   if (code === "protocols_need_domain") return copy(language, "请先配置节点的公网地址，再修改协议。", "Set up the node's public address before changing protocols.");

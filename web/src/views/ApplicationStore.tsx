@@ -10,11 +10,14 @@ import {
   SearchIcon,
   Settings2Icon,
 } from "lucide-react";
+import { api, isAPIError } from "@/api";
+import type { Mutate } from "@/App";
 import type { AppData, Application, AppView, Deployment } from "@/types";
 import type { Language } from "@/translations";
 import { AppIcon } from "@/components/desktop/AppIcon";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Spinner } from "@/components/ui/spinner";
 import { AppStore, AppStoreTile } from "./AppStore";
 import { eligibleAppNodes, localized } from "./appAccess";
 import { daylightAppKey, isDaylightCatalogApp } from "./daylight";
@@ -47,6 +50,7 @@ export function ApplicationStore({
   data,
   groups,
   language,
+  mutate,
   onInstall,
   onOpen,
   onManage,
@@ -63,6 +67,7 @@ export function ApplicationStore({
   data: AppData;
   groups: InstalledAppGroup[];
   language: Language;
+  mutate: Mutate;
   onInstall: (app: AppView) => void;
   onOpen: (key: string) => void;
   onManage: (application: Application) => void;
@@ -82,6 +87,32 @@ export function ApplicationStore({
     nonce: 1,
   }));
   const [query, setQuery] = useState("");
+  const [checkingCatalog, setCheckingCatalog] = useState(false);
+  const [failedCatalogSources, setFailedCatalogSources] = useState<string[] | null>(null);
+  const enabledSources = data.sources.filter((source) => source.enabled);
+
+  const checkForUpdates = async () => {
+    setCheckingCatalog(true);
+    setFailedCatalogSources(null);
+    try {
+      await mutate(async () => {
+        const failures: string[] = [];
+        for (const source of enabledSources) {
+          try {
+            await api.refreshSource(source.id);
+          } catch (error) {
+            if (isAPIError(error) && error.status === 401) throw error;
+            failures.push(source.displayName || source.id);
+          }
+        }
+        setFailedCatalogSources(failures);
+      });
+    } catch {
+      // The shared mutation handler reports request errors.
+    } finally {
+      setCheckingCatalog(false);
+    }
+  };
 
   const currentRoute = navState.entries[navState.index] ?? navState.entries[0];
   const activeSection: Section = currentRoute.kind === "section" ? currentRoute.section : currentRoute.origin;
@@ -392,6 +423,17 @@ export function ApplicationStore({
         </InputGroup>
 
         <div className="store-topbar-actions">
+          <Button
+            aria-busy={checkingCatalog}
+            className="store-check-updates"
+            disabled={checkingCatalog || enabledSources.length === 0}
+            onClick={() => void checkForUpdates()}
+            size="sm"
+            variant="outline"
+          >
+            {checkingCatalog ? <Spinner aria-hidden="true" className="motion-reduce:animate-none" data-icon="inline-start" /> : <RefreshCwIcon aria-hidden="true" data-icon="inline-start" />}
+            {copy(language, "检查更新", "Check for updates")}
+          </Button>
           {activeTasksControl}
           <Button
             aria-label={copy(language, "目录设置", "Catalog settings")}
@@ -405,6 +447,16 @@ export function ApplicationStore({
           </Button>
         </div>
       </div>
+      <p
+        className={checkingCatalog || !failedCatalogSources ? "sr-only" : "store-catalog-check-result max-h-[20svh] shrink-0 overflow-auto border-b bg-card px-4 py-2 text-sm text-card-foreground wrap-anywhere"}
+        role="status"
+      >
+        {checkingCatalog ? copy(language, "正在检查应用目录…", "Checking app catalogs…") : failedCatalogSources && (
+          failedCatalogSources.length > 0
+            ? copy(language, `未能检查 ${failedCatalogSources.join("、")}。`, `Could not check ${failedCatalogSources.join(", ")}.`)
+            : copy(language, "应用目录检查完成。", "App catalog check complete.")
+        )}
+      </p>
 
       {/* Main Split: 2-Item Sidebar + Content / Workbench */}
       <div className="store-layout">
