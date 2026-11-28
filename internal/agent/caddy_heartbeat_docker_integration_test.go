@@ -175,6 +175,7 @@ func TestCaddyDockerHeartbeatMetricsSilenceRealDocker(t *testing.T) {
 	}
 
 	// Phase 1: provision pinned caddy:2.11.4 container and apply rev 1.
+	// Strict post-apply Health must verify GET /config/ without touching /metrics.
 	if err := applyGatewayDesiredState(ctx, store, managed, desiredFor(1, upstreamPort), nil); err != nil {
 		t.Fatalf("apply rev 1 on pinned Caddy: %v", err)
 	}
@@ -184,11 +185,23 @@ func TestCaddyDockerHeartbeatMetricsSilenceRealDocker(t *testing.T) {
 	if afterApply.infoGetMetrics != 0 {
 		t.Fatalf("unexpected INFO log for /metrics: %+v", afterApply)
 	}
+	// First scrape here is only our own assertion read, proving strict Health
+	// made zero /metrics scrapes during applyGatewayDesiredState.
+	if count := readMetricsScrapeCount(); count != 0 {
+		t.Fatalf("strict applyGatewayDesiredState called /metrics %d times, want 0", count)
+	}
 
-	// Phase 2: 5 steady-state routine heartbeats must emit 0 new admin.api
-	// INFO "received request" lines while actually scraping /metrics each time.
+	// Phase 2: one warm-up routine heartbeat seeds /metrics -> /config/ ->
+	// /metrics; subsequent steady-state routine heartbeats (even across
+	// unrelated read-only GET /debug/vars traffic) emit 0 new admin.api INFO
+	// "received request" lines while executing real /metrics checks each time.
+	if err := managed.HeartbeatHealth(ctx); err != nil {
+		t.Fatalf("warm-up routine heartbeat failed: %v", err)
+	}
+	afterWarmup := waitForLog("warm-up routine GET /config/ INFO log", func(c realCaddyAdminLogCounts) bool {
+		return c.infoGetConfig > afterApply.infoGetConfig
+	})
 	metricsBefore := readMetricsScrapeCount()
-	beforeSteady := readLogs()
 	for i := range 5 {
 		if err := managed.HeartbeatHealth(ctx); err != nil {
 			t.Fatalf("steady-state heartbeat %d failed: %v", i+1, err)
@@ -196,23 +209,47 @@ func TestCaddyDockerHeartbeatMetricsSilenceRealDocker(t *testing.T) {
 	}
 	metricsAfter := readMetricsScrapeCount()
 	afterSteady := readLogs()
-	if afterSteady.infoReceived != beforeSteady.infoReceived {
-		t.Fatalf("steady-state heartbeats emitted admin.api INFO logs: before=%+v after=%+v", beforeSteady, afterSteady)
+	if afterSteady.infoReceived != afterWarmup.infoReceived {
+		t.Fatalf("steady-state heartbeats emitted admin.api INFO logs: before=%+v after=%+v", afterWarmup, afterSteady)
 	}
-	if afterSteady.infoGetConfig != beforeSteady.infoGetConfig {
-		t.Fatalf("steady-state heartbeats issued GET /config/: before=%+v after=%+v", beforeSteady, afterSteady)
+	if afterSteady.infoGetConfig != afterWarmup.infoGetConfig {
+		t.Fatalf("steady-state heartbeats issued GET /config/: before=%+v after=%+v", afterWarmup, afterSteady)
 	}
 	if afterSteady.infoGetMetrics != 0 {
 		t.Fatalf("/metrics emitted INFO logs on pinned Caddy: %+v", afterSteady)
 	}
-	// metricsAfter itself adds 1 scrape on top of the 5 heartbeat scrapes.
 	if delta := metricsAfter - metricsBefore; delta < 6 {
 		t.Fatalf("expected at least 5 heartbeat /metrics scrapes (+1 check), got delta=%d", delta)
 	}
 
+	// An unrelated read-only Admin request (GET /debug/vars) must not perturb
+	// the config generation or make steady heartbeats emit GET /config/ INFO.
+	varsReq, err := http.NewRequestWithContext(ctx, http.MethodGet, caddyDriver.AdminURL+"/debug/vars", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	varsResp, err := caddyDriver.client().Do(varsReq)
+	if err != nil || varsResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /debug/vars failed: resp=%v err=%v", varsResp, err)
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(varsResp.Body, 1<<20))
+	_ = varsResp.Body.Close()
+	afterVars := waitForLog("read-only GET /debug/vars INFO log", func(c realCaddyAdminLogCounts) bool {
+		return c.infoReceived > afterSteady.infoReceived
+	})
+	for i := range 2 {
+		if err := managed.HeartbeatHealth(ctx); err != nil {
+			t.Fatalf("post-debug-vars steady heartbeat %d failed: %v", i+1, err)
+		}
+	}
+	if afterVarsSteady := readLogs(); afterVarsSteady.infoReceived != afterVars.infoReceived || afterVarsSteady.infoGetConfig != afterVars.infoGetConfig {
+		t.Fatalf("read-only GET /debug/vars broke steady heartbeat silence: before=%+v after=%+v", afterVars, afterVarsSteady)
+	}
+
 	// Phase 3: invalid POST /load (unknown app fails provisioning inside run())
-	// preserves Admin write+error logs, sets reload_successful=0, and forces
-	// immediate strict GET /config/ without caching on subsequent heartbeats.
+	// preserves Admin write+error logs, sets reload_successful=0, triggers one
+	// immediate strict GET /config/, and once the retained healthy config is
+	// verified under that generation, resumes DEBUG-only quiet heartbeats.
 	badBody := fmt.Sprintf(`{"admin":{"listen":%q},"apps":{"unknown_ci_app":{}}}`, caddyDriver.AdminListen)
 	badReq, err := http.NewRequestWithContext(ctx, http.MethodPost, caddyDriver.AdminURL+"/load", strings.NewReader(badBody))
 	if err != nil {
@@ -225,7 +262,7 @@ func TestCaddyDockerHeartbeatMetricsSilenceRealDocker(t *testing.T) {
 	}
 	_ = badResp.Body.Close()
 	afterBadLoad := waitForLog("preserved Admin write and error logs", func(c realCaddyAdminLogCounts) bool {
-		return c.infoPostLoad > afterSteady.infoPostLoad && c.adminErrors > afterSteady.adminErrors
+		return c.infoPostLoad > afterVars.infoPostLoad && c.adminErrors > afterVars.adminErrors
 	})
 	if err := managed.HeartbeatHealth(ctx); err != nil {
 		t.Fatalf("failed reload with intact config reported unhealthy: %v", err)
@@ -233,28 +270,17 @@ func TestCaddyDockerHeartbeatMetricsSilenceRealDocker(t *testing.T) {
 	afterFailedReloadCheck := waitForLog("strict GET /config/ after reload_successful=0", func(c realCaddyAdminLogCounts) bool {
 		return c.infoGetConfig > afterBadLoad.infoGetConfig
 	})
-	if err := managed.HeartbeatHealth(ctx); err != nil {
-		t.Fatalf("second heartbeat while reload_successful=0 failed: %v", err)
-	}
-	waitForLog("second strict GET /config/ while reload_successful=0", func(c realCaddyAdminLogCounts) bool {
-		return c.infoGetConfig > afterFailedReloadCheck.infoGetConfig
-	})
-
-	// Phase 4: apply rev 2, verify steady silence, then externally wipe Caddy
-	// to bootstrap-only config; the very next heartbeat must detect it.
-	if err := applyGatewayDesiredState(ctx, store, managed, desiredFor(2, upstreamPort+1), nil); err != nil {
-		t.Fatalf("apply rev 2 on pinned Caddy: %v", err)
-	}
-	beforeRev2Steady := readLogs()
-	for i := range 2 {
+	for i := range 3 {
 		if err := managed.HeartbeatHealth(ctx); err != nil {
-			t.Fatalf("rev 2 steady heartbeat %d failed: %v", i+1, err)
+			t.Fatalf("post-failed-reload steady heartbeat %d failed: %v", i+1, err)
 		}
 	}
-	if afterRev2Steady := readLogs(); afterRev2Steady.infoReceived != beforeRev2Steady.infoReceived {
-		t.Fatalf("rev 2 steady heartbeats emitted INFO logs: before=%+v after=%+v", beforeRev2Steady, afterRev2Steady)
+	if afterFailedReloadQuiet := readLogs(); afterFailedReloadQuiet.infoReceived != afterFailedReloadCheck.infoReceived || afterFailedReloadQuiet.infoGetConfig != afterFailedReloadCheck.infoGetConfig {
+		t.Fatalf("retained valid config after reload_successful=0 did not resume quiet heartbeats: before=%+v after=%+v", afterFailedReloadCheck, afterFailedReloadQuiet)
 	}
 
+	// Phase 4: external bootstrap wipe from the reload_successful=0 baseline
+	// must still be detected immediately on the very next heartbeat.
 	wipeBody := fmt.Sprintf(`{"admin":{"listen":%q,"config":{"persist":false}}}`, caddyDriver.AdminListen)
 	wipeReq, err := http.NewRequestWithContext(ctx, http.MethodPost, caddyDriver.AdminURL+"/load", strings.NewReader(wipeBody))
 	if err != nil {
@@ -270,13 +296,18 @@ func TestCaddyDockerHeartbeatMetricsSilenceRealDocker(t *testing.T) {
 		t.Fatalf("external bootstrap wipe was not detected immediately: %v", err)
 	}
 
-	// Phase 5: apply rev 3, restart container, and confirm changed PID/start
-	// time triggers an immediate strict GET /config/ before returning to
-	// zero-INFO steady heartbeats.
-	if err := applyGatewayDesiredState(ctx, store, managed, desiredFor(3, upstreamPort+2), nil); err != nil {
-		t.Fatalf("apply rev 3 on pinned Caddy: %v", err)
+	// Phase 5: apply rev 2, warm baseline, restart container, and confirm
+	// changed PID/start time triggers an immediate strict GET /config/ before
+	// returning to zero-INFO steady heartbeats.
+	if err := applyGatewayDesiredState(ctx, store, managed, desiredFor(2, upstreamPort+1), nil); err != nil {
+		t.Fatalf("apply rev 2 on pinned Caddy: %v", err)
 	}
-	beforeRestart := readLogs()
+	if err := managed.HeartbeatHealth(ctx); err != nil {
+		t.Fatalf("rev 2 warm-up heartbeat failed: %v", err)
+	}
+	beforeRestart := waitForLog("rev 2 warm-up GET /config/", func(c realCaddyAdminLogCounts) bool {
+		return c.infoGetConfig > afterFailedReloadCheck.infoGetConfig
+	})
 	if _, err := docker.ContainerRestart(ctx, name, client.ContainerRestartOptions{}); err != nil {
 		t.Fatalf("restart Caddy container: %v", err)
 	}
@@ -308,7 +339,7 @@ func TestCaddyDockerHeartbeatMetricsSilenceRealDocker(t *testing.T) {
 		t.Fatalf("post-restart steady heartbeats emitted INFO logs: before=%+v after=%+v", afterRestart, afterRestartSteady)
 	}
 
-	t.Logf("PASS pinned %s: 0 steady-state admin.api INFO logs, preserved POST /load + error logs, immediate detection on reload_successful=0, external wipe, and container restart", defaultCaddyImage)
+	t.Logf("PASS pinned %s: strict apply made 0 /metrics calls, 0 steady-state admin.api INFO logs (including across GET /debug/vars and retained reload_successful=0), preserved POST /load + error logs, immediate detection on external wipe and container restart", defaultCaddyImage)
 }
 
 func freeLoopbackPort(t *testing.T) int {

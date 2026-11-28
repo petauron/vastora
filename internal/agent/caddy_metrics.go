@@ -49,13 +49,17 @@ func (driver *CaddyGatewayDriver) readAdminMetricsGeneration(ctx context.Context
 
 // parseCaddyAdminMetricsGeneration builds a canonical generation fingerprint
 // from Caddy's Prometheus metrics exposition. It requires an explicit
-// caddy_config_last_reload_successful=1 gauge and positive finite reload
-// timestamp, plus a digest of all non-read Admin request/error counters (and
-// process_start_time_seconds when present) so external writes, failed reloads,
-// same-timestamp reloads, or process restarts change the fingerprint.
+// caddy_config_last_reload_successful gauge (0 or 1) and positive finite
+// reload timestamp, plus a digest of all non-read-only Admin request/error
+// counters (and process_start_time_seconds when present) so external writes,
+// failed reloads, same-timestamp reloads, or process restarts change the
+// fingerprint while read-only Admin requests (GET/HEAD/OPTIONS) and retained
+// healthy configs after a failed reload (0) can settle back to DEBUG-only
+// heartbeats once verified by a bracketed GET /config/.
 func parseCaddyAdminMetricsGeneration(raw []byte) (string, bool) {
 	var (
 		sawReloadSuccessful bool
+		reloadSuccessful    int
 		sawReloadTimestamp  bool
 		reloadTimestampBits uint64
 		sawProcessStart     bool
@@ -114,10 +118,11 @@ func parseCaddyAdminMetricsGeneration(raw []byte) (string, bool) {
 		}
 		switch name {
 		case "caddy_config_last_reload_successful":
-			if len(labels) != 0 || sawReloadSuccessful || val != 1 {
+			if len(labels) != 0 || sawReloadSuccessful || (val != 0 && val != 1) {
 				return "", false
 			}
 			sawReloadSuccessful = true
+			reloadSuccessful = int(val)
 		case "caddy_config_last_reload_success_timestamp_seconds":
 			if len(labels) != 0 || sawReloadTimestamp || val <= 0 {
 				return "", false
@@ -130,24 +135,16 @@ func parseCaddyAdminMetricsGeneration(raw []byte) (string, bool) {
 			}
 			sawProcessStart = true
 			processStartBits = math.Float64bits(val)
-		case "caddy_admin_http_requests_total":
+		case "caddy_admin_http_requests_total", "caddy_admin_http_request_errors_total":
 			if val < 0 {
 				return "", false
 			}
-			// Ignore only read-only GET series so our own /metrics scrapes and
-			// strict /config/ readbacks do not perturb the config generation.
-			if labels["method"] == http.MethodGet && (labels["path"] == "/metrics" || labels["path"] == "/config/" || labels["path"] == "/id/") {
+			// Ignore read-only Admin methods (GET, HEAD, OPTIONS) on any
+			// Admin path so /metrics scrapes, strict /config/ readbacks, and
+			// diagnostic reads such as /debug/pprof or /debug/vars do not
+			// churn the config generation.
+			if isReadOnlyAdminMethod(labels["method"]) {
 				continue
-			}
-			seriesKey, sample := canonicalPrometheusSample(name, labels, val)
-			if seenAdminSeries[seriesKey] {
-				return "", false
-			}
-			seenAdminSeries[seriesKey] = true
-			mutatingSamples = append(mutatingSamples, sample)
-		case "caddy_admin_http_request_errors_total":
-			if val < 0 {
-				return "", false
 			}
 			seriesKey, sample := canonicalPrometheusSample(name, labels, val)
 			if seenAdminSeries[seriesKey] {
@@ -170,7 +167,16 @@ func parseCaddyAdminMetricsGeneration(raw []byte) (string, bool) {
 	if sawProcessStart {
 		proc = fmt.Sprintf("%016x", processStartBits)
 	}
-	return fmt.Sprintf("v1:reload=%016x:proc=%s:admin=%s", reloadTimestampBits, proc, hex.EncodeToString(hasher.Sum(nil))), true
+	return fmt.Sprintf("v1:ok=%d:reload=%016x:proc=%s:admin=%s", reloadSuccessful, reloadTimestampBits, proc, hex.EncodeToString(hasher.Sum(nil))), true
+}
+
+func isReadOnlyAdminMethod(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
 }
 
 func scanPrometheusMetricName(line string) (string, string, bool) {

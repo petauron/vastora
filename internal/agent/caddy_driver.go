@@ -277,69 +277,14 @@ func (driver *CaddyGatewayDriver) GetRouteStatus(ctx context.Context, routeID st
 }
 
 func (driver *CaddyGatewayDriver) Health(ctx context.Context) error {
-	return driver.checkHealth(ctx, false)
-}
-
-// HeartbeatHealth reuses a bracketed GET /config/ verification for routine
-// Docker Unix-socket heartbeats only when Docker runtime health, container
-// identity, Admin Unix socket inode, and Caddy /metrics generation evidence
-// all remain unchanged. Native, loopback HTTP, or unidentified runtimes always
-// execute strict uncached GET /config/ checks.
-func (driver *CaddyGatewayDriver) HeartbeatHealth(ctx context.Context) error {
-	return driver.checkHealth(ctx, true)
-}
-
-func (driver *CaddyGatewayDriver) checkHealth(ctx context.Context, allowCached bool) error {
-	driver.mu.RLock()
-	epochBefore := driver.probeEpoch
-	expectedBefore := len(driver.state.Routes) != 0
-	driver.mu.RUnlock()
-	runtimeID, err := driver.checkRuntimeHealth(ctx)
-	if err != nil {
+	if _, err := driver.checkRuntimeHealth(ctx); err != nil {
 		driver.invalidateConfigProbe()
 		return err
 	}
-	instanceID := ""
-	if runtimeID != "" && driver.AdminSocketPath != "" {
-		if socketID := adminSocketIdentity(driver.AdminSocketPath); socketID != "" {
-			instanceID = runtimeID + "|" + socketID
-		}
-	}
-	if allowCached && instanceID != "" {
-		driver.mu.RLock()
-		cached := driver.configProbe
-		epochMatches := driver.probeEpoch == epochBefore
-		expectedMatches := (len(driver.state.Routes) != 0) == expectedBefore
-		driver.mu.RUnlock()
-		if epochMatches &&
-			expectedMatches &&
-			cached.valid &&
-			cached.epoch == epochBefore &&
-			cached.instanceID == instanceID &&
-			cached.generation != "" &&
-			cached.expected == expectedBefore &&
-			(!expectedBefore || cached.loaded) {
-			liveGen, metricsOK, transportErr := driver.readAdminMetricsGeneration(ctx)
-			if transportErr != nil {
-				driver.invalidateConfigProbe()
-				return fmt.Errorf("agent: check Caddy Admin metrics: %w", transportErr)
-			}
-			if metricsOK && liveGen == cached.generation {
-				driver.mu.RLock()
-				stillCurrent := driver.probeEpoch == epochBefore && (len(driver.state.Routes) != 0) == expectedBefore
-				driver.mu.RUnlock()
-				if stillCurrent {
-					return nil
-				}
-			}
-			driver.clearConfigProbeIfEpoch(epochBefore)
-		}
-	}
-	var beforeGen string
-	var beforeOK bool
-	if instanceID != "" {
-		beforeGen, beforeOK, _ = driver.readAdminMetricsGeneration(ctx)
-	}
+	return driver.verifyLiveConfiguration(ctx)
+}
+
+func (driver *CaddyGatewayDriver) verifyLiveConfiguration(ctx context.Context) error {
 	loaded, err := driver.runtimeConfigurationLoaded(ctx)
 	if err != nil {
 		driver.invalidateConfigProbe()
@@ -352,42 +297,131 @@ func (driver *CaddyGatewayDriver) checkHealth(ctx context.Context, allowCached b
 		driver.invalidateConfigProbe()
 		return errors.New("agent: Caddy has only its Admin bootstrap; gateway configuration is missing")
 	}
-	var afterGen string
-	var afterOK bool
-	var socketAfter string
-	if instanceID != "" && beforeOK {
-		afterGen, afterOK, _ = driver.readAdminMetricsGeneration(ctx)
-		socketAfter = adminSocketIdentity(driver.AdminSocketPath)
-	}
-	driver.mu.Lock()
-	expectedNow := len(driver.state.Routes) != 0
-	if expectedNow && !loaded {
+	return nil
+}
+
+// HeartbeatHealth reuses a bracketed GET /config/ verification for routine
+// Docker Unix-socket heartbeats only when Docker runtime health, container
+// identity, Admin Unix socket inode, and Caddy /metrics generation evidence
+// all remain unchanged. Strict Health/startup/apply paths never touch
+// /metrics; the first routine heartbeat after startup, mutation, restart, or
+// invalidation seeds the baseline via /metrics -> /config/ -> /metrics (one
+// warm-up GET /config/ INFO log), after which steady-state heartbeats emit 0
+// admin.api INFO logs. Native, loopback HTTP, or unidentified runtimes always
+// execute strict uncached GET /config/ checks without querying /metrics.
+func (driver *CaddyGatewayDriver) HeartbeatHealth(ctx context.Context) error {
+	const maxRoutineVerifyAttempts = 2
+	for attempt := range maxRoutineVerifyAttempts {
+		driver.mu.RLock()
+		epochBefore := driver.probeEpoch
+		expectedBefore := len(driver.state.Routes) != 0
+		driver.mu.RUnlock()
+
+		runtimeID, err := driver.checkRuntimeHealth(ctx)
+		if err != nil {
+			driver.invalidateConfigProbe()
+			return err
+		}
+		instanceID := ""
+		if runtimeID != "" && driver.AdminSocketPath != "" {
+			if socketID := adminSocketIdentity(driver.AdminSocketPath); socketID != "" {
+				instanceID = runtimeID + "|" + socketID
+			}
+		}
+		if instanceID == "" {
+			driver.clearConfigProbeIfEpoch(epochBefore)
+			return driver.verifyLiveConfiguration(ctx)
+		}
+
+		if attempt == 0 {
+			driver.mu.RLock()
+			cached := driver.configProbe
+			epochMatches := driver.probeEpoch == epochBefore
+			expectedMatches := (len(driver.state.Routes) != 0) == expectedBefore
+			driver.mu.RUnlock()
+			if epochMatches &&
+				expectedMatches &&
+				cached.valid &&
+				cached.epoch == epochBefore &&
+				cached.instanceID == instanceID &&
+				cached.generation != "" &&
+				cached.expected == expectedBefore &&
+				(!expectedBefore || cached.loaded) {
+				liveGen, metricsOK, transportErr := driver.readAdminMetricsGeneration(ctx)
+				if transportErr != nil {
+					driver.invalidateConfigProbe()
+					return fmt.Errorf("agent: check Caddy Admin metrics: %w", transportErr)
+				}
+				if metricsOK && liveGen == cached.generation {
+					driver.mu.RLock()
+					stillCurrent := driver.probeEpoch == epochBefore && (len(driver.state.Routes) != 0) == expectedBefore
+					driver.mu.RUnlock()
+					if stillCurrent {
+						return nil
+					}
+				}
+				driver.clearConfigProbeIfEpoch(epochBefore)
+			}
+		}
+
+		beforeGen, beforeOK, beforeTransportErr := driver.readAdminMetricsGeneration(ctx)
+		if beforeTransportErr != nil {
+			driver.invalidateConfigProbe()
+			return fmt.Errorf("agent: check Caddy Admin metrics: %w", beforeTransportErr)
+		}
+		loaded, err := driver.runtimeConfigurationLoaded(ctx)
+		if err != nil {
+			driver.invalidateConfigProbe()
+			return err
+		}
+		driver.mu.RLock()
+		expected := len(driver.state.Routes) != 0
+		driver.mu.RUnlock()
+		if expected && !loaded {
+			driver.invalidateConfigProbe()
+			return errors.New("agent: Caddy has only its Admin bootstrap; gateway configuration is missing")
+		}
+		if !beforeOK {
+			driver.clearConfigProbeIfEpoch(epochBefore)
+			return nil
+		}
+
+		afterGen, afterOK, afterTransportErr := driver.readAdminMetricsGeneration(ctx)
+		if afterTransportErr != nil {
+			driver.invalidateConfigProbe()
+			return fmt.Errorf("agent: check Caddy Admin metrics: %w", afterTransportErr)
+		}
+		socketAfter := adminSocketIdentity(driver.AdminSocketPath)
+		driver.mu.Lock()
+		expectedNow := len(driver.state.Routes) != 0
+		if expectedNow && !loaded {
+			driver.invalidateConfigProbeLocked()
+			driver.mu.Unlock()
+			return errors.New("agent: Caddy has only its Admin bootstrap; gateway configuration is missing")
+		}
+		shifted := !afterOK ||
+			afterGen == "" ||
+			afterGen != beforeGen ||
+			socketAfter == "" ||
+			runtimeID+"|"+socketAfter != instanceID ||
+			driver.probeEpoch != epochBefore ||
+			expectedNow != expectedBefore
+		if !shifted {
+			driver.configProbe = caddyConfigProbe{
+				valid:      true,
+				epoch:      epochBefore,
+				instanceID: instanceID,
+				generation: afterGen,
+				expected:   expectedNow,
+				loaded:     loaded,
+			}
+			driver.mu.Unlock()
+			return nil
+		}
 		driver.invalidateConfigProbeLocked()
 		driver.mu.Unlock()
-		return errors.New("agent: Caddy has only its Admin bootstrap; gateway configuration is missing")
 	}
-	if instanceID != "" &&
-		beforeOK &&
-		afterOK &&
-		afterGen != "" &&
-		afterGen == beforeGen &&
-		socketAfter != "" &&
-		runtimeID+"|"+socketAfter == instanceID &&
-		driver.probeEpoch == epochBefore &&
-		expectedNow == expectedBefore {
-		driver.configProbe = caddyConfigProbe{
-			valid:      true,
-			epoch:      epochBefore,
-			instanceID: instanceID,
-			generation: afterGen,
-			expected:   expectedNow,
-			loaded:     loaded,
-		}
-	} else if driver.probeEpoch == epochBefore {
-		driver.configProbe = caddyConfigProbe{}
-	}
-	driver.mu.Unlock()
-	return nil
+	return errors.New("agent: Caddy configuration changed during health verification")
 }
 
 func (driver *CaddyGatewayDriver) checkRuntimeHealth(ctx context.Context) (string, error) {

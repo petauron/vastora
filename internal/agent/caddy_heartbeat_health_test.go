@@ -470,29 +470,42 @@ func TestCaddyHeartbeatSteadyStateProducesZeroInfoLogs(t *testing.T) {
 	if err := applyGatewayDesiredState(ctx, store, managed, gatewayState(1, 3000), nil); err != nil {
 		t.Fatal(err)
 	}
-	gets, loads, _ := fixture.counts()
-	if gets != 1 || loads != 1 {
-		t.Fatalf("post-apply verification counts = gets:%d loads:%d, want 1 and 1", gets, loads)
+	gets, loads, metrics := fixture.counts()
+	if gets != 1 || loads != 1 || metrics != 0 {
+		t.Fatalf("post-apply strict verification counts = gets:%d loads:%d metrics:%d, want 1, 1, 0", gets, loads, metrics)
 	}
 
 	agentClient := Client{GatewayDriver: managed}
-	// StartupHeartbeat always performs an immediate strict GET /config/.
+	// Strict StartupHeartbeat runs GET /config/ and never touches /metrics.
 	if err := agentClient.StartupHeartbeat(ctx, store); err != nil {
 		t.Fatal(err)
 	}
 	if healthy := <-observed; !healthy {
 		t.Fatal("startup heartbeat reported unhealthy gateway")
 	}
+	gets, _, metrics = fixture.counts()
+	if gets != 2 || metrics != 0 {
+		t.Fatalf("StartupHeartbeat did not stay strictly on GET /config/: gets=%d metrics=%d want 2 and 0", gets, metrics)
+	}
+
+	// First routine heartbeat seeds the baseline via /metrics -> /config/ ->
+	// /metrics (one warm-up GET /config/ INFO log).
+	if err := agentClient.Heartbeat(ctx, store); err != nil {
+		t.Fatal(err)
+	}
+	if healthy := <-observed; !healthy {
+		t.Fatal("warm-up routine heartbeat reported unhealthy gateway")
+	}
 	getsBefore, _, metricsBefore := fixture.counts()
-	if getsBefore != 2 {
-		t.Fatalf("StartupHeartbeat did not run strict GET /config/: gets=%d want 2", getsBefore)
+	if getsBefore != 3 || metricsBefore != 2 {
+		t.Fatalf("warm-up routine heartbeat counts = gets:%d metrics:%d, want 3 and 2", getsBefore, metricsBefore)
 	}
 	infoBefore, debugBefore, _, _ := fixture.logCounts()
 	runtimeBefore := inspector.callCount()
 
-	// Steady-state routine heartbeats must produce zero admin.api INFO logs
-	// and zero GET /config/ reads while checking runtime health and /metrics
-	// (DEBUG) on every heartbeat.
+	// Subsequent steady-state routine heartbeats must produce zero admin.api
+	// INFO logs and zero GET /config/ reads while checking runtime health and
+	// /metrics (DEBUG) on every heartbeat.
 	const steadyHeartbeats = 10
 	for range steadyHeartbeats {
 		if err := agentClient.Heartbeat(ctx, store); err != nil {
@@ -515,6 +528,15 @@ func TestCaddyHeartbeatSteadyStateProducesZeroInfoLogs(t *testing.T) {
 	}
 	if got := inspector.callCount() - runtimeBefore; got != steadyHeartbeats {
 		t.Fatalf("steady-state heartbeats skipped Docker runtime health: calls=%d want %d", got, steadyHeartbeats)
+	}
+
+	// Direct strict Health never queries /metrics even when a baseline exists.
+	if err := managed.Health(ctx); err != nil {
+		t.Fatal(err)
+	}
+	getsStrict, _, metricsStrict := fixture.counts()
+	if getsStrict != getsAfter+1 || metricsStrict != metricsAfter {
+		t.Fatalf("strict Health touched /metrics or skipped GET /config/: gets=%d->%d metrics=%d->%d", getsAfter, getsStrict, metricsAfter, metricsStrict)
 	}
 }
 
@@ -566,9 +588,13 @@ func TestCaddyHeartbeatDetectsExternalConfigWipeMutationAndFailedReloadImmediate
 		t.Fatal("external bootstrap wipe was reported healthy on next heartbeat")
 	}
 
-	// 2) Restore rev 2, then test same-timestamp external DELETE /config/...
-	// (caught via non-GET Admin request counter even when timestamp collides).
+	// 2) Restore rev 2, warm the routine baseline, then test same-timestamp
+	// external DELETE /config/... (caught via non-GET Admin request counter
+	// even when reload timestamp collides).
 	if err := applyGatewayDesiredState(ctx, store, managed, gatewayState(2, 3100), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := managed.HeartbeatHealth(ctx); err != nil {
 		t.Fatal(err)
 	}
 	fixture.setPinReloadTimestamp(true)
@@ -589,10 +615,15 @@ func TestCaddyHeartbeatDetectsExternalConfigWipeMutationAndFailedReloadImmediate
 		t.Fatal("same-timestamp external DELETE /config/ was missed by generation check")
 	}
 
-	// 3) Restore rev 3, then test failed external POST /load: error log is
-	// preserved, reload_successful=0 forces immediate strict GET /config/ and
-	// prevents caching while reload_successful remains 0.
+	// 3) Restore rev 3, warm baseline, then test failed external POST /load:
+	// error log is preserved, reload_successful=0 triggers ONE immediate
+	// strict GET /config/ verification, and once the retained valid config is
+	// confirmed under that generation, subsequent steady heartbeats return to
+	// DEBUG-only /metrics with 0 INFO logs — while an actual wipe still fails.
 	if err := applyGatewayDesiredState(ctx, store, managed, gatewayState(3, 3200), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := managed.HeartbeatHealth(ctx); err != nil {
 		t.Fatal(err)
 	}
 	getsBefore, _, _ := fixture.counts()
@@ -611,47 +642,121 @@ func TestCaddyHeartbeatDetectsExternalConfigWipeMutationAndFailedReloadImmediate
 	if errorsAfter <= errorsBefore {
 		t.Fatal("Admin API error log was not preserved")
 	}
-	// Caddy kept valid rev 3 config, so HeartbeatHealth still reports healthy,
-	// but must run strict GET /config/ every tick while reload_successful==0.
-	for step := 1; step <= 2; step++ {
+	// First heartbeat after failed reload runs strict GET /config/ and
+	// re-baselines the retained healthy configuration with reload_successful=0.
+	if err := managed.HeartbeatHealth(ctx); err != nil {
+		t.Fatalf("failed reload with intact config reported unhealthy: %v", err)
+	}
+	getsAfterFailureCheck, _, _ := fixture.counts()
+	if getsAfterFailureCheck != getsBefore+1 {
+		t.Fatalf("failed reload did not trigger immediate GET /config/: gets=%d want %d", getsAfterFailureCheck, getsBefore+1)
+	}
+	infoBeforeQuiet, _, _, _ := fixture.logCounts()
+	for range 3 {
 		if err := managed.HeartbeatHealth(ctx); err != nil {
-			t.Fatalf("failed reload with intact config reported unhealthy: %v", err)
+			t.Fatalf("steady heartbeat after retained config failed: %v", err)
 		}
-		getsNow, _, _ := fixture.counts()
-		if getsNow != getsBefore+step {
-			t.Fatalf("reload_successful=0 cached probe at step %d: gets=%d want %d", step, getsNow, getsBefore+step)
-		}
+	}
+	getsQuiet, _, _ := fixture.counts()
+	infoAfterQuiet, _, _, _ := fixture.logCounts()
+	if getsQuiet != getsAfterFailureCheck || infoAfterQuiet != infoBeforeQuiet {
+		t.Fatalf("retained healthy config after failed reload did not resume DEBUG-only heartbeats: gets=%d->%d info=%d->%d", getsAfterFailureCheck, getsQuiet, infoBeforeQuiet, infoAfterQuiet)
+	}
+	// An actual external bootstrap wipe from the reload_successful=0 baseline
+	// must still fail immediately on the next heartbeat.
+	wipeReq, err := http.NewRequestWithContext(ctx, http.MethodPost, caddy.AdminURL+"/load", strings.NewReader(`{"admin":{"config":{"persist":false}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wipeReq.Header.Set("Content-Type", "application/json")
+	wipeResp, err := caddy.client().Do(wipeReq)
+	if err != nil || wipeResp.StatusCode != http.StatusOK {
+		t.Fatalf("wipe from reload_successful=0 baseline failed: resp=%v err=%v", wipeResp, err)
+	}
+	_ = wipeResp.Body.Close()
+	if err := managed.HeartbeatHealth(ctx); err == nil || !strings.Contains(err.Error(), "Admin bootstrap") {
+		t.Fatalf("bootstrap wipe from reload_successful=0 baseline was missed: %v", err)
 	}
 }
 
 func TestCaddyHeartbeatRefusesStaleFingerprintAcrossConcurrentReloadAndInstanceChange(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("concurrent reload during GET /config/ prevents caching", func(t *testing.T) {
+	t.Run("concurrent wipe during GET /config/ cannot report healthy from old generation", func(t *testing.T) {
 		fixture, caddy := newCaddyAdminUnixFixture(t)
 		inspector := &fakeCaddyRuntimeInspector{identity: "docker:container-a:101:2026-11-28T00:00:00Z"}
 		caddy.SystemGateway = inspector
 		if err := caddy.ApplyConfiguration(ctx, gatewayState(1, 3000), nil); err != nil {
 			t.Fatal(err)
 		}
-		// Simulate an external reload landing right during GET /config/ so
-		// beforeGen != afterGen; the driver must NOT cache the stale snapshot.
+		// Simulate an external wipe landing right during GET /config/ so
+		// beforeGen != afterGen; HeartbeatHealth must not return healthy from
+		// the stale pre-wipe readback and must immediately re-verify and fail.
 		fixture.setOnConfigGet(func(f *fakeCaddyAdminFixture) {
 			f.simulateExternalReload(`{"admin":{"config":{"persist":false}}}`)
 		})
-		if err := caddy.Health(ctx); err != nil {
-			t.Fatalf("initial Health returned error on pre-wipe response: %v", err)
+		if err := caddy.HeartbeatHealth(ctx); err == nil || !strings.Contains(err.Error(), "Admin bootstrap") {
+			t.Fatalf("HeartbeatHealth reported ready from stale pre-wipe GET /config/: %v", err)
 		}
 		caddy.mu.RLock()
 		cachedAfterRace := caddy.configProbe.valid
 		caddy.mu.RUnlock()
 		if cachedAfterRace {
-			t.Fatal("driver cached probe despite concurrent generation change during GET /config/")
+			t.Fatal("driver cached probe despite concurrent wipe during GET /config/")
 		}
-		// Next routine heartbeat immediately re-reads GET /config/ and detects
-		// the wiped bootstrap configuration.
-		if err := caddy.HeartbeatHealth(ctx); err == nil || !strings.Contains(err.Error(), "Admin bootstrap") {
-			t.Fatalf("post-race heartbeat failed to detect concurrent wipe: %v", err)
+		gets, _, _ := fixture.counts()
+		if gets != 2 {
+			t.Fatalf("concurrent wipe did not immediately re-verify once: gets=%d want 2", gets)
+		}
+	})
+
+	t.Run("continuous concurrent churn returns unverified instead of stale healthy", func(t *testing.T) {
+		fixture, caddy := newCaddyAdminUnixFixture(t)
+		inspector := &fakeCaddyRuntimeInspector{identity: "docker:container-a:101:2026-11-28T00:00:00Z"}
+		caddy.SystemGateway = inspector
+		if err := caddy.ApplyConfiguration(ctx, gatewayState(1, 3000), nil); err != nil {
+			t.Fatal(err)
+		}
+		loadedConfig, err := caddyConfiguration(gatewayState(1, 3000), nil, caddy.AdminListen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rearm func(*fakeCaddyAdminFixture)
+		rearm = func(f *fakeCaddyAdminFixture) {
+			f.simulateExternalReload(string(loadedConfig))
+			f.setOnConfigGet(rearm)
+		}
+		fixture.setOnConfigGet(rearm)
+		if err := caddy.HeartbeatHealth(ctx); err == nil || !strings.Contains(err.Error(), "changed during health verification") {
+			t.Fatalf("continuous concurrent generation churn reported healthy: %v", err)
+		}
+		fixture.setOnConfigGet(nil)
+		gets, _, _ := fixture.counts()
+		if gets != 2 {
+			t.Fatalf("bounded retry exceeded 2 attempts: gets=%d want 2", gets)
+		}
+		// Once churn stops, the next heartbeat verifies cleanly.
+		if err := caddy.HeartbeatHealth(ctx); err != nil {
+			t.Fatalf("heartbeat did not recover after churn stopped: %v", err)
+		}
+	})
+
+	t.Run("socket replacement during GET /config/ re-verifies instead of caching stale inode", func(t *testing.T) {
+		fixture, caddy := newCaddyAdminUnixFixture(t)
+		inspector := &fakeCaddyRuntimeInspector{identity: "docker:container-a:101:2026-11-28T00:00:00Z"}
+		caddy.SystemGateway = inspector
+		if err := caddy.ApplyConfiguration(ctx, gatewayState(1, 3000), nil); err != nil {
+			t.Fatal(err)
+		}
+		fixture.setOnConfigGet(func(f *fakeCaddyAdminFixture) {
+			f.replaceUnixSocket(t)
+		})
+		if err := caddy.HeartbeatHealth(ctx); err != nil {
+			t.Fatalf("socket replacement during readback did not settle on retry: %v", err)
+		}
+		gets, _, _ := fixture.counts()
+		if gets != 2 {
+			t.Fatalf("socket swap mid-read did not trigger immediate retry: gets=%d want 2", gets)
 		}
 	})
 
@@ -662,7 +767,8 @@ func TestCaddyHeartbeatRefusesStaleFingerprintAcrossConcurrentReloadAndInstanceC
 		if err := caddy.ApplyConfiguration(ctx, gatewayState(1, 3000), nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := caddy.Health(ctx); err != nil {
+		// Seed routine baseline first.
+		if err := caddy.HeartbeatHealth(ctx); err != nil {
 			t.Fatal(err)
 		}
 		getsBefore, _, _ := fixture.counts()
@@ -690,8 +796,8 @@ func TestCaddyHeartbeatFailsClosedOnMetricsAnomalies(t *testing.T) {
 			s := "caddy_config_last_reload_success_timestamp_seconds 1795780000\n"
 			f.setMetricsOverride(&s)
 		},
-		"reload unsuccessful": func(f *fakeCaddyAdminFixture) {
-			s := "caddy_config_last_reload_successful 0\ncaddy_config_last_reload_success_timestamp_seconds 1795780000\n"
+		"invalid reload gauge value": func(f *fakeCaddyAdminFixture) {
+			s := "caddy_config_last_reload_successful 2\ncaddy_config_last_reload_success_timestamp_seconds 1795780000\n"
 			f.setMetricsOverride(&s)
 		},
 		"zero timestamp": func(f *fakeCaddyAdminFixture) {
@@ -718,8 +824,8 @@ func TestCaddyHeartbeatFailsClosedOnMetricsAnomalies(t *testing.T) {
 			if err := caddy.ApplyConfiguration(ctx, gatewayState(1, 3000), nil); err != nil {
 				t.Fatal(err)
 			}
-			// Populate valid cache first.
-			if err := caddy.Health(ctx); err != nil {
+			// Seed valid routine baseline first.
+			if err := caddy.HeartbeatHealth(ctx); err != nil {
 				t.Fatal(err)
 			}
 			getsBefore, _, _ := fixture.counts()
@@ -937,9 +1043,9 @@ func TestCaddyHeartbeatInvalidatesOnApplyWebsiteReloadRecoveryAndStrictPaths(t *
 	if err := store.restoreGatewayConfiguration(ctx); err != nil {
 		t.Fatal(err)
 	}
-	gets, _, _ = fixture.counts()
-	if gets != 6 {
-		t.Fatalf("strict verification paths did not run uncached GET /config/: gets=%d want 6", gets)
+	gets, _, metrics := fixture.counts()
+	if gets != 6 || metrics != 0 {
+		t.Fatalf("strict verification paths did not stay uncached and /metrics-free: gets=%d metrics=%d want 6 and 0", gets, metrics)
 	}
 
 	if err := managed.ReloadWebsites(ctx); err != nil {
@@ -1100,22 +1206,36 @@ caddy_admin_http_requests_total{code="200",handler="admin",method="POST",path="/
 		t.Fatal("valid metrics payload was rejected")
 	}
 
-	// Read-only GET /metrics and GET /config/ increases plus equivalent float
-	// formatting and optional Prometheus timestamps must preserve generation.
+	// Read-only Admin methods (GET, HEAD, OPTIONS) on any built-in Admin path
+	// (including /debug/pprof and /debug/vars), equivalent float formatting,
+	// and optional Prometheus timestamps must preserve generation.
 	sameGen := `caddy_config_last_reload_successful 1 1795780001000
 caddy_config_last_reload_success_timestamp_seconds 1795780000
 process_start_time_seconds 1.7957799e+09
 caddy_admin_http_requests_total{code="200",handler="admin",method="GET",path="/metrics"} 99
 caddy_admin_http_requests_total{code="200",handler="admin",method="GET",path="/config/"} 7
+caddy_admin_http_requests_total{code="200",handler="admin",method="GET",path="/debug/pprof/"} 14
+caddy_admin_http_requests_total{code="200",handler="admin",method="GET",path="/debug/vars"} 5
+caddy_admin_http_requests_total{code="200",handler="admin",method="HEAD",path="/config/"} 2
+caddy_admin_http_requests_total{code="200",handler="admin",method="OPTIONS",path="/load"} 3
+caddy_admin_http_request_errors_total{handler="admin",method="GET",path="/debug/pprof/"} 1
 caddy_admin_http_requests_total{code="200",handler="admin",method="POST",path="/load"} 1
 `
 	gen2, ok := parseCaddyAdminMetricsGeneration([]byte(sameGen))
 	if !ok || gen2 != gen1 {
-		t.Fatalf("read-only GET counters changed generation: %q != %q (ok=%v)", gen2, gen1, ok)
+		t.Fatalf("read-only Admin requests changed generation: %q != %q (ok=%v)", gen2, gen1, ok)
 	}
 
-	// Any mutating Admin request, error counter, reload timestamp change, or
-	// process start change must produce a different generation.
+	// reload_successful=0 is valid and produces a distinct generation token so
+	// a single failed reload forces immediate verification and then lets a
+	// retained healthy config resume DEBUG-only heartbeats.
+	genFailedReload, ok := parseCaddyAdminMetricsGeneration([]byte(strings.Replace(base, "successful 1", "successful 0", 1)))
+	if !ok || genFailedReload == "" || genFailedReload == gen1 {
+		t.Fatalf("reload_successful=0 did not produce a distinct valid generation: ok=%v gen=%q", ok, genFailedReload)
+	}
+
+	// Any mutating Admin request, mutating error counter, reload timestamp
+	// change, or process start change must produce a different generation.
 	for name, payload := range map[string]string{
 		"reload timestamp changed": strings.Replace(base, "1.79578e+09", "1795780001", 1),
 		"post load incremented":    strings.Replace(base, `path="/load"} 1`, `path="/load"} 2`, 1),
@@ -1129,10 +1249,10 @@ caddy_admin_http_requests_total{code="200",handler="admin",method="POST",path="/
 		}
 	}
 
-	// Invalid, incomplete, or failed-reload payloads must fail closed.
+	// Invalid or incomplete payloads must fail closed.
 	for name, bad := range map[string]string{
 		"empty":                  "",
-		"reload failed":          strings.Replace(base, "successful 1", "successful 0", 1),
+		"reload out of range":    strings.Replace(base, "successful 1", "successful 2", 1),
 		"missing timestamp":      "caddy_config_last_reload_successful 1\n",
 		"negative counter":       base + "caddy_admin_http_requests_total{code=\"200\",handler=\"admin\",method=\"POST\",path=\"/config/\"} -1\n",
 		"duplicate label":        "caddy_config_last_reload_successful 1\ncaddy_config_last_reload_success_timestamp_seconds 1795780000\ncaddy_admin_http_requests_total{method=\"POST\",method=\"POST\"} 1\n",
