@@ -174,6 +174,7 @@ func (s *Server) handleConfirmNetworkProfile(writer http.ResponseWriter, request
 }
 
 func (s *Server) handleReconcileNodeListener(writer http.ResponseWriter, request *http.Request) {
+	writer.Header().Set("Cache-Control", "no-store")
 	result, err := s.store.ReconcileNodeListener(request.Context(), request.PathValue("id"))
 	if err != nil {
 		switch {

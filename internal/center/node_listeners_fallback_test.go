@@ -20,19 +20,23 @@ import (
 	"github.com/petauron/vastora/internal/platform"
 )
 
-func seedManagedRealityForFallbackTest(t *testing.T, store *Store, node AgentCredential, appID, serviceID, pubID, hostname, sni string) {
+func seedManagedRealityForFallbackTest(t *testing.T, store *Store, node AgentCredential, role, appID, serviceID, pubID, hostname, sni string) {
 	t.Helper()
 	ctx := context.Background()
 	now := store.now().UTC().Format(time.RFC3339Nano)
 	siteID := testSiteID(t, store)
+	runtimeGeneration := 0
+	if role == threeXUIRoleWorker {
+		runtimeGeneration = 2
+	}
 	for _, stmt := range []struct {
 		query string
 		args  []any
 	}{
 		{
-			`INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
-			 VALUES(?, '3x-ui', ?, ?, 'vastora-official/3x-ui', '', 'running', 'docker', 'master', ?, ?)`,
-			[]any{appID, node.ID, siteID, now, now},
+			`INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, runtime_generation, created_at, updated_at)
+			 VALUES(?, '3x-ui', ?, ?, 'vastora-official/3x-ui', '', 'running', 'docker', ?, ?, ?, ?)`,
+			[]any{appID, node.ID, siteID, role, runtimeGeneration, now, now},
 		},
 		{
 			`INSERT INTO services(id, application_id, site_id, name, display_name, protocol, container_port, host_port, endpoint, source, app_protocol, status, created_at, updated_at)
@@ -54,7 +58,9 @@ func seedManagedRealityForFallbackTest(t *testing.T, store *Store, node AgentCre
 			t.Fatal(err)
 		}
 	}
-	selectTestThreeXUIController(t, store, appID)
+	if role == threeXUIRoleMaster {
+		selectTestThreeXUIController(t, store, appID)
+	}
 }
 
 func readStoredNodeListener(t *testing.T, store *Store, nodeID string) (int64, int64, string, gateway.NodeListenerState) {
@@ -86,7 +92,7 @@ func computeDesiredNodeListenerForTest(t *testing.T, store *Store, nodeID string
 	return state
 }
 
-func assertRealityRoutePreserved(t *testing.T, listener gateway.SharedHTTPS, bindAddress, sni string) {
+func assertRealityRoutePreserved(t *testing.T, listener gateway.SharedHTTPS, bindAddress, sni, expectedAlias string) {
 	t.Helper()
 	if listener.Address != bindAddress || listener.Port != 443 {
 		t.Fatalf("unexpected listener socket %s:%d, want %s:443", listener.Address, listener.Port, bindAddress)
@@ -95,8 +101,8 @@ func assertRealityRoutePreserved(t *testing.T, listener gateway.SharedHTTPS, bin
 		t.Fatalf("expected 1 REALITY route, got %#v", listener.Routes)
 	}
 	route := listener.Routes[0]
-	if !route.ManagedReality || route.Hostname != sni || route.ProxyProtocol != gateway.ProxyProtocolV2 || len(route.Upstreams) != 1 || route.Upstreams[0].Address != dockerruntime.ThreeXUIAlias || route.Upstreams[0].Port != centerThreeXUIRealityPort {
-		t.Fatalf("REALITY route changed unexpectedly: %#v", route)
+	if !route.ManagedReality || route.Hostname != sni || route.ProxyProtocol != gateway.ProxyProtocolV2 || len(route.Upstreams) != 1 || route.Upstreams[0].Address != expectedAlias || route.Upstreams[0].Port != centerThreeXUIRealityPort {
+		t.Fatalf("REALITY route changed unexpectedly: %#v (want alias %q)", route, expectedAlias)
 	}
 }
 
@@ -136,7 +142,7 @@ func TestNodeListenerRejectsUnmatchedForNonPublicGatewayAndBaseDaylight(t *testi
 
 	// Install CPA for non-public gateway routes and seed REALITY shared-443 entry.
 	installCPA(t, store, node, "10.0.0.11")
-	seedManagedRealityForFallbackTest(t, store, node, "reality-app-1", "reality-svc-1", "reality-pub-1", "entry.example.test", "camo.example.test")
+	seedManagedRealityForFallbackTest(t, store, node, threeXUIRoleMaster, "reality-app-1", "reality-svc-1", "reality-pub-1", "entry.example.test", "camo.example.test")
 
 	// Base vastora-official/daylight with tls_loopback_only=0 (table default) only
 	// listens on loopback for REALITY camouflage and must never trigger Caddy fallback.
@@ -157,7 +163,7 @@ func TestNodeListenerRejectsUnmatchedForNonPublicGatewayAndBaseDaylight(t *testi
 
 	// Ready Site Gateway + base Daylight alone must reject unmatched SNIs.
 	state := computeDesiredNodeListenerForTest(t, store, node.ID)
-	assertRealityRoutePreserved(t, state.Listener, "203.0.113.11", "camo.example.test")
+	assertRealityRoutePreserved(t, state.Listener, "203.0.113.11", "camo.example.test", dockerruntime.ThreeXUIAlias)
 	if !state.Listener.RejectUnmatched || state.Listener.CaddyAddress != "" || state.Listener.CaddyPort != 0 {
 		t.Fatalf("empty Site Gateway + base Daylight enabled Caddy fallback: %#v", state.Listener)
 	}
@@ -200,7 +206,7 @@ func TestNodeListenerRejectsUnmatchedForNonPublicGatewayAndBaseDaylight(t *testi
 
 	// Applied private LAN/Headscale TLS must still reject unmatched SNIs on public 443.
 	state = computeDesiredNodeListenerForTest(t, store, node.ID)
-	assertRealityRoutePreserved(t, state.Listener, "203.0.113.11", "camo.example.test")
+	assertRealityRoutePreserved(t, state.Listener, "203.0.113.11", "camo.example.test", dockerruntime.ThreeXUIAlias)
 	if !state.Listener.RejectUnmatched || state.Listener.CaddyAddress != "" || state.Listener.CaddyPort != 0 {
 		t.Fatalf("private LAN/Headscale TLS enabled public Caddy fallback: %#v", state.Listener)
 	}
@@ -229,9 +235,9 @@ func TestNodeListenerRejectsUnmatchedForNonPublicGatewayAndBaseDaylight(t *testi
 		ServiceAddress: "10.0.0.12", LANAddress: "10.0.0.12", PublicAddress: "203.0.113.12",
 		EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true,
 	})
-	seedManagedRealityForFallbackTest(t, store, standalone, "reality-app-2", "reality-svc-2", "reality-pub-2", "standalone.example.test", "solo.example.test")
+	seedManagedRealityForFallbackTest(t, store, standalone, threeXUIRoleWorker, "reality-app-2", "reality-svc-2", "reality-pub-2", "standalone.example.test", "solo.example.test")
 	soloState := computeDesiredNodeListenerForTest(t, store, standalone.ID)
-	assertRealityRoutePreserved(t, soloState.Listener, "203.0.113.12", "solo.example.test")
+	assertRealityRoutePreserved(t, soloState.Listener, "203.0.113.12", "solo.example.test", dockerruntime.LegacyXrayAlias)
 	if !soloState.Listener.RejectUnmatched || soloState.Listener.CaddyAddress != "" || soloState.Listener.CaddyPort != 0 {
 		t.Fatalf("standalone REALITY enabled Caddy fallback: %#v", soloState.Listener)
 	}
@@ -267,7 +273,7 @@ func TestNodeListenerPublicHTTPSApplyRemovalOrderingAndVerificationRetry(t *test
 	}
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	installCPA(t, store, node, "10.0.0.21")
-	seedManagedRealityForFallbackTest(t, store, node, "reality-order-app", "reality-order-svc", "reality-order-pub", "entry.example.test", "camo.example.test")
+	seedManagedRealityForFallbackTest(t, store, node, threeXUIRoleMaster, "reality-order-app", "reality-order-svc", "reality-order-pub", "entry.example.test", "camo.example.test")
 
 	// Queue and apply initial node listener while no public HTTPS route exists -> reject.
 	tx, err := store.db.BeginTx(ctx, nil)
@@ -343,7 +349,7 @@ func TestNodeListenerPublicHTTPSApplyRemovalOrderingAndVerificationRetry(t *test
 	if enableFallback.NodeListenerState.Listener.RejectUnmatched || enableFallback.NodeListenerState.Listener.CaddyAddress != dockerruntime.CaddyAlias || enableFallback.NodeListenerState.Listener.CaddyPort != 443 {
 		t.Fatalf("node listener did not enable Caddy fallback after applied public HTTPS: %#v", enableFallback.NodeListenerState.Listener)
 	}
-	assertRealityRoutePreserved(t, enableFallback.NodeListenerState.Listener, "203.0.113.21", "camo.example.test")
+	assertRealityRoutePreserved(t, enableFallback.NodeListenerState.Listener, "203.0.113.21", "camo.example.test", dockerruntime.ThreeXUIAlias)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, enableFallback.ID, enableFallback.Attempt, true, "", nil, enableFallback.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +408,7 @@ verifiedPub1:
 	if !disableFallback.NodeListenerState.Listener.RejectUnmatched || disableFallback.NodeListenerState.Listener.CaddyAddress != "" || disableFallback.NodeListenerState.Listener.CaddyPort != 0 {
 		t.Fatalf("stopping last public HTTPS route did not switch HAProxy back to reject: %#v", disableFallback.NodeListenerState.Listener)
 	}
-	assertRealityRoutePreserved(t, disableFallback.NodeListenerState.Listener, "203.0.113.21", "camo.example.test")
+	assertRealityRoutePreserved(t, disableFallback.NodeListenerState.Listener, "203.0.113.21", "camo.example.test", dockerruntime.ThreeXUIAlias)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, disableFallback.ID, disableFallback.Attempt, true, "", nil, disableFallback.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +441,7 @@ func TestNodeListenerSystemPublicHTTPSRequiresAppliedPayloadWithoutFlap(t *testi
 	}
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	installCPA(t, store, node, "10.0.0.31")
-	seedManagedRealityForFallbackTest(t, store, node, "reality-sys-app", "reality-sys-svc", "reality-sys-pub", "entry.example.test", "camo.example.test")
+	seedManagedRealityForFallbackTest(t, store, node, threeXUIRoleMaster, "reality-sys-app", "reality-sys-svc", "reality-sys-pub", "entry.example.test", "camo.example.test")
 
 	// Apply a private-only LAN route at gateway rev 1 first, and apply initial reject listener.
 	services, err := store.ListServices(ctx)
@@ -522,7 +528,7 @@ func TestNodeListenerStandaloneDaylightHTTPSLifecycleAndRollback(t *testing.T) {
 		ServiceAddress: "10.0.0.41", LANAddress: "10.0.0.41", PublicAddress: "203.0.113.41",
 		EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true,
 	})
-	seedManagedRealityForFallbackTest(t, store, node, "reality-dl-app", "reality-dl-svc", "reality-dl-pub", "entry.example.test", "camo.example.test")
+	seedManagedRealityForFallbackTest(t, store, node, threeXUIRoleMaster, "reality-dl-app", "reality-dl-svc", "reality-dl-pub", "entry.example.test", "camo.example.test")
 
 	// Queue & apply initial reject listener.
 	tx, err := store.db.BeginTx(ctx, nil)
@@ -581,12 +587,17 @@ func TestNodeListenerStandaloneDaylightHTTPSLifecycleAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := NewServer(store, "", false).Handler()
-	cancelReq := httptest.NewRequest(http.MethodPost, "/api/v1/applications/"+appID+"/node-site/action", strings.NewReader(`{"action":"cancel"}`))
-	cancelReq.Header.Set("Content-Type", "application/json")
-	cancelReq.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
-	cancelReq.Header.Set("X-CSRF-Token", csrf)
-	cancelResp := httptest.NewRecorder()
-	handler.ServeHTTP(cancelResp, cancelReq)
+	postNodeSiteAction := func(action string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/applications/"+appID+"/node-site-certificate/actions", strings.NewReader(`{"action":"`+action+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
+		req.Header.Set("X-CSRF-Token", csrf)
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+		return resp
+	}
+	cancelResp := postNodeSiteAction("cancel")
 	if cancelResp.Code != http.StatusAccepted {
 		t.Fatalf("cancel action failed: %d %s", cancelResp.Code, cancelResp.Body.String())
 	}
@@ -595,63 +606,6 @@ func TestNodeListenerStandaloneDaylightHTTPSLifecycleAndRollback(t *testing.T) {
 	}
 	completeNextTask(t, store, node, "node.listener.apply", nil)
 
-	// Re-configure and apply rev 2 (first actually applied TLS revision).
-	if _, err := store.configureNodeSite(ctx, appID, nodeSiteInput{
-		Hostname: "web.example.test", Port: 24482, CADirectory: certmagic.LetsEncryptProductionCA,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	firstTask := claimTask(t, store, node)
-	if firstTask.Kind != "node.listener.apply" || firstTask.NodeListenerState.Listener.RejectUnmatched {
-		t.Fatalf("expected node.listener.apply enabling Caddy before node.site.certificate, got %#v", firstTask)
-	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, firstTask.ID, firstTask.Attempt, true, "", nil, firstTask.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-	siteApply := claimTask(t, store, node)
-	if siteApply.Kind != nodesite.Kind {
-		t.Fatalf("expected node.site.certificate after listener apply, got %q", siteApply.Kind)
-	}
-	block, _ := pem.Decode([]byte(siteApply.NodeSite.CertificatePEM))
-	applyRaw := nodeSiteResultJSON(t, nodesite.Result{
-		Action: "apply", Revision: siteApply.Revision, Hostname: "web.example.test",
-		State: "applied", Fingerprint: nodesite.Fingerprint(block.Bytes), TLSLoopbackOnly: false,
-	})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, siteApply.ID, siteApply.Attempt, true, "", applyRaw, siteApply.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-
-	// Stage 3: rollback the FIRST applied TLS revision (no prior succeeded apply task) ->
-	// Agent restores non-TLS site, so HAProxy must switch back to RejectUnmatched=true.
-	rollbackReq := httptest.NewRequest(http.MethodPost, "/api/v1/applications/"+appID+"/node-site/action", strings.NewReader(`{"action":"rollback"}`))
-	rollbackReq.Header.Set("Content-Type", "application/json")
-	rollbackReq.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
-	rollbackReq.Header.Set("X-CSRF-Token", csrf)
-	rollbackResp := httptest.NewRecorder()
-	handler.ServeHTTP(rollbackResp, rollbackReq)
-	if rollbackResp.Code != http.StatusAccepted {
-		t.Fatalf("rollback action failed: %d %s", rollbackResp.Code, rollbackResp.Body.String())
-	}
-	rollbackTask := claimTask(t, store, node)
-	if rollbackTask.Kind != nodesite.Kind || rollbackTask.NodeSite.Action != "rollback" {
-		t.Fatalf("expected rollback task, got %#v", rollbackTask)
-	}
-	rollbackRaw := nodeSiteResultJSON(t, nodesite.Result{
-		Action: "rollback", Revision: rollbackTask.Revision, Hostname: "web.example.test", State: "rolled_back",
-	})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, rollbackTask.ID, rollbackTask.Attempt, true, "", rollbackRaw, rollbackTask.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-	afterInitialRollback := claimTask(t, store, node)
-	if afterInitialRollback.Kind != "node.listener.apply" || !afterInitialRollback.NodeListenerState.Listener.RejectUnmatched {
-		t.Fatalf("rolling back initial TLS apply did not switch HAProxy back to reject: %#v", afterInitialRollback)
-	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, afterInitialRollback.ID, afterInitialRollback.Attempt, true, "", nil, afterInitialRollback.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
-
-	// Stage 4: apply two public TLS revisions in sequence, then rollback the second ->
-	// prior applied revision was public TLS, so Caddy fallback must stay enabled.
 	applyPublicPort := func(port int) {
 		t.Helper()
 		loopbackFalse := false
@@ -682,25 +636,43 @@ func TestNodeListenerStandaloneDaylightHTTPSLifecycleAndRollback(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	completeRollback := func() {
+		t.Helper()
+		resp := postNodeSiteAction("rollback")
+		if resp.Code != http.StatusAccepted {
+			t.Fatalf("rollback action failed: %d %s", resp.Code, resp.Body.String())
+		}
+		task := claimTask(t, store, node)
+		if task.Kind != nodesite.Kind || task.NodeSite.Action != "rollback" {
+			t.Fatalf("expected rollback task, got %#v", task)
+		}
+		raw := nodeSiteResultJSON(t, nodesite.Result{
+			Action: "rollback", Revision: task.Revision, Hostname: "web.example.test", State: "rolled_back",
+		})
+		if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", raw, task.RequiredRuntimeGeneration); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Stage 3a & 3b: two consecutive apply-from-HTTP-only -> rollback cycles.
+	// Neither rollback may keep Caddy fallback from an earlier rolled-back apply.
+	for cycle := 1; cycle <= 2; cycle++ {
+		applyPublicPort(24482)
+		completeRollback()
+		afterRollback := claimTask(t, store, node)
+		if afterRollback.Kind != "node.listener.apply" || !afterRollback.NodeListenerState.Listener.RejectUnmatched {
+			t.Fatalf("cycle %d: rolling back HTTP-only->TLS apply did not switch HAProxy back to reject: %#v", cycle, afterRollback)
+		}
+		if err := store.CompleteTask(ctx, node.ID, node.Credential, afterRollback.ID, afterRollback.Attempt, true, "", nil, afterRollback.RequiredRuntimeGeneration); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Stage 4: apply two public TLS revisions in sequence, then rollback the second ->
+	// prior non-rolled-back applied revision was public TLS, so Caddy fallback stays enabled.
 	applyPublicPort(24482)
 	applyPublicPort(24485)
-
-	rollbackReq2 := httptest.NewRequest(http.MethodPost, "/api/v1/applications/"+appID+"/node-site/action", strings.NewReader(`{"action":"rollback"}`))
-	rollbackReq2.Header.Set("Content-Type", "application/json")
-	rollbackReq2.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
-	rollbackReq2.Header.Set("X-CSRF-Token", csrf)
-	rollbackResp2 := httptest.NewRecorder()
-	handler.ServeHTTP(rollbackResp2, rollbackReq2)
-	if rollbackResp2.Code != http.StatusAccepted {
-		t.Fatalf("second rollback failed: %d %s", rollbackResp2.Code, rollbackResp2.Body.String())
-	}
-	rollbackTask2 := claimTask(t, store, node)
-	rollbackRaw2 := nodeSiteResultJSON(t, nodesite.Result{
-		Action: "rollback", Revision: rollbackTask2.Revision, Hostname: "web.example.test", State: "rolled_back",
-	})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, rollbackTask2.ID, rollbackTask2.Attempt, true, "", rollbackRaw2, rollbackTask2.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
+	completeRollback()
 	if state := computeDesiredNodeListenerForTest(t, store, node.ID); state.Listener.RejectUnmatched {
 		t.Fatalf("rolling back to a previous public TLS revision unexpectedly disabled Caddy fallback: %#v", state.Listener)
 	}
@@ -767,6 +739,11 @@ func TestNodeListenerRestorePreservesReinstallPreconditions(t *testing.T) {
 	})
 	now := store.now().UTC().Format(time.RFC3339Nano)
 	siteID := testSiteID(t, store)
+	if _, err := store.UpdateSite(ctx, siteID, SiteInput{
+		Name: "Restore", Code: "restore", Timezone: "UTC", DomainSuffix: "example.test", GatewayNodes: []string{node.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
 		VALUES('glivela-restore-app', 'Glivela', ?, ?, ?, '', 'running', 'docker', '', ?, ?)`, node.ID, siteID, glivelaAppKey, now, now); err != nil {
 		t.Fatal(err)
@@ -795,11 +772,6 @@ func TestNodeListenerRestorePreservesReinstallPreconditions(t *testing.T) {
 	}
 
 	// 1. Existing Site Gateway + running gateway component must still block restore.
-	if _, err := store.UpdateSite(ctx, siteID, SiteInput{
-		Name: "Restore", Code: "restore", Timezone: "UTC", DomainSuffix: "example.test", GatewayNodes: []string{node.ID},
-	}); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := runRestore(); err == nil || !strings.Contains(err.Error(), "restore the shared gateway") {
 		t.Fatalf("site gateway did not block restore: %v", err)
 	}
@@ -879,10 +851,10 @@ func TestReconcileNodeListenerSingleNodeCanaryIdempotenceAndGuards(t *testing.T)
 		completeNextTask(t, store, node, "gateway.component.apply", nil)
 	}
 
-	// Seed REALITY on legacyA, legacyB, and realPublic.
-	seedManagedRealityForFallbackTest(t, store, legacyA, "app-a", "svc-a", "pub-a", "a.example.test", "camo-a.example.test")
-	seedManagedRealityForFallbackTest(t, store, legacyB, "app-b", "svc-b", "pub-b", "b.example.test", "camo-b.example.test")
-	seedManagedRealityForFallbackTest(t, store, realPublic, "app-p", "svc-p", "pub-p", "p.example.test", "camo-p.example.test")
+	// Seed REALITY on legacyA (controller), legacyB (worker), and realPublic (worker).
+	seedManagedRealityForFallbackTest(t, store, legacyA, threeXUIRoleMaster, "app-a", "svc-a", "pub-a", "a.example.test", "camo-a.example.test")
+	seedManagedRealityForFallbackTest(t, store, legacyB, threeXUIRoleWorker, "app-b", "svc-b", "pub-b", "b.example.test", "camo-b.example.test")
+	seedManagedRealityForFallbackTest(t, store, realPublic, threeXUIRoleWorker, "app-p", "svc-p", "pub-p", "p.example.test", "camo-p.example.test")
 
 	// Publish a genuine public_direct HTTPS site on realPublic only.
 	installCPA(t, store, realPublic, "10.0.0.63")
@@ -908,7 +880,7 @@ func TestReconcileNodeListenerSingleNodeCanaryIdempotenceAndGuards(t *testing.T)
 	// Persist legacy buggy ready listener state (RejectUnmatched=false) on legacyA and legacyB,
 	// and genuine Caddy fallback ready listener state on realPublic.
 	now := store.now().UTC().Format(time.RFC3339Nano)
-	seedLegacyFallback := func(node AgentCredential, pubIP, sni, pubID string) string {
+	seedLegacyFallback := func(node AgentCredential, pubIP, sni, pubID, alias string) string {
 		t.Helper()
 		state := gateway.NodeListenerState{
 			Revision: 1,
@@ -925,7 +897,7 @@ func TestReconcileNodeListenerSingleNodeCanaryIdempotenceAndGuards(t *testing.T)
 					ApplicationNodeID: node.ID,
 					ManagedReality:    true,
 					ProxyProtocol:     gateway.ProxyProtocolV2,
-					Upstreams:         []gateway.Upstream{{Address: dockerruntime.ThreeXUIAlias, Port: centerThreeXUIRealityPort}},
+					Upstreams:         []gateway.Upstream{{Address: alias, Port: centerThreeXUIRealityPort}},
 				}},
 			},
 		}.Sorted()
@@ -944,9 +916,9 @@ func TestReconcileNodeListenerSingleNodeCanaryIdempotenceAndGuards(t *testing.T)
 		}
 		return hash
 	}
-	hashA := seedLegacyFallback(legacyA, "203.0.113.61", "camo-a.example.test", "pub-a")
-	hashB := seedLegacyFallback(legacyB, "203.0.113.62", "camo-b.example.test", "pub-b")
-	seedLegacyFallback(realPublic, "203.0.113.63", "camo-p.example.test", "pub-p")
+	hashA := seedLegacyFallback(legacyA, "203.0.113.61", "camo-a.example.test", "pub-a", dockerruntime.ThreeXUIAlias)
+	hashB := seedLegacyFallback(legacyB, "203.0.113.62", "camo-b.example.test", "pub-b", dockerruntime.LegacyXrayAlias)
+	seedLegacyFallback(realPublic, "203.0.113.63", "camo-p.example.test", "pub-p", dockerruntime.LegacyXrayAlias)
 
 	// Center startup and routine matching heartbeats must NOT fan out HAProxy rebuilds.
 	if err := store.StartPublicationVerifications(ctx); err != nil {
@@ -1051,7 +1023,7 @@ func TestReconcileNodeListenerSingleNodeCanaryIdempotenceAndGuards(t *testing.T)
 	if taskA.Kind != "node.listener.apply" || !taskA.NodeListenerState.Listener.RejectUnmatched || taskA.NodeListenerState.Listener.CaddyAddress != "" || taskA.NodeListenerState.Listener.CaddyPort != 0 {
 		t.Fatalf("unexpected legacyA reconcile task: %#v", taskA)
 	}
-	assertRealityRoutePreserved(t, taskA.NodeListenerState.Listener, "203.0.113.61", "camo-a.example.test")
+	assertRealityRoutePreserved(t, taskA.NodeListenerState.Listener, "203.0.113.61", "camo-a.example.test", dockerruntime.ThreeXUIAlias)
 	if err := store.CompleteTask(ctx, legacyA.ID, legacyA.Credential, taskA.ID, taskA.Attempt, true, "", nil, taskA.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}

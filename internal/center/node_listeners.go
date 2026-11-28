@@ -681,9 +681,9 @@ func nodeSiteServesPublicHTTPS(ctx context.Context, tx *sql.Tx, nodeID, applicat
 	}
 	if state == "rolled_back" {
 		// Rollback restores the Agent's previous site snapshot. Only when an
-		// earlier succeeded apply/migration revision served public TLS (not
-		// loopback-only) did rollback retain a public 443 listener; rolling back
-		// an initial TLS revision restores the non-TLS site.
+		// earlier non-rolled-back apply/migration revision served public TLS
+		// (not loopback-only) did rollback retain a public 443 listener; rolling
+		// back an initial TLS revision restores the non-TLS site.
 		loopback, found, err := latestNodeSiteTaskLoopback(ctx, tx, nodeID, applicationID, revision, true)
 		if err != nil || !found {
 			return false, err
@@ -697,13 +697,24 @@ func nodeSiteServesPublicHTTPS(ctx context.Context, tx *sql.Tx, nodeID, applicat
 		return !tlsLoopbackOnly, nil
 	}
 	// Another revision is pending/issuing/action_required while appliedRevision
-	// remains active; check the recorded result for appliedRevision if present.
+	// remains recorded; inspect the latest non-rolled-back applied task up to
+	// appliedRevision so a rolled-back revision cannot vouch for public TLS.
 	loopback, found, err := latestNodeSiteTaskLoopback(ctx, tx, nodeID, applicationID, appliedRevision, false)
 	if err != nil {
 		return false, err
 	}
 	if found {
 		return !loopback, nil
+	}
+	var hasHistory bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM node_site_tasks
+		WHERE application_id = ? AND agent_id = ? AND revision <= ?
+	)`, applicationID, nodeID, appliedRevision).Scan(&hasHistory); err != nil {
+		return false, err
+	}
+	if hasHistory {
+		return false, nil
 	}
 	return !tlsLoopbackOnly, nil
 }
@@ -712,24 +723,40 @@ func latestNodeSiteTaskLoopback(ctx context.Context, tx *sql.Tx, nodeID, applica
 	var loopback int
 	var err error
 	if strictlyBefore {
-		err = tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(result_json, '$.tlsLoopbackOnly'), 0)
-			FROM node_site_tasks
-			WHERE application_id = ?
-			  AND agent_id = ?
-			  AND state = 'succeeded'
-			  AND json_extract(input_json, '$.action') IN ('apply', 'prepare-migration', 'accept-migration', 'cancel-migration')
-			  AND revision < ?
-			ORDER BY revision DESC, rowid DESC
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(t.result_json, '$.tlsLoopbackOnly'), 0)
+			FROM node_site_tasks t
+			WHERE t.application_id = ?
+			  AND t.agent_id = ?
+			  AND t.state = 'succeeded'
+			  AND json_extract(t.input_json, '$.action') IN ('apply', 'prepare-migration', 'accept-migration', 'cancel-migration')
+			  AND NOT EXISTS (
+				SELECT 1 FROM node_site_tasks rb
+				WHERE rb.application_id = t.application_id
+				  AND rb.agent_id = t.agent_id
+				  AND rb.revision = t.revision
+				  AND rb.state = 'succeeded'
+				  AND json_extract(rb.input_json, '$.action') = 'rollback'
+			  )
+			  AND t.revision < ?
+			ORDER BY t.revision DESC, t.rowid DESC
 			LIMIT 1`, applicationID, nodeID, revision).Scan(&loopback)
 	} else {
-		err = tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(result_json, '$.tlsLoopbackOnly'), 0)
-			FROM node_site_tasks
-			WHERE application_id = ?
-			  AND agent_id = ?
-			  AND state = 'succeeded'
-			  AND json_extract(input_json, '$.action') IN ('apply', 'prepare-migration', 'accept-migration', 'cancel-migration')
-			  AND revision = ?
-			ORDER BY revision DESC, rowid DESC
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(t.result_json, '$.tlsLoopbackOnly'), 0)
+			FROM node_site_tasks t
+			WHERE t.application_id = ?
+			  AND t.agent_id = ?
+			  AND t.state = 'succeeded'
+			  AND json_extract(t.input_json, '$.action') IN ('apply', 'prepare-migration', 'accept-migration', 'cancel-migration')
+			  AND NOT EXISTS (
+				SELECT 1 FROM node_site_tasks rb
+				WHERE rb.application_id = t.application_id
+				  AND rb.agent_id = t.agent_id
+				  AND rb.revision = t.revision
+				  AND rb.state = 'succeeded'
+				  AND json_extract(rb.input_json, '$.action') = 'rollback'
+			  )
+			  AND t.revision <= ?
+			ORDER BY t.revision DESC, t.rowid DESC
 			LIMIT 1`, applicationID, nodeID, revision).Scan(&loopback)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
