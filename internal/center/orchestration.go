@@ -149,8 +149,8 @@ func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, app
 			return err
 		}
 	}
-	var uninstallAppKey string
-	if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&uninstallAppKey); err != nil {
+	var uninstallAppKey, uninstallNodeID string
+	if err := tx.QueryRowContext(ctx, `SELECT app_key, node_id FROM applications WHERE id=?`, applicationID).Scan(&uninstallAppKey, &uninstallNodeID); err != nil {
 		return err
 	}
 	values, err := s.applicationPublicationCleanups(ctx, tx, applicationID)
@@ -184,6 +184,9 @@ func (s *Store) retireApplicationManagement(ctx context.Context, tx *sql.Tx, app
 		return err
 	}
 	if err := s.queueAffectedGateways(ctx, tx, applicationID, now); err != nil {
+		return err
+	}
+	if _, err := s.syncNodeListenerStateIfChanged(ctx, tx, uninstallNodeID, now, "node-local listener synced after application retirement"); err != nil {
 		return err
 	}
 	*cleanups = append(*cleanups, values...)
@@ -363,6 +366,9 @@ func (s *Store) queueAffectedGateways(ctx context.Context, tx *sql.Tx, applicati
 	}
 	for _, gatewayID := range gatewayIDs {
 		if err := s.queueGatewayState(ctx, tx, gatewayID, now); err != nil {
+			return err
+		}
+		if _, err := s.syncNodeListenerStateIfChanged(ctx, tx, gatewayID, now, "node-local listener synced after gateway route removal"); err != nil {
 			return err
 		}
 	}
@@ -557,6 +563,14 @@ func (s *Store) projectGatewayState(ctx context.Context, tx *sql.Tx, commit proj
 			return err
 		}
 	}
+	listenerQueued := false
+	if succeeded {
+		var syncErr error
+		listenerQueued, syncErr = s.syncNodeListenerStateIfChanged(ctx, tx, agentID, s.now().UTC(), "node-local listener synced after gateway apply")
+		if syncErr != nil {
+			return syncErr
+		}
+	}
 	event := "succeeded"
 	if !succeeded {
 		event = "failed"
@@ -565,7 +579,7 @@ func (s *Store) projectGatewayState(ctx context.Context, tx *sql.Tx, commit proj
 		return err
 	}
 	verificationTargets := []publicationVerificationTarget{}
-	if succeeded {
+	if succeeded && !listenerQueued {
 		verificationTargets, err = s.publicationVerificationTargetsForGateway(ctx, tx, agentID)
 		if err != nil {
 			return err
