@@ -455,6 +455,26 @@ describe("network and app views", () => {
     expect(mutate).not.toHaveBeenCalled();
   });
 
+  it("upgrades directly without reopening capability approval when the installed instance already approved the privileges", async () => {
+    const data = dashboard();
+    data.apps[0].app.runtime = { kind: "systemd", version: 1, requiredCapabilities: ["root"] };
+    data.applications[0] = {
+      ...data.applications[0],
+      installedVersion: "1.2.59",
+      availableVersion: "1.2.60",
+      updateAvailable: true,
+      authorizedCapabilities: ["root"],
+      upgradeApprovalCapabilities: [],
+    };
+    const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ id: "upgrade", agentId: "agent", appKey: data.apps[0].key, appVersion: "1.2.60", state: "pending", operation: "upgrade", deleteData: false, createdAt: "2026-09-12T00:00:00Z", updatedAt: "2026-09-12T00:00:00Z" });
+    renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async (action) => { await action(); }} />);
+    await act(async () => {
+      [...document.querySelectorAll<HTMLButtonElement>("button")].find((value) => value.textContent?.includes("升级到 v1.2.60"))?.click();
+    });
+    expect(document.getElementById("package-capability-root")).toBeNull();
+    expect(create).toHaveBeenCalledWith("agent", data.apps[0].key, {}, "upgrade", false, undefined, undefined, undefined, undefined, { packageRevision: 1, manifestSha256: "a".repeat(64) });
+  });
+
   it("rechecks catalog expiry on submit even before another dashboard refresh", async () => {
     const data = dashboard();
     data.applications = [];

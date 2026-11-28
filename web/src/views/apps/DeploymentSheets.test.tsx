@@ -160,4 +160,52 @@ describe("declarative package deployment review", () => {
     rerender(<DeploymentSheet data={crossVersion} editor={{ app, agent: data.agents[0], operation: "upgrade" }} language="zh-CN" onClose={vi.fn()} onSubmit={vi.fn()} />);
     expect(document.body.textContent).toContain("版本：0.2.0 → 0.2.1。");
   });
+
+  it("hides built-in platform capabilities on install, skips already-approved capabilities on upgrade, and never prompts on configure", async () => {
+    const { data, app } = fixture();
+    const official: AppView = {
+      ...app,
+      key: "vastora-official/glivela-entry",
+      sourceId: "vastora-official",
+      permissionDetails: ["node: user root"],
+      app: {
+        ...app.app,
+        id: "glivela-entry",
+        runtime: { kind: "native", version: 2, requiredCapabilities: ["native-services", "root", "host-tcp-budget"] },
+        config: [{ key: "label", type: "string", required: false, secret: false, label: { en: "Label", "zh-CN": "名称" }, description: { en: "", "zh-CN": "" } }],
+      },
+    };
+    data.agents[0].capabilities.executorVersions = { native: 2 };
+    data.agents[0].capabilities.runtimeCapabilities = ["native-services", "root", "host-tcp-budget"];
+    data.apps = [official];
+    const onSubmit = vi.fn(async () => undefined);
+
+    // Install: only high-risk root is shown; native-services and host-tcp-budget are hidden.
+    render(<DeploymentSheet data={data} editor={{ app: official, operation: "install" }} language="en" onClose={vi.fn()} onSubmit={onSubmit} />);
+    expect(approval("native-services")).toBeNull();
+    expect(approval("host-tcp-budget")).toBeNull();
+    expect(approval("root")).not.toBeNull();
+    expect(submitButton()?.disabled).toBe(true);
+    act(() => approval("root")?.click());
+    expect(submitButton()?.disabled).toBe(false);
+    await act(async () => submitButton()?.click());
+    expect(onSubmit).toHaveBeenCalledWith(data.agents[0], official, { label: "" }, "install", undefined, "", ["root"]);
+
+    // Upgrade when root was already approved: no checkboxes rendered and submit is enabled.
+    onSubmit.mockClear();
+    const installedData = {
+      ...data,
+      applications: [{ ...dashboard().applications[0], appKey: official.key, nodeId: data.agents[0].id, authorizedCapabilities: ["host-tcp-budget", "native-services", "root"], upgradeApprovalCapabilities: [] }],
+    };
+    rerender(<DeploymentSheet data={installedData} editor={{ app: official, agent: data.agents[0], operation: "upgrade" }} language="en" onClose={vi.fn()} onSubmit={onSubmit} />);
+    expect(approval("root")).toBeNull();
+    expect(submitButton()?.disabled).toBe(false);
+    await act(async () => submitButton()?.click());
+    expect(onSubmit).toHaveBeenCalledWith(data.agents[0], official, {}, "upgrade", undefined, undefined, []);
+
+    // Configure never prompts for capability checkboxes or permission details.
+    rerender(<DeploymentSheet data={installedData} editor={{ app: official, agent: data.agents[0], operation: "configure" }} language="en" onClose={vi.fn()} onSubmit={onSubmit} />);
+    expect(approval("root")).toBeNull();
+    expect(document.body.textContent).not.toContain("node: user root");
+  });
 });

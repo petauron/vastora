@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -615,9 +616,11 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 	equivalences := s.officialUpdateEquivalences(ctx)
 	availableVersions := make(map[string]string, len(apps))
 	availableRevisions := make(map[string]int, len(apps))
+	catalogByKey := make(map[string]catalog.AppManifest, len(apps))
 	for _, app := range apps {
 		availableVersions[app.Key] = app.App.Version
 		availableRevisions[app.Key] = app.App.PackageRevision
+		catalogByKey[app.Key] = app.App
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.name, a.node_id, a.site_id, a.app_key, a.image, a.status, a.runtime, a.role,
 		CASE WHEN a.app_key = 'vastora-official/3x-ui' THEN COALESCE(control.controller_application_id, '') ELSE '' END,
@@ -625,7 +628,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		CASE WHEN a.app_key = 'vastora-official/3x-ui' AND a.role = 'worker' AND COALESCE(n.master_application_id, '') <> COALESCE(control.controller_application_id, '') THEN 'VLESS node is linked to a legacy controller; finish global convergence first' ELSE COALESCE(n.last_error, '') END,
 		COALESCE(b.state, ''), COALESCE(b.updated_at, ''),
 		COALESCE(CASE WHEN latest.operation IN ('install', 'upgrade', 'configure') THEN latest.app_version ELSE '' END, ''),
-		a.created_at, a.updated_at, COALESCE(latest.package_revision,0), COALESCE(resources.adoption_state,''), COALESCE(resources.last_error,''), COALESCE(resources.resources_json,'{}'), COALESCE(retirement.replacement_application_id,''),
+		a.created_at, a.updated_at, COALESCE(latest.package_revision,0), COALESCE(resources.adoption_state,''), COALESCE(resources.last_error,''), COALESCE(resources.resources_json,'{}'), COALESCE(resources.authorized_capabilities_json,'[]'), COALESCE(latest.manifest_json,''), COALESCE(retirement.replacement_application_id,''),
 		CASE WHEN a.app_key IN ('vastora-official/daylight','vastora-official/daylight-https') THEN
 		 CASE WHEN site.application_id IS NULL OR site.hostname='' OR site.state='unconfigured' THEN 'unconfigured'
 		 WHEN a.status<>'running' OR site.error<>'' OR site.state='action_required' THEN 'action_required'
@@ -658,9 +661,14 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		var value ApplicationView
 		var created, updated string
 		var restorePointAt string
-		var resourcesRaw []byte
-		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated, &value.InstalledPackageRevision, &value.AdoptionState, &value.AdoptionError, &resourcesRaw, &value.ReplacementApplicationID, &value.NodeSiteStatus); err != nil {
+		var resourcesRaw, authorizedRaw, installedManifestRaw []byte
+		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated, &value.InstalledPackageRevision, &value.AdoptionState, &value.AdoptionError, &resourcesRaw, &authorizedRaw, &installedManifestRaw, &value.ReplacementApplicationID, &value.NodeSiteStatus); err != nil {
 			return nil, err
+		}
+		var existingGrants []string
+		if (value.AdoptionState == "" || value.AdoptionState == "ready") && len(authorizedRaw) > 0 && json.Unmarshal(authorizedRaw, &existingGrants) == nil && len(existingGrants) > 0 {
+			slices.Sort(existingGrants)
+			value.AuthorizedCapabilities = existingGrants
 		}
 		value.LegacyGlivela = value.AppKey == glivelaAppKey && legacyGlivelaReceipt(resourcesRaw)
 		value.ExecutionRetired = value.ReplacementApplicationID != ""
@@ -682,6 +690,25 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 			updateVersionIdentity{Version: value.InstalledVersion, PackageRevision: value.InstalledPackageRevision},
 			updateVersionIdentity{Version: value.AvailableVersion, PackageRevision: value.AvailablePackageRevision}) {
 			value.UpdateAvailable = false
+		}
+		if value.UpdateAvailable {
+			if targetManifest, ok := catalogByKey[value.AppKey]; ok {
+				var installedManifest *catalog.AppManifest
+				if len(installedManifestRaw) > 0 {
+					var parsed catalog.AppManifest
+					if json.Unmarshal(installedManifestRaw, &parsed) == nil && parsed.Runtime != nil {
+						installedManifest = &parsed
+					}
+				}
+				pending := upgradeApprovalCapabilities(value.AppKey, installedManifest, existingGrants, targetManifest)
+				if pending == nil {
+					pending = []string{}
+				}
+				value.UpgradeApprovalCapabilities = &pending
+				if len(pending) > 0 {
+					value.UpgradePermissionDetails = upgradePermissionDetails(installedManifest, targetManifest, pending)
+				}
+			}
 		}
 		value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)

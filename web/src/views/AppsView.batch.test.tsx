@@ -41,7 +41,7 @@ function fleetFixture(): AppData {
       metrics: true,
       logs: false,
       executorVersions: { native: 2 },
-      runtimeCapabilities: ["native-services", "host-tcp-budget", "shared-caddy"],
+      runtimeCapabilities: ["native-services", "root", "host-path", "host-tcp-budget", "shared-caddy"],
     },
     networkCandidates: [],
     networkProfile: { serviceAddress: "100.64.0.10", enabledKinds: ["headscale"], directPublic: false },
@@ -118,7 +118,7 @@ function renderApps(data: AppData, options: { workspaceKey?: string | null; muta
 }
 
 describe("batch application upgrades and stable task UI", () => {
-  it("updates all eligible hosts from the App Store sheet with one capability approval and one refresh", async () => {
+  it("updates all eligible hosts without unnecessary checkboxes for built-in platform capabilities", async () => {
     const data = fleetFixture();
     const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ id: "dep", state: "pending" } as never);
     const { container, mutate } = renderApps(data);
@@ -134,12 +134,10 @@ describe("batch application upgrades and stable task UI", () => {
     expect(dialog?.textContent).toContain("Node Gamma");
     expect(dialog?.textContent).toContain("节点离线");
     expect(dialog?.textContent).not.toContain("Node Delta");
+    expect(dialog?.textContent).not.toContain("管理宿主机原生服务");
+    expect(dialog?.textContent).not.toContain("此配方需要管理员授权");
 
     const submit = () => document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]');
-    expect(submit()?.disabled).toBe(true);
-    expect(document.body.textContent).toContain("管理宿主机原生服务");
-
-    act(() => document.getElementById("batch-capability-native-services")?.click());
     expect(submit()?.disabled).toBe(false);
 
     await act(async () => {
@@ -147,8 +145,8 @@ describe("batch application upgrades and stable task UI", () => {
     });
 
     expect(create).toHaveBeenCalledTimes(2);
-    expect(create).toHaveBeenNthCalledWith(1, "node-a", appKey, {}, "upgrade", false, undefined, undefined, undefined, ["native-services"], { packageRevision: 9, manifestSha256: manifestDigest });
-    expect(create).toHaveBeenNthCalledWith(2, "node-b", appKey, {}, "upgrade", false, undefined, undefined, undefined, ["native-services"], { packageRevision: 9, manifestSha256: manifestDigest });
+    expect(create).toHaveBeenNthCalledWith(1, "node-a", appKey, {}, "upgrade", false, undefined, undefined, undefined, undefined, { packageRevision: 9, manifestSha256: manifestDigest });
+    expect(create).toHaveBeenNthCalledWith(2, "node-b", appKey, {}, "upgrade", false, undefined, undefined, undefined, undefined, { packageRevision: 9, manifestSha256: manifestDigest });
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(mutate).toHaveBeenCalledWith(expect.any(Function), "已提交 2 台更新任务。", { reportError: false });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -171,7 +169,6 @@ describe("batch application upgrades and stable task UI", () => {
     act(() => betaCheckbox.click());
     expect(document.body.textContent).toContain("已选择 2/2 台主机");
 
-    act(() => document.getElementById("batch-capability-native-services")?.click());
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]')?.click();
     });
@@ -195,7 +192,6 @@ describe("batch application upgrades and stable task UI", () => {
 
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 Senlun 探针"]')?.click());
     act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("全部更新 (2)"))?.click());
-    act(() => document.getElementById("batch-capability-native-services")?.click());
 
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]')?.click();
@@ -214,7 +210,6 @@ describe("batch application upgrades and stable task UI", () => {
 
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 Senlun 探针"]')?.click());
     act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("全部更新 (2)"))?.click());
-    act(() => document.getElementById("batch-capability-native-services")?.click());
 
     // Simulate catalog expiry crossing Date.now() before another refresh.
     now.mockReturnValue(Date.parse("2030-01-01T00:00:00Z"));
@@ -249,7 +244,7 @@ describe("batch application upgrades and stable task UI", () => {
           id: "glivela-entry",
           version: "0.2.0",
           packageRevision: 2,
-          runtime: { kind: "native", version: 2, requiredCapabilities: ["native-services", "host-tcp-budget"] },
+          runtime: { kind: "native", version: 2, requiredCapabilities: ["native-services", "root", "host-path", "host-tcp-budget"] },
           name: { en: "Glivela Entry", "zh-CN": "Glivela 入口" },
           description: { en: "Entry", "zh-CN": "入口" },
           hostAccess: true,
@@ -266,7 +261,7 @@ describe("batch application upgrades and stable task UI", () => {
           id: "glivela-node",
           version: "0.2.0",
           packageRevision: 2,
-          runtime: { kind: "native", version: 2, requiredCapabilities: ["native-services"] },
+          runtime: { kind: "native", version: 2, requiredCapabilities: ["native-services", "root", "host-tcp-budget"] },
           name: { en: "Glivela Node", "zh-CN": "Glivela 节点" },
           description: { en: "Node", "zh-CN": "节点" },
           hostAccess: true,
@@ -283,7 +278,7 @@ describe("batch application upgrades and stable task UI", () => {
           id: "glivela-dual",
           version: "0.2.0",
           packageRevision: 2,
-          runtime: { kind: "native", version: 2, requiredCapabilities: ["native-services"] },
+          runtime: { kind: "native", version: 2, requiredCapabilities: ["native-services", "root", "host-tcp-budget"] },
           name: { en: "Glivela Dual", "zh-CN": "Glivela 双功能" },
           description: { en: "Dual", "zh-CN": "双功能" },
           hostAccess: true,
@@ -303,21 +298,91 @@ describe("batch application upgrades and stable task UI", () => {
 
     // Blocked but already up-to-date sibling (glivela-dual) does not block eligible upgrades.
     expect(document.getElementById("batch-upgrade-catalog-error")).toBeNull();
+    // Platform built-in capabilities are never rendered as manual checkboxes.
+    expect(document.getElementById("batch-capability-native-services")).toBeNull();
+    expect(document.getElementById("batch-capability-host-tcp-budget")).toBeNull();
     // Both packages on the same host have distinct labels.
     expect(document.querySelector('[aria-label="选择 Node Alpha · 接收客户端连接"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="选择 Node Alpha · 提供出口访问"]')).not.toBeNull();
 
-    // Uncheck entry -> approve native-services for node only -> re-check entry -> approval must reset.
+    // Uncheck entry -> approve root for node only -> re-check entry -> approval must reset.
     act(() => document.getElementById("batch-target-g-entry")?.click());
-    expect(document.getElementById("batch-capability-host-tcp-budget")).toBeNull();
-    act(() => document.getElementById("batch-capability-native-services")?.click());
+    expect(document.getElementById("batch-capability-host-path")).toBeNull();
+    act(() => document.getElementById("batch-capability-root")?.click());
     const submit = () => document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]');
     expect(submit()?.disabled).toBe(false);
 
     act(() => document.getElementById("batch-target-g-entry")?.click());
     expect(submit()?.disabled).toBe(true);
-    expect((document.getElementById("batch-capability-native-services") as HTMLInputElement | null)?.checked).toBe(false);
-    expect((document.getElementById("batch-capability-host-tcp-budget") as HTMLInputElement | null)?.checked).toBe(false);
+    expect((document.getElementById("batch-capability-root") as HTMLInputElement | null)?.checked).toBe(false);
+    expect((document.getElementById("batch-capability-host-path") as HTMLInputElement | null)?.checked).toBe(false);
+  });
+
+  it("skips approval prompts for previously approved privileges and only prompts for newly added ones in a batch", async () => {
+    const data = fleetFixture();
+    data.apps = [
+      {
+        key: "vastora-official/glivela-entry",
+        sourceId: "vastora-official",
+        fetchedAt: "2026-09-11T00:00:00Z",
+        manifestSha256: "c".repeat(64),
+        approvalRequiredCapabilities: ["root"],
+        permissionDetails: ["node: user root"],
+        app: {
+          id: "glivela-entry",
+          version: "0.3.0",
+          packageRevision: 3,
+          runtime: { kind: "native", version: 2, requiredCapabilities: ["native-services", "root", "host-tcp-budget"] },
+          name: { en: "Glivela Entry", "zh-CN": "Glivela 入口" },
+          description: { en: "Entry", "zh-CN": "入口" },
+          hostAccess: true,
+          config: [],
+        },
+      },
+    ];
+    data.applications = [
+      { id: "g-a", appKey: "vastora-official/glivela-entry", nodeId: "node-a", siteId: "site-a", name: "Glivela", image: "", runtime: "host", status: "running", installedVersion: "0.2.0", availableVersion: "0.3.0", updateAvailable: true, authorizedCapabilities: ["host-tcp-budget", "native-services", "root"], upgradeApprovalCapabilities: [], createdAt: "", updatedAt: "" },
+      { id: "g-b", appKey: "vastora-official/glivela-entry", nodeId: "node-b", siteId: "site-a", name: "Glivela", image: "", runtime: "host", status: "running", installedVersion: "0.2.0", availableVersion: "0.3.0", updateAvailable: true, authorizedCapabilities: ["host-tcp-budget", "native-services", "root"], upgradeApprovalCapabilities: [], createdAt: "", updatedAt: "" },
+    ];
+    const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ id: "dep", state: "pending" } as never);
+    const { container, rerender } = renderApps(data);
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 Glivela"]')?.click());
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("全部更新 (2)"))?.click());
+
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("此配方需要管理员授权");
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("以 root 用户运行");
+    const submit = () => document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]');
+    expect(submit()?.disabled).toBe(false);
+
+    await act(async () => {
+      submit()?.click();
+    });
+    expect(create).toHaveBeenNthCalledWith(1, "node-a", "vastora-official/glivela-entry", {}, "upgrade", false, undefined, undefined, undefined, undefined, { packageRevision: 3, manifestSha256: "c".repeat(64) });
+    expect(create).toHaveBeenNthCalledWith(2, "node-b", "vastora-official/glivela-entry", {}, "upgrade", false, undefined, undefined, undefined, undefined, { packageRevision: 3, manifestSha256: "c".repeat(64) });
+
+    // If one host has a newly added privilege, only that new privilege is prompted and submitted for that host.
+    create.mockClear();
+    const expanded = {
+      ...data,
+      applications: [
+        data.applications[0],
+        { ...data.applications[1], upgradeApprovalCapabilities: ["host-path"], upgradePermissionDetails: ["app: /etc/demo -> /etc/demo (read-only)"] },
+      ],
+    };
+    rerender(expanded);
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("全部更新 (2)"))?.click());
+    expect(document.getElementById("batch-capability-root")).toBeNull();
+    expect(document.getElementById("batch-capability-host-path")).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("app: /etc/demo -> /etc/demo (read-only)");
+    expect(submit()?.disabled).toBe(true);
+    act(() => document.getElementById("batch-capability-host-path")?.click());
+    expect(submit()?.disabled).toBe(false);
+    await act(async () => {
+      submit()?.click();
+    });
+    expect(create).toHaveBeenNthCalledWith(1, "node-a", "vastora-official/glivela-entry", {}, "upgrade", false, undefined, undefined, undefined, undefined, { packageRevision: 3, manifestSha256: "c".repeat(64) });
+    expect(create).toHaveBeenNthCalledWith(2, "node-b", "vastora-official/glivela-entry", {}, "upgrade", false, undefined, undefined, undefined, ["host-path"], { packageRevision: 3, manifestSha256: "c".repeat(64) });
   });
 
   it("keeps routine active tasks in the compact Sheet trigger while leaving reconciliation recovery inline", () => {

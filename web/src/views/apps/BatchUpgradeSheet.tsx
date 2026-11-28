@@ -9,7 +9,7 @@ import { isDaylightAppKey, daylightAppKey } from "../daylight";
 import { threeXUIAppKey, type InstalledAppInstance } from "../installed-apps-model";
 import { catalogInstallBlocked, copy } from "../shared";
 import { RegionFlag } from "../RegionFlag";
-import { capabilityLabel } from "./DeploymentSheets";
+import { capabilityLabel, upgradeApprovalCapabilities, upgradeApprovalPermissionDetails } from "./capabilities";
 import { formatUpgradeTransition, isSameVersionRevisionUpgrade, isValidRevision } from "./versionDisplay";
 import { AppIcon } from "@/components/desktop/AppIcon";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -246,8 +246,8 @@ export function BatchUpgradeSheet({
   const skipped = plan?.skipped ?? [];
   const chosen = eligible.filter((item) => selectedIds.includes(item.instance.application.id));
   const capabilitySource = chosen.length > 0 ? chosen : eligible;
-  const requiredCapabilities = [...new Set(capabilitySource.flatMap((item) => item.app.app.runtime?.requiredCapabilities ?? []))];
-  const permissionDetails = [...new Set(capabilitySource.flatMap((item) => item.app.permissionDetails ?? []))];
+  const requiredCapabilities = [...new Set(capabilitySource.flatMap((item) => upgradeApprovalCapabilities(item.app, item.instance.application)))];
+  const permissionDetails = [...new Set(capabilitySource.flatMap((item) => upgradeApprovalPermissionDetails(item.app, item.instance.application)))];
   const permissionsApproved = requiredCapabilities.every((capability) => approvedCapabilities.includes(capability));
 
   const activeTargets = chosen.length > 0 ? chosen : eligible;
@@ -362,12 +362,18 @@ export function BatchUpgradeSheet({
     const nextChosen = eligible.filter((item) => nextIds.includes(item.instance.application.id));
     const prevKeys = new Set(prevChosen.map((item) => item.app.key));
     const nextKeys = new Set(nextChosen.map((item) => item.app.key));
-    const addedRecipe = [...nextKeys].some((key) => !prevKeys.has(key));
+    const prevRequired = new Set(prevChosen.flatMap((item) => upgradeApprovalCapabilities(item.app, item.instance.application)));
+    const nextRequired = new Set((nextChosen.length > 0 ? nextChosen : eligible).flatMap((item) => upgradeApprovalCapabilities(item.app, item.instance.application)));
+    const prevDetails = new Set(prevChosen.flatMap((item) => upgradeApprovalPermissionDetails(item.app, item.instance.application)));
+    const nextDetails = new Set((nextChosen.length > 0 ? nextChosen : eligible).flatMap((item) => upgradeApprovalPermissionDetails(item.app, item.instance.application)));
+    const addedApprovalRecipe = [...nextKeys].some((key) => !prevKeys.has(key))
+      && nextChosen.some((item) => !prevKeys.has(item.app.key) && upgradeApprovalCapabilities(item.app, item.instance.application).length > 0);
+    const addedCapability = [...nextRequired].some((capability) => !prevRequired.has(capability));
+    const addedDetail = [...nextDetails].some((detail) => !prevDetails.has(detail));
     setSelectedIds(nextIds);
-    if (addedRecipe) {
+    if (addedApprovalRecipe || addedCapability || addedDetail) {
       setApprovedCapabilities([]);
     } else {
-      const nextRequired = new Set((nextChosen.length > 0 ? nextChosen : eligible).flatMap((item) => item.app.app.runtime?.requiredCapabilities ?? []));
       setApprovedCapabilities((current) => current.filter((capability) => nextRequired.has(capability)));
     }
   };
@@ -484,7 +490,7 @@ export function BatchUpgradeSheet({
             {requiredCapabilities.length > 0 ? (
               <FieldSet>
                 <FieldLegend>{copy(language, "此配方需要管理员授权", "This recipe requires administrator approval")}</FieldLegend>
-                <FieldDescription>{copy(language, "本次批量更新只需确认一次，应用到所选全部主机。", "Approve once to apply across all selected hosts in this batch.")}</FieldDescription>
+                <FieldDescription>{copy(language, "以下权限为本次更新新增或扩大范围，本次批量更新只需确认一次，后续未新增权限的更新无需重复确认。", "The following permissions are new or expanded for this update. Approve once for this batch; future updates without new permissions will not prompt again.")}</FieldDescription>
                 <FieldGroup>
                   {requiredCapabilities.map((capability) => (
                     <Field key={capability} orientation="horizontal">

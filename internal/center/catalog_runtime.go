@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -125,55 +126,217 @@ func packageRuntimeName(manifest catalog.AppManifest) string {
 	return "docker"
 }
 
+// Built-in platform capabilities describe runtime/platform integration gates
+// verified between Center and Agent rather than privileged host escalations
+// that require manual administrator checkboxes.
+func isBuiltInPlatformCapability(appKey, capability string) bool {
+	if capability == "native-services" {
+		return true
+	}
+	if !strings.HasPrefix(appKey, OfficialCatalogSourceID+"/") {
+		return false
+	}
+	switch capability {
+	case "shared-caddy", "cpa-tunnel-identity", "host-tcp-budget", "meridian-runtime":
+		return true
+	default:
+		return false
+	}
+}
+
+func approvalRequiredCapabilities(appKey string, manifest catalog.AppManifest) []string {
+	if manifest.Runtime == nil || len(manifest.Runtime.RequiredCapabilities) == 0 {
+		return nil
+	}
+	var required []string
+	for _, capability := range manifest.Runtime.RequiredCapabilities {
+		if !isBuiltInPlatformCapability(appKey, capability) {
+			required = append(required, capability)
+		}
+	}
+	return required
+}
+
+func isRootProcessUser(user string) bool {
+	if user == "" {
+		return false
+	}
+	for _, part := range strings.Split(user, ":") {
+		if part == "root" {
+			return true
+		}
+		if numeric, err := strconv.ParseUint(part, 10, 32); err == nil && numeric == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func packageCapabilityScopes(manifest catalog.AppManifest) map[string][]string {
+	scopes := map[string][]string{}
+	if manifest.Runtime == nil {
+		return scopes
+	}
+	if docker := manifest.Runtime.Docker; docker != nil {
+		for _, c := range docker.Containers {
+			if isRootProcessUser(c.User) {
+				scopes["root"] = append(scopes["root"], "docker:"+c.Name+":root")
+			}
+			if c.HostNetwork {
+				scopes["host-network"] = append(scopes["host-network"], "docker:"+c.Name+":host-network")
+			}
+			for _, m := range c.Mounts {
+				if m.HostPath != "" {
+					access := "rw"
+					if m.ReadOnly {
+						access = "ro"
+					}
+					scopes["host-path"] = append(scopes["host-path"], "docker:"+c.Name+":"+m.HostPath+"->"+m.Target+":"+access)
+				}
+			}
+			for _, d := range c.Devices {
+				scopes["devices"] = append(scopes["devices"], "docker:"+c.Name+":device:"+d)
+			}
+		}
+	}
+	if native := manifest.Runtime.Systemd; native != nil && isRootProcessUser(native.User) {
+		scopes["root"] = append(scopes["root"], "systemd:root")
+	}
+	if bundle := manifest.Runtime.NativeServices; bundle != nil {
+		for _, service := range bundle.Services {
+			if service.ManagedUser == "" && isRootProcessUser(service.Process.User) {
+				scopes["root"] = append(scopes["root"], "native:"+service.Name+":root")
+			}
+		}
+	}
+	return scopes
+}
+
+func capabilityScopeCovered(capability string, grantedScopes, targetScopes []string) bool {
+	for _, target := range targetScopes {
+		if slices.Contains(grantedScopes, target) {
+			continue
+		}
+		if capability == "host-path" && strings.HasSuffix(target, ":ro") &&
+			slices.Contains(grantedScopes, strings.TrimSuffix(target, ":ro")+":rw") {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func capabilityAlreadyApprovedForUpgrade(capability string, installed *catalog.AppManifest, existingGrants []string, target catalog.AppManifest) bool {
+	if installed == nil || installed.Runtime == nil || !slices.Contains(existingGrants, capability) {
+		return false
+	}
+	switch capability {
+	case "root", "host-network", "host-path", "devices":
+	default:
+		// Unknown or unmodeled capabilities fail closed and require explicit approval.
+		return false
+	}
+	installedScopes := packageCapabilityScopes(*installed)[capability]
+	targetScopes := packageCapabilityScopes(target)[capability]
+	return capabilityScopeCovered(capability, installedScopes, targetScopes)
+}
+
+func upgradeApprovalCapabilities(appKey string, installed *catalog.AppManifest, existingGrants []string, target catalog.AppManifest) []string {
+	var pending []string
+	for _, capability := range approvalRequiredCapabilities(appKey, target) {
+		if !capabilityAlreadyApprovedForUpgrade(capability, installed, existingGrants, target) {
+			pending = append(pending, capability)
+		}
+	}
+	return pending
+}
+
 func deploymentPermissions(ctx context.Context, db registryCredentialQuerier, request DeploymentRequest, manifest catalog.AppManifest) ([]string, error) {
-	grants := []string{}
+	existingGrants := []string{}
 	var state string
-	var previous []byte
-	err := db.QueryRowContext(ctx, `SELECT r.adoption_state, r.authorized_capabilities_json
-		FROM application_resources r JOIN applications a ON a.id=r.application_id
-		WHERE a.node_id=? AND a.app_key=?`, request.AgentID, request.AppKey).Scan(&state, &previous)
+	var previous, installedRaw []byte
+	err := db.QueryRowContext(ctx, `SELECT r.adoption_state, r.authorized_capabilities_json, COALESCE(latest.manifest_json, '')
+		FROM applications a
+		JOIN application_resources r ON r.application_id=a.id
+		LEFT JOIN deployments latest ON latest.rowid = (
+			SELECT candidate.rowid FROM deployments candidate
+			WHERE candidate.agent_id = a.node_id AND candidate.application_id = a.id AND candidate.state = 'succeeded'
+			ORDER BY candidate.created_at DESC, candidate.rowid DESC LIMIT 1
+		)
+		WHERE a.node_id=? AND a.app_key=?`, request.AgentID, request.AppKey).Scan(&state, &previous, &installedRaw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
+	var installed *catalog.AppManifest
 	if err == nil {
 		if state != "ready" {
 			return nil, errors.New("center: verify and adopt existing resources in the maintenance window before changing this application")
 		}
-		if json.Unmarshal(previous, &grants) != nil {
+		if json.Unmarshal(previous, &existingGrants) != nil {
 			return nil, errors.New("center: stored package permissions are invalid")
 		}
-	}
-	if request.AuthorizedCapabilities != nil {
-		grants = slices.Clone(*request.AuthorizedCapabilities)
-	} else if manifest.Runtime != nil {
-		// Capability names alone cannot describe scope: an existing host-path
-		// grant must not silently cover a new mount/device/root process in a new
-		// recipe. Privileged upgrades always require reviewing the pinned recipe.
-		if request.Operation == "upgrade" && len(manifest.Runtime.RequiredCapabilities) != 0 {
-			return nil, errors.New("center: administrator permission approval required: review the new recipe's privilege scope before upgrading")
+		if len(installedRaw) > 0 {
+			var parsed catalog.AppManifest
+			if json.Unmarshal(installedRaw, &parsed) == nil && parsed.Runtime != nil {
+				installed = &parsed
+			}
 		}
-		// Removal of privileges is safe without new approval; additions are not.
-		grants = slices.DeleteFunc(grants, func(value string) bool { return !slices.Contains(manifest.Runtime.RequiredCapabilities, value) })
 	}
-	if err := catalog.ValidateAuthorizedCapabilities(manifest, grants); err != nil {
+	required := []string{}
+	if manifest.Runtime != nil {
+		required = slices.Clone(manifest.Runtime.RequiredCapabilities)
+	}
+	explicit := map[string]bool{}
+	if request.AuthorizedCapabilities != nil {
+		for _, capability := range *request.AuthorizedCapabilities {
+			if capability == "" || explicit[capability] {
+				return nil, errors.New("center: administrator permission approval required: catalog: invalid or duplicate capability authorization")
+			}
+			if !slices.Contains(required, capability) {
+				return nil, errors.New("center: administrator permission approval required: catalog: extra capability authorizations are forbidden")
+			}
+			explicit[capability] = true
+		}
+	}
+	var pending []string
+	switch request.Operation {
+	case "install":
+		pending = approvalRequiredCapabilities(request.AppKey, manifest)
+	case "upgrade":
+		pending = upgradeApprovalCapabilities(request.AppKey, installed, existingGrants, manifest)
+	case "configure", "uninstall":
+		for _, capability := range approvalRequiredCapabilities(request.AppKey, manifest) {
+			if !slices.Contains(existingGrants, capability) {
+				pending = append(pending, capability)
+			}
+		}
+	default:
+		pending = approvalRequiredCapabilities(request.AppKey, manifest)
+	}
+	for _, capability := range pending {
+		if !explicit[capability] {
+			return nil, fmt.Errorf("center: administrator permission approval required: capability %s requires explicit authorization", capability)
+		}
+	}
+	if err := catalog.ValidateAuthorizedCapabilities(manifest, required); err != nil {
 		return nil, fmt.Errorf("center: administrator permission approval required: %w", err)
 	}
-	slices.Sort(grants)
-	return grants, nil
+	slices.Sort(required)
+	return required, nil
 }
 
-func packagePermissionDetails(manifest catalog.AppManifest) []string {
-	var details []string
+func packagePermissionDetailsByCapability(manifest catalog.AppManifest) map[string][]string {
+	details := map[string][]string{}
 	if manifest.Runtime == nil {
 		return details
 	}
 	if docker := manifest.Runtime.Docker; docker != nil {
 		for _, c := range docker.Containers {
-			if c.User == "root" || c.User == "0" || strings.HasPrefix(c.User, "root:") || strings.HasPrefix(c.User, "0:") {
-				details = append(details, c.Name+": user "+c.User)
+			if isRootProcessUser(c.User) {
+				details["root"] = append(details["root"], c.Name+": user "+c.User)
 			}
 			if c.HostNetwork {
-				details = append(details, c.Name+": host network")
+				details["host-network"] = append(details["host-network"], c.Name+": host network")
 			}
 			for _, m := range c.Mounts {
 				if m.HostPath != "" {
@@ -181,16 +344,67 @@ func packagePermissionDetails(manifest catalog.AppManifest) []string {
 					if m.ReadOnly {
 						access = "read-only"
 					}
-					details = append(details, c.Name+": "+m.HostPath+" -> "+m.Target+" ("+access+")")
+					details["host-path"] = append(details["host-path"], c.Name+": "+m.HostPath+" -> "+m.Target+" ("+access+")")
 				}
 			}
 			for _, d := range c.Devices {
-				details = append(details, c.Name+": device "+d)
+				details["devices"] = append(details["devices"], c.Name+": device "+d)
 			}
 		}
 	}
-	if native := manifest.Runtime.Systemd; native != nil && (native.User == "0" || native.User == "root") {
-		details = append(details, "systemd: user "+native.User)
+	if native := manifest.Runtime.Systemd; native != nil && isRootProcessUser(native.User) {
+		details["root"] = append(details["root"], "systemd: user "+native.User)
+	}
+	if bundle := manifest.Runtime.NativeServices; bundle != nil {
+		for _, service := range bundle.Services {
+			if service.ManagedUser == "" && isRootProcessUser(service.Process.User) {
+				details["root"] = append(details["root"], service.Name+": user "+service.Process.User)
+			}
+		}
+	}
+	return details
+}
+
+func packagePermissionDetails(manifest catalog.AppManifest) []string {
+	byCapability := packagePermissionDetailsByCapability(manifest)
+	var details []string
+	for _, capability := range []string{"root", "host-network", "host-path", "devices"} {
+		details = append(details, byCapability[capability]...)
+	}
+	return details
+}
+
+func upgradePermissionDetails(installed *catalog.AppManifest, target catalog.AppManifest, pending []string) []string {
+	if len(pending) == 0 {
+		return nil
+	}
+	targetByCap := packagePermissionDetailsByCapability(target)
+	var installedByCap map[string][]string
+	if installed != nil {
+		installedByCap = packagePermissionDetailsByCapability(*installed)
+	}
+	var details []string
+	for _, capability := range pending {
+		targetLines := targetByCap[capability]
+		if len(targetLines) == 0 {
+			continue
+		}
+		if installedByCap == nil {
+			details = append(details, targetLines...)
+			continue
+		}
+		priorLines := installedByCap[capability]
+		var added []string
+		for _, line := range targetLines {
+			if !slices.Contains(priorLines, line) {
+				added = append(added, line)
+			}
+		}
+		if len(added) > 0 {
+			details = append(details, added...)
+		} else {
+			details = append(details, targetLines...)
+		}
 	}
 	return details
 }

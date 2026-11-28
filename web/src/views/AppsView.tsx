@@ -25,6 +25,7 @@ import { ApplicationStore, type StoreNavigationTarget } from "./ApplicationStore
 import { installedAppGroups, type InstalledAppInstance } from "./installed-apps-model";
 import { ApplicationCredentialsSheet, InstalledAppDetails } from "./apps/ApplicationDetails";
 import { BatchUpgradeSheet, createBatchUpgradeRequest, type BatchUpgradeOutcome, type BatchUpgradeRequest, type BatchUpgradeTarget } from "./apps/BatchUpgradeSheet";
+import { upgradeApprovalCapabilities } from "./apps/capabilities";
 import { DeploymentSheet, PublicationSheet, type DeploymentEditor } from "./apps/DeploymentSheets";
 import { RealityRenameSheet, SubscriptionSheet, UninstallSheet } from "./apps/SubscriptionSheets";
 import { OfficialAppManagerHost } from "@/app-workspaces/OfficialAppWorkspaceHost";
@@ -121,10 +122,10 @@ export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onO
     const failed: BatchUpgradeOutcome["failed"] = [];
     for (let index = 0; index < targets.length; index++) {
       const target = targets[index];
-      const required = target.app.app.runtime?.requiredCapabilities ?? [];
-      const authorizedCapabilities = required.length
-        ? required.filter((capability) => approvedCapabilities.includes(capability))
-        : [];
+      const pending = upgradeApprovalCapabilities(target.app, target.instance.application);
+      const authorizedCapabilities = pending.length > 0
+        ? pending.filter((capability) => approvedCapabilities.includes(capability))
+        : undefined;
       const scope = deploymentSecretScope(target.agent.id, target.app.key, "upgrade");
       const operationKey = target.app.key === "vastora-official/senlun" ? secretOperation(scope) : undefined;
       try {
@@ -183,7 +184,7 @@ export function AppsView({ data, language, mutate, workspaceKey, onNavigate, onO
       setUpgradeError(blocker || copy(language, "请先确认节点在线并刷新应用目录。", "Check node connectivity and refresh the app catalog first."));
       return;
     }
-    if (app.app.runtime?.requiredCapabilities?.length) {
+    if (upgradeApprovalCapabilities(app, application).length > 0) {
       setDeploymentEditor({ app, agent, operation });
     } else {
       void upgrade(application, app, agent);

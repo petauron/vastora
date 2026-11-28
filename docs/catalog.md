@@ -50,8 +50,14 @@ ordinary applications do not require a product integration.
 
 Install/upgrade requests to `POST /api/v1/deployments` must carry the reviewed
 `packageRevision`, `manifestSha256` and explicitly approved
-`authorizedCapabilities`. Changed catalog identity invalidates the request.
-Omitted grants can retain existing grants, never approve an expansion.
+`authorizedCapabilities` for any privileged host capability (`root`,
+`host-network`, `host-path`, `devices`, or unknown capabilities) not already
+authorized on that installed instance with an equal or narrower scope. Built-in
+platform capabilities (`native-services`, and official `shared-caddy`,
+`cpa-tunnel-identity`, `host-tcp-budget`, `meridian-runtime`) remain enforced
+between Center and Agent without requiring manual checkbox approval. Changed
+catalog identity invalidates the request. Omitted grants can retain existing
+approved grants when scope does not expand, never approve an expansion.
 Configuration/uninstall use the recorded installed manifest.
 
 Instance resource records retain real container/volume/unit/path ownership,

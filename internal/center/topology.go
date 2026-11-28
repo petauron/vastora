@@ -152,11 +152,14 @@ type ApplicationView struct {
 	NodeSyncError            string     `json:"nodeSyncError,omitempty"`
 	RestorePointState        string     `json:"restorePointState,omitempty"`
 	RestorePointAt           *time.Time `json:"restorePointAt,omitempty"`
-	InstalledVersion         string     `json:"installedVersion,omitempty"`
-	InstalledPackageRevision int        `json:"installedPackageRevision"`
-	AdoptionState            string     `json:"adoptionState,omitempty"`
-	AdoptionError            string     `json:"adoptionError,omitempty"`
-	AvailablePackageRevision int        `json:"availablePackageRevision"`
+	InstalledVersion            string     `json:"installedVersion,omitempty"`
+	InstalledPackageRevision    int        `json:"installedPackageRevision"`
+	AdoptionState               string     `json:"adoptionState,omitempty"`
+	AdoptionError               string     `json:"adoptionError,omitempty"`
+	AuthorizedCapabilities      []string   `json:"authorizedCapabilities,omitempty"`
+	UpgradeApprovalCapabilities *[]string  `json:"upgradeApprovalCapabilities,omitempty"`
+	UpgradePermissionDetails    []string   `json:"upgradePermissionDetails,omitempty"`
+	AvailablePackageRevision    int        `json:"availablePackageRevision"`
 	AvailableVersion         string     `json:"availableVersion,omitempty"`
 	UpdateAvailable          bool       `json:"updateAvailable"`
 	CreatedAt                time.Time  `json:"createdAt"`

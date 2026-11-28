@@ -82,9 +82,10 @@ type AppView struct {
 	CatalogRevision      uint64              `json:"catalogRevision,omitempty"`
 	InstallBlocked       bool                `json:"installBlocked,omitempty"`
 	InstallBlockedReason string              `json:"installBlockedReason,omitempty"`
-	ManifestSHA256       string              `json:"manifestSha256"`
-	ManagedConfigFields  []string            `json:"managedConfigFields,omitempty"`
-	PermissionDetails    []string            `json:"permissionDetails,omitempty"`
+	ManifestSHA256               string              `json:"manifestSha256"`
+	ManagedConfigFields          []string            `json:"managedConfigFields,omitempty"`
+	ApprovalRequiredCapabilities []string            `json:"approvalRequiredCapabilities"`
+	PermissionDetails            []string            `json:"permissionDetails,omitempty"`
 }
 
 type RegistryCredential struct {
@@ -806,6 +807,11 @@ func (s *Store) ListApps(ctx context.Context) ([]AppView, error) {
 		}
 		apps[i].ManifestSHA256 = digest
 		apps[i].ManagedConfigFields = managedConfigFields(apps[i].Key)
+		approvalRequired := approvalRequiredCapabilities(apps[i].Key, apps[i].App)
+		if approvalRequired == nil {
+			approvalRequired = []string{}
+		}
+		apps[i].ApprovalRequiredCapabilities = approvalRequired
 		apps[i].PermissionDetails = packagePermissionDetails(apps[i].App)
 		if err := requireCatalogRuntime(apps[i].App); err != nil {
 			apps[i].InstallBlocked = true
